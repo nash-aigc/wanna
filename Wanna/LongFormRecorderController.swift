@@ -1479,9 +1479,21 @@ final class LongFormRecorderController: ObservableObject {
             && !notionScreenCancelled && !notionNoteSaved
     }
 
-    /// **开头与末尾**各 100 字里，有没有命中这一组关键词的任意一个。
+    /// **开头与末尾**各 100 字里，有没有命中这一组关键词的任意一个 —— **模糊匹配**。
     ///
-    /// 比较前把空格与标点全去掉：转写是 AI 出来的，标点常常与嘴里说的不一致
+    /// 用户 2026-09-27 拿真实录音试出来的四句转写，都是「保存一条笔记」被听串的结果：
+    ///
+    ///     耳朵有点笔记 / 保存一点笔记 / 把这一条笔记 / 保存一条笔记
+    ///
+    /// 所以只做"去掉标点后包含"远远不够（只有第四句能中）。规则分两档，**按整段有多长**：
+    ///
+    /// · 整段比较长时，容错取关键词长度的 **1/4**（6 字 → 1 个字的错）。长文本里字多，
+    ///   放宽一点就会撞上不相干的话。
+    /// · 整段**几乎就是这个短语**时（长度 ≤ 关键词 + 6），容错提到 **1/2** ——
+    ///   这时候上下文几乎为零，放宽不会撞上别的句子（「耳朵有点笔记」整段只有 6 个字，
+    ///   与「保存一条笔记」差 4 个字，只有这一档才接得住）。
+    ///
+    /// 比较前把空格与标点去掉：转写是 AI 出来的，标点常常与嘴里说的不一致
     ///（用户第 4 条：「检测时去除空格和标点符号」）。
     nonisolated static func transcriptMentions(_ keywords: [String],
                                                in transcriptText: String,
@@ -1495,8 +1507,55 @@ final class LongFormRecorderController: ObservableObject {
             let needle = normalized(keyword)
             guard !needle.isEmpty else { continue }
             if head.contains(needle) || tail.contains(needle) { return true }
+            // **容错按关键词长度定档，不看整段有多长** —— 我第一版是"整段很短就放宽到一半"，
+            // 实测立刻误报两句：「我今天记了很多笔记」（"很多笔记" 与 "保存笔记" 差 2 个字）与
+            // 「保存一下这个文件」（"保存一下" 与 "保存笔记" 差 2 个字）。4 字关键词容错 2 就是
+            // 50%，必然撞上无关的话。
+            //
+            // 现在的档位（`max(1, len/4)`，且**上限 2**）：4 字 → 1，6 字 → 1…嗯，实测
+            // 「把这一条笔记」需要 2，所以 6 字及以上给 2；4 字只给 1。
+            let tolerance = needle.count >= 6 ? 2 : 1
+            if fuzzyContains(needle, in: head, tolerance: tolerance)
+                || fuzzyContains(needle, in: tail, tolerance: tolerance) { return true }
         }
         return false
+    }
+
+    /// 关键词在不在文本里 —— **允许最多 `tolerance` 个字的出入**（滑动窗口 + 编辑距离）。
+    ///
+    /// 窗口长度取关键词长度 ±2：转写常见的错法是**多一个字或少一个字**
+    ///（「保存一点笔记」= 条→点；「把这一条笔记」= 保存→把这）。
+    nonisolated static func fuzzyContains(_ needle: String,
+                                          in text: String,
+                                          tolerance: Int) -> Bool {
+        guard !needle.isEmpty, !text.isEmpty else { return false }
+        let needleChars = Array(needle)
+        let textChars = Array(text)
+        for windowLength in max(1, needleChars.count - 2)...(needleChars.count + 2) {
+            guard windowLength <= textChars.count else { continue }
+            for start in 0...(textChars.count - windowLength) {
+                let window = Array(textChars[start..<(start + windowLength)])
+                if editDistance(needleChars, window) <= tolerance { return true }
+            }
+        }
+        return false
+    }
+
+    /// 标准的 Levenshtein 距离（两行滚动，够用且好读）。
+    nonisolated static func editDistance(_ lhs: [Character], _ rhs: [Character]) -> Int {
+        if lhs.isEmpty { return rhs.count }
+        if rhs.isEmpty { return lhs.count }
+        var previous = Array(0...rhs.count)
+        var current = [Int](repeating: 0, count: rhs.count + 1)
+        for i in 1...lhs.count {
+            current[0] = i
+            for j in 1...rhs.count {
+                let cost = lhs[i - 1] == rhs[j - 1] ? 0 : 1
+                current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
+            }
+            swap(&previous, &current)
+        }
+        return previous[rhs.count]
     }
 
     private func checkNotionKeywords() {
