@@ -1691,7 +1691,7 @@ final class NotchRecordingOverlayController {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         // 压在刘海面板之上：录音期间这条带要盖住原来的静止 pill。
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 1)
+        panel.level = NotchSupport.recordingBandWindowLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isMovable = false
         // **关掉 NSWindow 自带的 frame 动画。** 改 frame 时 AppKit 默认会插一段

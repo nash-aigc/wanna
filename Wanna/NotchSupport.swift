@@ -846,6 +846,16 @@ nonisolated enum NotchSupport {
     /// **不要沿用 `OverlayWindow` 的 `.screenSaver`（1000）**：那一层是给光标伴随物准备的
     ///（它要求自己盖在右键菜单之上）。这一排虽然点击穿透，但一块 190pt 宽的卡片盖住用户的
     /// 右键菜单是看得见的缺陷 —— 和摄像头小窗同一个理由，见 `cameraStripWindowLevel`。
+    /// **录音带那块面板的层级**（2026-09-27 抬高）。
+    ///
+    /// 原来它是 `statusWindow + 1`，只比状态栏高一档 —— 用户报「屏幕这个按钮被挡住了」，
+    /// 而能挡住它的正是**别的 App 的高层窗口**（浮层、全屏播放器、常驻的自动化工具覆盖层）。
+    ///
+    /// 取 `.popUpMenu`（101）：**在菜单栏与状态栏之上**（他要的"悬浮在菜单栏的上面"），
+    /// 又**在 `OverlayWindow` 生来的 `.screenSaver`(1000) 之下** —— 我们自己的光标 / 绿圈 /
+    /// 白板那一族必须仍然盖在它上面，否则光标会被这句字幕挡住。
+    static let recordingBandWindowLevel: NSWindow.Level = .popUpMenu
+
     static let agentStripWindowLevel: NSWindow.Level = .mainMenu
 
     // MARK: - 摄像头小窗的摆放
