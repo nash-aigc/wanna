@@ -267,6 +267,27 @@ struct NotchPillRootView: View {
     @ObservedObject var panelModel: NotchPanelModel
     var audioHistoryProvider: () -> [CGFloat]
 
+    /// **Listening 那一刻的展开进度**（2026-09-27）。两翼与刘海下面那行字幕读的是
+    /// **同一个值**，所以两块在每一帧都严格同宽 —— 这是「动画中间一块空白」的根治办法：
+    /// 原来两翼由相位驱动、字幕由另一条晚一轮的订阅驱动，中间那几十毫秒里带子比字幕宽，
+    /// 桌面就从那里透出来（实测每侧最宽多出约 25pt）。
+    ///
+    /// 非 Listening 的相位一律按 1（= 全宽）算，所以别的相位的外观与从前一字不差。
+    @ObservedObject private var listeningTranscriptModel = NotchListeningTranscriptModel.shared
+
+    /// 两翼在这一帧展开到几分之几。
+    ///
+    /// **`isBandPresented` 那半边是收起动画**：相位一离开 `.listening`，字幕那条就开始缩回
+    /// （`hide()` 里那次 `withAnimation`），此刻两翼**必须跟着缩** —— 只看相位的话它到这里
+    /// 就变成 1（"非 Listening 一律满宽"），于是两翼满宽、字幕已经缩回去，桌面从两翼下面
+    /// 透出来（实测每侧最宽 76pt）。别的相位（打字提问、播报）里 `isBandPresented` 是 false，
+    /// 走的是"满宽"，与从前一字不差。
+    private var wingRevealProgress: CGFloat {
+        (panelModel.activityPhase == .listening || listeningTranscriptModel.isBandPresented)
+            ? listeningTranscriptModel.bandRevealProgress
+            : 1
+    }
+
     /// 刘海左侧那几颗「Notion 笔记」按钮怎么摆（2026-09-27 从录音搬到主 Agent）。
     /// 由控制器在装配时算好传进来 —— 只有它手里有 `NSScreen`，见
     /// `NotchSupport.notionNoteButtonPlacement`。nil = 这块屏没有刘海，什么都不画。
@@ -337,7 +358,7 @@ struct NotchPillRootView: View {
                         squaresBottomOuterCorner: squaresBottomOuterCorner
                     )
                     .frame(
-                        width: isActive ? Self.leadingWingWidth : 0,
+                        width: isActive ? Self.leadingWingWidth * wingRevealProgress : 0,
                         height: notchHeight
                     )
                     // The clip lives OUTSIDE the animated width frame: inside
@@ -380,7 +401,7 @@ struct NotchPillRootView: View {
                         squaresBottomOuterCorner: squaresBottomOuterCorner
                     )
                     .frame(
-                        width: isActive ? Self.trailingWingWidth : 0,
+                        width: isActive ? Self.trailingWingWidth * wingRevealProgress : 0,
                         height: notchHeight
                     )
                     .clipped()

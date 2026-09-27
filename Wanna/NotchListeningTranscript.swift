@@ -71,6 +71,15 @@ final class NotchListeningTranscriptModel: ObservableObject {
     /// 由 `NotchListeningTranscriptPanelController.show()/hide()` 用 `withAnimation` 翻。
     @Published var bandRevealProgress: CGFloat = 0
 
+    /// **这条带子（黑带 + 字幕）此刻在屏幕上吗** —— 从 `show()` 到收起动画跑完、面板
+    /// 真正 `orderOut` 为止。
+    ///
+    /// 两翼的宽度靠它决定「要不要跟着 `bandRevealProgress` 走」：**收起的那 0.38 秒里也要跟**
+    /// （不然两翼已经回到满宽、字幕却缩回去了，桌面就从两翼下面透出来 —— 实测每侧最宽
+    /// 76pt 的一块白），而别的相位（打字提问的 Thinking、播报的 Speaking…）要与从前一字不差
+    /// 地走"相位非 idle 就满宽"，所以不能简单地只看相位。
+    @Published var isBandPresented: Bool = false
+
     /// 用户在编辑窗里改过的正文。`nil` = 没改过，编辑框跟着识别结果显示。
     @Published private(set) var editorDraftText: String?
 
@@ -236,6 +245,7 @@ final class NotchListeningTranscriptPanelController {
         revealGeneration += 1
         let shouldRevealNow = isPresented || !panels.isEmpty
         isPresented = true
+        NotchListeningTranscriptModel.shared.isBandPresented = true
 
         if panels.isEmpty {
             NotchListeningTranscriptModel.shared.beginRound()
@@ -271,9 +281,11 @@ final class NotchListeningTranscriptPanelController {
 
     /// 那一行该走了 —— 用户说完、相位离开 Listening，或者刘海整个被别的 App 的全屏挡住。
     ///
-    /// **收也是一次动画**（宽度缩回刘海中心），与两翼缩回同一条曲线；动画走完才 `orderOut`。
-    /// 这条字幕不盖任何东西（上面的黑带是 pill 自己画的），所以过程中不会露出桌面 ——
-    /// 但**收的时机必须和两翼一致**，否则用户看到的还是「上面先没了、下面还留着」。
+    /// **收是不动画的，直接收。** 展开那一下要"从刘海中间长出来"（用户的要求），
+    /// 但**收起时不能缩宽度** —— 相位离开 Listening 之后那条黑带**还要留在屏幕上**
+    /// （Thinking / Speaking 两个相位它都在），字幕一缩宽度，桌面就从两翼下面透出来
+    /// （实测每侧最宽 150px 的一块白）。所以收的时候：进度直接归零、面板立刻 `orderOut`，
+    /// 视觉上就是「字幕消失、带子进入 Thinking」—— 这正是它在这个 App 里原本的样子。
     func hide() {
         guard isPresented else { return }
         isPresented = false
@@ -283,17 +295,10 @@ final class NotchListeningTranscriptPanelController {
         NotchListeningTranscriptModel.shared.isEditorExpanded = false
 
         revealGeneration += 1
-        let generation = revealGeneration
-        withAnimation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration)) {
-            NotchListeningTranscriptModel.shared.bandRevealProgress = 0
-        }
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + NotchSupport.listeningBandRevealDuration + 0.05
-        ) { [weak self] in
-            guard let self, self.revealGeneration == generation, !self.isPresented else { return }
-            for panel in self.panels { panel.orderOut(nil) }
-            self.panels.removeAll()
-        }
+        NotchListeningTranscriptModel.shared.bandRevealProgress = 0
+        NotchListeningTranscriptModel.shared.isBandPresented = false
+        for panel in panels { panel.orderOut(nil) }
+        panels.removeAll()
     }
 
     /// 屏幕参数变了（插拔显示器、分辨率）：面板的矩形要按新屏幕重算。

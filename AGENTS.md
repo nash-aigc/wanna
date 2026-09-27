@@ -326,6 +326,8 @@ The app needs three models, called **roles**:
 | 🧠 `vision` | Looks at the screenshot and answers | `qwen3-vl-plus` |
 | 👄 `speech` | Reads the answer aloud | `qwen-audio-3.1-tts-flash` + cloned 赵今麦 voice |
 
+**「识别要 2 秒才出字」量到的是音频采集，不是识别**（2026-09-27）：按下说话键 → **第一块音频进 provider** 实测**冷 2025ms / 热 139ms**（同一份日志里录音那条路是 `AUHAL 已启动` +17ms、`第 1 块` +22ms）。差在**引擎**：主 Agent 走共享的 VPIO 引擎（那套 IO 重配置 ~2 秒，本仓早有记录），按键后头 2 秒的话根本没进采集；录音那条用自己的 AUHAL 引擎、不开 VPIO。**被排除的候选**：每句一条新连接的握手（连接在按下那一刻就建了；实测 `新段 @连接后 0.7s`（音频立刻喂）对 `@连接后 2.0s`（音频晚到）——差别全在音频何时到）与 `publishInterimDraftText` 的节流（同步调用，与 provider 出字同拍）。**没有改代码**：`audioEngineIdleReleaseMinutes`（1/3/5 分钟或永久）决定这 2 秒多久付一次，把它调长/永久是用户的取舍（代价是常驻麦克风路由 + 压低别的软件音量）；要彻底消灭它得让采集先于引擎起来，与「一条音频路径」「VPIO 启用顺序」冲突，不由代码擅改。
+
 **Recognition is the one role with a second backend, and since 2026-09-27 the main Agent runs on it.** 设置 → 听 → 「说话时用哪个识别」 picks 豆包（火山引擎）or 阿里百炼; it defaults to 豆包, so the press-to-talk shortcut transcribes with Doubao out of the box. **A dropped connection must not end the recording** (2026-09-27, the 「第二次按不提交、退不出来」 regression): the Doubao client's own watchdog declares a connection dead after 15 s with no reply *while audio is being fed* — which for press-to-talk is a **false positive**, because a user who presses the key and thinks in silence gets no replies from the server — and the provider used to surface that as a fatal error, so `handleRecognitionError` cancelled the whole dictation: nothing was submitted, nothing was said on screen, and the next press started a *new* recording instead of submitting. The provider now **reconnects** (bounded at 3 per utterance, keeping everything already recognised as a sealed prefix because a fresh connection restarts the server's millisecond timeline), `handleRecognitionError` submits whatever text exists instead of discarding it, and a dictation that dies with **no** text notifies `onDictationAbandoned` so the turn recorder does not leave a turn open. See 开发经验/10-踩过的坑.md D21. The Doubao path takes its credentials, 档位, language and hotwords from **the 录音 page's existing fields** — one Volcano account, so one place to type the API key — which is why that switch's settings row says outright that the 听 page's 识别语言 and 识别模型 only apply to 百炼. Which path gets which backend is decided in exactly one place, `BuddyTranscriptionProviderFactory`; see its Key Files entry for the three rules.
 
 Which provider serves each role, and that provider's URL, API key and model names, are the user's to set. Settings are changed in the notch sheet's embedded 设置 pages (the notch subsystem is the primary entry) or, where the subsystem cannot host them, the titled window; both write:
@@ -523,8 +525,16 @@ The recording mute is now the between-replies half, and the AEC covers the windo
   `withAnimation` 都读它）+ `NotchSupport.revealedListeningBandWidth(notchWidth:revealProgress:)`
   = `刘海 + (两翼之和) × 进度`（两翼的宽度动画是同一个线性式子，所以边缘每一帧都重合）。
   进度由 `NotchListeningTranscriptPanelController.show()/hide()` 用 `withAnimation` 翻。
-  录屏逐帧量到（26fps）：时长 ≈350ms、两块收敛到**同一对边缘 88…807**、**没有任何一帧只有一块**；
-  残差是过程中带子每侧宽 ~25pt —— 两个 `withAnimation` 的起跑差一个主队列轮次。
+  ⚠️ **光"时长一样"不够 —— 两块必须读同一个值**：第一版两翼由**相位**驱动、字幕由面板里那个
+  `bandRevealProgress` 驱动，差一个主队列轮次，展开头几十毫秒里带子比字幕宽（实测每侧 **25pt**），
+  桌面就从那里透出来（用户附图圈的就是那两个角：「你绝对不可以出现这种状态」）。现在两翼也读
+  `bandRevealProgress`（`wingRevealProgress`），并用 `NotchListeningTranscriptModel.isBandPresented`
+  （`show()` 起、`orderOut` 止）把**收起那一段也带上** —— 只按相位判的话收起时两翼被强行按满宽、
+  字幕在缩，实测每侧 **150px** 的白。**收起不缩宽度**（相位离开 Listening 后那条黑带还要留给
+  Thinking/Speaking），`hide()` 直接归零 + `orderOut`。面板的出现也从"相位订阅（晚一轮）"改成在
+  `refreshActivityPhase()` 里**同拍直调**（订阅保留，它是收起的出口）。
+  录屏逐帧量到（19–33fps）：时长 ≈350ms、展开过程中每侧露白 **≤2px（≈1pt）**、
+  **没有任何一帧只有一块**、两块收敛到同一对边缘。
 - **点刘海左侧那颗「Listening」**（`handleGlobalClick` 里新增的一个分支）走的是**录音两翼那一份矩形**
   （`NotchSupport.recordingWingFrames`）——「画在哪」由视图按 `NotchSupport.leadingWingWidth` 画、
   「点在哪」由控制器用同一个矩形判。判在**录音那条之后**（两者占同一块屏幕，谁真的在跑算谁的）、

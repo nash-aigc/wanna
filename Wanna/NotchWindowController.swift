@@ -1910,6 +1910,15 @@ final class NotchWindowController {
             activityPhaseHoldTask?.cancel()
             activityPhaseHoldTask = nil
             panelModel.activityPhase = derivedPhase
+            // **同一拍里就把字幕那一块跟上**（2026-09-27，用户附图的「动画中间一块空白」）。
+            //
+            // 原来它只走相位订阅（`Publishers.CombineLatest(...).receive(on:
+            // DispatchQueue.main)`）—— 那条路比这里**晚一个主队列轮次**，于是两翼的宽度动画
+            // 已经跑了 ~20–40ms、字幕还停在「刘海那么宽」，中间那一段**带子比字幕宽**
+            // 的地方就是桌面透出来的白块（实测带子每侧最宽多出约 25pt）。
+            // 在这一拍里直接调一次：字幕面板与两翼**同拍出现**，几何从第一帧就对得上。
+            // 订阅那一条**保留**（它是相位离开 Listening 时收起的唯一出口）。
+            syncListeningTranscriptPanel()
             return
         }
 
@@ -1929,6 +1938,7 @@ final class NotchWindowController {
             activityPhaseHoldTask?.cancel()
             activityPhaseHoldTask = nil
             panelModel.activityPhase = .idle
+            syncListeningTranscriptPanel()
             return
         }
 
@@ -1942,6 +1952,7 @@ final class NotchWindowController {
                 ?? (self.isDictationFinalizing
                     ? .transcribing
                     : NotchActivityPhase(from: self.latestVoiceState))
+            self.syncListeningTranscriptPanel()
         }
     }
 
