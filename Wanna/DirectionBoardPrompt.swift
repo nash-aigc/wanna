@@ -91,7 +91,12 @@ nonisolated enum DirectionBoardPrompt {
               └─ 第一层
               没有可梳理的就写「—」>
         疑问：<你在他的内容里**真正读出来的问题**：有歧义的地方、前后矛盾的地方、他说了但没交代清楚的
-              地方（最多 **4 行**，每行一句）。**没有就整行写「—」** —— 不要为了凑而编问题>
+              地方。**每一行一条**，格式是「**一、关于〈什么内容〉的疑问：〈具体是什么问题〉**」，
+              序号用**一、二、三、四**（最多 4 条）。**先说这疑问是关于哪一块的，再说具体内容。**
+              照这个样子写（这是格式示范，不是内容）：
+              一、关于「记到哪里」的疑问：没说清是记进哪一页、哪一条
+              二、关于「用哪个数据」的疑问：两个数字对不上，不确定该用哪个
+              没有就整行写「—」 —— **不要为了凑而编问题**>
 
         **答案**：<只在这一轮**包含一个可以当场回答的问题**时才写（「北京在哪」「杨幂是谁」
                   「左右两张图有什么区别」「这道题选 A 还是 B」），一到三句话，像回答用户一样自然；
@@ -103,6 +108,12 @@ nonisolated enum DirectionBoardPrompt {
                   例如「1 对，3 不对」「取消 2」；没有就整行不写>
 
         规则：
+        0. **「疑问」是接着上一轮说的**（用户 2026-09-27：「用户可能会关注某个疑问，并因此补充一些内容。
+           如果发现这个疑问已经消除，或不再有疑问，就把这个疑问删掉……**疑问就是疑问，不能总是更换**」）：
+           下面如果给了「还没解决的疑问」，那是**之前就提出来、现在仍然挂着的** ——
+           你这一轮要做的是：① 他刚补的话有没有**解决了其中某一条**（解决了就别再写它）；
+           ② 剩下的照抄过来（说法可以更准，但别换问题）；③ 只有真的读出新问题才加新的。
+           **不许把上一轮的问题换一批新的重说一遍。**
         1. **只写理解与结果**，不要执行任何事、不要给操作步骤、不要写代码；
         2. 「目标问题」一句话说不完就写「细节」那一行，**不要写成长篇**；
         3. 用中文写（他说英文就用英文）；
@@ -171,7 +182,8 @@ nonisolated enum DirectionBoardPrompt {
                                         previousRoundItems: [DirectionBoardDisplayItem],
                                         recentReadings: [String],
                                         referenceMaterials: String? = nil,
-                                        previousAnswers: String? = nil) -> String {
+                                        previousAnswers: String? = nil,
+                                        previousQuestions: String? = nil) -> String {
         var sections: [String] = []
         // **参考材料**（屏幕 / 剪贴板 / 访达选中）—— 与主 Agent 那一轮读的是同一份。
         //
@@ -180,6 +192,10 @@ nonisolated enum DirectionBoardPrompt {
         //（他还在说话的时候就能看到总结），所以这一轮的请求必须也带上材料。
         if let referenceMaterials {
             let trimmed = referenceMaterials.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { sections.append(trimmed) }
+        }
+        if let previousQuestions {
+            let trimmed = previousQuestions.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { sections.append(trimmed) }
         }
         // **你刚才在右下角回过的那几条**（用户 2026-09-27：「一定要带上刚才的结果」）——

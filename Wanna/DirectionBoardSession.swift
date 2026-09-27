@@ -63,6 +63,20 @@ final class DirectionBoardSession: ObservableObject {
     /// 视图读这个决定那个按钮是亮的还是灰的。
     var hasCopyableReply: Bool { hasCopyableReplyProvider?() ?? false }
 
+    /// 把上一轮的疑问带上（写进提示词的 `<previous_questions>` 段）。
+    func pendingQuestionsPromptBlock() -> String? {
+        let trimmed = pendingQuestions.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "—" else { return nil }
+        return """
+        <previous_questions>
+        你上一轮提的这些疑问**还没解决**（用户可能刚刚补了一句来解决其中某一条）：
+        \(trimmed)
+
+        请判断：他刚补的内容解决了其中哪一条？**解决了的那条不要再写**；没解决的照抄过来。
+        </previous_questions>
+        """
+    }
+
     /// 右下角那张卡片刚显示过的那段（`CompanionManager` 在写预览/真答案时喂进来）。
     func noteCornerAnswerShown(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -170,6 +184,14 @@ final class DirectionBoardSession: ObservableObject {
     /// 所以他要的这条链得单独带着。最多三轮（他：「甚至要带上前三轮的结果」）。
     private var recentCornerAnswers: [(text: String, shownAt: Date)] = []
     static let rememberedCornerAnswerCount = 3
+
+    /// **还没解决的疑问**（用户 2026-09-27：「用户可能会关注某个疑问，并因此补充一些内容。
+    /// 如果发现这个疑问已经消除，或不再有疑问，就把这个疑问删掉。这个疑问要带入到本次回复中显示出来，
+    /// 也要带入到下一次对话里，并且要固定下来。**疑问就是疑问，不能总是更换**」）。
+    ///
+    /// 所以它**不随每一轮重写**：上一轮的疑问随请求带下去，模型只负责"删掉已解决的 + 加新的"。
+    /// 那一行文本本身也一直显示在卡片上（`understandingLines` 里那一行的值就是它）。
+    private var pendingQuestions = ""
 
     /// **最近三轮**模型的理解原文（最近的那一轮在最前）—— 用户要的连续性：
     /// 「你要在发送给下一轮模型的时候要保留前三轮……让它重点参考最近一轮」。
@@ -697,6 +719,13 @@ final class DirectionBoardSession: ObservableObject {
                     print("🧭 方向看板：答案预览 = \(answer.prefix(60))")
                 }
 
+                // **疑问那一行是"常驻"的**：把这一轮的值记下来，下一轮带着它去问模型
+                //（它只删已解决的、加新的，不许换一批重说）。
+                if let questions = self.understandingLines.first(where: { $0.label == "疑问" })?.value,
+                   !questions.isEmpty {
+                    self.pendingQuestions = questions
+                }
+
                 // **用户对上一轮那些方向的评论，由模型在**这一轮**读懂**（两拍语义，用户 2026-09-27：
                 // 「他的理解是由大语言模型在第二轮……你必须要知道用户表达的是对上一轮 JEV 模型
                 // 它的结果的一个选择」）。编号按**上一轮那一列**回填。
@@ -741,7 +770,8 @@ final class DirectionBoardSession: ObservableObject {
             previousRoundItems: previousRoundItems,
             recentReadings: recentReadings,
             referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
-            previousAnswers: previousCornerAnswersPromptBlock())
+            previousAnswers: previousCornerAnswersPromptBlock(),
+            previousQuestions: pendingQuestionsPromptBlock())
         do {
             let (text, _) = try await visionChatAPI.analyzeImageStreaming(
                 images: screenshots,

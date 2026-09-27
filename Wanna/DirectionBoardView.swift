@@ -50,7 +50,9 @@ struct DirectionBoardView: View {
     /// 卡片会变成又窄又高的一条。问过他之后选的是 **480（−30%）**：选项格 2 列、按钮行照旧放得下。
     /// 基准跟着从 340 调到 240，这样设置页那三档（1 / 1.5 / 2 倍）的**相对关系不变**，
     /// 默认值也仍然是 2 倍 —— 不用迁移任何存盘的值。
-    static let resultCardWidth: CGFloat = 240
+    /// 用户 2026-09-27：「卡片整体宽度在之前缩小 30% 的基础上**增加回来**，
+    /// **约为右下角卡片宽度的两倍**」→ 340 × 2 = **680**。
+    static let resultCardWidth: CGFloat = 340
     /// 一格的最小宽度 —— 它决定"这条宽度里排几列"：680 的卡片用掉 24 的左右边距之后是 656，
     /// 656 / 164 = **4 列**（用户 2026-09-27：「改成 4 列显示吧，现在 3 列太窄了，
     /// 每个卡片的空白间距太大」—— 原来是 190，算出来是 3 列）。
@@ -81,6 +83,18 @@ struct DirectionBoardView: View {
     /// 每一行预留几行（顺序与 `understandingLabels` 一致）。
     static let reservedLineCounts: [String: Int] = ["目标": 3, "细节": 7, "疑问": 4]
 
+    /// **脑图那一行是哪一行**（「细节」）—— 它单独占右栏，且**不画标题**。
+    static let mindMapLabel = "细节"
+    /// 左栏宽度 = 卡片宽度的 **40%**（用户指定的比例）。
+    private var understandingColumnWidth: CGFloat {
+        (Self.cardWidth(forMultiplier: widthMultiplier) - Self.horizontalPadding * 2) * 0.4
+    }
+    /// 方向格**固定三行**的高度（每行 = 一个格子的高度 28 + 行距 6）。
+    private static let directionGridHeight: CGFloat = 3 * 28 + 2 * 6
+
+    /// 理解那块的总高度（固定）—— 左右两栏共用，于是右侧那张脑图的高度就是"整个卡片的高度"。
+    private static let understandingBlockHeight: CGFloat = 9 * understandingLineHeight
+
     /// 用户设的宽度倍数（默认 2）。
     private var widthMultiplier: Double {
         AppSettingsStore.snapshot().directionBoardWidthMultiplier
@@ -101,11 +115,12 @@ struct DirectionBoardView: View {
             }
         }
         .padding(.horizontal, Self.horizontalPadding)
-        .padding(.vertical, 10)
+        .padding(.top, Self.cardBottomPadding)
+        .padding(.bottom, Self.cardBottomPadding)
         // **折叠之后整张卡片就只剩那个按钮**（用户：「折叠后……变成一个折叠按钮」）——
         // 所以宽度也跟着收，不然屏幕上会留一条 680 宽的空条。
         .frame(width: session.isCollapsed
-               ? Self.collapseHalfWidth * 2 + Self.horizontalPadding * 2
+               ? Self.collapseButtonWidth * 3 + Self.horizontalPadding * 2
                : Self.cardWidth(forMultiplier: widthMultiplier),
                alignment: .leading)
         .background(AnswerCardView.cardBackground(theme: theme))
@@ -148,6 +163,12 @@ struct DirectionBoardView: View {
     ///
     /// 所以两半的底色**刻意不一样**（左半亮一点、右半几乎透明）—— 他要一眼看出"哪半边能点"。
     /// 右半不留任何手势，于是按住它就是按住这张卡片（拖动的监听在面板那一侧）。
+    /// **左下角那个长方形**（用户 2026-09-27：「可以理解为左下角显示一个**长方形**，左边缘是整个卡片的
+    /// 边缘，下边缘是整个卡片的下边缘……它不是正方形，是长方形，**左侧折叠按钮宽度小，右侧宽度是它的两倍**。
+    /// 这个按钮在**高度上与复制按钮对齐，是对齐不是相同**，因为**它的底边比较低**」）。
+    ///
+    /// 所以：左 1/3 是折叠按钮、右 2/3 是拖动区；**顶边与按钮行齐平**、**底边压到卡片最下沿**
+    /// （比按钮行低一个下边距）—— 高度 = 按钮行高 + 下边距。
     private var collapseToggle: some View {
         HStack(spacing: 0) {
             Button {
@@ -156,25 +177,30 @@ struct DirectionBoardView: View {
                 Image(systemName: session.isCollapsed ? "chevron.right" : "chevron.left")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(session.isCollapsed ? DS.Colors.success : theme.textColor.opacity(0.75))
-                    .frame(width: Self.collapseHalfWidth, height: Self.cancelRowHeight)
+                    .frame(width: Self.collapseButtonWidth, height: Self.collapseToggleHeight)
                     .background(Self.collapseClickableColor)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(session.isCollapsed ? "展开看板" : "把看板折叠起来")
 
-            // 右半：**故意不给功能** —— 它是留给鼠标按住拖动的地方（底色也刻意不同）。
+            // 右侧**两倍宽**、**故意不给功能** —— 留给鼠标按住拖动（底色刻意不同，一眼看出哪半边能点）。
             Color.clear
-                .frame(width: Self.collapseHalfWidth, height: Self.cancelRowHeight)
+                .frame(width: Self.collapseButtonWidth * 2, height: Self.collapseToggleHeight)
                 .background(Self.collapseDragColor)
         }
-        // **不加自己的边框**（用户 2026-09-27：「外边框也就是折叠按钮的边框，**不要再增加一个边框**」）——
-        // 它就是卡片左下角那一块，边框由卡片本身给。折叠态时卡片的边框变绿，那也就是它的边框。
+        // **不加自己的边框**（用户：「外边框也就是折叠按钮的边框，不要再增加一个边框」）——
+        // 边框由卡片本身给；折叠态时卡片边框变绿，那也就是它的边框。
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
-    private static let collapseHalfWidth: CGFloat = 26
-    /// 左半（能点）与右半（只能拖）的底色 —— 他要"用颜色区分开"。
+    /// 折叠钮的宽度（左 1/3 折叠、右 2/3 拖动 → 整块是它的 3 倍宽）。
+    private static let collapseButtonWidth: CGFloat = 22
+    /// 折叠钮的高度 = 按钮行高 + 卡片下边距（于是顶边与按钮行齐平、底边压到卡片最下沿）。
+    private static var collapseToggleHeight: CGFloat { cancelRowHeight + cardBottomPadding }
+    /// 卡片四周的内边距（原来是写死的 10；折叠钮要"贴到最下面"，所以它得是个常量）。
+    private static let cardBottomPadding: CGFloat = 10
+    /// 左 1/3（能点）与右 2/3（只能拖）的底色 —— 他要"用颜色区分开"。
     private static let collapseClickableColor = Color.white.opacity(0.13)
     private static let collapseDragColor = Color.white.opacity(0.03)
 
@@ -189,13 +215,25 @@ struct DirectionBoardView: View {
             //（「你注意，我刚才是把这个任务结果删掉了」）—— **答案归鼠标右下角那张卡片**
             //（`CompanionManager.answerPreviewText`，与最终结果同一张），右上角只回答
             //「我理解得对不对」。所以这一段现在直接从选项跳到理解。
-            // **参考材料的标签**（用户 2026-09-27：「在表格下面、AI 回复上面添加几个小标签」）——
-            // 只有**真的拿到了**才画（采集器只在成功时写材料，所以这条是结构上成立的）。
-            if !referenceCollector.materials.tags.isEmpty {
-                referenceTagRow
+            // （参考材料的标签**不在这里** —— 它归左栏，见下面那个 `HStack` 里的 `referenceTagRow`。
+            //   第一版两处都留了一份，屏幕上于是出现了两排「参考」标签。）
+            // **左右两栏**（用户 2026-09-27：「整体分成左右两部分，**左侧占 40% 宽度，右侧占 60%**……
+            // 左侧是 AI 对用户的理解，包括所有的疑问、目标、对目标的理解、有哪些困惑的理解；
+            // 右侧是 AI 对用户需求的整体梳理。这样更容易理解」）。
+            // 右侧只有那张**脑图**（连「细节」这个标题都不要了，直接显示整张图），高度撑满整块。
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !referenceCollector.materials.tags.isEmpty ||
+                        !referenceCollector.materials.unresolved.isEmpty {
+                        referenceTagRow
+                    }
+                    understandingColumn
+                }
+                .frame(width: understandingColumnWidth, alignment: .leading)
+                mindMapColumn
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // 第三段：理解（**固定四行**，见 `understoodRow`）。
-            understandingArea
+            .frame(height: Self.understandingBlockHeight, alignment: .top)
             // （第四段原来在这里：那个"补充说明"输入框，已按用户要求删掉。
             //   左侧那条竖折叠条也一起挪走了 —— 用户 2026-09-27：「这个输入框左侧这个折叠的东西，
             //   你就把它显示到复制的按钮左侧吧，然后把它横向显示」。见 `collapseToggle`。）
@@ -227,6 +265,11 @@ struct DirectionBoardView: View {
                 directionRow(item)
             }
         }
+        // **固定占三行的高度**（用户 2026-09-27：「建议固定为最多显示三行，就固定显示三行，
+        // 更多内容以后再说」）—— 于是这一块也**不再随卡片里有多少个方向而变高变矮**，
+        // 多的那几行被裁掉（`maximumItemCount` 那边另有上限）。
+        .frame(height: Self.directionGridHeight, alignment: .top)
+        .clipped()
     }
 
     private func directionRow(_ item: DirectionBoardDisplayItem) -> some View {
@@ -370,10 +413,13 @@ struct DirectionBoardView: View {
     /// 用户 2026-09-27 的两句合起来就是这一段的设计：「他回复结果的时候总是跳、总是蹦……
     /// 内容有时候有软件目标细节，有时候没有」+「这几行固定在这，而不是突然间有、突然间没有，
     /// 这对体验影响太差了」。所以：行的集合恒定、值可能为空（画占位符）、**卡片高度因此恒定**。
-    private var understandingArea: some View {
+    /// **左栏**：AI 对用户的理解（目标 / 疑问）。
+    private var understandingColumn: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(session.understandingLines.enumerated()), id: \.offset) { index, line in
-                understandingRow(label: line.label, value: line.value, revealIndex: index + 1)
+                if line.label != Self.mindMapLabel {
+                    understandingRow(label: line.label, value: line.value, revealIndex: index + 1)
+                }
             }
         }
         // 整块**高度固定**（各行自己预留了几行就占几行）—— 这样内容来了也只是填进预留的位置，
@@ -381,6 +427,20 @@ struct DirectionBoardView: View {
         // ⚠️ 这里原来有一个 ✕（"这个理解不对"）。**删掉了**：理解现在是**无条件**跟着提示词发给
         // 模型的（用户 2026-09-27：「这个大语言模型的理解，你可以去发，发过去」），
         // 也就是说"确认"这个动作没有意义了 —— 一个点了不改变任何事情的按钮比没有按钮更糟。
+    }
+
+    /// **右栏：那张脑图**（「细节」）—— 用户 2026-09-27：「右侧从上到下都是细节，**高度占据整个
+    /// 卡片的高度**。**不再有细节标题**，直接显示整个脑图」。
+    private var mindMapColumn: some View {
+        let value = session.understandingLines.first { $0.label == Self.mindMapLabel }?.value ?? ""
+        return Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .id(value)
+            .transition(.opacity)
+            .animation(.easeOut(duration: 0.28), value: value)
     }
 
     /// 一行理解：左边标签定宽，右边值（**空值画占位符**，不是不画）。
@@ -440,6 +500,7 @@ struct DirectionBoardView: View {
             // **折叠钮贴左下角**（用户 2026-09-27：「最左侧是折叠按钮，**左边距、下边距为 0，
             // 也就是贴紧边缘，类似从左下角长出来一样**。可以理解为左下角有一个正方形」）。
             // 所以它不能再被卡片的 12pt 内边距套住 —— 用负 padding 把它顶到边上（见下面 buttonRowInset）。
+            // 折叠钮的底边比按钮行更低（它一直压到卡片下沿）—— 所以这一行的对齐靠上。
             collapseToggle
 
             // **两个复制按钮是"一整块"**（用户 2026-09-27：「你让他们的两个按钮合并成一个，
@@ -479,7 +540,7 @@ struct DirectionBoardView: View {
             // 三档取消自成一组，**暗红底色只给这一组** —— 那两个按钮是"拿走结果"，
             // 不该跟着一起变红。
             HStack(spacing: 0) {
-                cancelButton(title: "取消本次", help: "这一次循环不再显示看板（录音照旧）") {
+                cancelButton(title: "取消", help: "这一次循环不再显示看板（录音照旧）") {
                     session.cancelForThisCycle()
                 }
                 cancelRowDivider
