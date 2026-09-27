@@ -2208,8 +2208,10 @@ final class CompanionManager: ObservableObject {
         // 不该顺手往 Notion 里写一页笔记。
         if turnCancelledByEscape {
             turnCancelledByEscape = false
-            // 这一轮到此结束：松开"按在 idle 上"（下一次按下会重新算相位）。
-            notchWindowController?.releaseActivityPhaseIdleHold()
+            // ⚠️ **这里不松开**"按在 idle 上"（2026-09-27 实测纠正）：收尾这一段
+            // `voiceState` 还是 `.processing`（`isFinishingTranscript` 那段），一松开相位立刻
+            // 按它算成 Thinking / Typing…**又亮起来** —— 用户看到的正是「按了 ESC，还是显示 thinking」。
+            // 松开放在**下一次真正开始一轮**的地方（按下快捷键 / 打字提问）。
             print("⏹️ ESC 打断：这一轮的录音已留存，什么都不发")
             pendingConfirmationTranscript = nil
             liveTranscriptText = ""
@@ -2667,6 +2669,8 @@ final class CompanionManager: ObservableObject {
     func submitTypedQuestion(_ text: String, sendsScreenshot: Bool = true) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // 新的一轮开始了：松开 ESC 那次「按在 idle 上」（见 `handleFinalTranscript` 那段）。
+        notchWindowController?.releaseActivityPhaseIdleHold()
 
         lastTranscript = trimmed
         liveTranscriptText = ""

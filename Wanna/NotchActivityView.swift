@@ -319,7 +319,9 @@ struct NotchPillRootView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let notchHeight = geometry.size.height - NotchSupport.restingPillAnimationHeadroom
+            let notchHeight = geometry.size.height
+                - NotchSupport.restingPillAnimationHeadroom
+                - NotchSupport.notchTranscriptRowHeight
             // The pill stays exactly notch-width: the window is the pill widened
             // by the same `activeFlankWidth` on BOTH sides, so subtracting it
             // twice gives the pill back. (**Both sides equal** is the invariant
@@ -332,6 +334,12 @@ struct NotchPillRootView: View {
             let pillWidth = geometry.size.width
                 - NotchSupport.activeFlankWidth * 2
             let isActive = panelModel.activityPhase != .idle
+
+            // **整条（黑带 + 下面那行字幕）的宽度 —— 只有一个变量。**
+            // 黑带的三段与下面那一行都从这里取值，所以它们的左右边缘**在同一个视图里、
+            // 同一帧、同一个动画事务**中一起变（这就是"一个动画"的结构保证）。
+            let revealedBandWidth = pillWidth
+                + (Self.leadingWingWidth + Self.trailingWingWidth) * wingRevealProgress
 
             ZStack(alignment: .top) {
                 // Negative spacing: each wing overlaps the middle segment by
@@ -423,6 +431,21 @@ struct NotchPillRootView: View {
                 )
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+
+            // **刘海下面那一行实时字幕**（2026-09-27 从另一块面板搬进来）。
+            // 它与上面那条黑带**同一个视图、同一个宽度变量** —— 展开时一起从刘海中心向左右长，
+            // 任何一帧都不可能错开（所以也不会再露出桌面）。它显不显示只看相位：
+            // Listening 显示、其余不显示（用户：「Listening 时要显示，Speaking 时不显示」）。
+            if panelModel.activityPhase == .listening {
+                NotchTranscriptLine(
+                    text: NotchListeningTranscriptModel.shared.liveText,
+                    width: revealedBandWidth,
+                    height: NotchSupport.notchTranscriptRowHeight,
+                    // 上边是方的（与黑带拼在一起），只有下面两个角是圆的。
+                    isAttachedToNotch: false)
+                .frame(width: geometry.size.width, alignment: .center)
+                .offset(y: notchHeight)
+            }
         }
         .ignoresSafeArea()
     }

@@ -182,11 +182,11 @@ struct NotchListeningTranscriptView: View {
                         model.isEditorExpanded = false
                     })
             } else {
-                NotchTranscriptLine(text: model.liveText,
-                                    width: revealedLineWidth,
-                                    height: NotchSupport.notchTranscriptRowHeight,
-                                    // 上边是方的（和刘海那条黑带拼在一起），只有下面两个角是圆的。
-                                    isAttachedToNotch: false)
+                // **收起态那一行不在这里画了**（2026-09-27）：它搬进了刘海面板，
+                // 与黑带同一个视图、同一个宽度、同一个动画事务（见 `NotchPillRootView`）。
+                // 这块面板只剩下"展开后的编辑窗"这一个职责 —— 也就是从这一版起，
+                // 屏幕上那条黑带与它下面的字幕**只有一个动画**。
+                Color.clear
             }
         }
         // 横向铺满面板（那一行自己居中），纵向**显式顶对齐** —— 宿主视图是铺满整块面板的，

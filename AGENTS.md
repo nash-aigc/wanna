@@ -331,8 +331,9 @@ The app needs three models, called **roles**:
 **ESC 落在"正在说话"时，界面要瞬间消失（2026-09-27）**：`forceActivityPhaseIdle()` 只按当前
 这一刻，而相位是从 `voiceState` 派生的（此刻录音还在收尾、`voiceState` 仍是 `.listening`），
 下一拍又算回 Listening。所以新增 `NotchPanelModel.isActivityPhaseHeldAtIdle`：ESC 打断"正在听"时
-置上，`refreshActivityPhase()` 在标志清掉之前一直返回 idle；这一轮收尾（`handleFinalTranscript`
-的 ESC 分支）或下一次按下时松开（`开发经验/10-踩过的坑.md` D32）。
+置上，`refreshActivityPhase()` 在标志清掉之前一直返回 idle；**收尾时不松开**（那一刻 `voiceState` 还是 `.processing`，一松开相位立刻算成
+Thinking/Typing 又亮起来 —— 用户报的「还是显示 thinking」就是这个）；松开放在**下一次真正开始一轮**
+（按下快捷键 / 打字提问）（`开发经验/10-踩过的坑.md` D32）。
 
 **鼠标旁那张卡片只留任务的结果**（2026-09-27 用户：「不要在鼠标右下角显示内容……关键是 Agent 的
 任务回复之后的这个结果，**不应该显示用户提示词**」）：任务一旦开始执行（派活或执行动作），
@@ -541,7 +542,15 @@ The recording mute is now the between-replies half, and the AEC covers the windo
   `withAnimation` 都读它）+ `NotchSupport.revealedListeningBandWidth(notchWidth:revealProgress:)`
   = `刘海 + (两翼之和) × 进度`（两翼的宽度动画是同一个线性式子，所以边缘每一帧都重合）。
   进度由 `NotchListeningTranscriptPanelController.show()/hide()` 用 `withAnimation` 翻。
-  ⚠️ **2026-09-27 最终形态：那一行不做宽度动画，宽度恒定 = 整条。** 前两版都是"让字幕跟着黑带
+  ⚠️ **2026-09-27 最终形态（第四次）：那一行搬进刘海面板，与黑带同一个视图、同一个宽度变量。**
+  前三版都建立在"两个窗口"这个前提上（黑带在刘海面板、那一行在另一块面板），
+  无论怎么对齐（同一时长/同一进度值/恒定宽度）都只是概率性的 —— 用户报了三遍，第三遍的原话是
+  「你应该是让他是一个动画才对，**现在又是两个动画了**」。这一版把那一行交给
+  `NotchPillRootView` 自己画（`restingWindowFrame` 的高度相应加 `notchTranscriptRowHeight`），
+  黑带与它在**同一个 `VStack`、读同一个 `revealedBandWidth`** —— **结构上只有一个动画**；
+  那块独立面板只剩"展开后的编辑窗"。见 `开发经验/10-踩过的坑.md` D34。
+
+  ⚠️ **（下面是前三版的教训，保留）**： 前两版都是"让字幕跟着黑带
   一起长"（时序对齐，量到每侧 ≤2px），而"任何一帧都不许透出桌面"是确定性要求 —— 只能靠
   **几何上互相覆盖**保证：这一行从第一帧起就铺满整条宽度，黑带在它上面怎么长都盖得住 ✓
   （用户自己给的退路：「如果不可以的话，你就直接让它直接显示出来也行，但是你绝对不可以出现

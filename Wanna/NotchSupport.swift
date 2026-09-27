@@ -687,7 +687,13 @@ nonisolated enum NotchSupport {
         return CGRect(x: pillFrame.minX - activeFlankWidth,
                       y: pillFrame.minY,
                       width: pillFrame.width + activeFlankWidth * 2,
-                      height: pillFrame.height)
+                      // **高度多了刘海下面那一行字幕**（2026-09-27）：那一行原来住在
+                      // `NotchListeningTranscriptPanelController` 的**另一块面板**里 ——
+                      // 两块窗口、两个动画事务、相位还晚一拍，于是"任何一帧都不许露"只能靠对齐去凑
+                      //（量到 ≤2px 也不等于每一帧都不露，用户为此报了三遍）。
+                      // 现在那一行由**这块窗口**自己画：黑带与它同一个视图、同一个宽度变量、
+                      // 同一个动画事务 —— 从结构上不可能错开。
+                      height: pillFrame.height + notchTranscriptRowHeight)
     }
 
     /// 屏幕右上角那一排最多同时显示几个 agent 按钮。
