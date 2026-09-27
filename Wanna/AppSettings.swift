@@ -556,7 +556,9 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 用户 2026-09-27：「如果 3 秒之内用户新增的内容少于 10 个字，也不发送，因为相当于这句话
     /// 还没说完。标点符号不算字数」，随后在我问"要不要做成可调"时回「**需要在设置中可以调整**」。
     /// 范围 5…20（`clamped()` 兜住手改的 JSON）。
-    var directionBoardMinimumAddedCharacters: Int = 10
+    // ⚠️ 2026-09-28：`directionBoardMinimumAddedCharacters`（"每隔 3 秒问一次的门槛"）已删 ——
+    // 实时那条链改成"他停下来了就刷"，不再有字数门槛，那个设置存了也不生效。
+    // 旧文件里多出来的这个键被**忽略**（解码器只取它认识的键），不会让整份设置解不出来。
 
     /// **Jev 给的 P(是) 到多少才显示这一格**（默认 0.5）。
     ///
@@ -1685,8 +1687,6 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
         settings.transientCursorHideDelaySeconds = min(max(settings.transientCursorHideDelaySeconds, 0.5), 5)
         // 看板门槛：5…20 字（用户要求可在设置里调，范围是我们替他定的 —— 太小等于没门槛，
         // 太大他要等很久才看到一次理解）。
-        settings.directionBoardMinimumAddedCharacters =
-            min(max(settings.directionBoardMinimumAddedCharacters, 5), 20)
         // 看板宽度：1×~2×（用户说"要么一倍，要么两倍"，所以范围就夹在这里）。
         // 门槛的可调范围也跟着抬起来：低于 0.5 等于没门槛（用户明确要"非常高"）。
         settings.directionBoardProbabilityThreshold =
@@ -1728,7 +1728,6 @@ nonisolated extension AppSettings {
         case directionBoardEnabled
         case directionBoard
         case directionBoardProbabilityThreshold
-        case directionBoardMinimumAddedCharacters
         case answerBubbleLingerSeconds
         case cursorPresenceMode
         case cursorShapeStyle
@@ -1861,8 +1860,6 @@ nonisolated extension AppSettings {
         opensPanelOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .opensPanelOnLaunch) ?? defaults.opensPanelOnLaunch
         showsResponseText = try container.decodeIfPresent(Bool.self, forKey: .showsResponseText) ?? defaults.showsResponseText
         directionBoardEnabled = try container.decodeIfPresent(Bool.self, forKey: .directionBoardEnabled) ?? defaults.directionBoardEnabled
-        directionBoardMinimumAddedCharacters = try container.decodeIfPresent(
-            Int.self, forKey: .directionBoardMinimumAddedCharacters) ?? defaults.directionBoardMinimumAddedCharacters
         directionBoardProbabilityThreshold = try container.decodeIfPresent(
             Double.self, forKey: .directionBoardProbabilityThreshold) ?? defaults.directionBoardProbabilityThreshold
         directionBoard = DirectionBoardConfiguration.validated(

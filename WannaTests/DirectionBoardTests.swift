@@ -135,7 +135,13 @@ struct DirectionBoardTests {
 
     // MARK: - 节奏闸门（每 3 秒 + 内容变了 + 新增 ≥10 字）
 
-    @Test func theCadenceGateNeedsTenNewCharacters() throws {
+    /// **实时那两张卡：他一停下来就刷，跟说了几个字完全无关**（用户 2026-09-28）。
+    ///
+    /// 原来是「新增 ≥10 字（标点不算）」、梳理那条更是 ≥20 —— 所以他说一句短的，
+    /// **两张卡一次都不刷**，屏幕上停在上一轮（他报的「没有反应」就是这个）。
+    /// 现在唯一的"内容"条件是「比上一次请求多了**至少一个内容字**」——
+    /// 那不是字数限制，只是"这一轮确实有新东西可说"。
+    @Test func theCadenceGateOnlyNeedsSomethingNew() throws {
         func added(_ transcript: String, since last: String) -> Int {
             DirectionBoardSession.addedCharacterCount(transcript: transcript, since: last)
         }
@@ -154,7 +160,10 @@ struct DirectionBoardTests {
         #expect(shouldRequest("帮我把这段存到 notion 里", last: ""))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "帮我把这段存到 notion 里"))
         #expect(!shouldRequest("帮我把这段存到 notion 里。", last: "帮我把这段存到 notion 里"))
-        #expect(!shouldRequest("嗯", last: ""))
+        // **一个字也算数**（「跟说话字数完全无关」）。
+        #expect(shouldRequest("嗯", last: ""))
+        #expect(shouldRequest("好", last: ""))
+        #expect(shouldRequest("北京在哪", last: ""))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", enabled: false))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", listening: false))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", requesting: true))
@@ -560,44 +569,13 @@ struct DirectionBoardTests {
         #expect(DirectionBoardView.questionRowLines == 10)
         #expect(DirectionBoardView.referenceTagRowLines == 1)
         #expect(DirectionBoardView.optionSlots == 3)
-        // **左半宽 = 回复卡宽**（用户 2026-09-28：分隔线的位置要落在回复卡右边缘上）。
-        #expect(DirectionBoardView.barWidth == NotchSupport.answerCardMaximumWidth)
+        // **左半宽 = 回复卡宽 + 20 的余量**（用户 2026-09-28：分隔线删掉之后，
+        // 两张卡之间要留出距离 —— 「右侧内容也能不跟右下角卡片挨着」）。
+        #expect(DirectionBoardView.barWidth
+                == NotchSupport.answerCardMaximumWidth + NotchSupport.directionBoardBarCardClearance)
         #expect(DirectionBoardView.barHeight == 251)
         #expect(DirectionBoardView.mapWidth == 340)
         #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
-    }
-
-    /// **按住说话那条路：说完 1.5 秒就发**（用户 2026-09-28：「我希望【停止说话 1.5 秒后
-    /// 直接发送】**不要有任何其他限制因素**」）。
-    ///
-    /// 他上一轮的实测日志说明了这个洞：说完了、静音整整 10 秒，屏幕上什么都没有，直到**松手**才发出去
-    /// —— 因为静音自动发送当时**只存在于连续追问那个窗口里**，按住说话这条根本没有。
-    @Test func pushToTalkSendsOneAndAHalfSecondsAfterTheUserStopsTalking() throws {
-        let now = Date()
-        func verdict(afterSilence silence: TimeInterval, transcript: String,
-                     submitted: String = "") -> Bool {
-            BuddyDictationManager.shouldAutoSubmitPushToTalk(
-                now: now,
-                lastTranscriptUpdate: now.addingTimeInterval(-silence),
-                transcript: transcript,
-                transcriptAlreadySubmitted: submitted,
-                silenceSeconds: 1.5)
-        }
-        // 停更 1.5 秒 → 发。**短句照样发**（「好」「嗯。」都过 —— 与字数无关）。
-        #expect(verdict(afterSilence: 1.5, transcript: "好"))
-        #expect(verdict(afterSilence: 2.0, transcript: "嗯。"))
-        #expect(verdict(afterSilence: 9.0, transcript: "帮我看看这个"))
-        // 还没到 1.5 秒 → 再等等。
-        #expect(!verdict(afterSilence: 1.2, transcript: "帮我看看这个"))
-        // 一个字都没认出来 → 没有"说完"可言（这不是字数限制，是"根本没说话"）。
-        #expect(!verdict(afterSilence: 3.0, transcript: ""))
-        #expect(!verdict(afterSilence: 3.0, transcript: "  "))
-        // 这一句已经因为静音发过了 → 不重复发（定稿回来前还会跑几十次回调）。
-        #expect(!verdict(afterSilence: 3.0, transcript: "好", submitted: "好"))
-        // 从来没收到过转写（刚按下还没说话）→ 不触发。
-        #expect(!BuddyDictationManager.shouldAutoSubmitPushToTalk(
-            now: now, lastTranscriptUpdate: nil, transcript: "好",
-            transcriptAlreadySubmitted: "", silenceSeconds: 1.5))
     }
 
     /// **「静音多久自动发送」= 1.5 秒，而且与字数无关**（用户 2026-09-28）。
@@ -672,7 +650,8 @@ struct DirectionBoardTests {
         // 回复卡**最宽时**的右边缘 —— 卡窄一点的时候自然让出一条缝，卡最宽时严丝合缝。
         let mapLeft = frame.minX + NotchSupport.directionBoardBarWidth
         let answerCardRightEdge = anchor.x + 12 + NotchSupport.answerCardMaximumWidth
-        #expect(abs(mapLeft - answerCardRightEdge) < 0.5)
+        // **留出那 20pt**（不是"等于"、更不是"贴着"）。
+        #expect(abs(mapLeft - answerCardRightEdge - NotchSupport.directionBoardBarCardClearance) < 0.5)
         // 横向：顶边那个偏移不动 x，只动 y。
         #expect(abs(frame.minX - (anchor.x + 12)) < 0.5)
         // **贴到屏幕边也不许夹**（用户 2026-09-28：「右上角那个卡片……撞到边缘之后就不移动了，

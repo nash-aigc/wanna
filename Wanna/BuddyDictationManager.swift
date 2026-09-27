@@ -462,7 +462,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     /// emitted into a silent room.
     /// 纯函数：一句转写里有多少"内容字符"（标点与空白不算）。
     /// `nonisolated internal` 是刻意的 —— 它没有状态，而单测与"静音到点"那条判据
-    ///（`shouldAutoSubmitPushToTalk`）都要在**不碰主 actor**的情况下用它。
+    /// 单测也要在**不碰主 actor**的情况下用它。
     nonisolated static func continuousListeningContentCharacterCount(in transcriptText: String) -> Int {
         transcriptText.reduce(into: 0) { contentCharacterCount, character in
             if character.isLetter || character.isNumber { contentCharacterCount += 1 }
@@ -630,17 +630,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private var latestRecognizedText = ""
     private var shouldAutomaticallySubmitFinalDraft = false
 
-    /// **「说完 N 秒就发」在按住说话这条路上的两个状态**（用户 2026-09-28）。
-    ///
-    /// 判据是**转写停更**，不是麦克风电平 —— 识别器一停就不再出新字，所以"最后一次拿到新字
-    /// 之后过了 N 秒"就是"你说完 N 秒"，而且**不需要给这条采集路径标定任何电平阈值**
-    ///（这条不开 VPIO，刻度与连续监听那条不一样，拿 0.25 去卡会时灵时不灵）。
-    private var pushToTalkLastTranscriptUpdateAt: Date?
-    /// 已经因为"静音到点"提交过的那一句原文 —— 定稿回来之前电平回调还会跑几十次，
-    /// 没有它就会把同一句话说好几遍。
-    private var pushToTalkTranscriptAtLastAutoSubmit = ""
     /// 这一场录音该等几秒（开录时从设置快照一次，中途改设置不影响正在说的这句）。
-    private var pushToTalkSilenceSendSeconds: TimeInterval = 1.5
     private var hasFinishedCurrentDictationSession = false
     private var finalizeFallbackWorkItem: DispatchWorkItem?
     private var pendingStartRequestIdentifier = UUID()
@@ -1729,12 +1719,6 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             }
         }
 
-        // **说完 N 秒就发**：这一场的时间表从设置里快照一次（与连续监听那条同一个设置 ——
-        // 设置 → 听 → 「静音多久自动发送」），并把这场的计时状态清干净。
-        pushToTalkSilenceSendSeconds = AppSettingsStore.snapshot().continuousListeningSilenceSendSeconds
-        pushToTalkLastTranscriptUpdateAt = nil
-        pushToTalkTranscriptAtLastAutoSubmit = ""
-
         let startRequestIdentifier = UUID()
         pendingStartRequestIdentifier = startRequestIdentifier
 
@@ -1891,8 +1875,6 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.latestRecognizedText = transcriptText
-                    // 「说完 N 秒就发」的计时器：**每来一段新转写就重置**（按住说话这条）。
-                    self.pushToTalkLastTranscriptUpdateAt = Date()
                     // **每一句实时转写都要送到调用方。**（2026-09-27 修，用户报的
                     // 「它能识别，但是没有在刘海下显示实时的字幕」）
                     //
@@ -2309,11 +2291,6 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             // `max(new, old × 0.72)` and is still applied on EVERY buffer, so the
             // value published after a skip is already the peak of the buffers that
             // were skipped, and the 0.08 s animation interpolates between them.
-            // **「说完 N 秒就发」**：这条回调 ~47 次/秒，本身就是个现成的时钟 ——
-            // 不用再养一个 Timer（那个仓库为"多一张表忘记停"吃过亏）。函数自己按状态判，
-            // 连续监听那条路上它是空转（那条有自己的表）。
-            self.autoSubmitPushToTalkIfTheUserStoppedSpeaking(now: now)
-
             let shouldPublishLevel =
                 now.timeIntervalSince(self.lastAudioPowerLevelPublishDate)
                 >= Self.audioPowerLevelPublishIntervalSeconds
@@ -2330,51 +2307,6 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 )
             }
         }
-    }
-
-    /// 「说完 N 秒就发」的**判据本身**（纯函数 —— 单测直接打它，不碰音频与状态机）。
-    ///
-    /// ⚠️ **没有一个条件与"说了几个字"有关**（用户 2026-09-28：「跟说话字数完全无关」）：
-    /// 唯一与文本有关的是"**认出来过内容**"（0 字根本没有"说完"可言）。
-    /// `silenceSeconds` 之内还在出字就重置 —— 所以它量的是**转写的停更**，不是静音。
-    nonisolated static func shouldAutoSubmitPushToTalk(now: Date,
-                                                       lastTranscriptUpdate: Date?,
-                                                       transcript: String,
-                                                       transcriptAlreadySubmitted: String,
-                                                       silenceSeconds: TimeInterval) -> Bool {
-        guard let lastTranscriptUpdate else { return false }
-        guard continuousListeningContentCharacterCount(in: transcript) >= 1 else { return false }
-        guard transcript != transcriptAlreadySubmitted else { return false }
-        return now.timeIntervalSince(lastTranscriptUpdate) >= silenceSeconds
-    }
-
-    /// **说完 N 秒就发** —— 按住说话这条路上也在跑（用户 2026-09-28：
-    /// 「我希望【停止说话 1.5 秒后直接发送】**不要有任何其他限制因素**」）。
-    ///
-    /// 他上一轮的实测日志说明了这个洞：说完了、静音整整 10 秒，屏幕上什么都没有，
-    /// 直到**松手**才发出去（「07:35:20 峰值 0.218 → 07:35:32 峰值 0.040」中间那 10 秒）——
-    /// 因为静音自动发送当时**只存在于连续追问那个窗口里**，按住说话这条根本没有。
-    ///
-    /// 判据只有一条：**转写不再更新**。它不是"字数"、不是"电平"：
-    /// · 不用电平，是因为这条采集路不开 VPIO，刻度和连续监听那条不一样（拿 0.25 卡会时灵时不灵）；
-    /// · 不用字数，是因为用户明说了「跟说话字数完全无关」。
-    ///
-    /// 三个前提也都不是限制性的：正在按住说话（连续追问那条有自己的表）、这一句**已经认出过内容**
-    /// （一个字都没认出来就没有"说完"可言）、以及**不是确认模式**（「松开立即发送」关着的时候
-    /// 用户要自己看一眼再发，自动发会把那个设置废掉）。
-    private func autoSubmitPushToTalkIfTheUserStoppedSpeaking(now: Date) {
-        guard isDictationInProgress, !isContinuousListening, !isFinalizingTranscript else { return }
-        guard shouldAutomaticallySubmitFinalDraft else { return }
-        guard Self.shouldAutoSubmitPushToTalk(
-            now: now,
-            lastTranscriptUpdate: pushToTalkLastTranscriptUpdateAt,
-            transcript: latestRecognizedText,
-            transcriptAlreadySubmitted: pushToTalkTranscriptAtLastAutoSubmit,
-            silenceSeconds: pushToTalkSilenceSendSeconds) else { return }
-        pushToTalkTranscriptAtLastAutoSubmit = latestRecognizedText
-        MainFlowDiagnostics.log("⏱️ 按住说话：静音 \(String(format: "%.1f", pushToTalkSilenceSendSeconds))s 到点"
-                                + "（认到 \(Self.continuousListeningContentCharacterCount(in: latestRecognizedText)) 字）→ 直接发送")
-        stopPushToTalk(expectedStartSource: activeStartSource ?? .keyboardShortcut)
     }
 
     private func appendRecordedAudioPowerSample(_ audioPowerSample: CGFloat) {

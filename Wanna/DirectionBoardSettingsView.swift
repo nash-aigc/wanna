@@ -52,15 +52,9 @@ struct DirectionBoardSettingsSection: View {
             // 所以连同 `AppSettings.directionBoardWidthMultiplier` 一起删掉。
 
             SettingsCardRowDivider()
-            SettingsRow(
-                label: "每隔 3 秒问一次的门槛",
-                description: "新增多少个字才值得问一次（标点不算）。太小等于没门槛，太大你要等很久才看到一次理解。"
-            ) {
-                SettingsStepper(
-                    value: generalSettingsViewModel.binding(\.directionBoardMinimumAddedCharacters),
-                    range: 5...20)
-            }
-
+            // ⚠️ **「每隔 3 秒问一次的门槛」（新增多少个字才问一次）删掉了（2026-09-28）**：
+            // 实时那条链改成"**他停下来了就刷**"（见 `DirectionBoardSession.hasPausedLongEnough`
+            // 与 `shouldRequest`），字数门槛整个没有了 —— 那个设置留着就是存了也不生效。
             SettingsCardRowDivider()
             SettingsRow(
                 label: "方向概率阈值",

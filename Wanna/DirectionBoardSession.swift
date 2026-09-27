@@ -403,7 +403,10 @@ final class DirectionBoardSession: ObservableObject {
     static let rememberedReadingCount = 3
     private let visionChatAPI = BailianVisionChatAPI()
 
-    static let cadenceSeconds: TimeInterval = 3
+    /// **每 1 秒检查一次**（原来是 3 秒）。用户 2026-09-28 要的是"说完 ~1.5 秒就刷"：
+    /// 检查本身只比两个时间戳和一个字符串，而**真正的请求仍然被"停下来了 + 有新内容"卡着**，
+    /// 所以把节拍调快只是让那一拍来得准时，不会多花任何一次模型调用。
+    static let cadenceSeconds: TimeInterval = 1
 
     private var isEnabled: Bool { AppSettingsStore.snapshot().directionBoardEnabled }
 
@@ -795,20 +798,23 @@ final class DirectionBoardSession: ObservableObject {
 
     // MARK: - 节奏闸门（三条，纯函数）
 
-    /// 每 3 秒看一次 + 内容变了 + **新增 ≥10 字（标点不算）**。
+    /// 每 1 秒看一次 + **他停下来了**（见 `hasPausedLongEnough`）+ **出现了新内容**。
+    ///
+    /// ⚠️ **没有字数门槛了**（用户 2026-09-28：「我正常的要求是说完话……自动发送，但我发现有时候
+    /// 说话**字数特别少，它就不执行**……【**跟说话字数完全无关**】」）。
+    /// 原来这里是「新增 ≥10 字（标点不算）」，梳理那条更是 `max(10×2, 20)` ——
+    /// 所以他说一句短的，**实时那两张卡一次都不刷**，屏幕上停在上一轮的样子。
+    /// 现在唯一的"内容"条件是**比上一次请求多了至少一个内容字**（`>= 1`）：
+    /// 那不是字数限制，只是"这一轮确实有新东西可说"（否则同一份转写会被反复问）。
     nonisolated static func shouldRequest(transcript: String,
                                           lastRequestedTranscript: String,
                                           isEnabled: Bool,
                                           isListening: Bool,
                                           isRequesting: Bool,
-                                          isCancelled: Bool = false,
-                                          minimumAddedCharacters: Int = 10) -> Bool {
+                                          isCancelled: Bool = false) -> Bool {
         guard isEnabled, isListening, !isRequesting, !isCancelled else { return false }
-        return addedCharacterCount(transcript: transcript, since: lastRequestedTranscript)
-            >= minimumAddedCharacters
+        return addedCharacterCount(transcript: transcript, since: lastRequestedTranscript) >= 1
     }
-
-    static let defaultMinimumAddedCharacters = 10
 
     /// **他停下来了吗**（用户 2026-09-27：「只有用户 2 秒钟没有说话，才需要提取用户提示词发送给 AI，
     /// 而不是自动根据时间来确定」）。
@@ -872,18 +878,12 @@ final class DirectionBoardSession: ObservableObject {
             MainFlowDiagnostics.stage("看板：他还在说（距上一句 \(String(format: "%.1f", secondsSinceHeSpoke))s）")
             return
         }
-        let minimumAdded = AppSettingsStore.snapshot().directionBoardMinimumAddedCharacters
         guard Self.shouldRequest(transcript: latestTranscript,
                                  lastRequestedTranscript: lastRequestedTranscript,
                                  isEnabled: isEnabled,
                                  isListening: isListening,
                                  isRequesting: isRequesting,
-                                 isCancelled: isCancelled,
-                                 minimumAddedCharacters: minimumAdded) else { return }
-        // ⚠️ **梳理那条另有一道更粗的闸**（2026-09-27 深夜）：它每次都要**重画整张图**
-        //（输入是整份转写、输出是全部问题），比"只答一句"贵得多 —— 每 10 个字就重画一次
-        // 正是用户说的「**明显拖慢速度**」。答案那条不受这条影响（它照旧按 `minimumAdded`）。
-        let analysisMinimumAdded = max(minimumAdded * 2, 20)
+                                 isCancelled: isCancelled) else { return }
         let transcript = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         lastRequestedTranscript = transcript
         // **这一轮的"新问题" = 上一轮回复落地之后他说的那段**（用户 2026-09-27：
@@ -960,10 +960,11 @@ final class DirectionBoardSession: ObservableObject {
             // 一个问题，又要让 AI 参考之前的内容来总结所有的问题**……**每一个 AI 调用，
             // 都是在回复一个方向的问题**」。
             async let probabilitiesTask = self.judgeWithJevIfConfigured(state: state, directions: directions)
-            // 梳理那次只在"攒够了新内容"时才发 —— 否则这一轮只刷新答案（与方向概率）。
-            let shouldAnalyze = Self.addedCharacterCount(transcript: newQuestion,
-                                                         since: lastAnalyzedQuestion)
-                >= analysisMinimumAdded
+            // ⚠️ 2026-09-28：**这一轮一定连梳理一起发**。原来那道"更粗的闸"
+            //（`max(10×2, 20)` 个字才重画那张图）正是"说短句时右上角不动"的另一半原因 ——
+            // 用户要的是**两张卡一起刷**（「说完话之后他应该是右上角跟右下角显示的是实时的卡片」）。
+            // 轮次本身已经由"停下来了 + 有新内容"卡着，所以这里不需要第二道。
+            let shouldAnalyze = true
             if shouldAnalyze { lastAnalyzedQuestion = newQuestion }
             async let analysisTask = shouldAnalyze
                 ? self.analyzeTranscriptWithModel()

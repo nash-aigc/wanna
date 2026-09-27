@@ -821,14 +821,21 @@ nonisolated enum NotchSupport {
     //（`directionBoardPanelFrame` / `DirectionBoardPanelController`）读同一份，
     // 两处各写一遍必然会漂 —— 这个仓库为"画的和点的不一致"付过代价（`trailingWingOriginX` 那次差 71pt）。
 
-    /// 7 的**横杠**（左半内容）宽 —— **就取回复卡的宽度**（用户 2026-09-28：「七字形上面那个卡片，
-    /// 它的左半部分宽度，也就是卡片中间那条**分隔线**的位置，我希望**左侧的宽度刚好等于右下角
-    /// 这个卡片的宽度**，让分隔线落在这个位置上」）。
+    /// 7 的**横杠**（左半内容）宽 = **回复卡的最大宽度 + 20 的余量**。
     ///
-    /// 所以它和「竖条宽」是**同一个数**：整块面板 680 = 340 + 340，那条分隔线正好落在
-    /// **回复卡右边缘的延长线上**（卡最宽时严丝合缝，窄的时候分隔线略靠右一点点 —— 卡的宽度
-    /// 本身是随内容变的，这是它唯一能对齐的那个基准）。
-    nonisolated static var directionBoardBarWidth: CGFloat { answerCardMaximumWidth }
+    /// ⚠️ 这个数被用户改过两次，两次的理由都记在这儿：
+    /// · 2026-09-28 早先：「**左侧的宽度刚好等于右下角这个卡片的宽度**，让**分隔线**落在这个位置上」
+    ///   → 那时它是 `answerCardMaximumWidth`（340），为的是让那条线压在回复卡的右边缘上；
+    /// · 2026-09-28 稍后：「把**分隔线删除**……**右侧内容也能不跟右下角卡片挨着**」
+    ///   → 分隔线没了，对齐的约束随之消失；**两张卡还贴在一起**（竖条的左边缘正好落在
+    ///   回复卡最宽时的右边缘上），所以要**多让出 `cardClearance` 那点距离**。
+    ///
+    /// 于是面板 700 = 360 + 340：竖条的左边缘比回复卡最宽时的右边缘还靠右 20pt ✓
+    ///（卡窄一点时缝更大 —— 卡的宽度随内容变，这是它唯一能保证的下限）。
+    nonisolated static let directionBoardBarCardClearance: CGFloat = 20
+    nonisolated static var directionBoardBarWidth: CGFloat {
+        answerCardMaximumWidth + directionBoardBarCardClearance
+    }
     /// 横杠的高度 —— **定值**（行的集合恒定、每行预留固定行数，卡片高度因此不晃）。
     ///
     /// 算式（2026-09-28 三段定稿）：上边距 12 + 问题 10 行（10×16 + 9×3 = 187）+ 间隔 8

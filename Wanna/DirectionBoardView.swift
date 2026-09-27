@@ -403,13 +403,9 @@ private struct ReferenceTagFlowLayout: Layout {
             optionRow
         }
         .frame(width: Self.barWidth, height: Self.barHeight, alignment: .topLeading)
-        // **横杠与竖条之间那条分割线**（用户 2026-09-28：「右侧一条分割线」）——
-        // 只画到横杠的下沿：再往下，竖条的左边缘本身就是那条线（见 `DirectionBoardSevenShape`）。
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(theme.textColor.opacity(0.10))
-                .frame(width: 1)
-        }
+        // ⚠️ **横杠与竖条之间那条分割线删掉了**（用户 2026-09-28：「把**分隔线删除**，
+        // 这样视觉效果（右上角的卡片）**就是一个整体**」）—— 现在那一整块是同一个面，
+        // 只靠**7 字形自己的轮廓**把凹口划出来（见 `DirectionBoardSevenShape`）。
     }
 
     /// **最下面那一行：模型筛出来的 3 个方向**（用户 2026-09-28：「最多 4 个……多了不要，
