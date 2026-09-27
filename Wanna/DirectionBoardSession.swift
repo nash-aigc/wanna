@@ -108,6 +108,51 @@ final class DirectionBoardSession: ObservableObject {
         AppSettingsStore.snapshot().directionBoardEnabled
     }
 
+    // MARK: - 自检开关（没有麦克风时唯一能把看板拉起来的办法）
+
+    /// `WANNA_DIRECTION_BOARD_SELFCHECK=1` 时：把看板拉起来、喂几句**假转写**，
+    /// 但**不发任何请求**（`WANNA_DIRECTION_BOARD_SELFCHECK=live` 才发一次真的）。
+    ///
+    /// 为什么需要它：这台机器没有可用的语音输入（音箱到麦克风的耦合 212–447/32768，门槛 0.25），
+    /// 而看板只在"说话期间"出现 —— 没有这个开关，我就只能靠读代码说"它应该是对的"。
+    /// 先例是 `WANNA_DESKTOP_AGENT`（`MacosUseController` 里那个），同样是环境变量、同样不是
+    /// 用户可见的设置（所以不违反"一个什么都不管的开关比没有更坏"）。
+    static var selfCheckMode: String? {
+        ProcessInfo.processInfo.environment["WANNA_DIRECTION_BOARD_SELFCHECK"]
+    }
+
+    /// 自检时**不许发请求**（除非显式要 live）—— 免得我为了看一眼界面花掉用户的钱。
+    private var suppressesRequestsForSelfCheck: Bool {
+        Self.selfCheckMode != nil && Self.selfCheckMode != "live"
+    }
+
+    /// 按顺序喂几句假转写（第一句命中笔记类关键词，第二句再命中显示类，第三句谁都不命中
+    /// → 那一行留给模型，屏幕上会看到第一格仍旧是预设短语）。
+    func runSelfCheckSequence() {
+        guard Self.selfCheckMode != nil else { return }
+        beginListening()
+        let lines = [
+            "帮我把这段记下来",
+            "帮我把这段记下来，再指给我看是哪个",
+            "帮我把这段记下来，再指给我看是哪个，然后照着它写一段新的",
+        ]
+        for (index, line) in lines.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 1.2) { [weak self] in
+                self?.noteLiveTranscript(line)
+                print("🎛️ 方向看板自检：喂了第 \(index + 1) 句 —— \(line)")
+            }
+        }
+    }
+
+    /// 自检：把"提交时会拼出来的那几行"打出来（不花请求、不动管线）。
+    func logTurnDecisionForSelfCheck() {
+        guard Self.selfCheckMode != nil else { return }
+        let decision = consumeTurnDecision()
+        print("🎛️ 方向看板自检：提交时会加在提示词前面的是 —— "
+              + (DirectionBoardPrompt.decoration(confirmedDirectionTexts: decision.directionTexts,
+                                                 typedInput: decision.typedInput) ?? "（什么都没点，不加）"))
+    }
+
     // MARK: - 生命周期（调用方各加一行的四个口子）
 
     /// 用户按下快捷键开始说话了（或连续追问窗口里又开口了）。
@@ -241,6 +286,8 @@ final class DirectionBoardSession: ObservableObject {
     /// 这道闸门是用户 2026-09-27 定的（我问他"每 3 秒一发 vs 文本变了才发"，他选了后者）：
     /// 他停顿时、思考时、重复时都不该花钱 —— 而且**没变就再问一次也问不出新东西**。
     private func requestIfTheTranscriptChanged() {
+        // 自检时默认不发请求（除非 WANNA_DIRECTION_BOARD_SELFCHECK=live）—— 看界面不该花钱。
+        guard !suppressesRequestsForSelfCheck else { return }
         guard Self.shouldRequest(transcript: latestTranscript,
                                  lastRequestedTranscript: lastRequestedTranscript,
                                  isEnabled: isEnabled,

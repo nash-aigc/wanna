@@ -781,6 +781,18 @@ final class CompanionManager: ObservableObject {
         // `LegacyDefaultsMigration` 的头注释。
         LegacyDefaultsMigration.runIfNeeded()
 
+        // **方向看板的自检**（`WANNA_DIRECTION_BOARD_SELFCHECK=1`）：没有麦克风也把看板摆出来，
+        // 喂几句假转写、不打任何请求。开发期验界面用，不是用户可见的设置 —— 见
+        // `DirectionBoardSession.selfCheckMode` 里写的理由（这台机器没有可用的语音输入）。
+        if DirectionBoardSession.selfCheckMode != nil {
+            DirectionBoardPanelController.shared.startSelfCheckIfRequested()
+            DirectionBoardSession.shared.runSelfCheckSequence()
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(6))
+                DirectionBoardSession.shared.logTurnDecisionForSelfCheck()
+            }
+        }
+
         refreshAllPermissions()
         print("🔑 Wanna start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
 

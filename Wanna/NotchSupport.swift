@@ -773,6 +773,56 @@ nonisolated enum NotchSupport {
     /// 带子 272pt、那一行 276pt，**那一行每边多出 2pt**，正是因为那一行的宽度按"三段之和"算。
     static let bandSegmentOverlap: CGFloat = 2
 
+    // MARK: - 任务方向看板（鼠标右上角）
+
+    /// 看板面板的矩形：**右上角锚在鼠标那一点 + 一点间距**，其余三边由内容尺寸推出来。
+    ///
+    /// 用户 2026-09-27：「位置：鼠标右上角，位置固定，不随鼠标移动」——所以锚点**只在显示那一刻**
+    /// 取一次鼠标位置（`anchor`），之后内容怎么变都不重新锚，只重算原点（右上角钉住）。
+    ///
+    /// 三件事在这里一次做完（纯函数，能被 `WannaTests` 直接锁住）：
+    /// 1. **往右上去**：左下角 = `anchor + (gap, gap)`；
+    /// 2. **夹进屏幕**（`visibleFrame` 内留 `margin`）—— 鼠标贴着屏幕右上角时看板会自己让进来；
+    /// 3. **不压刘海那条带子**：带子（两翼 + 中段）比硬件刘海宽，所以排除区按 `wingBandWidth` 算；
+    ///    真撞上就整体往下让到带子下面。
+    ///
+    /// - Parameters:
+    ///   - anchor: 鼠标位置（AppKit 全局坐标，与 `NSPanel.setFrame` 同一个空间）。
+    ///   - size: 内容量出来的尺寸（面板紧贴内容 —— 不能留透明边，否则点击会落在空处）。
+    nonisolated static func directionBoardPanelFrame(anchor: CGPoint,
+                                                     size: CGSize,
+                                                     on screen: NSScreen,
+                                                     gap: CGFloat = 12,
+                                                     margin: CGFloat = 8) -> CGRect {
+        let visible = screen.visibleFrame
+        var originX = anchor.x + gap
+        var originY = anchor.y + gap
+        originX = min(max(originX, visible.minX + margin), visible.maxX - size.width - margin)
+        originY = min(max(originY, visible.minY + margin), visible.maxY - size.height - margin)
+        var frame = CGRect(x: originX, y: originY, width: size.width, height: size.height)
+
+        if let bandRect = restingBandRectInAppKitCoordinates(on: screen),
+           frame.intersects(bandRect) {
+            // 带子在屏幕顶边下方；把看板整体挪到它下面（仍然夹在屏幕里）。
+            frame.origin.y = max(visible.minY + margin, bandRect.minY - frame.height - margin)
+        }
+        return frame
+    }
+
+    /// 刘海那条带子（两翼 + 中段）在 **AppKit 坐标**里的矩形 —— 看板不许压住它。
+    ///
+    /// `notchRect(on:)` 给的是"显示坐标"（屏幕顶边向下），这里换一次：屏幕顶边是 `frame.maxY`。
+    nonisolated static func restingBandRectInAppKitCoordinates(on screen: NSScreen) -> CGRect? {
+        guard let notch = notchRect(on: screen) else { return nil }
+        let bandWidth = wingBandWidth(pillWidth: restingPillWidth(on: screen))
+        let bandTopY = screen.frame.maxY - notch.minY
+        let bandBottomY = screen.frame.maxY - notch.maxY
+        return CGRect(x: screen.frame.minX + notch.midX - bandWidth / 2,
+                      y: screen.frame.minY + bandBottomY,
+                      width: bandWidth,
+                      height: bandTopY - bandBottomY)
+    }
+
     // MARK: - 临时 agent 的那一排（屏幕右上角，菜单栏下面一行）
     //
     // 用户 2026-09-26：「刘海左侧这个 agent 的小图标，就是状态图标，应该放在右侧，

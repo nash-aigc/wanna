@@ -775,15 +775,17 @@ struct AnswerCardView: View {
 
     /// Reference spec §3.1–3.4: corner 10, border 1.5, padding 10px 12px,
     /// font 13.5, letter-spacing .02em, on 参考规范's ~22pt line pitch.
-    private static let cardCornerRadius: CGFloat = 10
-    private static let cardBorderWidth: CGFloat = 1.5
-    private static let fontSize: CGFloat = 13.5
+    /// ⚠️ **internal（2026-09-27）**：任务方向看板要与右下角那张卡片**完全一致**，
+    /// 所以这几个数只能有一份 —— 看板读的就是这一份。
+    static let cardCornerRadius: CGFloat = 10
+    static let cardBorderWidth: CGFloat = 1.5
+    static let fontSize: CGFloat = 13.5
     private static let letterSpacing: CGFloat = 13.5 * 0.02
 
     /// The gap between two rendered lines that share a paragraph. `Text` reports
     /// its own line pitch as font line height + this, so it is also exactly the
     /// gap the block arithmetic in `paragraphBlocks` has to leave.
-    private static let lineSpacing: CGFloat = 5
+    static let lineSpacing: CGFloat = 5
 
     /// The height one rendered line occupies: the font's own line height plus
     /// `lineSpacing`, i.e. exactly how far the next line starts below this one.
@@ -863,7 +865,7 @@ struct AnswerCardView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(cardBackground(theme: theme))
+            .background(Self.cardBackground(theme: theme))
             .clipShape(RoundedRectangle(cornerRadius: Self.cardCornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Self.cardCornerRadius, style: .continuous)
@@ -1176,7 +1178,7 @@ struct AnswerCardView: View {
     /// — one very faint horizontal line every 22pt, drawn from the card's
     /// top edge the way 参考规范's repeating-linear-gradient does.
     @ViewBuilder
-    private func cardBackground(theme: AnswerCardTheme) -> some View {
+    static func cardBackground(theme: AnswerCardTheme) -> some View {
         if theme.drawsRuledLines {
             ZStack {
                 theme.backgroundColor
