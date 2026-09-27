@@ -166,19 +166,19 @@ struct DirectionBoardSettingsSection: View {
         SettingsGroupLabel("回车那套")
         SettingsCard {
             SettingsRow(
-                label: "粘贴的快捷键",
-                description: "看板显示着的时候：按这个键 = 把**右下角那段回复粘到你光标的位置**（覆盖掉选中的东西），然后这一轮结束；另一个键 = **把当前任务发给主 Agent 去执行**。默认是 Enter 粘贴。"
+                label: "粘贴用哪个键",
+                description: "看板显示着的时候，这两个键**不用点卡片**就生效：选中的那个 = 把**右下角那段回复粘到你光标的位置**（覆盖掉选中的东西）然后这一轮结束；**另一个** = **把当前这一轮发给主 Agent 去执行**（也就是转到 agent 模式）。默认 **Command + Enter 粘贴 / Option + Enter 执行**。"
             ) {
                 SettingsSegmentedPicker(
                     selection: generalSettingsViewModel.binding(\.boardPasteShortcut),
                     options: [
-                        SettingsPickerOption(label: "Enter", value: ComposerSendShortcut.returnKey),
-                        SettingsPickerOption(label: "Command + Enter", value: ComposerSendShortcut.commandReturn),
+                        SettingsPickerOption(label: "Command + Enter", value: BoardPasteShortcut.commandReturn),
+                        SettingsPickerOption(label: "Option + Enter", value: BoardPasteShortcut.optionReturn),
                     ])
             }
         }
         SettingsNote(
-            text: "看板一显示，这两个键**不用点卡片**就生效 —— 它显示的那几秒里回车被它接走，这正是你要的「直接显示之后就自动识别」。"
+            text: "看板一显示这两个组合就生效 —— 不用点卡片，正是「直接显示之后就自动识别」。**裸回车（以及 Shift + 回车）原样放行**，因为那两个动作现在都带修饰键，再吞掉裸回车只会白白吃掉你在别的 App 里的回车。"
         )
 
         SettingsGroupLabel("参考材料（说这些词就带上）")

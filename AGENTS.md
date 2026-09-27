@@ -691,7 +691,9 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 用户：「在设置页面让用户可以自己设置 Enter 或者是 Command + Enter，**现在默认顺序为 Enter**，
 自动将右下角回复的结果**粘贴进光标的位置上**。如果用户输入 Command + Enter，就自动**执行当前任务**。
 然后把跟右上角卡片的交互去掉，**直接显示之后就自动识别这两个快捷键**」。设置项复用
-`ComposerSendShortcut`（新字段 `boardPasteShortcut`，默认 `.returnKey` = Enter 粘贴）。**"不用点卡片"
+`ComposerSendShortcut`（新字段 `boardPasteShortcut`，默认 `.returnKey` = Enter 粘贴）。
+（⚠️ **2026-09-27 深夜改**：两下回车重新分配成 **⌥⏎ 执行 / ⌘⏎ 粘贴**，裸回车**放行不吞**；
+`boardPasteShortcut` 也更成了自己的小枚举 `BoardPasteShortcut` —— 见本文件后面的第二十七轮那条。）**"不用点卡片"
 这一条花了三次才落地，每次都是量出来的**：① 本地键盘监听收不到 —— 卡片是 `.nonactivatingPanel`，
 `isKeyWindow` 可以是 true，**但系统只把键盘事件送给"当前激活的 App"**，而 Wanna 从不激活；
 ② `becomesKeyOnlyIfNeeded = true` 让没有输入框的卡片**永远成不了 key**（改成 false 之后日志才显示
@@ -919,6 +921,19 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 顶了回去、负内边距等于没写（第一版就是这样，屏幕上量到的仍是 15pt 的缝）。去掉那个 frame 之后
 用 AX 核对：折叠钮 `(1293,580,22×36)`、面板 `x:1293 y:32 w:680 h:584` ——
 **左边缘 1293 = 面板左边缘、下边缘 616 = 面板下边缘**，贴住了；三个按钮仍是 26 高、离卡片下沿 10pt。
+
+**第九版二十五补（2026-09-27 深夜第二十七轮）：看板上那两下回车重新分配 —— ⌥⏎ 执行 / ⌘⏎ 粘贴。**
+用户：「关于（实时对话）**转到 agent 模式**（快捷键替换成 **option+enter**），和**粘贴**的快捷键
+（替换成 **com+enter**）」。**改的是判据，不是"哪两个键被监听"**（那条会吞事件的全局 tap 一个字没动）。
+① 判据抽成纯函数 `BoardPasteShortcut.action(isCommand:isOption:)` → `.paste` / `.execute` /
+`.passThrough`，两个入口共用、**能单测**（整张表钉在 `boardReturnKeysAreOptionToExecuteAndCommandToPaste`）；
+② **`passThrough` 是真不吞** —— 那条 tap 原来在 `keyCode == 36` 之后无条件 `return nil`，
+现在只有真做了那两件事之一才吞（**裸回车放行**：那两个动作现在都带修饰键，再吞掉裸回车只会白白
+吃掉用户在别的 App 里的回车，而他毫无感觉；Command+Option 同时按着也放行 —— 不猜）；
+③ 设置项从复用的 `ComposerSendShortcut` 换成自己的小枚举 `BoardPasteShortcut`
+（Command+Enter / Option+Enter），编码走 **String 优先**（旧值 `"commandReturn"` 解得出、
+`"returnKey"` 落到新默认，**不会抛错** —— 规则 E1）。
+**真机三条各按一次读日志**：裸 ⏎ → 放行（不吞）／⌘⏎ → 粘贴并退出／⌥⏎ → 执行（转 agent）。
 
 **第九版二十四补（2026-09-27 深夜第二十六轮）：脑图按「大类 → 具体问题」两级画 —— 就改提示词。**
 用户：「右上角的脑图应该按照**内容的类型**来**分类**……它应该有一个**大的分类在外面**，

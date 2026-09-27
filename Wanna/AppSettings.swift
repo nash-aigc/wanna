@@ -119,6 +119,45 @@ nonisolated enum WindowExpansionStyle: String, Codable, CaseIterable, Sendable {
 /// `.commandReturn` 适合经常要写好几段、写的时候还得空行的人 —— 回车留给换行，
 /// 想发的时候顺手带一个 Command。两种都保留**另一个键仍然换行**（回车发送时
 /// Shift+回车换行，Command+回车发送时回车换行），所以哪一种都能写出多行的输入。
+/// **看板上那两下回车分别做什么** —— 用户 2026-09-27 深夜定的：
+/// **⌥⏎ = 执行（转到 agent 模式）**，**⌘⏎ = 粘贴并退出**。
+nonisolated enum BoardPasteShortcut: String, Codable, CaseIterable, Sendable {
+    /// ⌘⏎ 粘贴（默认）—— 那么 ⌥⏎ 就是执行。
+    case commandReturn
+    /// ⌥⏎ 粘贴 —— 那么 ⌘⏎ 就是执行。
+    case optionReturn
+
+    var displayName: String {
+        switch self {
+        case .commandReturn: return "Command + Enter"
+        case .optionReturn: return "Option + Enter"
+        }
+    }
+
+    /// 这一下回车要做什么。
+    ///
+    /// **纯函数**，两个入口（那条会吞事件的全局 tap、以及兜底的本地监听）共用同一份判断 ——
+    /// 两处各写一遍必然漂。返回值决定了要不要把这一下**吞掉**（`passThrough` 就是不吞）。
+    func action(isCommand: Bool, isOption: Bool) -> BoardReturnKeyAction {
+        // 两个修饰键同时按着：说不清他想干哪件事，**放行**，不做任何猜测。
+        guard !(isCommand && isOption) else { return .passThrough }
+        if isCommand { return self == .commandReturn ? .paste : .execute }
+        if isOption { return self == .optionReturn ? .paste : .execute }
+        // 裸回车：两个动作都不是它 —— 原样放行（放行 = 不吞，见 `DirectionBoardPanelController`）。
+        return .passThrough
+    }
+}
+
+/// 一下回车的结果（见 `BoardPasteShortcut.action`）。
+nonisolated enum BoardReturnKeyAction: Equatable {
+    /// 把右下角那段回复粘到光标处，然后结束这一轮。
+    case paste
+    /// 把当前这一轮交给主 Agent 执行（＝转到 agent 模式）。
+    case execute
+    /// 不是这两个动作之一 —— **原样放行给前台 App，不吞**。
+    case passThrough
+}
+
 nonisolated enum ComposerSendShortcut: String, Codable, CaseIterable, Sendable {
     /// 按 Enter 发送（默认）。换行是 Shift + Enter。
     case returnKey
@@ -1357,12 +1396,23 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     var notionScreenKeywords: String = AppSettings.defaultNotionScreenKeywords
 
     /// **看板上哪个键用来"粘贴"**（另一个键就是"执行"）。用户 2026-09-27：
-    /// 「在设置页面让用户可以自己设置 Enter 或者是 Command + Enter，**现在默认顺序为 Enter**，
-    /// 自动将右下角回复的结果粘贴进光标的位置上。如果用户输入 Command + Enter，就自动执行当前任务」。
+    /// **看板显示着的时候，哪两个键分别管"粘贴"和"执行"**。
     ///
-    /// 复用的是对话输入框那个同形状的选择（`ComposerSendShortcut`：按 Enter / 按 Command + Enter）——
-    /// 概念就是同一个"哪个键做什么"，没有理由再造一个。默认 `.returnKey` = **Enter 粘贴**。
-    var boardPasteShortcut: ComposerSendShortcut = .returnKey
+    /// ⚠️ 2026-09-27 深夜改（用户）：「关于（实时对话）**转到 agent 模式**（快捷键替换成
+    /// **option+enter**），和**粘贴**的快捷键（替换成 **com+enter**）」。
+    ///
+    /// 所以现在这一字段表达的是「**粘贴**用哪个键」：
+    /// · `.commandReturn`（**默认**）→ **⌘⏎ 粘贴**、**⌥⏎ 执行**；
+    /// · `.optionReturn` → 反过来。
+    /// **裸回车两个都不是** —— 它原样放行（见 `BoardPasteShortcut.action` 的 `.passThrough`），
+    /// 因为那两个动作现在都带修饰键，再吞掉裸回车就只是白白吃掉用户在他自己 App 里的回车。
+    ///
+    /// ⚠️ 它原来是复用对话输入框那个 `ComposerSendShortcut`（Enter / Command+Enter）——
+    /// 那两个动作现在都换成了**带修饰键**的回车，形状不再一样，所以改成自己的小枚举；
+    /// 旧文件里存的 `"commandReturn"` 仍然解得出（同一个 rawValue，含义也一样），
+    /// 存的 `"returnKey"` 则落到新默认上 —— 走 **String 优先**的解码，不能直接解枚举
+    ///（直接解会在 rawValue 对不上时抛错，把整份 `AppSettings.json` 带走，见规则 E1）。
+    var boardPasteShortcut: BoardPasteShortcut = .commandReturn
 
     /// **「文件 / 文件夹」那一组**（只看主 Agent 那条路用）。
     ///
@@ -1970,9 +2020,11 @@ nonisolated extension AppSettings {
         } else {
             selectedItemKeywords = storedSelectedItemKeywords ?? defaults.selectedItemKeywords
         }
-        boardPasteShortcut = try container.decodeIfPresent(ComposerSendShortcut.self,
-                                                          forKey: .boardPasteShortcut)
-            ?? defaults.boardPasteShortcut
+        // ⚠️ **String 优先**：存的是旧值（`returnKey`）时直接解枚举会**抛错**，
+        // 而一处抛错会把整份 `AppSettings.json` 带走（规则 E1）。见 `boardPasteShortcut` 的注释。
+        let storedBoardPasteShortcut = try container.decodeIfPresent(String.self, forKey: .boardPasteShortcut)
+        boardPasteShortcut = storedBoardPasteShortcut
+            .flatMap(BoardPasteShortcut.init(rawValue:)) ?? defaults.boardPasteShortcut
         recordingAutoReconnects = try container.decodeIfPresent(Bool.self, forKey: .recordingAutoReconnects) ?? defaults.recordingAutoReconnects
         recordingRotationMinutes = try container.decodeIfPresent(Int.self, forKey: .recordingRotationMinutes) ?? defaults.recordingRotationMinutes
         recordingCopiesToClipboard = try container.decodeIfPresent(Bool.self, forKey: .recordingCopiesToClipboard) ?? defaults.recordingCopiesToClipboard

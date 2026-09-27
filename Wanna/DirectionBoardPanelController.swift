@@ -185,22 +185,41 @@ final class DirectionBoardPanelController {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         guard keyCode == 36 else { return Unmanaged.passUnretained(event) }   // 36 = Return
         let isCommand = event.flags.contains(.maskCommand)
-        MainActor.assumeIsolated {
-            MainFlowDiagnostics.log("⌨️ 看板：拦截到回车（command=\(isCommand)，卡片可见=\(isVisible)）")
-            guard isVisible else { return }
-            performReturnKeyAction(isCommand: isCommand)
+        let isOption = event.flags.contains(.maskAlternate)
+        let isShift = event.flags.contains(.maskShift)
+        let shouldConsume = MainActor.assumeIsolated { () -> Bool in
+            MainFlowDiagnostics.log("⌨️ 看板：拦截到回车（command=\(isCommand)，option=\(isOption)，"
+                                    + "shift=\(isShift)，卡片可见=\(isVisible)）")
+            guard isVisible else { return false }
+            return performReturnKeyAction(isCommand: isCommand, isOption: isOption, isShift: isShift)
         }
-        return nil   // **吞掉**：卡片显示期间回车归它
+        // **只有真的做了那两件事之一才吞掉**：裸回车（以及 Shift+回车）原样放行 ——
+        // 卡片显示期间白白吃掉用户在别的 App 里的回车，是没有理由的。
+        return shouldConsume ? nil : Unmanaged.passUnretained(event)
     }
 
     /// 回车到底做哪件事（粘贴 / 执行）—— 本地监听与全局拦截**共用这一处判断**。
-    private func performReturnKeyAction(isCommand: Bool) {
+    /// 这一下回车做了什么；返回**要不要把这一下吞掉**。
+    ///
+    /// 用户 2026-09-27 深夜定的两条：**⌥⏎ = 执行（转到 agent 模式）**、**⌘⏎ = 粘贴**；
+    /// **裸回车不吞**（它现在不属于这两件事里的任何一件 —— 见 `BoardPasteShortcut.action`）。
+    @discardableResult
+    private func performReturnKeyAction(isCommand: Bool, isOption: Bool, isShift: Bool) -> Bool {
+        // 换行留给输入框自己（用户：「可以让用户通过 Shift + Enter 换行」）。
+        if isShift { return false }
         let pasteShortcut = AppSettingsStore.snapshot().boardPasteShortcut
-        let wantsPaste = (pasteShortcut == .returnKey) ? !isCommand : isCommand
-        if wantsPaste {
+        let action = pasteShortcut.action(isCommand: isCommand, isOption: isOption)
+        // 一行判据：**这一下走了哪条路**（按住什么键 → 做什么），出问题时唯一能核对的东西。
+        MainFlowDiagnostics.log("⌨️ 看板：回车 → \(action == .paste ? "粘贴并退出" : action == .execute ? "执行（转 agent）" : "放行（不吞）")")
+        switch action {
+        case .paste:
             directionBoardPasteAndExit?()
-        } else {
+            return true
+        case .execute:
             directionBoardCopyAndSend?()
+            return true
+        case .passThrough:
+            return false
         }
     }
 
@@ -237,11 +256,12 @@ final class DirectionBoardPanelController {
             guard let self, let panel = self.panel, panel.isVisible else { return event }
             guard event.keyCode == 36 else { return event }   // 36 = Return
             _ = panel.isKeyWindow
-            // 换行留给输入框自己（用户：「可以让用户通过 Shift + Enter 换行」）。
-            if event.modifierFlags.contains(.shift) { return event }
-            // 与全局拦截**共用同一处判断**（见 `performReturnKeyAction`）。
-            self.performReturnKeyAction(isCommand: event.modifierFlags.contains(.command))
-            return nil
+            // 与全局拦截**共用同一处判断**（见 `performReturnKeyAction`）—— 两处各写一遍必然漂。
+            let shouldConsume = self.performReturnKeyAction(
+                isCommand: event.modifierFlags.contains(.command),
+                isOption: event.modifierFlags.contains(.option),
+                isShift: event.modifierFlags.contains(.shift))
+            return shouldConsume ? nil : event
         }
         keyMonitors = [monitor].compactMap { $0 }
     }

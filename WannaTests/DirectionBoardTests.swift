@@ -869,4 +869,28 @@ struct DirectionBoardTests {
         // 问题行都在分类**之后**（每一件都挂在某一类下面）。
         #expect(lines.filter { $0.hasPrefix("├") || $0.hasPrefix("└") }.count == 4)
     }
+
+    /// **看板上那两下回车**（用户 2026-09-27 深夜）：「关于（实时对话）**转到 agent 模式**
+    /// （快捷键替换成 **option+enter**），和**粘贴**的快捷键（替换成 **com+enter**）」。
+    /// 判据做成纯函数，两个入口共用 —— 这里钉住整张表。
+    @Test func boardReturnKeysAreOptionToExecuteAndCommandToPaste() throws {
+        // 默认：⌘⏎ 粘贴、⌥⏎ 执行。
+        let defaultShortcut = BoardPasteShortcut.commandReturn
+        #expect(defaultShortcut.action(isCommand: true, isOption: false) == .paste)
+        #expect(defaultShortcut.action(isCommand: false, isOption: true) == .execute)
+        // **裸回车放行，不吞** —— 它现在不属于这两件事里的任何一件。
+        #expect(defaultShortcut.action(isCommand: false, isOption: false) == .passThrough)
+        // 两个修饰键同时按着：说不清，放行（不猜）。
+        #expect(defaultShortcut.action(isCommand: true, isOption: true) == .passThrough)
+
+        // 反过来选也一样成立。
+        let swapped = BoardPasteShortcut.optionReturn
+        #expect(swapped.action(isCommand: false, isOption: true) == .paste)
+        #expect(swapped.action(isCommand: true, isOption: false) == .execute)
+
+        // ⚠️ 旧文件存的是 `"returnKey"`（旧枚举的值）—— 现在解不出来，必须**落到新默认**，
+        // 而不是抛错（抛错会把整份 AppSettings.json 带走，规则 E1）。
+        #expect(BoardPasteShortcut(rawValue: "returnKey") == nil)
+        #expect(BoardPasteShortcut(rawValue: "commandReturn") == .commandReturn)
+    }
 }
