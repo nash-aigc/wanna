@@ -68,6 +68,15 @@ nonisolated final class VolcengineRealtimeASRClient {
 
     private let socketQueue = DispatchQueue(label: "wanna.longform.asr.socket")
     private var configuration: Configuration
+    /// 调用方注入的一条**长命** `URLSession`（可以不注）。
+    ///
+    /// 归调用方所有，这里**不会** invalidate 它 —— 见 `teardownOnQueue`。长录音那条路
+    /// 不注（一次录音换连接最多几十次，自己建没问题）；主 Agent 那条路**每句话一条连接**，
+    /// 自己建就成了仓规 E3 那条坑：连续新建 + invalidate 会破坏 OS 的连接池，
+    /// 之后开始报 `Socket is not connected`。
+    private let injectedSharedURLSession: URLSession?
+    /// 这条 URLSession 是不是本对象建的（建的才由本对象销毁）。
+    private var ownsURLSession = false
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
     private var receiveLoopTask: Task<Void, Never>?
@@ -90,8 +99,9 @@ nonisolated final class VolcengineRealtimeASRClient {
     /// 就回来了。用户报的「说两个字也要等很久」就是这个。
     private var finalResultCompletion: (() -> Void)?
 
-    init(configuration: Configuration) {
+    init(configuration: Configuration, urlSession: URLSession? = nil) {
         self.configuration = configuration
+        self.injectedSharedURLSession = urlSession
     }
 
     func updateConfiguration(_ configuration: Configuration) {
@@ -130,7 +140,14 @@ nonisolated final class VolcengineRealtimeASRClient {
         sessionConfiguration.timeoutIntervalForResource = .infinity
         sessionConfiguration.waitsForConnectivity = true
 
-        let session = URLSession(configuration: sessionConfiguration)
+        let session: URLSession
+        if let injectedSharedURLSession {
+            session = injectedSharedURLSession
+            ownsURLSession = false
+        } else {
+            session = URLSession(configuration: sessionConfiguration)
+            ownsURLSession = true
+        }
         let task = session.webSocketTask(with: request)
         self.session = session
         self.task = task
@@ -388,8 +405,13 @@ nonisolated final class VolcengineRealtimeASRClient {
         let closing = task
         task = nil
         closing?.cancel(with: .normalClosure, reason: nil)
-        session?.invalidateAndCancel()
+        // **注入进来的那条不碰。** 它归调用方所有，invalidate 掉它等于把调用方
+        // 接下来还要用的那条也拆了（主 Agent 那条路每句话都复用它）。
+        if ownsURLSession {
+            session?.invalidateAndCancel()
+        }
         session = nil
+        ownsURLSession = false
         if notify {
             publishState(.disconnected(reason: "已断开"))
         }

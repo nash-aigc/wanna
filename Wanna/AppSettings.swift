@@ -456,6 +456,39 @@ nonisolated enum VolcengineASRResource: String, Codable, CaseIterable, Sendable 
     }
 }
 
+/// 说话时用哪个识别服务（按住 ⌃⌥ 说话 / 持续追问 / 卡片通话那条路）。
+///
+/// **为什么要有这一项**：同一台机器上现在有两个都能跑的识别后端 —— 火山引擎的
+/// 豆包流式识别（长录音那一条路用的）和百炼的实时识别。用户的原话是「这两个
+/// 快捷键用的都是同一个语音模型来识别的……豆包的，然后正常的那个使用的是阿里的」，
+/// 所以「主 Agent 那条走豆包」是一个**用户要选的事实**，不是代码里的默认值 ——
+/// 写死一个默认值意味着以后想换回来要改代码。
+///
+/// 语音聊天里**角色指定了识别模型**的那条路不受它影响：那里的模型名是百炼的，
+/// 角色编辑器里也是按百炼的模型清单选的（见 `BuddyTranscriptionProviderFactory`）。
+nonisolated enum VoiceTranscriptionService: String, Codable, CaseIterable, Sendable {
+    /// 火山引擎豆包流式识别。配置是「录音」页那一套（同一个账号、同一份密钥）。
+    case volcengine
+    /// 阿里云百炼的实时识别。配置是「模型」页 👂 那个角色。
+    case bailian
+
+    var displayName: String {
+        switch self {
+        case .volcengine: return "豆包流式识别（火山引擎）"
+        case .bailian: return "阿里百炼实时识别"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .volcengine:
+            return "用「录音」页里配好的那套豆包参数（API Key、档位、识别语言、热词）。与录音快捷键同一个识别服务。"
+        case .bailian:
+            return "用「模型」页里 👂 那个角色的模型与密钥。识别语言与热词用本页上面的两项。"
+        }
+    }
+}
+
 nonisolated struct AppSettings: Codable, Sendable, Equatable {
 
     // MARK: - 通用 · 启动
@@ -703,6 +736,15 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     }
 
     // MARK: - 听（语音识别）
+
+    /// 说话用哪个识别服务。存 rawValue 而不是枚举本身 —— 与这个文件里其他枚举
+    /// 同一个理由：读到不认识的值时退化成默认，而不是让整份设置解不出来。
+    var voiceTranscriptionServiceRawValue: String = VoiceTranscriptionService.volcengine.rawValue
+
+    var voiceTranscriptionService: VoiceTranscriptionService {
+        get { VoiceTranscriptionService(rawValue: voiceTranscriptionServiceRawValue) ?? .volcengine }
+        set { voiceTranscriptionServiceRawValue = newValue.rawValue }
+    }
 
     var transcriptionLanguage: TranscriptionLanguage = .chinese
 
@@ -1543,6 +1585,7 @@ nonisolated extension AppSettings {
         case reviewAgentReadsProject
         case reviewAgentWritesProject
         case transcriptionLanguage
+        case voiceTranscriptionServiceRawValue
         case extraTranscriptionKeyterms
         case finalTranscriptGracePeriodSeconds
         case usesAutomaticSpeechSegmentation
@@ -1702,6 +1745,7 @@ nonisolated extension AppSettings {
         reviewAgentReadsProject = try container.decodeIfPresent(Bool.self, forKey: .reviewAgentReadsProject)
         reviewAgentWritesProject = try container.decodeIfPresent(Bool.self, forKey: .reviewAgentWritesProject)
         transcriptionLanguage = try container.decodeIfPresent(TranscriptionLanguage.self, forKey: .transcriptionLanguage) ?? defaults.transcriptionLanguage
+        voiceTranscriptionServiceRawValue = try container.decodeIfPresent(String.self, forKey: .voiceTranscriptionServiceRawValue) ?? defaults.voiceTranscriptionServiceRawValue
         extraTranscriptionKeyterms = try container.decodeIfPresent(String.self, forKey: .extraTranscriptionKeyterms) ?? defaults.extraTranscriptionKeyterms
         finalTranscriptGracePeriodSeconds = try container.decodeIfPresent(Double.self, forKey: .finalTranscriptGracePeriodSeconds) ?? defaults.finalTranscriptGracePeriodSeconds
         usesAutomaticSpeechSegmentation = try container.decodeIfPresent(Bool.self, forKey: .usesAutomaticSpeechSegmentation) ?? defaults.usesAutomaticSpeechSegmentation
