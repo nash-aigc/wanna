@@ -196,6 +196,34 @@ struct DirectionBoardTests {
             """)
     }
 
+    // MARK: - 答案预览的寿命（用户报的"ESC 退出后卡片还跟着鼠标"）
+
+    /// **只有"提交"那一轮留着预览，其余出口一律当场作废。**
+    ///
+    /// 2026-09-27 的致命 bug：他按住快捷键提问（右下角出现预览）→ 按 ESC 退出 →
+    /// **卡片没退，一直跟着鼠标**。根因是那张卡的寿命靠"每个出口记得收一下"，
+    /// 而 ESC 这条出口漏了（提交那条要留着交接、不能收，两者必须分开）。
+    @Test @MainActor func onlyTheSubmittingTurnKeepsTheAnswerPreview() throws {
+        let session = DirectionBoardSession.shared
+        var writes: [String?] = []
+        session.answerPreviewWriter = { writes.append($0) }
+
+        // 一次"提交"：留着 —— 真答案 1~2 秒后要来交接（收早了就是"显示了两个回复"）。
+        session.beginListening(cycleID: "unit-test-submit")
+        #expect(session.isListening)
+        // `beginListening` 自己会清一次（新一轮 = 上一轮那张预览作废），那一次不计入。
+        writes.removeAll()
+        _ = session.consumeTurnDecision()
+        #expect(writes.isEmpty)          // 一个字都没写 = 预览没被清
+
+        // 一次"放弃"（ESC / 窗口到期走的就是这个出口）：当场作废。
+        session.beginListening(cycleID: "unit-test-abandon")
+        session.endListening()
+        #expect(writes.last == .some(nil))
+
+        session.answerPreviewWriter = nil
+    }
+
     // MARK: - 四段卡片里的解析（固定四行 + 任务结果）
 
     /// **行的集合恒定** —— 这是卡片"不再跳"的全部依据。

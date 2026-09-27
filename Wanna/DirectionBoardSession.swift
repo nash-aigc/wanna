@@ -254,7 +254,19 @@ final class DirectionBoardSession: ObservableObject {
         refreshDisplayedItems()
     }
 
-    func endListening() {
+    /// - Parameter keepPreview: **提交**那一轮要传 `true` —— 右下角那张答案卡片要一直挂着，
+    ///   等真答案的第一个字来了再交接（用户报过"显示了两个回复"，见 `consumeTurnDecision`）。
+    ///   其余所有出口（ESC 打断、监听窗口到期、空转写、取消……）都用默认值 `false`：
+    ///   这一轮**没有答案要来接**，预览必须当场作废。
+    ///
+    ///   ⚠️ 这只是**第二道**。第一道在 `NotchWindowController.setActivityPhase`：
+    ///   **相位的下一个值不是 `.listening` 就把预览清掉** —— 出口有一堆、将来还会多，
+    ///   靠"每个出口记得调一下"迟早再漏一次（2026-09-27 就是这么漏掉 ESC 那条的）。
+    func endListening(keepPreview: Bool = false) {
+        if !keepPreview {
+            previewAnswer = nil
+            answerPreviewWriter?(nil)
+        }
         roundGeneration += 1
         cadenceTimer?.invalidate()
         cadenceTimer = nil
@@ -297,7 +309,8 @@ final class DirectionBoardSession: ObservableObject {
         // 交接在 `CompanionManager` 里：真答案的第一个字到达时（`clearAnswerPreview()`），
         // 或这一轮被打断时（`clearAnswerBubble()`）。
         // 收尾（见上）：停表、不再听、在飞的请求作废。
-        endListening()
+        // **keepPreview: true** —— 这一轮是"提交"，真答案马上就来，卡片要留着交接。
+        endListening(keepPreview: true)
         return decision
     }
 

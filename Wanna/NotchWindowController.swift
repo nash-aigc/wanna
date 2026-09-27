@@ -1906,7 +1906,7 @@ final class NotchWindowController {
         // 只在语音状态**变化**时才重算，而停止之后语音状态就停在 idle 不动了，
         // 所以那次清空没有任何东西会把它改回来。这就是「要么没有显示，要么被
         // 窗口覆盖了」里"没有显示"的那一半。
-        panelModel.activityPhase = panelModel.externalSessionOverride ?? .idle
+        setActivityPhase(panelModel.externalSessionOverride ?? .idle)
     }
 
     /// ESC 打断那一下：把相位按在 idle 上，直到这一轮真的结束。
@@ -1921,7 +1921,7 @@ final class NotchWindowController {
         activityPhaseHoldIsSuppressed = false
         activityPhaseHoldTask?.cancel()
         activityPhaseHoldTask = nil
-        panelModel.activityPhase = panelModel.externalSessionOverride ?? .idle
+        setActivityPhase(panelModel.externalSessionOverride ?? .idle)
         syncListeningTranscriptPanel()
     }
 
@@ -1943,13 +1943,37 @@ final class NotchWindowController {
         refreshActivityPhase()
     }
 
+    /// **相位的唯一写入口** —— 顺手管一件事：**右下角那张"答案预览"只活在 Listening 相位里**。
+    ///
+    /// 2026-09-27 用户报的致命 bug：「按住 ESC 退出之后，右下角的卡片没有退出，持续跟随鼠标
+    /// 显示」。根因是那张卡的寿命原来靠"每个出口记得收一下"，而出口有一堆（ESC 打断、
+    /// 监听窗口到期、空转写、提交后没有答案、下一轮开始……）—— **漏一个就是一张永远跟着鼠标的卡片**。
+    ///
+    /// 相位是这个子系统里"说话期间"唯一的那份真相，所以把预览的寿命**挂在它上面**。
+    ///
+    /// ⚠️ 判据是 **`== .idle`**，不是 `!= .listening` —— 这一点是量出来的：
+    /// 提交之后相位会先经过 `.transcribing`（等定稿）、再 `.thinking`（截图 + 视觉请求），
+    /// 而那段正是"预览等着被真答案交接"的 1~2 秒。用 `!= .listening` 会**在那段里把卡片清掉**，
+    /// 于是又回到用户报的"显示了两个回复"（卡片先消失再冒出来）。
+    /// `.idle` 的含义才是"这一轮什么都没在跑" —— 那正是该把预览收掉的唯一时刻。
+    ///
+    /// （另一道是 `CompanionManager` / `DirectionBoardSession` 自己的：提交那一轮 `keepPreview: true`
+    ///   留着交接，其余出口（ESC、窗口到期、空转写）直接清；管线收尾时也清一次 ——
+    ///   覆盖"提交了但根本没答案"（纯执行类任务不写 `streamingAnswerText`）。）
+    private func setActivityPhase(_ phase: NotchActivityPhase) {
+        if phase == .idle {
+            companionManager.clearAnswerPreview()
+        }
+        panelModel.activityPhase = phase
+    }
+
     private func refreshActivityPhase() {
         // 被 ESC 按在 idle 上：**这一轮结束之前不许再按 voiceState 算回来**
         //（用户 2026-09-27：「用户说话的过程中间，用户按住 ESC，他没有瞬间消失」）。
         if panelModel.isActivityPhaseHeldAtIdle {
             activityPhaseHoldTask?.cancel()
             activityPhaseHoldTask = nil
-            panelModel.activityPhase = panelModel.externalSessionOverride ?? .idle
+            setActivityPhase(panelModel.externalSessionOverride ?? .idle)
             syncListeningTranscriptPanel()
             return
         }
@@ -1974,7 +1998,7 @@ final class NotchWindowController {
             }
             activityPhaseHoldTask?.cancel()
             activityPhaseHoldTask = nil
-            panelModel.activityPhase = derivedPhase
+            setActivityPhase(derivedPhase)
             // **同一拍里就把字幕那一块跟上**（2026-09-27，用户附图的「动画中间一块空白」）。
             //
             // 原来它只走相位订阅（`Publishers.CombineLatest(...).receive(on:
@@ -2002,7 +2026,7 @@ final class NotchWindowController {
             activityPhaseHoldIsSuppressed = false
             activityPhaseHoldTask?.cancel()
             activityPhaseHoldTask = nil
-            panelModel.activityPhase = .idle
+            setActivityPhase(.idle)
             syncListeningTranscriptPanel()
             return
         }
@@ -2013,10 +2037,10 @@ final class NotchWindowController {
             try? await Task.sleep(for: .seconds(Self.activityPhaseHoldSeconds))
             guard let self, !Task.isCancelled else { return }
             self.activityPhaseHoldTask = nil
-            self.panelModel.activityPhase = self.panelModel.externalSessionOverride
+            self.setActivityPhase(self.panelModel.externalSessionOverride
                 ?? (self.isDictationFinalizing
                     ? .transcribing
-                    : NotchActivityPhase(from: self.latestVoiceState))
+                    : NotchActivityPhase(from: self.latestVoiceState)))
             self.syncListeningTranscriptPanel()
         }
     }
@@ -2044,7 +2068,7 @@ final class NotchWindowController {
         }
         activityPhaseHoldTask?.cancel()
         activityPhaseHoldTask = nil
-        panelModel.activityPhase = .idle
+        setActivityPhase(.idle)
     }
 }
 

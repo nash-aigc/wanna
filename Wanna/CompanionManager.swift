@@ -1855,6 +1855,9 @@ final class CompanionManager: ObservableObject {
     private func cancelTurnByEscapeWhileListening() {
         turnCancelledByEscape = true
         // 看板：这一轮到此为止，他点过的方向**跟着作废**（不清的话会跟到下一次打字提问上）。
+        // **ESC 打断"正在听"→ 预览当场作废**（用户 2026-09-27 报的致命 bug：
+        // 「按住 ESC 退出之后，右下角的卡片没有退出，持续跟随鼠标显示」）。
+        // 这条路上**没有真答案来接**，留着就是一张永远跟着鼠标的卡片。
         DirectionBoardSession.shared.endListening()
         _ = DirectionBoardSession.shared.consumeTurnDecision()
         // **界面立刻收掉，而且这一轮结束之前别再冒出来**（用户两遍：「界面应该瞬间消失」/
@@ -2283,7 +2286,10 @@ final class CompanionManager: ObservableObject {
         // 这一轮到此为止：看板停表、不再发请求（**排在下面所有分支之前** —— 提交之后
         // 每一句都已经送进管线，看板再显示就没有意义；用户：「直到用户按下快捷键发送问题，
         // 或等待 2 秒自动发送问题后才不显示」）。
-        DirectionBoardSession.shared.endListening()
+        //
+        // **keepPreview: true** —— 这一次是要提交的，真答案 1~2 秒后就来，那张答案预览
+        // 要一直挂着等它交接（收早了卡片会先消失再冒出来 = 用户报的"显示了两个回复"）。
+        DirectionBoardSession.shared.endListening(keepPreview: true)
         let trimmedTranscript = NotchListeningTranscriptModel.shared.consumeEditedTranscript()
             ?? finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {
@@ -3303,6 +3309,10 @@ final class CompanionManager: ObservableObject {
                     pendingQuestionText = nil
                     liveJobProgressSteps = []
                 }
+                // **这一轮跑完了就收掉答案预览**。正常情况它已经被"真答案的第一个字"交接掉了，
+                // 但**纯执行类的任务根本不写 `streamingAnswerText`**（中间步骤不进那张卡片），
+                // 那一道就永远不会触发 —— 不收的话那张预览会一直挂在鼠标旁边。
+                self.clearAnswerPreview()
             }
 
             // One snapshot for the whole interaction. Re-reading the settings
