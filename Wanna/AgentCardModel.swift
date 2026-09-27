@@ -324,16 +324,26 @@ final class AgentCardModel: ObservableObject {
 
     // MARK: - 动作
 
-    /// 「设为默认」：屏幕快捷键发出去的问题从此进这一条主循环会话。
+    /// 「收藏」那一颗的开关：屏幕快捷键发出去的问题从此进这一条主循环会话，
+    /// **已经是它的就取消**。
+    ///
+    /// 2026-09-27 之前这里只有一个方向（设，不取消），用户报的就是这个：
+    /// 「左侧卡片的收藏按钮（让它能取消收藏，现在不能取消收藏）」。
+    /// 取消之后落的是 `nil` —— 没有"收藏哪一条"，与开机时的状态完全相同，
+    /// 而不是"改收藏另一条"。
     ///
     /// 只对主循环卡片成立 —— Claude Code 卡片上没有这颗按钮（用户明确要求
     /// 「新建的 Claude Code 类型卡片不可设为默认」）。
-    func setDefault(cardID: String) {
+    func toggleDefault(cardID: String) {
+        let currentDefaultCardID = AppSettingsStore.snapshot().defaultSessionID
+        let newDefaultCardID: String? = (currentDefaultCardID == cardID) ? nil : cardID
         // `save` 抛的是「写不进磁盘」。默认会话是用户刚点下的选择，写不进去要说出来，
         // 但**不能让它把侧栏搞崩** —— 所以吞掉错误并留一行日志（写失败的清一色是
         // 磁盘权限/满盘，改天再点一次就是了）。
         do {
-            try AppSettingsStore.save(AppSettingsStore.snapshot().withDefaultSessionID(cardID))
+            try AppSettingsStore.save(
+                AppSettingsStore.snapshot().withDefaultSessionID(newDefaultCardID)
+            )
         } catch {
             print("⚠️ Wanna: 记不住默认会话（\(cardID)）—— \(error)")
         }

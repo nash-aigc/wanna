@@ -28,8 +28,12 @@ struct HomeSpaceSidebarView: View {
     /// its published presets and connection phase, and its rows select.
     @ObservedObject var voiceChatController: VoiceChatController
 
-    /// **文本 / 图文那一通电话**（`TextCallController`）—— 卡片上那颗通话按钮在非语音
-    /// 模式下走它。`@ObservedObject`：通话状态一变，绿色高亮要跟着变。
+    /// **文本 / 图文那一通电话**（`TextCallController`）。
+    ///
+    /// 卡片上那颗通话按钮**不再走它**（2026-09-27 起一律走语音，见 `callButton`），
+    /// 它在这里只剩两件事：那张卡片上一通**文本**电话正在打的时候按钮要亮着，
+    /// 以及打新的一通之前先把别的收掉（两条路共用同一份连续监听窗口，只能活一条）。
+    /// `@ObservedObject`：通话状态一变，绿色高亮要跟着变。
     @ObservedObject var textCallController: TextCallController
 
     /// 挂断那一下走 `CompanionManager.hangUpAnyActiveCall()` —— 两条通话共用一个挂断，
@@ -568,10 +572,13 @@ struct HomeSpaceSidebarView: View {
     /// 用户 2026-09-26 先把它叫「收藏按钮」，随后说清了它的含义：「把右侧的收藏按钮放在
     /// 通话按钮的左侧」+ 早先那句「新建的 Claude Code 类型卡片不可设为默认」——
     /// 所以它就是"这条是我的默认主对话"，只有主循环卡片有。
+    ///
+    /// **点一下是开关**（2026-09-27，用户：「让它能取消收藏，现在不能取消收藏」）：
+    /// 亮着的那颗再点一下就灭，`defaultSessionID` 落回 nil。
     private func favouriteButton(_ card: AgentCardModel.Card) -> some View {
         Button(action: {
             SoundEffectPlayer.shared.play(.sidebarButton)
-            cardModel.setDefault(cardID: card.entityID)
+            cardModel.toggleDefault(cardID: card.entityID)
         }) {
             Image(systemName: card.isDefault ? "star.fill" : "star")
                 .font(.system(size: 10.5))
@@ -584,7 +591,7 @@ struct HomeSpaceSidebarView: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .help(card.isDefault
-              ? "这条是默认主对话：屏幕快捷键发出去的问题进它"
+              ? "这条是默认主对话：屏幕快捷键发出去的问题进它 · 点一下取消收藏"
               : "收藏为默认：屏幕快捷键发出去的问题进这一条主对话")
     }
 
@@ -624,44 +631,53 @@ struct HomeSpaceSidebarView: View {
 
     /// 卡片右侧那颗「通话」。
     ///
-    /// **它按卡片的模式分两条完全不同的路**（用户 2026-09-26）：
+    /// **不管这张卡片现在选的是哪个模式，它一律走语音**（2026-09-27 用户定）：
+    /// 「你要让用户点击通话按钮的时候，自动切换到右侧的语音模式。无论用户在右侧选择
+    /// 哪一个模式，应该把它自动切换到语音模式，然后通话，**而不是在当前模式下说话**。」
     ///
-    /// - **语音 / 视频**：切到语音模式 → 备好引擎 → 连上那一场（`startCallForCard`）。
-    /// - **文本 / 图文**：打一通**文本电话** —— 用语音识别替用户说话，识别到就把这句话
-    ///   发出去，走的是这张卡片原本的文本管线（见 `TextCallController`）。用户的原话是
-    ///   「文本模式和图文模式的通话按钮路线是使用语音识别的形式……替用户发送文本，不用
-    ///   手动输入」。
+    /// 所以它做的四件事，顺序不能换：
     ///
-    /// 两条都**再按一次就是挂断**：一颗只会拨号、不会挂断的电话按钮没有意义，而刘海右侧
-    /// 那颗挂断离侧栏很远（`hangUpAnyActiveCall`）。
+    ///   1. `cardModel.open(...)` —— 先把右列切到**这一张**卡片。少了它，下面两步
+    ///      操作的是"右列正在显示的另一张卡"（模式与角色都是按卡片 id 存的），
+    ///      而语音页显示的是 `activeCardID` —— 结果就是"点了这张，通的是那张"。
+    ///   2. `setMode(.voice, ...)` —— 右列那一排四个模式因此跳到「语音」，
+    ///      内容列整块换成语音页（路由只读这个值）。
+    ///   3. `startCallForCard(...)` —— 摆正角色 / 聊天类型 / 引擎，**然后真的连上**。
+    ///      用户 2026-09-26 补的要求：「我点击之后应该自动切换到语音模式，全双工，
+    ///      然后自动通话。你现在没有自动通话，只是选中了，应该自动通话才对。」
+    ///   4. 已经在这一通里就挂断 —— 一颗只会拨号、不会挂断的电话按钮没有意义。
+    ///
+    /// **「文本 / 图文那一通电话」（`TextCallController`）不在这颗按钮上**：
+    /// 那是"说一句 → 转成文字 → 走这张卡片自己的管线"，入口在右列页头最右那颗
+    ///（`NotchSheetRootView.textCallChip`）。它仍然存在，只是从侧栏这张卡片上够不着了
+    /// —— 用户要的就是"卡片这颗 = 打电话（语音）"。
     private func callButton(_ card: AgentCardModel.Card) -> some View {
-        let mode = cardChatPreferences.mode(forCardID: card.entityID, kind: card.kind)
         // **高亮说的是"这一通正在打"**，不是"这张卡片选了语音模式" —— 后者会让一张只是
-        // 选过语音模式的卡片一直亮着绿电话（实测到的那一版）。
-        let isCalling = mode.isVoiceLike
-            ? voiceChatController.isCalling(cardID: card.entityID)
-            : textCallController.isCalling(cardID: card.entityID)
+        // 选过语音模式的卡片一直亮着绿电话（实测到的那一版）。文本那一通也算这张卡片
+        // 在通话中，因为它同样占着那一份唯一的连续监听窗口。
+        let isVoiceCalling = voiceChatController.isCalling(cardID: card.entityID)
+        let isTextCalling = textCallController.isCalling(cardID: card.entityID)
+        let isCalling = isVoiceCalling || isTextCalling
         return Button {
             SoundEffectPlayer.shared.play(.sidebarButton)
             if isCalling {
                 companionManager?.hangUpAnyActiveCall()
                 return
             }
-            if mode.isVoiceLike {
-                cardChatPreferences.setMode(.voice, forCardID: card.entityID)
-                // **连上，不只是备好** —— 摆正配置与连接写在一起（`startCallForCard`），
-                // 顺序反了就按上一个角色的配置去连。
-                voiceChatController.startCallForCard(cardID: card.entityID, cardKind: card.kind)
-            } else {
-                // 视图是值类型，没有 `[weak self]` —— `start` 是 async 的，所以这里的
-                // 捕获按值拿走控制器引用（它是一个 `@MainActor` 类，生命周期由
-                // `CompanionManager` 持有，不依赖这个视图活着）。
-                let controller = textCallController
-                Task { @MainActor in
-                    await controller.start(cardID: card.entityID, cardKind: card.kind)
-                }
+            // **只可能有一条通话活着**（两条路共用同一份连续监听窗口），而这里要打的是
+            // 新的一通 —— 所以先把别的收掉。少了这一步，当另一张卡片正连着**同一个角色**
+            // 时（`resolvedRole` 在用户还没建自己的角色时对每张卡片返回的都是内置那条），
+            // `connectToRole` 会判定"已经连在这个角色上"而直接返回：卡片切过去了、
+            // 模式也跳到语音了，**电话却没打出去**。
+            if textCallController.isActive || voiceChatController.connectionPhase != .idle {
+                companionManager?.hangUpAnyActiveCall()
             }
+            // ① 先让右列显示这一张卡片。
             cardModel.open(card, sessionsModel: sessionsModel, agentSessionManager: agentSessionManager)
+            // ② 模式切到语音 —— 右列整块换成语音页。
+            cardChatPreferences.setMode(.voice, forCardID: card.entityID)
+            // ③ 摆正配置 + 真的连上（顺序见 `startCallForCard` 的注释）。
+            voiceChatController.startCallForCard(cardID: card.entityID, cardKind: card.kind)
         } label: {
             // **正方形 + 圆角、图形更大、贴着上/下/右边缘**（用户 2026-09-26：「卡片里的
             // 通话按钮改成正方形加圆角的形式，里面的按钮图形要变大。按钮的上边缘、下边缘和
@@ -686,7 +702,9 @@ struct HomeSpaceSidebarView: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
-        .help("跟它通话：切到语音模式（全双工语音）并直接连上。引擎与音色在「设置 → 角色」里改")
+        .help(isCalling
+              ? "挂断这一通"
+              : "跟它通话：自动切到语音模式（全双工语音）并直接连上。引擎与音色在「设置 → 角色」里改")
     }
 
     // 这里曾经有一个 `isCurrent(_:)`（判断"这张卡片是不是当前正在显示的那张"）——
