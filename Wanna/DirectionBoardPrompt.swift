@@ -124,7 +124,10 @@ nonisolated enum DirectionBoardPrompt {
               ⚠️ **不要用 Markdown**（不要 `**`、不要 `#`、不要列表符号）—— 它是直接画在卡片上的纯文字。
               没有矛盾就整行写「—」。>
 
-        **答案**：<只在这一轮**包含一个可以当场回答的问题**时才写（「北京在哪」「杨幂是谁」
+        **答案**：<⚠️ **他这一问很可能是在"改/追问"上一条回复**（「重新换行列出」「用英文再说一遍」
+                 「展开讲讲」这种）—— 那就**基于上面你回过的那一条来改**，
+                 **绝对不要写"我看不到你上一轮的内容"**（那段内容就在上面）。
+                 其余情况：只在这一轮**包含一个可以当场回答的问题**时才写（「北京在哪」「杨幂是谁」
                   「左右两张图有什么区别」「这道题选 A 还是 B」），一到三句话，像回答用户一样自然；
                   不是问题、或者你要靠执行才能知道答案的，**整行不写**>
         （这一行会被直接显示在用户鼠标右下角，和最终结果的样式一模一样 —— 所以要像成品答案那样写，
@@ -293,6 +296,7 @@ nonisolated enum DirectionBoardPrompt {
     static func understandingUserPrompt(newQuestion: String,
                                         previousRoundItems: [DirectionBoardDisplayItem],
                                         previousTurnsText: String? = nil,
+                                        previousAnswers: String? = nil,
                                         spokenTranscript: [String] = [],
                                         referenceMaterials: String? = nil,
                                         previousQuestions: String? = nil) -> String {
@@ -317,6 +321,16 @@ nonisolated enum DirectionBoardPrompt {
         // 处理下面那个新问题。之前几轮是用来判断"这件事是不是接着上一件在说"的。
         if let previousTurnsText {
             let trimmed = previousTurnsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { sections.append(trimmed) }
+        }
+        // **你刚才在右下角那张卡片上回过的那几条**（原文，最近的在前）。
+        //
+        // ⚠️ 用户 2026-09-27 深夜：「我追问之前的问题，我发现他**无法知道我上一次回复了什么**，
+        // 这是不可以的。**上一次回复的结果必须追加到全新的调用里面**」。他追问时说的常常很短
+        //（「重新换行列出」「用英文再说一遍」），**全部信息都在上一条回复里** ——
+        // 所以这一段是"改写类追问"唯一的信息源，必须在。
+        if let previousAnswers {
+            let trimmed = previousAnswers.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { sections.append(trimmed) }
         }
         // ⚠️ **他说的全部内容，整份发下去**（用户 2026-09-27 深夜定的形状）：

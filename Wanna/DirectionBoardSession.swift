@@ -939,17 +939,6 @@ final class DirectionBoardSession: ObservableObject {
                     DirectionBoardPrompt.leftoverParagraphText(paragraphText))
                 // 一次回复落了地 —— 视图据此播那一下淡入（用户：「而不是突然间显示出来」）。
                 self.contentRevision += 1
-                // **记下这一轮**（他说的 + 你回的），最近的在前 —— 下一轮请求带着前五轮当参考
-                //（用户 2026-09-27：「取前五轮发给 AI 当作参考内容，让 AI 重点关注最近这一次」）。
-                // ⚠️ 记的是**这一轮问的那段**（`newQuestion`），不是整段累积转写 ——
-                // 否则下一轮算出来的"新问题"会把这一轮的内容又算进去。
-                self.recentTurns.insert((question: newQuestion,
-                                         answer: String((answerText ?? paragraphText)
-                                            .prefix(Self.maximumReadingCharacters)),
-                                         at: Date()), at: 0)
-                if self.recentTurns.count > Self.rememberedTurnCount {
-                    self.recentTurns.removeLast(self.recentTurns.count - Self.rememberedTurnCount)
-                }
 
                 // **答案** → 右下角那张卡片（与最终结果同一张、同一套渲染）。
                 //
@@ -963,14 +952,6 @@ final class DirectionBoardSession: ObservableObject {
                 self.streamingUpdateCount = 0
                 self.boardPreviewStreamingWriter?(false)
                 self.streamingAnswerText = ""
-                if let answer = answerText.flatMap(DirectionBoardPrompt.parseAnswer) {
-                    self.previewAnswer = answer
-                    self.answerPreviewWriter?(answer)
-                    // **记下"我刚才回过这一条"** —— 下一轮他要对着它追问（「用英文再说一遍」）时，
-                    // 提示词里得带上它（他：「一定要带上刚才的结果」）。
-                    self.noteCornerAnswerShown(answer)
-                    print("🧭 方向看板：答案预览 = \(answer.prefix(60))")
-                }
 
                 // **把这一轮那张图存成"到目前为止的汇总"**（下一轮在它上面继续并）。
                 if let mindMap = self.understandingLines.first(where: { $0.label == "细节" })?.value,
@@ -1003,7 +984,40 @@ final class DirectionBoardSession: ObservableObject {
                             .joined(separator: " ｜ "))
                 }
             }
+            // **这一轮的记录与答案**（两件事都不依赖"梳理"成功 —— 见下面那段注释）。
+            self.settleRound(newQuestion: newQuestion,
+                             analysisText: analysisText,
+                             answerText: answerText)
             self.refreshDisplayedItems()
+        }
+    }
+
+    /// 一轮的两件收尾：**记下这一轮**（给下一轮当参考）+ **把答案写到右下角那张卡片**。
+    ///
+    /// ⚠️ 它们原来都写在"梳理（第一次调用）成功"那个 `if let` 里 —— 于是**梳理一旦失败或返回空，
+    /// 答案会跟着被吞掉、连"上一轮回过什么"也一起不记**。而"上一轮回过什么"正是用户追问时
+    /// **唯一的信息源**（他 2026-09-27 深夜报的「我追问之前的问题，我发现他无法知道我上一次
+    /// 回复了什么，这是不可以的」）。所以这两件事**与梳理解耦**：各自成功就各自落地。
+    private func settleRound(newQuestion: String, analysisText: String?, answerText: String?) {
+        let answer = answerText.flatMap(DirectionBoardPrompt.parseAnswer)
+        if let answer {
+            previewAnswer = answer
+            answerPreviewWriter?(answer)
+            // **记下"我刚才回过这一条"** —— 下一轮他对着它追问（「重新换行列出」）时，
+            // 请求里得带上它（`previousCornerAnswersPromptBlock`）。
+            noteCornerAnswerShown(answer)
+            print("🧭 方向看板：答案预览 = \(answer.prefix(60))")
+        }
+        // **记下这一轮**（他说的 + 你回的），最近的在前 —— 下一轮请求带着最近三轮当参考。
+        // ⚠️ 记的是**这一轮问的那段**（`newQuestion`），不是整段累积转写 ——
+        // 否则下一轮算出来的"新问题"会把这一轮的内容又算进去。
+        let recordedAnswer = answer ?? analysisText ?? ""
+        guard !recordedAnswer.isEmpty else { return }
+        recentTurns.insert((question: newQuestion,
+                            answer: String(recordedAnswer.prefix(Self.maximumReadingCharacters)),
+                            at: Date()), at: 0)
+        if recentTurns.count > Self.rememberedTurnCount {
+            recentTurns.removeLast(recentTurns.count - Self.rememberedTurnCount)
         }
     }
 
@@ -1057,6 +1071,11 @@ final class DirectionBoardSession: ObservableObject {
             newQuestion: newQuestion,
             previousRoundItems: previousRoundItems,
             previousTurnsText: previousTurnsPromptBlock(),
+            // ⚠️ **「你刚才回过的那几条」必须带上**（用户 2026-09-27 深夜报的：
+            // 「我追问之前的问题，我发现他**无法知道我上一次回复了什么**，这是不可以的。
+            // **上一次回复的结果必须追加到全新的调用里面**。我说的是**右下角这部分**」）。
+            // 拆两次调用的时候我把这一段从请求里摘掉了 —— 而它正是"追问/让它改写"唯一的信息源。
+            previousAnswers: previousCornerAnswersPromptBlock(),
             referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
             previousQuestions: nil)
         do {

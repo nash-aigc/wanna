@@ -722,4 +722,33 @@ struct DirectionBoardTests {
         #expect(prompt.contains("他到目前为止说过的**全部内容**"))
         #expect(prompt.contains("北京跟上海的关系是什么"))
     }
+
+    /// **追问必须看得见上一条回复**（用户 2026-09-27 深夜报的）：
+    /// 「我追问之前的问题，我发现他**无法知道我上一次回复了什么**，这是不可以的。
+    /// **上一次回复的结果必须追加到全新的调用里面**。我说的是**右下角这部分**」。
+    /// 他追问时说得常常很短（「重新换行列出」），**全部信息都在上一条回复里** ——
+    /// 拆两次调用时我把这一段摘掉了，就是那次回归。
+    @Test func theAnswerCallCarriesThePreviousAnswers() throws {
+        let prompt = DirectionBoardPrompt.understandingUserPrompt(
+            newQuestion: "重新换行列出",
+            previousRoundItems: [],
+            previousTurnsText: "<previous_turns>…</previous_turns>",
+            previousAnswers: """
+            <previous_answers>
+            你刚才在右下角那张卡片上回过这几条（最近的在前）：
+            【最近一次】杨幂拍过的电影有《…》《…》
+            </previous_answers>
+            """)
+        #expect(prompt.contains("previous_answers"))
+        #expect(prompt.contains("杨幂拍过的电影"))
+        // 而且要在**新问题之前**（它是背景，新问题排最后）。
+        #expect(prompt.range(of: "previous_answers")!.lowerBound
+                < prompt.range(of: "用户这一次的新问题")!.lowerBound)
+        // 提示词里还要明说：追问就基于上一条改，**不许说"我看不到"**。
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
+            looksAtTheScreen: true)
+        #expect(systemPrompt.contains("改/追问"))
+        #expect(systemPrompt.contains("绝对不要写"))
+    }
 }
