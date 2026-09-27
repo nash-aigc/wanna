@@ -93,7 +93,8 @@ nonisolated enum DirectionBoardPrompt {
               （「这道题选哪个」「这个按钮在哪」）时，屏幕才进入目标。
               用户的话已经说清楚了，就照直写，**不要加解释、不要铺陈**>
               （这一行在卡片上叫「**需求**」—— 左侧那一列就是在了解用户的需求）
-        细节：<**把用户这段内容梳理成一张竖形的关系图**（像下面这样用树枝和缩进把层级与因果画出来，
+        细节：<**把用户的需求梳理成一张竖形的关系图**（这张图就是"他在关心什么"的全貌，
+              不只是这一句）（像下面这样用树枝和缩进把层级与因果画出来，
               最多 **7 行**）。用户是用眼睛扫的，字太多他看不下去；画成关系图他既看得快，
               也能一眼看出你有没有真的理解：
               ├─ 第一层
@@ -136,6 +137,14 @@ nonisolated enum DirectionBoardPrompt {
            ② 剩下的照抄过来（说法可以更准，但别换问题）；③ 只有真的读出新问题才加新的。
            **不许把上一轮的问题换一批新的重说一遍。**
         1. **只写理解与结果**，不要执行任何事、不要给操作步骤、不要写代码；
+        1.4 **只看最近这一次**（用户 2026-09-27）：「如果**最近的问题跟之前有关系**，AI 就知道
+           该怎么回复；如果最近一次的问题**跟之前没有关系**，那就**只回复最近一次问题**。」
+           下面给你的前几轮**是参考、不是这一轮要做的事** —— 它们只用来判断"这件事是不是接着
+           上一件在说"。
+           例：他先后说「北京在哪」「北京欢迎你」「北京是一个语言吗」「北京是中国的吗」
+           「北京市的地理位置在哪里」—— 这几句都在讲**北京**，所以「细节」那张图就围绕
+           「关于北京的信息」一路往上长（这就是**对用户需求的梳理**）；
+           但若他忽然问「杨幂是谁」，那就是**全新的一件事**，图要重开。
         1.5 **「以当前这一句为准」**（用户 2026-09-27）：「对于用户的问题，可能是连续性的，
            可能**跟当前屏幕完全没有任何关系**，可能**跟上一个问题也完全没有任何关系**。
            要让 AI 知道，**以当前问题为准**。」
@@ -208,11 +217,15 @@ nonisolated enum DirectionBoardPrompt {
     /// · 「你必须要知道用户表达的是对**上一轮**（JEV）它的结果的一个选择」→ 上一轮的编号映射；
     /// · 「你要在发送给下一轮模型的时候要**保留前三轮**，然后你要标记一下……最早的那一轮和最近的
     ///   那一轮分别是什么，然后让它**重点参考最近一轮**」→ 带标签的三环历史。
-    static func understandingUserPrompt(transcript: String,
+    /// - Parameters:
+    ///   - newQuestion: **他这一次的新问题**（他自己说的那段，不是整段累积转写）——
+    ///     用户 2026-09-27：「用户说话之后，要把用户的问题当作一个**全新的问题**，同时把之前用户说的话
+    ///     和 AI 回复的结果，**取前五轮**发给 AI 当作参考内容，让 AI **重点关注最近这一次**」。
+    ///   - previousTurnsText: 前面几轮（用户说的 + 你回的）拼好的一段，**只是参考**。
+    static func understandingUserPrompt(newQuestion: String,
                                         previousRoundItems: [DirectionBoardDisplayItem],
-                                        recentReadings: [String],
+                                        previousTurnsText: String? = nil,
                                         referenceMaterials: String? = nil,
-                                        previousAnswers: String? = nil,
                                         previousQuestions: String? = nil) -> String {
         var sections: [String] = []
         // **参考材料**（屏幕 / 剪贴板 / 访达选中）—— 与主 Agent 那一轮读的是同一份。
@@ -228,21 +241,19 @@ nonisolated enum DirectionBoardPrompt {
             let trimmed = previousQuestions.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { sections.append(trimmed) }
         }
-        // **你刚才在右下角回过的那几条**（用户 2026-09-27：「一定要带上刚才的结果」）——
-        // 他对着这张卡片追问时（「用英文再说一遍」），模型必须知道"刚才那条"是什么。
-        if let previousAnswers {
-            let trimmed = previousAnswers.trimmingCharacters(in: .whitespacesAndNewlines)
+        // **前面几轮（用户说的 + 你回的）—— 只是参考**（用户 2026-09-27：「把之前用户说的话
+        // 和 AI 回复的结果，取前五轮发给 AI 当作参考内容，让 AI 重点关注最近这一次」）。
+        //
+        // ⚠️ 它排在**新问题之前**、而且标题里就写明"参考"：这一轮要做的事只有一件 ——
+        // 处理下面那个新问题。之前几轮是用来判断"这件事是不是接着上一件在说"的。
+        if let previousTurnsText {
+            let trimmed = previousTurnsText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { sections.append(trimmed) }
         }
         // ⚠️ **这一段是重点，标签要明说**（用户 2026-09-27：「虽然都是一次性发给 AI，但**在打标签上、
         // 在关注重点上，要告诉 AI 应该怎么去关注**」）。屏幕 / 剪贴板 / 访达那些材料排在它前面、
         // 标成"参考"；用户自己的话单独标成"**目标以这一段为准**" —— 因为「**用户的提示词才是目标**，
         // 屏幕上的内容是参考部分」。
-        sections.append("""
-        【用户的原话 —— **这是重点，目标以这一段为准；屏幕上的一切都只是参考材料**】
-        \(transcript)
-        """)
-
         if !previousRoundItems.isEmpty {
             let lines = previousRoundItems.map { item in
                 let mark: String
@@ -262,21 +273,13 @@ nonisolated enum DirectionBoardPrompt {
             """)
         }
 
-        let readings = recentReadings
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if !readings.isEmpty {
-            // 最近的那一轮排在最前，标签也是照着这个顺序给的（用户要的重点参考最近一次）。
-            let labels = ["最近一次", "倒数第二次", "倒数第三次"]
-            let blocks = readings.enumerated().map { index, reading in
-                let label = index < labels.count ? labels[index] : "更早"
-                return "【\(label)】\n\(reading)"
-            }
-            sections.append("""
-            你前面几轮的理解（**以「最近一次」为主**，其余供你保持连续）：
-            \(blocks.joined(separator: "\n\n"))
-            """)
-        }
+        // **新问题排在整段请求的最后**（用户 2026-09-27：「让 AI **重点关注最近这一次**」）——
+        // 模型最后读到的就是这一轮要做的那件事，上面全是背景。
+        sections.append("""
+        【用户这一次的新问题 —— **重点只看这一段**，上面的全是参考】
+        \(newQuestion)
+        """)
+
         return sections.joined(separator: "\n\n")
     }
 

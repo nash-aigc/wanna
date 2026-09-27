@@ -534,11 +534,20 @@ struct DirectionBoardTests {
 
         // 请求里，用户的原话必须被标成「目标以这一段为准」。
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
-            transcript: "帮我把下载目录整理一下",
+            newQuestion: "帮我把下载目录整理一下",
             previousRoundItems: [],
-            recentReadings: [])
-        #expect(userPrompt.contains("这是重点，目标以这一段为准"))
+            previousTurnsText: """
+            <previous_turns>
+            【最近一次】他说的：北京在哪　你回的：北京在中国北部。
+            </previous_turns>
+            """)
+        // 新问题的标题（这一段是这一轮唯一要做的事）。
+        #expect(userPrompt.contains("用户这一次的新问题"))
         #expect(userPrompt.contains("帮我把下载目录整理一下"))
+        // 前五轮那一段在，而且**排在新问题之前**（模型最后读到的才是这一轮的事）。
+        #expect(userPrompt.contains("previous_turns"))
+        #expect(userPrompt.range(of: "previous_turns")!.lowerBound
+                < userPrompt.range(of: "用户这一次的新问题")!.lowerBound)
     }
 
     /// 用户 2026-09-27 的尺寸：**矛盾缩小两次 30%**、**需求再增加一点**、表格 **4 行**、参考 **3 行**。
@@ -589,5 +598,18 @@ struct DirectionBoardTests {
         #expect(DirectionBoardPrompt.formattedQuestion("一、关于 X 的疑问：  内容")
                 == "一、关于 X 的疑问： 内容")
         #expect(DirectionBoardPrompt.formattedQuestion("没有冒号的一句话") == "没有冒号的一句话")
+    }
+
+    /// **只看最近这一次**（用户 2026-09-27）：「如果最近的问题跟之前有关系，AI 就知道该怎么回复；
+    /// 如果最近一次的问题跟之前没有关系，那就**只回复最近一次问题**」——
+    /// 他给的那个例子（连着问北京）就是这条规则的判据。
+    @Test func thePromptFocusesOnTheLatestQuestion() throws {
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: [(id: "d1", keyword: "记笔记", detail: "把内容记到 Notion")],
+            looksAtTheScreen: true)
+        #expect(systemPrompt.contains("只看最近这一次"))
+        #expect(systemPrompt.contains("只回复最近一次问题"))
+        #expect(systemPrompt.contains("北京欢迎你"))
+        #expect(systemPrompt.contains("全新的一件事"))
     }
 }

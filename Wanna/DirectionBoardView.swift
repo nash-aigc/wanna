@@ -171,6 +171,10 @@ struct DirectionBoardView: View {
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
         .contentShape(Rectangle())
         .onTapGesture { onCardTapped() }
+        // 他在说话 → 灯亮起（并开始呼吸）；停下来 → 立刻停（用户：「检测不到用户在说话，
+        // 就停止呼吸」）。
+        .onChange(of: session.isUserSpeaking) { _, isSpeaking in isBreathing = isSpeaking }
+        .onAppear { isBreathing = session.isUserSpeaking }
     }
 
     private var borderTint: Color {
@@ -213,7 +217,32 @@ struct DirectionBoardView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(session.isCollapsed ? DS.Colors.success : theme.textColor.opacity(0.75))
                     .frame(width: Self.collapseButtonWidth, height: Self.collapseToggleHeight)
-                    .background(Self.collapseClickableColor)
+                    // **呼吸灯**（用户 2026-09-27：「一开始的时候，应该在**左下角折叠按钮**的位置上
+                    // 做一个**呼吸灯效果**：只要检测到用户在说话，就是呼吸的效果；如果检测不到用户在
+                    // 说话，就停止呼吸。**目的是让用户知道当前左上角、右上角的卡片是不是能够真正
+                    // 接收到用户的提示词和输入内容**」）。
+                    //
+                    // 判据是 `session.isUserSpeaking`（转写每来一次字亮 0.9 秒）。
+                    // 只做**透明度 + 一点点缩放**，不换颜色也不做光晕 —— 它要回答的是
+                    // "卡还在听吗"，抢眼反而会盖过卡片本身的内容。
+                    .background(
+                        Self.collapseClickableColor
+                            .opacity(session.isUserSpeaking ? 1 : 1)
+                            .scaleEffect(session.isUserSpeaking ? 1.0 : 1.0)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(DS.Colors.success.opacity(0.26))
+                            // ⚠️ **呼吸要真的来回**：`repeatForever` 必须挂在**一个会变的布尔**上
+                            //（挂在"当前是否在说话"上是没用的 —— 那个值只说了一次，
+                            // 动画播完就停，看到的是一亮一灭不是呼吸）。
+                            // 这里 `isBreathing` 由 `isUserSpeaking` 驱动，动画交给渲染服务器来回跑。
+                            .opacity(isBreathing ? 0.95 : 0.12)
+                            .animation(isBreathing
+                                       ? .easeInOut(duration: 0.75).repeatForever(autoreverses: true)
+                                       : .easeOut(duration: 0.25),
+                                       value: isBreathing)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -228,6 +257,11 @@ struct DirectionBoardView: View {
         // 边框由卡片本身给；折叠态时卡片边框变绿，那也就是它的边框。
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
+
+    /// **呼吸的开关**：`false → true` 那一下挂上 `repeatForever` 的动画，之后由**渲染服务器**来回跑 ——
+    /// 主线程一次都不参与（这个仓库为"逐帧在主线程上做工作"吃过一次大亏：那块面板的展开动画）。
+    /// ⚠️ 不要写 `Timer` + 每帧改值：那是 24fps 的主线程工作，只为了一盏呼吸灯不值得。
+    @State private var isBreathing = false
 
     /// 折叠钮的宽度（左 1/3 折叠、右 2/3 拖动 → 整块是它的 3 倍宽）。
     private static let collapseButtonWidth: CGFloat = 22

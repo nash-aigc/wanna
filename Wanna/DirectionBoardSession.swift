@@ -126,6 +126,51 @@ final class DirectionBoardSession: ObservableObject {
         """
     }
 
+    /// 他把话说出来了 → 灯亮；**约 0.9 秒没有新字就熄灭**（他自己定的判据：「检测不到用户在说话，
+    /// 就停止呼吸」）。
+    ///
+    /// ⚠️ 熄灭用**代次计数**：他连着说的时候每来一个字都会重新排一次熄灭，旧的那次不能把新的这一盏吹掉。
+    private func noteUserSpeakingNow() {
+        isUserSpeaking = true
+        speakingGeneration += 1
+        let generation = speakingGeneration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard let self, self.speakingGeneration == generation else { return }
+            self.isUserSpeaking = false
+        }
+    }
+
+    private var speakingGeneration = 0
+
+    /// **前五轮**拼成提示词的一段（用户说的 + 你回的），最近的在前。
+    ///
+    /// 它取代了原来的两段（`recentReadings` 三轮理解 + `previousAnswers` 三条答案）——
+    /// 那两段在提示词里各说各的，而用户要的是"**一轮 = 问 + 答**"这件事本身
+    ///（「把之前用户说的话和 AI 回复的结果，取前五轮发给 AI 当作参考内容」）。
+    func previousTurnsPromptBlock() -> String? {
+        guard !recentTurns.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let blocks = recentTurns.enumerated().map { index, turn -> String in
+            let label = index == 0 ? "最近一次" : "倒数第\(TurnReferenceMaterials.chineseNumber(index + 1))次"
+            return """
+            【\(label)｜\(formatter.string(from: turn.at))】
+            他说的：\(turn.question.isEmpty ? "（这一轮没听到新的）" : turn.question)
+            你回的：\(turn.answer)
+            """
+        }
+        return """
+        <previous_turns>
+        前面几轮你们说过什么（**最近的在前；这只是参考，不是这一轮要做的事**）：
+        \(blocks.joined(separator: "\n\n"))
+
+        拿它判断一件事：**他这次说的，是不是接着上面某一件在说**。
+        接着说的，就把「细节」那张图沿着同一件事往下长；换了一件事，图就重开。
+        </previous_turns>
+        """
+    }
+
     /// 某条回复显示出来**之后**用户说的话（看板手里最新的那段转写就是）。
     private func latestTranscriptAfter(_ moment: Date) -> String {
         // 看板只有"当前这一句"的累积文本，所以能给的判据很直接：这条回复是**这一句之前**
@@ -142,6 +187,13 @@ final class DirectionBoardSession: ObservableObject {
     // MARK: - 界面读的状态
 
     @Published private(set) var isListening = false
+    /// **他此刻正在说话吗** —— 左下角那颗折叠钮的**呼吸灯**就是看它
+    ///（用户 2026-09-27：「只要检测到用户在说话，就是呼吸的效果；如果检测不到用户在说话，
+    /// 就停止呼吸。**目的是让用户知道当前左上角、右上角的卡片是不是能够真正接收到用户的提示词
+    /// 和输入内容**」）。
+    ///
+    /// 判据是"最近这一小会儿有没有新字进来"，与那两道停顿闸门同源（都用转写到达时刻，不用引擎状态）。
+    @Published private(set) var isUserSpeaking = false
     @Published private(set) var paragraph = ""
     /// **结构化理解的那四行**（目标问题 / 类型 / 参考 / 细节）—— 用户要的"换行显示，可以显示为多行"。
     ///
@@ -186,6 +238,15 @@ final class DirectionBoardSession: ObservableObject {
     ///
     /// 主 Agent 那条路本来有会话历史，但**看板这条线上那些"预览答案"从来没进过历史**（它们没被发送），
     /// 所以他要的这条链得单独带着。最多三轮（他：「甚至要带上前三轮的结果」）。
+    /// **前五轮**：每一轮 = 他说的那句话 + 你回的那一段（用户 2026-09-27：「把之前用户说的话
+    /// 和 AI 回复的结果，**取前五轮**发给 AI 当作参考内容，让 AI **重点关注最近这一次**」）。
+    ///
+    /// 它取代了原来分开的两份（`recentReadings` 三轮理解 + `recentCornerAnswers` 三条答案）——
+    /// 那两份在提示词里是**两段各说各的**，而他要的是"一轮 = 问 + 答"这件事本身。
+    private var recentTurns: [(question: String, answer: String, at: Date)] = []
+    /// 保留几轮（用户点名 **5**）。
+    static let rememberedTurnCount = 5
+
     private var recentCornerAnswers: [(text: String, shownAt: Date)] = []
     static let rememberedCornerAnswerCount = 3
 
@@ -199,7 +260,6 @@ final class DirectionBoardSession: ObservableObject {
 
     /// **最近三轮**模型的理解原文（最近的那一轮在最前）—— 用户要的连续性：
     /// 「你要在发送给下一轮模型的时候要保留前三轮……让它重点参考最近一轮」。
-    private var recentReadings: [String] = []
     /// **上一轮看板上显示的那一列**（编号 → 方向）—— 用户对方向的评论指的是它，
     /// 因为两次之间 JEV 会把那一列重排（见 `DirectionBoardMatching.parseSelectionVerdict`）。
     private var previousRoundItems: [DirectionBoardDisplayItem] = []
@@ -212,6 +272,7 @@ final class DirectionBoardSession: ObservableObject {
     private static let cancelledUntilDefaultsKey = "wannaDirectionBoardCancelledUntil"
     private static let tenMinutes: TimeInterval = 10 * 60
     /// 每轮理解原文留多少字（下一轮当上下文用）。
+    /// 一轮记下来的回复最多留这么多字（提示词里只是参考，不必全文）。
     private static let maximumReadingCharacters = 600
     /// 带几轮给模型（用户：「你要在发送给下一轮模型的时候要保留前三轮」）。
     static let rememberedReadingCount = 3
@@ -349,7 +410,6 @@ final class DirectionBoardSession: ObservableObject {
         previewAnswer = nil
         answerPreviewWriter?(nil)
         contentRevision = 0
-        recentReadings = []
         previousRoundItems = []
         jevProbabilities = [:]
         displayedItems = []
@@ -368,6 +428,7 @@ final class DirectionBoardSession: ObservableObject {
         }
         latestTranscript = transcriptText
         latestTranscriptUpdateAt = Date()
+        noteUserSpeakingNow()
         // ⚠️ 参考材料的采集**不在这里**：截图与那三类关键词归 `TurnReferenceCollector`
         //（2026-09-27 用户把参考材料扩成三类之后，它成了主 Agent 与看板**共用**的东西 ——
         //  主 Agent 那一轮的提示词、看板这一轮的请求、卡片上那排标签，读的都是它）。
@@ -394,6 +455,8 @@ final class DirectionBoardSession: ObservableObject {
         requestTask = nil
         isRequesting = false
         isListening = false
+        isUserSpeaking = false
+        speakingGeneration += 1     // 作废在途的那次"熄灭"（它已经没有对象了）
         // 这一轮结束了：把面板上那一列**快照**留给下一次（用户对方向的评论指的是它）。
         previousRoundItems = displayedItems
     }
@@ -627,10 +690,10 @@ final class DirectionBoardSession: ObservableObject {
         // 判据是"安静了多久"，不是"过了多久"：他连着说的时候**一次都不发**（那几分钟里
         // 屏幕上停的是他刚开口时的理解），停下来才刷新一次。
         //
-        // ⚠️ 这里的门槛比"发送"那个（`continuousListeningSilenceSendSeconds`，默认 2.0 秒）**短一半**：
-        // 两处都用 2 秒的话，预览和真答案会在同一刻到达 —— 预览就没有存在的时间了。
-        // 一半留出大约 1 秒的"先看到答案"的窗口（他当初要预览就是为了这个）。
-        let silenceThreshold = AppSettingsStore.snapshot().continuousListeningSilenceSendSeconds / 2
+        // **判据就是"停顿两秒"**（用户 2026-09-27 深夜把这条收口了：「应用到当前这个逻辑
+        // 也是一样的：**检测用户说话，停顿两秒，自动发送给 AI，就这么简单**」）——
+        // 用的就是他设置页里那个「静音多久自动发送」，不再是它的一半。
+        let silenceThreshold = AppSettingsStore.snapshot().continuousListeningSilenceSendSeconds
         let secondsSinceHeSpoke = Date().timeIntervalSince(latestTranscriptUpdateAt)
         guard Self.hasPausedLongEnough(secondsSinceHeSpoke: secondsSinceHeSpoke,
                                        threshold: silenceThreshold) else {
@@ -647,6 +710,14 @@ final class DirectionBoardSession: ObservableObject {
                                      .snapshot().directionBoardMinimumAddedCharacters) else { return }
         let transcript = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         lastRequestedTranscript = transcript
+        // **这一轮的"新问题" = 上一轮回复落地之后他说的那段**（用户 2026-09-27：
+        // 「代码上要能识别 AI 回复结果的那一秒……从 AI 回复停稳那一秒到用户第二次停顿，
+        // 中间的内容要提取出来，**这个文本就是用户全新的问题**，重点关注这个」）。
+        //
+        // 拿不到"之后"那一段（第一轮、或者回复落地前他就一直在说）就退回整段 —— 那时整段本来就是新问题。
+        let newQuestion = recentTurns.isEmpty
+            ? transcript
+            : latestTranscriptAfter(recentTurns[0].at).trimmingCharacters(in: .whitespacesAndNewlines)
         MainFlowDiagnostics.log("🧭 看板：第 \(roundGeneration) 轮发请求（转写 \(transcript.count) 字）")
         let generation = roundGeneration
         isRequesting = true
@@ -670,12 +741,12 @@ final class DirectionBoardSession: ObservableObject {
             //（主 Agent 那一轮才需要全部 —— 那才是"参考材料"）。
             let latestScreenGroup = TurnReferenceCollector.shared.materials.screenshots.last ?? []
             let screenshots = latestScreenGroup.map { (data: $0.imageData, label: $0.label) }
-            let state = "用户到目前为止说的话：\n\(transcript.prefix(500))"
+            let state = "用户这一轮说的话：\n\(newQuestion.prefix(500))"
 
             // ① **Jev 判方向**（便宜、给概率）；② **大模型写那段理解**（小提示词）。
             // 两条并行发，谁先回来谁先上屏。
             async let probabilitiesTask = self.judgeWithJevIfConfigured(state: state, directions: directions)
-            async let paragraphTask = self.writeParagraphWithModel(transcript: transcript,
+            async let paragraphTask = self.writeParagraphWithModel(newQuestion: newQuestion,
                                                                    directions: directions,
                                                                    screenshots: screenshots)
             let probabilities = await probabilitiesTask
@@ -706,10 +777,15 @@ final class DirectionBoardSession: ObservableObject {
                     DirectionBoardPrompt.leftoverParagraphText(paragraphText))
                 // 一次回复落了地 —— 视图据此播那一下淡入（用户：「而不是突然间显示出来」）。
                 self.contentRevision += 1
-                // **最近三轮**（最近的在最前）—— 下一轮请求带着它，让模型保持连续。
-                self.recentReadings.insert(String(paragraphText.prefix(Self.maximumReadingCharacters)), at: 0)
-                if self.recentReadings.count > Self.rememberedReadingCount {
-                    self.recentReadings.removeLast(self.recentReadings.count - Self.rememberedReadingCount)
+                // **记下这一轮**（他说的 + 你回的），最近的在前 —— 下一轮请求带着前五轮当参考
+                //（用户 2026-09-27：「取前五轮发给 AI 当作参考内容，让 AI 重点关注最近这一次」）。
+                // ⚠️ 记的是**这一轮问的那段**（`newQuestion`），不是整段累积转写 ——
+                // 否则下一轮算出来的"新问题"会把这一轮的内容又算进去。
+                self.recentTurns.insert((question: newQuestion,
+                                         answer: String(paragraphText.prefix(Self.maximumReadingCharacters)),
+                                         at: Date()), at: 0)
+                if self.recentTurns.count > Self.rememberedTurnCount {
+                    self.recentTurns.removeLast(self.recentTurns.count - Self.rememberedTurnCount)
                 }
 
                 // **答案** → 右下角那张卡片（与最终结果同一张、同一套渲染）。
@@ -767,18 +843,17 @@ final class DirectionBoardSession: ObservableObject {
     }
 
     /// 那段"AI 怎么理解"：**只用方向清单 + 用户的话**（不再发主 Agent 那 5000 字提示词）。
-    private func writeParagraphWithModel(transcript: String,
+    private func writeParagraphWithModel(newQuestion: String,
                                          directions: [(id: String, keyword: String, detail: String)],
                                          screenshots: [(data: Data, label: String)]) async -> String? {
         // 每一轮都带图 → 提示词里那段"这一次带了屏幕截图，请看图再回答"成了**常规要求**，
         // 不再是"带了图才追加的一段"。
         let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions)
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
-            transcript: transcript,
+            newQuestion: newQuestion,
             previousRoundItems: previousRoundItems,
-            recentReadings: recentReadings,
+            previousTurnsText: previousTurnsPromptBlock(),
             referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
-            previousAnswers: previousCornerAnswersPromptBlock(),
             previousQuestions: pendingQuestionsPromptBlock())
         do {
             let (text, _) = try await visionChatAPI.analyzeImageStreaming(
