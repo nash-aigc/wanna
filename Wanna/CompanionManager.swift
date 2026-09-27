@@ -410,6 +410,8 @@ final class CompanionManager: ObservableObject {
     /// 长录音键。只认按下沿 —— 按一下开始、再按一下结束，两次都是「按下」，
     /// 所以这里不做 if/else 分辨，直接交给控制器自己 toggle。
     private var recordingShortcutTransitionsCancellable: AnyCancellable?
+    /// ESC 打断那条订阅（2026-09-27）。
+    private var escapeKeyPressedCancellable: AnyCancellable?
     /// 「释放引擎」的快捷键订阅 —— 与上面那三个模式快捷键共用同一条事件流。
     private var releaseEngineShortcutCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
@@ -435,6 +437,19 @@ final class CompanionManager: ObservableObject {
     /// Nothing is sent while this holds a value; the text sits in the cursor
     /// bubble so it can be read before it becomes a question. A second tap of the
     /// shortcut sends it, and simply speaking again replaces it.
+    /// **这一轮（这一次提交）的分组 id** —— 与派出去的临时 agent 身上那个 `groupID`
+    /// 是同一个值。ESC 打断靠它只收这一轮派出去的活（见
+    /// `AgentActivityBoard.cancelRunningTasks(inGroup:reason:)`）。
+    private var currentTurnGroupID: String?
+
+    /// **这一轮被 ESC 取消了**：录音照存、什么都不发。
+    ///
+    /// 用户 2026-09-27 定的：「用户在录音时按下 ESC，直接中断录音，但**录音需保存到
+    /// 本地，与正常录音一致**」。所以它走的是 `finishTurn`（留一条本地录音），而不是
+    /// `discardTurn`（那是「一个字都没听到」）；只是这一轮不进对话管线。
+    /// 每次开一轮新录音时清零，判完也清 —— 否则它会把**下一轮**也一起吞掉。
+    private var turnCancelledByEscape = false
+
     private var pendingConfirmationTranscript: String?
 
     /// When the shortcut went down, so a release can tell a tap from a hold.
@@ -1694,6 +1709,92 @@ final class CompanionManager: ObservableObject {
                 guard pressed else { return }
                 LongFormRecorderController.shared.toggleRecording()
             }
+
+        // **ESC = 打断**（2026-09-27 用户定）。走的是同一条 CGEvent tap，所以不要求
+        // Wanna 自己是 key window —— 用户多半正在别的 App 里干活，而那正是「打断」
+        // 要发生的场合。tap 只读不吞：不属于这一轮的那一按原样进前台 App。
+        escapeKeyPressedCancellable = globalPushToTalkShortcutMonitor
+            .escapeKeyPressedPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                self?.handleEscapeKeyPressed()
+            }
+    }
+
+    /// **ESC 被按下了。它算不算「打断」，由这一轮在不在跑来决定。**
+    ///
+    /// 用户 2026-09-27 定的三段：
+    /// 1. **正在听（录音中）** → 直接中断录音，**但录音照存**（与正常录音一致），
+    ///    这一轮**什么都不发**；
+    /// 2. **正在跑（思考 / 播报 / agent 循环）** → 真打断：停播报、收掉鼠标旁那张卡片、
+    ///    把**这一次提交**派出去的 agent 全部收掉（之前几轮的不管）；
+    /// 3. 其余情况（没有这一轮）→ **什么都不做**，ESC 原样进前台 App。
+    ///
+    /// 边界（既有语义不许破坏）：**转写编辑窗开着时，ESC 仍然是「收起编辑窗」** ——
+    /// 那是这个 App 里早就有的一条 ESC，用户的「打断」不该把它抢走；编辑窗本身就是
+    /// 在 Listening 里开出来的，用户按 ESC 时最可能的意思是「把这块收起来」。
+    /// 长录音那条路（⌥C）的 ESC 归 `NotchRecordingOverlay`，这里不碰。
+    private func handleEscapeKeyPressed() {
+        if NotchListeningTranscriptModel.shared.isEditorExpanded {
+            NotchListeningTranscriptModel.shared.isEditorExpanded = false
+            print("⏹️ ESC：收起转写编辑窗（既有语义，不打断这一轮）")
+            return
+        }
+
+        if buddyDictationManager.isRecordingFromKeyboardShortcut
+            || buddyDictationManager.isPreparingToRecord {
+            cancelTurnByEscapeWhileListening()
+            return
+        }
+
+        if voiceState == .processing
+            || voiceState == .responding
+            || currentResponseTask != nil
+            || bailianTTSClient.isPlaying {
+            interruptTurnByEscapeWhileRunning()
+            return
+        }
+
+        // 连续追问那个窗口开着也算「正在听」—— 麦克风开着、下面那行字幕也开着，
+        // 用户的 ESC 是「别听了」。交给同一个出口：窗口关掉、这一句不发、录音照留。
+        if buddyDictationManager.isContinuousListening {
+            cancelTurnByEscapeWhileListening()
+            return
+        }
+
+        print("⏹️ ESC：这一轮没有在听也没有在跑，什么都不做（ESC 照常进前台 App）")
+    }
+
+    /// ESC 落在「正在听」那一刻：**中断录音、录音照存、什么都不发**。
+    private func cancelTurnByEscapeWhileListening() {
+        turnCancelledByEscape = true
+        if buddyDictationManager.isContinuousListening {
+            endContinuousListeningWindow(reason: "user pressed escape")
+            return
+        }
+        pendingKeyboardShortcutStartTask?.cancel()
+        pendingKeyboardShortcutStartTask = nil
+        buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
+        shortcutPressBeganAt = nil
+    }
+
+    /// ESC 落在「正在跑」那一刻：停播报、收卡片、**只收这一轮派出去的 agent**。
+    private func interruptTurnByEscapeWhileRunning() {
+        let cancelledGroup = currentTurnGroupID
+        print("⏹️ ESC 打断这一轮（group=\(cancelledGroup ?? "无")）")
+        // 播报 + 鼠标旁那张卡片 + 主循环（含 sub agent）—— 都在这一个收口里。
+        interruptActiveResponse()
+        let cancelledTasks = AgentActivityBoard.shared.cancelRunningTasks(
+            inGroup: cancelledGroup,
+            reason: "用户按 ESC 打断了这一次提交")
+        // 这一轮派出去的活如果挂在某张 **Claude Code 卡片**上，那张卡片自己的子进程也要停。
+        // ⚠️ 边界（如实记在这里）：一张 Claude Code 卡片只有**一个**子进程，所以这张卡上
+        // 更早那一轮的活会被一起停掉 —— 这是那个数据结构本身的边界，不是这里能绕开的；
+        // 主循环自己的活（sub agent / agent 循环）没有这个问题，它们就在 `currentResponseTask` 里。
+        for task in cancelledTasks where task.cardKind == .claudeCode {
+            guard let cardID = task.cardID, let sessionID = UUID(uuidString: cardID) else { continue }
+            agentSessionManager.interrupt(sessionID)
+        }
     }
 
     /// Copies the current mode shortcut bindings into the monitor's match
@@ -1839,6 +1940,8 @@ final class CompanionManager: ObservableObject {
                 return
             }
 
+            // 新的一轮，ESC 标志清零（上一轮如果没走到收尾，别把它带到这一轮上来）。
+            turnCancelledByEscape = false
             // Recorded so the release can tell a tap (send what's waiting) from a
             // hold (say something new). See `handleFinalTranscript`.
             shortcutPressBeganAt = Date()
@@ -2046,6 +2149,8 @@ final class CompanionManager: ObservableObject {
         let trimmedTranscript = NotchListeningTranscriptModel.shared.consumeEditedTranscript()
             ?? finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {
+            // ESC 取消的那一轮如果本来就没听到话，走这里 —— 标志必须清掉。
+            turnCancelledByEscape = false
             // Nothing was heard. With confirmation on, anything already waiting
             // stays waiting; with it off there is nothing to do either way.
             //
@@ -2073,6 +2178,17 @@ final class CompanionManager: ObservableObject {
         // 两处都要留下东西（同一条原则），所以这里把录音先收干净，再让 Notion 去决定
         // 这一轮发不发 —— 三个去向（发出 / 存成笔记 / 取消）都留下这同一条录音。
         AgentTurnRecorder.shared.finishTurn(transcript: trimmedTranscript)
+
+        // **ESC 打断的那一轮：录音留下来了，其余什么都不做。**（2026-09-27 用户定）
+        // 判在 Notion 那道岔**之前** —— 用户按 ESC 的意思是「这一轮到此为止」，
+        // 不该顺手往 Notion 里写一页笔记。
+        if turnCancelledByEscape {
+            turnCancelledByEscape = false
+            print("⏹️ ESC 打断：这一轮的录音已留存，什么都不发")
+            pendingConfirmationTranscript = nil
+            liveTranscriptText = ""
+            return
+        }
 
         // **「存成一条 Notion 笔记」那条路在这里分岔**（2026-09-27 从录音搬过来）。
         // 说话期间命中过关键词，这一轮就到此为止 —— 不再往下走（不截图、不问模型），
@@ -3136,6 +3252,10 @@ final class CompanionManager: ObservableObject {
                 /// 侧栏里因此折叠成一个「文件夹」（用户 2026-09-26 的要求）。
                 /// **一轮生成一次**，不是每派一次生成一次。
                 let turnGroupID = UUID().uuidString
+                // 记到实例上：ESC 打断要用它界定「这一次提交派出去的所有 agent」。
+                // 为什么是它而不是 sessionID / startedAt / cardID，见
+                // `AgentActivityBoard.cancelRunningTasks(inGroup:reason:)` 的注释。
+                currentTurnGroupID = turnGroupID
 
                 /// **这一轮的主会话标题**（归档页按主会话折叠，标题一起记下来：会话
                 /// 改名/被删之后，归档里仍然认得出是哪一次 —— 用户：「防止用户找不到

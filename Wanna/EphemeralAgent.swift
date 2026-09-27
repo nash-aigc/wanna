@@ -476,6 +476,44 @@ final class AgentActivityBoard: ObservableObject {
         FinishedTaskStore.shared.record(failedAgent)
     }
 
+    /// **ESC 那一按**：把**这一轮提交**派出去的、还在跑的任务全部收掉。
+    ///
+    /// ## 「这一次提交」是哪一个字段界定的
+    ///
+    /// 判据是 **`groupID`** —— 它是**一轮提问**生成的那个 id（`CompanionManager` 的
+    /// `turnGroupID`，每轮新建一个），派活时逐个写进 `EphemeralAgent.groupID`。
+    /// 另外三个候选都不行，各自的原因：
+    ///
+    /// · **`sessionID` 是会话**，不是提交：一条会话跨很多轮，按它停会把**之前几轮**的活
+    ///   一起杀掉 —— 而用户明确要求「仅打断刚才这一次提交的全部内容，之前提交的不算」。
+    /// · **`startedAt` 只是一个时间戳**，没有边界：两次提交之间隔多久、中间有没有别的
+    ///   事件，都没有一个可以切分的位置。
+    /// · **`cardID`/`cardKind` 会被兜底交接改写**（`handoffReason`/`handedOffAt` 那一族
+    ///   字段就是为它写的），所以它回答的是「这条任务**现在**归谁」，而不是
+    ///   「它是谁提交的」。
+    ///
+    /// 收尾语义与"失败"一致（`failed` + 一条 reason），因为对用户来说这就是「这一轮
+    /// 没做成」，而 reason 让复盘页看得出是**被他按 ESC 打断的**，不是自己崩的。
+    /// 失败的按钮本来就「不退场」（见 `scheduleRetirement`），所以这里也不用排退场。
+    @discardableResult
+    func cancelRunningTasks(inGroup groupID: String?, reason: String) -> [EphemeralAgent] {
+        guard let groupID, !groupID.isEmpty else { return [] }
+        var cancelled: [EphemeralAgent] = []
+        for index in agents.indices where agents[index].groupID == groupID
+            && agents[index].status == .running {
+            agents[index].status = .failed
+            agents[index].failureReason = reason
+            agents[index].finishedAt = Date()
+            cancelled.append(agents[index])
+            FinishedTaskStore.shared.record(agents[index])
+        }
+        guard !cancelled.isEmpty else { return [] }
+        SoundEffectPlayer.appendToDiagnosticLog(
+            "ESC 打断：这一轮派出去的 \(cancelled.count) 个 agent 已收掉"
+            + "（\(cancelled.map(\.id).joined(separator: "、"))）")
+        return cancelled
+    }
+
     func appendStep(_ text: String, to agentID: String) {
         guard let index = agents.firstIndex(where: { $0.id == agentID }) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

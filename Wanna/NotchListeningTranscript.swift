@@ -60,6 +60,17 @@ final class NotchListeningTranscriptModel: ObservableObject {
     /// 展开的转写编辑窗开着没有。点刘海左侧那颗「Listening」切换（见 `handleGlobalClick`）。
     @Published var isEditorExpanded = false
 
+    /// **那一行（连同上面对着的黑带）展开到哪一步了**，0…1。
+    ///
+    /// 用户 2026-09-27：「展开动画非常撕裂……应该把它做成一个动画……可以把它从刘海向左右
+    /// 两侧展开……现在相当于上面一块、下面一块拼在一起，动画时时间又不对」。
+    ///
+    /// 屏幕上是两块（刘海面板画的黑带 + 这块面板画的字幕行），它们没法共用一个 CA 动画，
+    /// 所以"一个动画"= **同一个时长、同一条曲线、同一个触发时刻 + 同一条几何式子**：
+    /// 宽度由 `NotchSupport.revealedListeningBandWidth` 算，两翼的宽度动画与它同行。
+    /// 由 `NotchListeningTranscriptPanelController.show()/hide()` 用 `withAnimation` 翻。
+    @Published var bandRevealProgress: CGFloat = 0
+
     /// 用户在编辑窗里改过的正文。`nil` = 没改过，编辑框跟着识别结果显示。
     @Published private(set) var editorDraftText: String?
 
@@ -125,6 +136,16 @@ struct NotchListeningTranscriptView: View {
         NotchSupport.leadingWingWidth + notchWidth + NotchSupport.trailingWingWidth
     }
 
+    /// **展开过程中**这一行的宽度：`刘海 + 两翼之和 × 进度`。
+    ///
+    /// 与刘海那条黑带的宽度动画**是同一个式子**（`NotchSupport.revealedListeningBandWidth`），
+    /// 所以从第一帧到最后一帧，两块的左右边缘都重合 —— 过程中不会露出缝。
+    /// 进度 0 时它只有刘海那么宽（黑压黑，看不见），进度 1 时就是整条。
+    private var revealedLineWidth: CGFloat {
+        NotchSupport.revealedListeningBandWidth(notchWidth: notchWidth,
+                                                revealProgress: model.bandRevealProgress)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // **刘海那一行让开。** 静止 pill 自己画着那条黑带和两翼（它有自己一块窗口），
@@ -149,7 +170,7 @@ struct NotchListeningTranscriptView: View {
                     })
             } else {
                 NotchTranscriptLine(text: model.liveText,
-                                    width: bandWidth,
+                                    width: revealedLineWidth,
                                     height: NotchSupport.notchTranscriptRowHeight,
                                     // 上边是方的（和刘海那条黑带拼在一起），只有下面两个角是圆的。
                                     isAttachedToNotch: false)
@@ -194,6 +215,9 @@ final class NotchListeningTranscriptPanelController {
     private var panels: [NSPanel] = []
     private var isPresented = false
     private var cancellables: Set<AnyCancellable> = []
+    /// 展开/收起动画的代次：排着的那次 `orderOut` 只在代次没变时执行 ——
+    /// 否则「收起动画还没走完又来了新一轮」会把新面板一起关掉。
+    private var revealGeneration = 0
     /// 展开态才装的那两个「折叠」监听（ESC / 点外面）。
     private var outsideClickMonitor: Any?
     private var escapeKeyMonitor: Any?
@@ -202,37 +226,74 @@ final class NotchListeningTranscriptPanelController {
     ///
     /// **新的一轮从这里开始**：文字与编辑状态归零（`beginRound`），所以"上一轮说的字"
     /// 不会在新一轮的第一句到达之前先在屏幕上闪一下。
+    ///
+    /// 展开是**一次从刘海中心向左右两侧的动画**，与刘海那条黑带的宽度动画同一条曲线、
+    /// 同一个时长、同一个式子（见 `NotchSupport.listeningBandRevealDuration` /
+    /// `revealedListeningBandWidth`）。做法：面板先以「宽度 = 刘海」那一帧出现，**下一拍**
+    /// 再把进度翻成 1 —— 同一拍里建面板又翻进度，SwiftUI 画出来的第一帧就已经是展开完的
+    /// 样子（中间那一段动画根本不存在）。
     func show() {
-        guard !isPresented else { return }
+        revealGeneration += 1
+        let shouldRevealNow = isPresented || !panels.isEmpty
         isPresented = true
-        NotchListeningTranscriptModel.shared.beginRound()
 
-        for screen in NSScreen.screens {
-            guard let panel = makePanel(for: screen) else { continue }
-            panel.orderFrontRegardless()
-            panels.append(panel)
+        if panels.isEmpty {
+            NotchListeningTranscriptModel.shared.beginRound()
+            NotchListeningTranscriptModel.shared.bandRevealProgress = 0
+
+            for screen in NSScreen.screens {
+                guard let panel = makePanel(for: screen) else { continue }
+                panel.orderFrontRegardless()
+                panels.append(panel)
+            }
+            // 收起态：点击穿透（那一行的点击走全局监听里的屏幕矩形）。
+            for panel in panels { panel.ignoresMouseEvents = true }
+            startObservingEditorExpansion()
+            applyEditorExpansionState()
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isPresented else { return }
+                withAnimation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration)) {
+                    NotchListeningTranscriptModel.shared.bandRevealProgress = 1
+                }
+            }
+            return
         }
-        // 收起态：点击穿透（那一行的点击走全局监听里的屏幕矩形）。
-        for panel in panels { panel.ignoresMouseEvents = true }
-        startObservingEditorExpansion()
-        applyEditorExpansionState()
+
+        if shouldRevealNow {
+            // 收起动画还没走完（面板还在）—— 直接把进度推回 1，同一拍里的 `orderOut` 已被
+            // 代次挡掉。
+            withAnimation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration)) {
+                NotchListeningTranscriptModel.shared.bandRevealProgress = 1
+            }
+        }
     }
 
     /// 那一行该走了 —— 用户说完、相位离开 Listening，或者刘海整个被别的 App 的全屏挡住。
     ///
-    /// **直接 `orderOut`，没有淡出**：这条字幕不盖任何东西（上面的黑带是 pill 自己画的），
-    /// 所以没有录音带那种「盖着的那块从面板画的切回 pill 画的」的硬切换要藏。
+    /// **收也是一次动画**（宽度缩回刘海中心），与两翼缩回同一条曲线；动画走完才 `orderOut`。
+    /// 这条字幕不盖任何东西（上面的黑带是 pill 自己画的），所以过程中不会露出桌面 ——
+    /// 但**收的时机必须和两翼一致**，否则用户看到的还是「上面先没了、下面还留着」。
     func hide() {
         guard isPresented else { return }
         isPresented = false
         removeDismissMonitors()
-        for panel in panels {
-            panel.orderOut(nil)
-        }
-        panels.removeAll()
         // 编辑窗也跟着收起 —— 这一句已经交出去了，留一个还在邀请用户改字的框
         // 比收起来更糟（那个改动不会再有任何去处）。
         NotchListeningTranscriptModel.shared.isEditorExpanded = false
+
+        revealGeneration += 1
+        let generation = revealGeneration
+        withAnimation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration)) {
+            NotchListeningTranscriptModel.shared.bandRevealProgress = 0
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + NotchSupport.listeningBandRevealDuration + 0.05
+        ) { [weak self] in
+            guard let self, self.revealGeneration == generation, !self.isPresented else { return }
+            for panel in self.panels { panel.orderOut(nil) }
+            self.panels.removeAll()
+        }
     }
 
     /// 屏幕参数变了（插拔显示器、分辨率）：面板的矩形要按新屏幕重算。

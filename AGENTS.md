@@ -508,12 +508,29 @@ The recording mute is now the between-replies half, and the AEC covers the windo
   规则就是这个：「如果用户说完了，然后进入 thinking，那么这个录音的内容就消失掉了。什么时候用户说话，
   下面这个内容才会显示」，补的一句是「Listening 时要显示，Speaking 时不显示」（回答本来就会显示在
   鼠标右下角那张卡片上）。**它不碰状态机** —— 打断、说完等待、自动发送、相位全都还是原来那套。
-- **文本从两条实时转写回调喂进来**（按住说话的 `updateDraftText` + 连续追问的 `onTranscriptUpdate`），
-  而且**刻意放在「说话时实时显示识别文字」那个开关的 guard 之前** —— 那个开掌管的是鼠标旁那颗气泡。
+- **文本从两条实时转写回调喂进来**（按住说话那条 **2026-09-27 才真正接上** + 连续追问的
+  `onTranscriptUpdate`），而且**刻意放在「说话时实时显示识别文字」那个开关的 guard 之前** ——
+  那个开掌管的是鼠标旁那颗气泡。
+  ⚠️ **按住说话那条原来接的是 `updateDraftText`，而它只在收尾/取消时被调用** —— 于是这行字幕、
+  Notion 的实时关键词检测、「说到屏幕立即截屏」、气泡的实时文字**四件事在真机上从来没有活过**，
+  而验收用的"注入一句转写"注入点在**收尾**那条路上，正好绕开。现在是 provider 的
+  `onTranscriptUpdate`（真·实时）里多喂一次 `publishInterimDraftText` —— **只喂回调，
+  不碰录音状态机、不碰 VAD、不碰打断判定**（教训见 `开发经验/10-踩过的坑.md` D24）。
+- **展开是一次动画，不是两块各动各的**（2026-09-27 用户：「展开动画非常撕裂……应该把它做成一个
+  动画……从刘海向左右两侧展开」）：屏幕上是两块（刘海面板画的黑带 + 这块面板画的字幕行），
+  分属两个窗口、没法共用一个 CA 动画 —— 所以"一个动画"= **同一个时长、同一条曲线、同一条几何
+  式子**：`NotchSupport.listeningBandRevealDuration`（0.38，两翼的 `.animation` 与字幕的
+  `withAnimation` 都读它）+ `NotchSupport.revealedListeningBandWidth(notchWidth:revealProgress:)`
+  = `刘海 + (两翼之和) × 进度`（两翼的宽度动画是同一个线性式子，所以边缘每一帧都重合）。
+  进度由 `NotchListeningTranscriptPanelController.show()/hide()` 用 `withAnimation` 翻。
+  录屏逐帧量到（26fps）：时长 ≈350ms、两块收敛到**同一对边缘 88…807**、**没有任何一帧只有一块**；
+  残差是过程中带子每侧宽 ~25pt —— 两个 `withAnimation` 的起跑差一个主队列轮次。
 - **点刘海左侧那颗「Listening」**（`handleGlobalClick` 里新增的一个分支）走的是**录音两翼那一份矩形**
   （`NotchSupport.recordingWingFrames`）——「画在哪」由视图按 `NotchSupport.leadingWingWidth` 画、
   「点在哪」由控制器用同一个矩形判。判在**录音那条之后**（两者占同一块屏幕，谁真的在跑算谁的）、
   **`panelModel.isExpanded` 之前**（那一整段结尾有一句无条件的 `return`，录音两翼当年就是被它挡掉的）。
+- **ESC 打断**（2026-09-27 用户定，见下面《ESC = 打断》一节）：转写编辑窗开着时 ESC 仍然是
+  「收起编辑窗」（既有语义优先）；否则这一轮在听/在跑时 ESC 才是打断。
 - **编辑窗里改过的字会顶替这一句发出去的话**：`handleFinalTranscript` / `submitFollowUpQuestion`
   最前面取一次 `consumeEditedTranscript()`（取走即清、一轮一次；没改过返回 `nil`，照识别结果走）。
   这是它与录音那条唯一的语义差别 —— 录音那条改的是"存下来的转写"，而主 Agent 这条没有"存下来"，
@@ -534,6 +551,34 @@ The recording mute is now the between-replies half, and the AEC covers the windo
   的发送那一步（只验到返回值，发送要真调一次模型并出声）；按住 ⌃⌥ 边说话边点的真实时序。
 - **两处照搬过来的取舍**：展开时那 718×592 收鼠标事件（编辑框要用，与录音带同一条）；那一行会压在
   展开面板页头那一条（y 32…64）上，也只在说话那几秒。
+
+### ESC = 打断（2026-09-27 用户定）
+
+用户的原话：「1. 第一次按下：开始触发……2. 第二次按下：保持现有逻辑不变。3. 按下 ESC 键：打断……
+用户在**录音时**按下 ESC，直接中断录音，但**录音需保存到本地，与正常录音一致**……**执行过程中**……
+点击 ESC 为**真打断**，具体停止范围包括：**语音播报、卡片下角的卡片，以及当前任务（即刚才提交的
+任务）所涉及的所有 agent**。注意：**仅打断刚才这一次提交的全部内容，之前提交的不算。**」
+
+**接在已有的那条 CGEvent tap 上**（`GlobalPushToTalkShortcutMonitor.escapeKeyPressedPublisher`），
+不新建监听：选它的理由和说话快捷键一样 —— **不要求 Wanna 自己是 key window**（用户多半正在别的
+App 里干活，而那正是"打断"要发生的场合），而且这个 tap **只读不吞**，所以不属于这一轮的那一按
+原样进前台 App。长按重复用 `keyboardEventAutorepeat` 挡掉。
+
+**判不判，由这一轮在不在跑决定**（`CompanionManager.handleEscapeKeyPressed`）：
+**编辑窗开着 → 收起编辑窗**（既有语义优先）｜**正在听 → 中断录音，录音照存、什么都不发**
+（`turnCancelledByEscape` 只在 `handleFinalTranscript` 里判，且判在 Notion 那道岔**之前**）｜
+**正在跑 → `interruptActiveResponse()`（播报 + 卡片 + 主循环含 sub agent）+ 只收这一轮派出去的
+agent**｜其余什么都做。
+
+**「这一次提交」= `groupID`**（`turnGroupID`，一轮生成一次，派活时写进 `EphemeralAgent.groupID`）。
+另外三个候选都被排除，理由写在 `AgentActivityBoard.cancelRunningTasks(inGroup:reason:)` 的注释里：
+`sessionID` 是会话（跨多轮，按它停会杀掉之前几轮的活）、`startedAt` 没有边界、`cardID` 会被兜底
+交接**改写**。收尾用 `failed` + 一条 reason（对用户就是"这一轮没做成"，reason 让复盘看得出是被
+ESC 打断的）。
+
+⚠️ **一处结构边界**：一张 Claude Code 卡片只有**一个**子进程，所以"只停这一轮"在那张卡上做不到 ——
+`agentSessionManager.interrupt(sessionID)` 会把这张卡上更早那一轮的活一起停掉。这是那个数据结构
+本身的边界，已在注释与 `开发经验/17` 里写明。
 
 ### 主 Agent 上的「存成一条 Notion 笔记」（2026-09-27 从录音搬过来）
 
@@ -697,7 +742,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `ClaudeAgentProcess.swift` | ~480 | The one-to-one bridge to a claude CLI subprocess — the project's first `Foundation.Process` client, `nonisolated` with all mutable state confined to a serial `parsingQueue`. Builds the launch arguments (`--session-id` vs `--resume` decided by `hasLaunchedOnce`), writes user turns and the interrupt `control_request` to stdin, parses stdout frame-by-frame into `AgentProcessEvent`s (stream deltas, tool-activity summaries, `result`-frame turn-finished with `total_cost_usd`), keeps a 12-line stderr tail for post-mortems, and treats any non-`success` result subtype as a recorded failed/interrupted turn rather than a silent one. |
 | `AgentSessionManager.swift` | ~503 | `@MainActor` orchestration: the roster (`@Published`, reloaded on `.wannaAgentSessionsDidChange`), the sidebar's section selection, per-agent streaming text, the turn pipeline (gate checks → record → spawn-or-reuse → write, with one `--resume` relaunch retry on a failed stdin write), the concurrency cap, the master-switch refusals, interrupt, and process-event handling that turns CLI frames into store writes and sounds. Also owns the voice-dispatch entry points the model's `[AGENT_SPAWN:]`/`[AGENT_SEND:]` tags call (`spawnAndSendFirstTurn` — folder default `~/Desktop/WannaAgents/<名字>`, name-collision reuses the existing agent — and `dispatchFollowUp`) and the completion-announcement machinery (`voiceIdleProvider`/`speakAnnouncement` closures injected by `CompanionManager`, serialized by `isAnnouncingCompletion`). Also owns `SidebarSection`, the switcher's vocabulary shared by the sidebar and the sheet root. |
 | `AgentHUDController.swift` | ~580 | The desktop HUD — one small INTERACTIVE `NSPanel` per screen in the top-right corner hosting a trailing-aligned chip stack: an accordion handle + one chip per non-idle agent not dismissed this run (34×34 gradient tile from the agent's id-hashed palette + status dot; hover expands to a strip with name, status word, `lastPreview` and a close ×). Panels clone `CompanionResponseOverlay`'s parameters except `ignoresMouseEvents = false`; the `NSHostingView` is installed once and refreshes update a shared `AgentHUDStackModel` in place (a rebuild would drop hover state, and a running agent mutates the store every few seconds); rows are a fixed 56 pt tall so hover never changes the layout; the controller re-frames panels off `stackModel.objectWillChange` when the handle collapses the stack. Nothing shows at launch until a turn leaves `.idle`; the vision model never sees the HUD (screenshot capture filters the app's own bundle id). See 开发经验/14-Agent子系统.md 八. |
-| `EphemeralAgent.swift` | ~240 | **一个临时 agent = 用户的一次任务**（不是一段长期对话），加它身后的看板 `AgentActivityBoard`。四种状态：`running` / `doneVerified`（**没有任何代码产生它** —— 见 Architecture 里那两条已知缺口）/ `doneUnverified` / `failed`；记的是给人看的四样东西（标题、原话、步骤、工具调用，后者在面板里默认折叠，因为用户说过「工具调用的部分一定要折叠起来，因为它会占用很多的空间」）。看板负责 `beginTask` / `appendStep` / `appendToolCall` / `finishTask`、卡片的 2 秒自动收起、**做完的按钮自己退场**（核验过 4 秒、未核验 12 秒，代次计数，面板开着的那一个不拿 —— 与 `pruneExpired` 同一条规矩），以及 `manualPanelID`（点按钮开的那块面板，**收/开都只改这一个 id**，不让按钮和看板各持一份真相）。 |
+| `EphemeralAgent.swift` | ~278 | **一个临时 agent = 用户的一次任务**（不是一段长期对话），加它身后的看板 `AgentActivityBoard`。四种状态：`running` / `doneVerified`（**没有任何代码产生它** —— 见 Architecture 里那两条已知缺口）/ `doneUnverified` / `failed`；记的是给人看的四样东西（标题、原话、步骤、工具调用，后者在面板里默认折叠，因为用户说过「工具调用的部分一定要折叠起来，因为它会占用很多的空间」）。看板负责 `beginTask` / `appendStep` / `appendToolCall` / `finishTask`、卡片的 2 秒自动收起、**做完的按钮自己退场**（核验过 4 秒、未核验 12 秒，代次计数，面板开着的那一个不拿 —— 与 `pruneExpired` 同一条规矩），以及 `manualPanelID`（点按钮开的那块面板，**收/开都只改这一个 id**，不让按钮和看板各持一份真相）。**2026-09-27 多了 `cancelRunningTasks(inGroup:reason:)`** —— ESC 打断用：把**这一轮提交**（同一个 `groupID`）里还在跑的任务收成 `failed` + 一条 reason；为什么用 `groupID` 而不是 `sessionID`/`startedAt`/`cardID`，那个函数的注释里逐条写了（会话跨多轮、时间戳没有边界、cardID 会被兜底交接改写）。 |
 | `AgentStripView.swift` | ~200 | 屏幕**右上角、菜单栏下面一行**那一排按钮 + 按钮下面叠着的卡片（**同时最多两张**）。它铺在**自己那块面板**里（`AgentStripPanelController`），**右对齐、顶对齐**铺满 —— 所以画的位置就是面板的位置，和命中矩形（`NotchSupport.agentButtonFrame` / `agentCardFrame`）只有一处算术。按钮**高度 = 菜单栏高度**、形状**上直下圆**（复用刘海那条带自己的 `PillShape`）、宽 40 让 id 一行放得下（30 时它会折成两行、看着像乱码）；**从右到左**排，最新的在最右边。**不接收点击**（面板 `ignoresMouseEvents`，点击由 `NotchWindowController` 的全局监听接走）；呼吸只给 `running` 和 `failed`。 |
 | `AgentStripPanelController.swift` | ~110 | 那一排住的**窗口**：透明、无边框、非激活、`ignoresMouseEvents`（点击穿透，所以菜单栏和别人的窗口照常可点）、`hidesOnDeactivate = false`（去别的 App 干活时它必须还在）、层级 `NotchSupport.agentStripWindowLevel`（`.mainMenu` —— 在普通窗口之上、在我们自己的面板之下）。**窗口建好一次、之后只挪 frame**（透明窗口改尺寸会让新露出来的区域空一帧透出桌面，见录音那条带的「背景穿透」）。`install()` 幂等，由 `NotchWindowController.rebuildScreenPresences` 调用（启动 / 权限到位 / 屏幕参数变化都从这里过），`teardown()` 在关掉「刘海屏入口」和退出时撤掉 —— **因为它的点击是那个控制器的监听接的，两者必须同生同死**。 |
 | `AgentPanelController.swift` | ~300 | 点那一排按钮之后弹出的**只读**详情面板（320pt `NSPanel`）：标题 + 状态 + 复制 id、原话、逐步的「做了什么」、默认折叠的工具调用。**不是控制台**（用户要求「不可以输入」），也不并进 Agent 页。位置由 `NotchSupport.agentDetailPanelTopRightAnchor` 给 —— 挂在那一排按钮的**右下角**（那一排 2026-09-26 搬到屏幕右上角，面板跟着走）。它**跟着看板走**：`manualPanelID` 决定开关，`agents` 一变就按同一个 id 重建 —— 少了后一条，「点开一个正在跑的任务」会永远停在点开那一刻的样子（用户报的「任务完成了，但按钮跟任务状态没有同步」）。 |
@@ -723,7 +768,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `RecordingLibrary.swift` | ~188 | 录音元数据与历史索引。每场录音自己带一份 `.json`（所以一整场可以直接拖走，不需要外部索引也对得上），`Recordings.json` 只是缓存 —— `rescanFromDisk` 能只靠目录重建历史。**只删索引不删文件**：删录音是删除文件本身的事，由界面上带确认的操作负责。 |
 | `NotchRecordingOverlay.swift` | ~1540 | 刘海上的录音 UI：左右两翼 + 刘海下方那一行滚动转录。**是一块独立面板，不是刘海窗口的子视图** —— 刘海窗口的高度只有刘海加一点余量，而转写那一行挂在刘海**下面**，画进去根本看不见。**窗口尺寸建好一次、永不改变**：它是透明窗口、黑色靠 SwiftUI 画，而几何在 CA 提交**之前**就改了，中间那一瞬新露出来的区域是空的、桌面会透出来（用户报的「背景穿透」）。收起时多出来的透明区靠 `ignoresMouseEvents` 让开，两翼的点击走全局监听（刘海 pill 用的就是这套）。`SmoothRevealedTranscriptText` 的位置是 `可用宽度 − 文字宽度`，所以**文字变短就会向右跳** —— 这是它反复出问题的唯一原因，改动的每一次都要先问「这个改动会不会让宽度变小」。窗口上限必须带**迟滞**（160↔220 先长后裁），否则上限本身就把窗口变回了定长窗口、宽度恒定、动画再也不被调度。 **摄像头小窗不在这块面板里 —— 它有自己的全屏面板**（2026-09-26）。用户要求把小窗挪到屏幕左侧中间／底部中央／右侧中间，理由是「当用户的纸上文字很小、需要把纸拿得很近时，由于小窗位于上方附近，会导致用户看不到小窗里的内容」—— 而这三个位置**全在带面板之外**，带面板的帧又不能改（见 `panelFrame` 那段「背景穿透」）。所以小窗搬进 `CameraStripPanelView` 那块**全屏、永远 `ignoresMouseEvents = true`、永不移动也不改尺寸**的面板（层级 `NotchSupport.cameraStripWindowLevel` = statusWindow+1，**不是** `OverlayWindow` 生来的 `.screenSaver` —— 那会盖住右键菜单，而左中/右中正好在菜单弹出区），位置变成纯对齐与边距，窗口几何一次都不碰。四个位置 `CameraStripPlacement`：`belowNotch`（与旧矩形**逐点一致**，离屏探针断言过）／`left`／`bottom`／`right`，对齐分别是 topLeading（水平靠 `notchCenteredLeadingInset` 对准**刘海中心**，不是面板中心——面板是全屏的，两者今天相等是巧合）／leading／bottom／trailing；用对齐而不是绝对坐标是因为小窗高度随画面宽高比变（`previewHeight`），AppKit 侧根本算不出来。标题栏中间四颗按钮：还原／左／下／右，**当前所在位置那颗标绿**。**命中矩形由视图用 `GeometryReader` + `PreferenceKey` 发布上来，不在 AppKit 里镜像一份**（`NotchSupport.trailingWingOriginX` 那次画的和点的差 71pt 的教训），控制器只做 `NotchSupport.appKitGlobalRect` 那个 y 翻转换算——**那个符号是整个改动里风险最高的一处，写反是静默的**，所以它住在 `NotchSupport` 里能被探针直接测。小窗面板**单独一个 `cameraStripPanels` 数组，绝不能进 `panels`**：`reframePanels()` 会翻转那里的 `ignoresMouseEvents`，而 `installDismissMonitors()` 的「点外面」判定是全屏成员会让每一次点击都算「里面」。**⌘Enter 是切换**（刘海下 ⇄ 底部），按 `isCameraCapturing` 装卸监听所以摄像头没开时它在系统里根本不存在，另加 `isARepeat` 去重——这个动作不是幂等的，ESC 那两个是。⚠️ 它和 ESC 一样只读不吞，所以也会传给前台 App（Slack 里就是「发送」）；本仓库没有任何能拦截全局按键的机制，别为此去接一个会吞的 tap。顺带钉死一条不变量：`NotchRecordingBandView` 的根加了 `.frame(maxHeight: .infinity, alignment: .top)`——宿主视图是铺满整块面板的，而内容只有 64pt 高，不写这一行带子的位置就由 SwiftUI 默认对齐说了算，而 `collapsedWingHitRects` 等三处矩形都硬假定它贴着顶边。**2026-09-27：那条带子只剩两态（在录 / 展开看转写）—— 「Notion 笔记」那三颗按钮的画连同「保存中」第三态一起删了**（按钮搬去 `NotionNoteButtonRow`，画在刘海面板里）。**同一天稍晚：展开的转写编辑窗抽成了共用视图**（`NotchExpandedTranscriptPanel`，住在 `NotchTranscriptMarquee.swift`）—— 主 Agent 说话时的 `Listening` 要一模一样的那一个窗口，这边只剩「哪几个字段接到哪几个参数上」；`ribbonHeight` / `expandedPanelBodyHeight` 也改成`NotchSupport` 的转发，`EmbossMaterial` 从 `private` 放开（两处共用同一份材质）。实测抽完之后录音这条编辑窗的 `AXTextArea` 是 `(523,90,682×474)`，与新面板逐点相同。 |
 | `NotchTranscriptMarquee.swift` | ~250 | **刘海下面那一行滚动字幕**，两个入口共用（2026-09-27）。`SmoothRevealedTranscriptText`（平滑左移的那一个：位移 = `可用宽度 − 文字宽度`，所以文字一变短就往右跳；显示源只增不减、窗口上限 160 带 60 字迟滞、窗口必须能长 —— 这三条是十次失败换来的，注释里全写着）与 `NotchTranscriptLine`（那一行的外壳：黑底、两端 13% 渐隐、上直下圆）。**同一天又把展开的转写编辑窗也抽到这里**（`NotchExpandedTranscriptPanel`）：录音带与主 Agent 的 `Listening` 用的是**同一份**排版、材质、圆角与三个快捷键，用户要的「完全照搬」由同一份实现保证 —— 实测两处的 `AXTextArea` 都是 `(523, 90, 682×474)`，逐点相同。 |
-| `NotchListeningTranscript.swift` | ~330 | **主 Agent 说话时刘海下面那一行字幕，和点开之后的转写编辑窗**（2026-09-27，接线图第 2、3 条）。三块：`NotchListeningTranscriptModel`（这一轮的文本 + 编辑草稿，单例）、`NotchListeningTranscriptView`（收起=那一行 `NotchTranscriptLine`，展开=`NotchExpandedTranscriptPanel`）、`NotchListeningTranscriptPanelController`（它那块透明、点击穿透、永不改尺寸的面板，层级 `.popUpMenu` —— 在刘海面板之上，所以展开面板时那一行照样看得见）。**只由相位驱动**：`== .listening` 就出现、其余收起（用户：「如果用户说完了，然后进入 thinking，那么这个录音的内容就消失掉了」），**不碰状态机**。`CompanionManager` 在两条实时转写回调里喂它（按住说话 + 连续追问，且**刻意不看**「说话时实时显示识别文字」那个开关）；刘海左侧那颗「Listening」的点击归 `handleGlobalClick`，读的是录音两翼那一份矩形（`recordingWingFrames`）。**编辑窗里改过的字会顶替这一句发出去的话**（`consumeEditedTranscript()`，取走即清、一轮一次）—— 这是它与录音那条唯一的语义差别，也是「可以让用户编辑录音里面的内容」唯一有意义的落点。 |
+| `NotchListeningTranscript.swift` | ~390 | **主 Agent 说话时刘海下面那一行字幕，和点开之后的转写编辑窗**（2026-09-27，接线图第 2、3 条）。三块：`NotchListeningTranscriptModel`（这一轮的文本 + 编辑草稿，单例）、`NotchListeningTranscriptView`（收起=那一行 `NotchTranscriptLine`，展开=`NotchExpandedTranscriptPanel`）、`NotchListeningTranscriptPanelController`（它那块透明、点击穿透、永不改尺寸的面板，层级 `.popUpMenu` —— 在刘海面板之上，所以展开面板时那一行照样看得见）。**只由相位驱动**：`== .listening` 就出现、其余收起（用户：「如果用户说完了，然后进入 thinking，那么这个录音的内容就消失掉了」），**不碰状态机**。`CompanionManager` 在两条实时转写回调里喂它（按住说话 + 连续追问，且**刻意不看**「说话时实时显示识别文字」那个开关）；刘海左侧那颗「Listening」的点击归 `handleGlobalClick`，读的是录音两翼那一份矩形（`recordingWingFrames`）。**编辑窗里改过的字会顶替这一句发出去的话**（`consumeEditedTranscript()`，取走即清、一轮一次）—— 这是它与录音那条唯一的语义差别，也是「可以让用户编辑录音里面的内容」唯一有意义的落点。 |
 | `RecordingSettingsView.swift` | ~597 | 设置页「录音」。历史在最顶、其余参数在下；每条历史两行（标题 + 复制/播放/在访达中显示/展开，第二行预览或十行全文）。「自定义风格」那一节含总开关、屏幕截图开关、模型 URL/Key/模型 ID，以及**从「模型」页导入**的选择器 —— 模型 ID 跟着服务商一起换，因为一个地址配别家的模型名必然 404。 **2026-09-27 起这一页的历史有两个来源**：长录音（`LongFormRecorderController`）与主 Agent 的每一轮（`AgentTurnRecorder`）—— 两者落的是同一套 `<id>.wav` / `.txt` / `.json`，所以这一页一行都不用改。同一处加了一层 `RecordingLibraryChangeObserver`（一个只订阅 `RecordingLibraryStore.didChangeNotification` 的小 `View`）：主 Agent 每问一句就多一条，而这一页的 `@State` 是 ViewModel 的，中间缺一层的话列表要等下一次别的原因重绘才更新；做成独立 `View` 而不是 `@State` 是因为 **extension 里不能声明存储属性**。 |
 | `RecordingPolishStyle.swift` | ~280 | 「自定义风格」的数据与存储。多条风格各自一个开关 + 可改名的名称 + 提示词，出厂那条是用户给的 3556 字「文本后处理引擎」提示词，**逐字照抄**（那是他写好的规则，改一个字都可能改变行为），**可以关但不给删** —— 恢复它意味着让用户重新贴一遍三千多字。 |
 | `RecordingPolishClient.swift` | ~206 | 转写结束后的模型调用。**必须发 `thinking: {"type": "disabled"}`** —— `deepseek-flash` 是推理模型，会在给出答案前先吐几百上千个推理 token，而这个仓库自己量过那笔账（视觉那条路上 4.5 秒的请求里 3.4 秒是思考）。润色是改写任务，那段思考用户一个字都看不到，全是白等；实测一次 23 秒、一次 8 秒，关掉之后是 1 秒量级。地址留空时回落到「模型」页里 🧠 那个服务商。**失败就用原文** —— 用户要的是「整理一下再给我」，整理失败时他最需要的仍然是他说过的话。 |

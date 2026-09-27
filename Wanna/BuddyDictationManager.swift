@@ -1796,7 +1796,19 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             keyterms: buildTranscriptionKeyterms(),
             onTranscriptUpdate: { [weak self] transcriptText in
                 Task { @MainActor in
-                    self?.latestRecognizedText = transcriptText
+                    guard let self else { return }
+                    self.latestRecognizedText = transcriptText
+                    // **每一句实时转写都要送到调用方。**（2026-09-27 修，用户报的
+                    // 「它能识别，但是没有在刘海下显示实时的字幕」）
+                    //
+                    // 这里的 `updateDraftText` 原来**只在收尾时**被调用（取消时一次、
+                    // 确认模式结束时一次）—— 于是挂在它上面的四件事在真机上**从来没有活过**：
+                    // 刘海下面那行实时字幕、Notion 的实时关键词检测、「说到屏幕立即截屏」、
+                    // 鼠标旁那颗气泡的实时文字。它们都是今天（b87a424 / eba781d）新接上来的，
+                    // 而验收用的是"注入一句转写"，注入点在收尾那条路上 —— 正好绕开了这个洞。
+                    //
+                    // 它只喂回调：不碰录音状态机、不碰 VAD、不碰打断判定。
+                    self.publishInterimDraftText(transcriptText)
                 }
             },
             onFinalTranscriptReady: { [weak self] transcriptText in
@@ -1946,8 +1958,18 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         currentDraftCallbacks?.submitDraftText(finalDraftText)
     }
 
-    private func composeDraftText(withTranscribedText transcribedText: String) -> String {
-        let trimmedTranscriptText = transcribedText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// **把一句实时转写交给调用方**（`updateDraftText` 那条回调）。
+    ///
+    /// 2026-09-27 新增：这条路以前**只在收尾时**被调用（取消一次、确认模式结束一次），
+    /// 于是挂在它上面的四件事在真机上从来没有活过 —— 见 `onTranscriptUpdate` 里的注释。
+    ///
+    /// 它只喂回调：不碰录音状态机、不碰 VAD、不碰打断判定。
+    private func publishInterimDraftText(_ transcriptText: String) {
+        guard let draftCallbacks else { return }
+        draftCallbacks.updateDraftText(composeDraftText(withTranscribedText: transcriptText))
+    }
+
+    private func composeDraftText(withTranscribedText transcribedText: String) -> String {        let trimmedTranscriptText = transcribedText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedTranscriptText.isEmpty else {
             return draftTextBeforeCurrentDictation

@@ -655,3 +655,85 @@ Speaking 时 **88→123**（那 35px 就是 14pt 的圆角），字幕条上边 
 - 测试产生的录音都在 **worktree 自己的** `Wanna录音/`（`WorkspaceDirectory` 从 `#filePath`
   推出根目录，所以 worktree 的构建写的是 worktree 的目录），**用户那份目录一个字节都没动**；
   测完全部删除。用户的 `/Applications/Wanna.app` 按任务要求**没有同步**（仍是旧代码）。
+
+---
+
+## 第二轮回归修复 + ESC 打断（2026-09-27 傍晚）
+
+用户的第二批反馈三件事 + 一条新功能，全部在真机上量过、改过、复验过。
+
+### 一、实时字幕（D24）—— 四件事挂在了一个只在收尾时被调用的回调上
+
+`updateDraftText` **不是**「每句实时转写都给你」的那个回调：它只在收尾/取消时被调用。
+刘海下面那行字幕、Notion 的实时关键词检测、「说到屏幕立即截屏」、鼠标旁那颗气泡的实时文字
+**四件事全挂在它上面**，于是真机上从来没有活过。而验收用的是"注入一句转写"，注入点在**收尾**
+那条路上 —— 正好绕开。修法是在 provider 的 `onTranscriptUpdate`（真·实时回调）里多喂一次，
+**只喂回调，不碰任何状态机**。
+
+**真识别验的**（不是注入）：把一段真语音的 16k PCM 按 tap 的节奏喂进**同一个豆包 provider**
+（`WANNA_PROBE_AUDIO_FILE`），服务端真回字 → 刘海下面出现
+「现在几点？帮我看一下屏幕右上角有什么内容」，同一批日志里 `📸 Companion: heard 屏幕 — capturing
+the screen immediately` 也出现了（那一条同样是被这个洞埋掉的）。**探针验完已删。**
+
+### 二、展开动画（D25）—— 两块合成了一个动画
+
+时长/曲线/几何式子三样都收敛到 `NotchSupport`（`listeningBandRevealDuration` +
+`revealedListeningBandWidth`），字幕从刘海中心向两侧展开。录屏逐帧量到：**时长 ≈350ms**、
+两块**收敛到同一对边缘 88…807**、**没有任何一帧只有一块**。
+残差（如实记）：过程中带子每侧比字幕宽约 25pt —— 两个 `withAnimation` 的起跑差一个主队列轮次。
+
+### 三、ESC 打断（用户新定的）
+
+用户的原话：「1. 第一次按下：开始触发，截屏识别用户语音并显示。2. 第二次按下：保持现有逻辑不变。
+3. 按下 ESC 键：打断……用户在录音时按下 ESC，直接中断录音，但**录音需保存到本地，与正常录音一致**……
+**执行过程中**，用户可通过两种方式打断：一是直接语音打断（现有方式），二是通过主 Agent 快捷键……
+点击 ESC 为**真打断，会停止整个执行过程**，具体停止范围包括：**语音播报、卡片下角的卡片，
+以及当前任务（即刚才提交的任务）所涉及的所有 agent**。注意：**仅打断刚才这一次提交的全部内容，
+之前提交的不算。**」
+
+**怎么接的**：ESC 走**已有的那条 CGEvent tap**（`GlobalPushToTalkShortcutMonitor`），
+新增一个 `escapeKeyPressedPublisher`。选它而不是 NSEvent 全局监听，理由与说话快捷键一样：
+**它不要求 Wanna 自己是 key window** —— 用户十有八九正在别的 App 里干活，而那正是「打断」要发生的
+场合。tap **只读不吞**，所以不属于这一轮的那一按原样进前台 App（用户按 ESC 关他的对话框照常）。
+长按重复用 `keyboardEventAutorepeat` 挡掉。
+
+**判不判，由这一轮在不在跑决定**（`CompanionManager.handleEscapeKeyPressed`）：
+
+| 时刻 | 这一按做什么 |
+|---|---|
+| **转写编辑窗开着** | 收起编辑窗（**既有语义，优先**）—— 编辑窗本来就开在 Listening 里，用户按 ESC 最可能的意思是"收起来" |
+| **正在听**（`isRecordingFromKeyboardShortcut` / `isPreparingToRecord` / 连续追问窗口） | 中断录音：**录音照存**（走 `finishTurn`，不是 `discardTurn`）、**这一轮什么都不发**（在 Notion 那道岔**之前**判，所以也不会顺手写一页笔记） |
+| **正在跑**（`processing` / `responding` / `currentResponseTask != nil` / 正在播报） | `interruptActiveResponse()`（播报 + 卡片 + 主循环含 sub agent 一个收口）+ **只收这一轮派出去的 agent** |
+| 其余 | 什么都不做（日志留一行），ESC 原样进前台 App |
+
+**「这一次提交」用哪个字段界定 → `groupID`**（`turnGroupID`，一轮生成一次，派活时逐个写进
+`EphemeralAgent.groupID`）。另外三个候选都不行，理由写在
+`AgentActivityBoard.cancelRunningTasks(inGroup:reason:)` 的注释里：`sessionID` 是**会话**（跨很多轮，
+按它停会杀掉之前几轮的活，而用户明确说"之前提交的不算"）、`startedAt` 只是时间戳没有边界、
+`cardID` 会被**兜底交接改写**（所以它答的是"现在归谁"，不是"谁提交的"）。
+
+**实测（真按键盘）**：
+
+- **Listening 中按 ESC**（带探针音频的那次构建，真识别）：`主 Agent 这一轮已存成一条录音
+  2026-09-27-094253-1DC0 · 2.7 秒 · 10 字` + `⏹️ ESC 打断：这一轮的录音已留存，什么都不发`
+  —— 录音留了、一个字没发 ✓。干净构建（无语音）走的是空转写那条出口：`这一轮没有听到话，不留录音` ✓。
+- **执行中按 ESC**：`⏹️ ESC 打断这一轮（group=DC6264C3…）` →
+  `🔊 Streaming speech: stopPlayback() while a segment was playing — abandoning the rest of the reply`
+  → 相位回 idle（卡片收掉）✓。
+- **什么都不在跑时按 ESC**：`⏹️ ESC：这一轮没有在听也没有在跑，什么都不做` ✓。
+- **"只停这一轮"的边界**（确定性探针，已在真 App 里跑）：造两轮派活（groupA×2、groupB×1），
+  只取消 groupA → `被取消 2 个（应 2）：cpah、y9ze`，`A1=failed/group=A A2=failed/group=A
+  B1=running/group=B` —— **上一轮的活原样不动** ✓。探针验完已删。
+
+**没验到的（如实写）**：
+1. **真实用户语音**（这台机器的音箱进不了麦克风）—— 上面那些"真识别"是把一段**真语音的 PCM**
+   喂进真 provider，**麦克风那一段不是真的**。
+2. **"执行中"那一按停掉的真实 agent**：`cancelRunningTasks` 的收口是用确定性探针验的
+   （两轮分组），而**端到端**（真派活 → ESC → 看那一条任务变成"被 ESC 打断"）**没有构造**——
+   需要模型真的写出 `[AGENT:…]` 或动作标签。
+3. **Claude Code 卡片那一半**：`agentSessionManager.interrupt(sessionID)` 只在
+   `cancelledTasks` 里出现 `.claudeCode` 时调用，**没有真跑过**。而且有一处**结构边界**：
+   一张 Claude Code 卡片只有**一个**子进程，所以这张卡上更早那一轮的活会被一起停掉 ——
+   这是那个数据结构本身的边界，绕不开，已写在注释里。
+4. **ESC 在"别的 App 抢了 key"时的可达性**：走 CGEvent tap 按说与前台是谁无关，但**只验了
+   Wanna 自己 idle 时那一按**（日志那一行出现了），**没有在别的 App 里真按一次**。

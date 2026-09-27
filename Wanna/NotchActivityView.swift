@@ -387,7 +387,11 @@ struct NotchPillRootView: View {
                 }
                 // The wing extension/retraction rides the phase change, so
                 // the wings slide out of the notch instead of popping.
-                .animation(.easeInOut(duration: 0.38), value: panelModel.activityPhase)
+                //
+                // ⚠️ 时长从 `NotchSupport` 读（2026-09-27）：刘海下面那行字幕的展开
+                // 动画读的是**同一个数**，两块合起来才像一个动画（见那个常量的注释）。
+                .animation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration),
+                           value: panelModel.activityPhase)
 
                 // **「Notion 笔记」那几颗按钮**（2026-09-27 之后归主 Agent）：检测到关键词时
                 // 长在刘海左侧。位置由 `NotchSupport` 的屏幕矩形给出 —— 它是这块窗口里

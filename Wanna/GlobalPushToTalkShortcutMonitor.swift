@@ -54,6 +54,14 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     /// 一个「设置了但按了没反应」的功能比没有这个功能更糟。
     var recordingShortcutBinding: RecordedKeyboardShortcut?
     let recordingShortcutTransitionsPublisher = PassthroughSubject<Bool, Never>()
+
+    /// **ESC 被按下了。**（2026-09-27 用户定的「主 Agent 快捷键 + ESC 打断」）
+    ///
+    /// 它没有绑定、也不可配置 —— ESC 就是 ESC。发布者只发「按下」，重复的长按不发
+    ///（见 `matchEscapeKey`）。**它只报告，不判断**：这一按到底算不算「打断」由
+    /// `CompanionManager` 决定（只有主 Agent 那一轮正在听/正在跑时才算），其余时候
+    /// 这一按应当原样进前台 App —— 所以这个 tap 依然只读不吞。
+    let escapeKeyPressedPublisher = PassthroughSubject<Void, Never>()
     private var recordingShortcutPressed = false
     private var releaseEngineShortcutPressedState = false
 
@@ -155,6 +163,17 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         }
 
         let eventKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        // **ESC**：主 Agent 那一轮正在听/正在跑时它是「打断」，其余时候什么都不做
+        //（本 tap 是 listen-only，永远不吞键 —— 用户按下的 ESC 照常进前台 App）。
+        //
+        // 走这条 tap 而不是 NSEvent 全局监听，理由和说话快捷键一样：它**不要求
+        // Wanna 自己是 key window** —— 用户十有八九正在别的 App 里干活（那正是
+        // 「打断」要发生的场合）。长按重复的 ESC 用 `keyboardEventAutorepeat` 挡掉，
+        // 一次按下只算一次。
+        if matchEscapeKey(eventType: eventType, event: event) {
+            return Unmanaged.passUnretained(event)
+        }
+
         if matchExternalShortcuts(
             eventType: eventType,
             keyCode: eventKeyCode,
@@ -206,6 +225,19 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         }
 
         return Unmanaged.passUnretained(event)
+    }
+
+    /// **ESC（keyCode 53）**：只认按下那一沿，长按的重复不算。
+    ///
+    /// 返回「是否命中」，命中就到此为止（和上面几个匹配器一样）—— 它不会被当成说话
+    /// 快捷键的一部分。**修饰键不参与匹配**：用户说的是「按下 ESC 键」，带了修饰键的
+    /// ESC 也仍然是 ESC。
+    private func matchEscapeKey(eventType: CGEventType, event: CGEvent) -> Bool {
+        guard eventType == .keyDown else { return false }
+        guard UInt16(event.getIntegerValueField(.keyboardEventKeycode)) == 53 else { return false }
+        guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return true }
+        escapeKeyPressedPublisher.send()
+        return true
     }
 
     /// Matches the external mode-shortcut bindings against one tap event. Returns

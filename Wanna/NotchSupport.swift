@@ -731,6 +731,29 @@ nonisolated enum NotchSupport {
     /// 所以这个数只能有一份。
     static let notchTranscriptEditorBodyHeight: CGFloat = 560
 
+    /// **Listening 的那条带子 + 它下面那行字幕，一起从刘海中心向左右展开的时长。**
+    ///
+    /// 用户 2026-09-27（附图）：「用户点击主页快捷键时，展开动画非常撕裂，应该把它做成
+    /// 一个动画，现在是把两个动画拼在一起了……可以把它从刘海向左右两侧展开……现在相当于
+    /// 上面一块、下面一块拼在一起，动画时时间又不对，整个过程中间一块白一块黑。」
+    ///
+    /// 屏幕上是**两块**：刘海那条黑带由刘海面板画（两翼的宽度动画），那行字幕由
+    /// `NotchListeningTranscriptPanelController` 那块独立面板画。两块分属两个窗口，
+    /// 没法共用一个 CA 动画 —— 所以"一个动画"只能靠**同一个时长、同一条曲线、
+    /// 同一个触发时刻**，以及**同一条几何式子**（见 `revealedListeningBandWidth`）做到。
+    /// 这个数就是那个时长：两翼的 `.animation` 与字幕的 `withAnimation` **都读它**。
+    static let listeningBandRevealDuration: TimeInterval = 0.38
+
+    /// 展开过程中，那一整条（黑带 + 字幕）在 `revealProgress` 处的宽度。
+    ///
+    /// **它必须与两翼的宽度动画是同一个式子**，否则过程中两块会对不齐、桌面从缝里透出来：
+    /// 两翼各自从 0 长到 `leadingWingWidth` / `trailingWingWidth`，所以整条带子在
+    /// 进度 p 处的宽度是 `刘海 + (两翼之和) × p`。字幕那一块读的就是这个函数
+    /// （它是**线性**的，所以只要时长、曲线、起点相同，两块的边缘在每一帧都重合）。
+    static func revealedListeningBandWidth(notchWidth: CGFloat, revealProgress: CGFloat) -> CGFloat {
+        notchWidth + (leadingWingWidth + trailingWingWidth) * max(0, min(1, revealProgress))
+    }
+
     // MARK: - 临时 agent 的那一排（屏幕右上角，菜单栏下面一行）
     //
     // 用户 2026-09-26：「刘海左侧这个 agent 的小图标，就是状态图标，应该放在右侧，
