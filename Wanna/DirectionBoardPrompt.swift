@@ -48,19 +48,22 @@ nonisolated enum DirectionBoardPrompt {
     用户按着说话键、正在说他的需求。屏幕右上角有一块「任务方向看板」，要显示**你怎么理解他这次要做的事**。
     请**顺便**把这份理解写出来 —— 它不影响你怎么回答用户，只决定看板上显示什么。
 
-    严格按下面的格式回答，**不要写别的任何东西**，不要用代码块：
+    严格按下面的格式回答，**不要写别的任何东西**，不要用代码块（方向行按下面给你的类别数给，
+    最多五行）：
 
     <<<看板
     说明：<一两句话，说清你以为他要你做什么，不超过 200 字>
-    方向1：<笔记类的最短标签，不超过 8 个字；这一行不适用就写「无」>
-    方向2：<显示类的最短标签，不超过 8 个字；这一行不适用就写「无」>
-    方向3：<执行类的最短标签，不超过 8 个字；这一行不适用就写「无」>
+    方向1：<第一类的最短标签，不超过 12 个字；这一类不适用就写「无」>
+    方向2：<…>
     看板>>>
 
-    三条规矩：
-    1. **标签要短**（8 字以内），优先用下面给你的预设短语里的说法；
-    2. **某一行不适用就写「无」**，不要硬凑一个方向出来；
-    3. 说明里**不要复述**用户原话，写"你理解他要做什么"。
+    四条规矩：
+    1. **标签要短**（12 字以内），优先用下面给你的预设短语里的说法；
+    2. **哪一类不适用就写「无」**，不要硬凑 —— 看板上**只会显示你写了标签的那几类**，
+       写「无」的那一类根本不出现；
+    3. 说明里**不要复述**用户原话，写"你理解他要做什么"；
+    4. 如果用户**用嘴选了一个方向**（「第二个方向」「关于显示方向的」这种），那个方向也要给标签，
+       而且要和用户选的那一类一致（看板那边会按他说的自动选中，两边不能打架）。
     """
 
     /// 看板那一次请求的用户消息。
@@ -71,7 +74,8 @@ nonisolated enum DirectionBoardPrompt {
     ///     命中的行由本地匹配决定，模型写什么都不会被采用 —— 那正是用户说的「预设关键词作为首选」。
     static func requestUserMessage(transcriptText: String,
                                    unmatchedRowIndices: [Int],
-                                   configuration: DirectionBoardConfiguration) -> String {
+                                   configuration: DirectionBoardConfiguration,
+                                   previousReading: String? = nil) -> String {
         var sections: [String] = []
 
         sections.append("""
@@ -80,6 +84,20 @@ nonisolated enum DirectionBoardPrompt {
         \(transcriptText)
         </transcript>
         """)
+
+        // **上一次的判断结论**（用户 2026-09-27：「咱们的提示词是 3 秒发动一次，而且每一次都是
+        // 全新的内容，所以要包含上一次的方向，最好是这样的：上一次的判断结论，AI 判断出来的结论」）。
+        // 整段回给他、不省字段：省了字段就得再写一套提取规则，而这是模型自己的话，它读得懂。
+        if let previousReading, !previousReading.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sections.append("""
+            这是你上一次（几秒前）对同一件事的判断，供你保持连续：
+            <previous_reading>
+            \(previousReading)
+            </previous_reading>
+
+            如果用户这几秒里没有说新的方向，就沿用上面的判断；说了新的，以新的为准。
+            """)
+        }
 
         // 把六个预设短语告诉模型，是为了让它的用词与看板上的固定短语保持一致（用户要的
         // 「优先考虑显示在对应的行和位置」）。
@@ -94,7 +112,7 @@ nonisolated enum DirectionBoardPrompt {
         """)
 
         if unmatchedRowIndices.isEmpty {
-            sections.append("这几行本地都已经对上了，**只需要写「说明」那一行**，方向行一律写「无」。")
+            sections.append("这几类本地都已经对上了，**只需要写「说明」那一行**，方向行一律写「无」。")
         } else {
             let list = unmatchedRowIndices.map { "方向\($0 + 1)" }.joined(separator: "、")
             sections.append("""
@@ -132,9 +150,9 @@ nonisolated enum DirectionBoardPrompt {
             case "说明":
                 if paragraph.isEmpty { paragraph = value }
                 else { paragraphLines.append(value) }
-            case "方向1", "方向2", "方向3":
+            case "方向1", "方向2", "方向3", "方向4", "方向5":
                 guard let rowIndex = Int(key.dropFirst(2)).map({ $0 - 1 }),
-                      (0..<DirectionBoardConfiguration.rowCount).contains(rowIndex),
+                      (0..<DirectionBoardConfiguration.maximumRowCount).contains(rowIndex),
                       rowLabels[rowIndex] == nil else { continue }
                 if let label = label(from: value) { rowLabels[rowIndex] = label }
             default:
@@ -216,7 +234,7 @@ nonisolated enum DirectionBoardPrompt {
         let rawKey = String(line[line.startIndex..<colonIndex])
         let key = rawKey.filter { !"*` 　".contains($0) }
         let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
-        let knownKeys = ["说明", "方向1", "方向2", "方向3"]
+        let knownKeys = ["说明", "方向1", "方向2", "方向3", "方向4", "方向5"]
         guard knownKeys.contains(key) else { return nil }
         return (key, value)
     }

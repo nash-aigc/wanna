@@ -34,14 +34,12 @@ struct DirectionBoardSettingsSection: View {
                 SettingsSwitch(isOn: generalSettingsViewModel.binding(\.directionBoardEnabled))
             }
 
-            ForEach(0..<DirectionBoardConfiguration.rowCount, id: \.self) { rowIndex in
-                ForEach(0..<DirectionBoardConfiguration.buttonsPerRow, id: \.self) { columnIndex in
+            ForEach(Array(configuration.rows.enumerated()), id: \.offset) { rowIndex, row in
+                ForEach(0..<min(row.buttons.count, DirectionBoardConfiguration.buttonsPerRow), id: \.self) { columnIndex in
                     SettingsCardRowDivider()
                     SettingsRow(
-                        label: "\(configuration.rows[rowIndex].title) · 第 \(columnIndex + 1) 格",
-                        description: columnIndex == 0
-                            ? "第 1 格在关键词没命中时会显示 AI 写的短语（≤12 字）。"
-                            : "第 2 格永远是这句话，AI 不会改它。"
+                        label: "\(row.title) · 方向 \(columnIndex + 1)",
+                        description: "关键词命中就显示这句话（本地匹配，不花请求）；\(columnIndex == 0 ? "两个都没命中时，这句话是 AI 写的那一格的兜底。" : "它是同一类的另一个方向。")"
                     ) {
                         // 上下排而不是左右排：真机上这一页的控件宽度只有 ~300pt，
                         // 并排两个框会把关键词截成半句（离屏渲染一眼看出来：`… 存到`）。
@@ -61,6 +59,17 @@ struct DirectionBoardSettingsSection: View {
 
             SettingsCardRowDivider()
             SettingsRow(
+                label: "类别名",
+                description: "每一行左边显示的名字（笔记类 / 显示类 / …），用逗号分隔。最多 5 类。"
+            ) {
+                SettingsPlainField(
+                    placeholder: "笔记类，显示类，执行类，文字类，图文类",
+                    text: titlesBinding,
+                    width: 260)
+            }
+
+            SettingsCardRowDivider()
+            SettingsRow(
                 label: "恢复默认",
                 description: "把六个短语和它们的关键词恢复成出厂的那一套。"
             ) {
@@ -76,6 +85,33 @@ struct DirectionBoardSettingsSection: View {
     }
 
     // MARK: - 绑定（草稿，按「保存」才落盘）
+
+    /// 类别名（逗号分隔）。改一行就重写整份 rows 的标题，行数也随之增删（最多 5）。
+    private var titlesBinding: Binding<String> {
+        Binding(
+            get: { configuration.rows.map(\.title).joined(separator: "，") },
+            set: { newValue in
+                var titles = newValue
+                    .split(whereSeparator: { $0 == "," || $0 == "，" })
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                guard !titles.isEmpty else { return }
+                if titles.count > DirectionBoardConfiguration.maximumRowCount {
+                    titles = Array(titles.prefix(DirectionBoardConfiguration.maximumRowCount))
+                }
+                var rows: [DirectionBoardRow] = []
+                for (index, title) in titles.enumerated() {
+                    let fallback = DirectionBoardConfiguration.default.rows[
+                        index % DirectionBoardConfiguration.default.rows.count]
+                    var row = index < configuration.rows.count ? configuration.rows[index] : fallback
+                    row.title = title
+                    rows.append(row)
+                }
+                var updated = configuration
+                updated.rows = rows
+                generalSettingsViewModel.draftSettings.directionBoard = updated
+            })
+    }
 
     private func phraseBinding(rowIndex: Int, columnIndex: Int) -> Binding<String> {
         Binding(

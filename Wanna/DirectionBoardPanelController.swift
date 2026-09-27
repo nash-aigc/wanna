@@ -23,16 +23,32 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
 final class DirectionBoardPanelController {
 
     static let shared = DirectionBoardPanelController()
-    private init() {}
+    private init() {
+        // **"他到底开口了没有"要单独看**（2026-09-27 用户报的：没说话也挂着）。
+        //
+        // 相位是必要条件不是充分条件：回答之后的 30 秒追问窗口里相位一直是 `.listening`，
+        // 而那 30 秒里他可能一个字都没说 —— 那块板子就那么杵在屏幕上，很碍事。
+        // 判据改成"**刘海下面那行字幕里有字**"：有字 = 他真的在说话。
+        NotchListeningTranscriptModel.shared.$liveText
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &cancellables)
+    }
+
+    private var cancellables: Set<AnyCancellable> = []
 
     private var panel: NSPanel?
     private var hostingView: NSHostingView<DirectionBoardView>?
+    /// 相位（+ 面板没铺开）是否允许看板出现 —— **这只是必要条件，不是充分条件**。
+    private var phaseAllowsBoard = false
+    private var transcriptObserver: AnyCancellable?
     /// 显示那一刻的鼠标位置：**只看这一次**（用户：「位置固定，不随鼠标移动」）。
     private var anchorPoint: CGPoint?
     /// 已经摆好的内容尺寸 —— 用来给 `onPreferenceChange` 去重，避免"改尺寸 → 重新布局 → 再改尺寸"。
@@ -46,11 +62,22 @@ final class DirectionBoardPanelController {
     ///   看板在它下面根本看不见；与右下角那张结果卡片同一条规矩）。由调用方传进来，
     ///   面板控制器不去猜刘海的状态。
     func sync(isVisible shouldBeVisible: Bool, isSheetExpanded: Bool) {
+        phaseAllowsBoard = shouldBeVisible && !isSheetExpanded
+        applyVisibility()
+    }
+
+    /// 两个条件都满足才显示：**相位允许**（说话期间 / 追问窗口）**且他真的说出了字**。
+    private func applyVisibility() {
         guard AppSettingsStore.snapshot().directionBoardEnabled else {
-            if isVisible { hide() }
+            hide()
             return
         }
-        if shouldBeVisible && !isSheetExpanded {
+        let spokenText = NotchListeningTranscriptModel.shared.liveText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // 自检不走相位（它直接喂假转写），所以那道闸门在自检模式下恒开 —— 否则相位机
+        // 每次 `refreshActivityPhase` 都会把它关回去（实测过一次：面板建好又被收掉）。
+        let phaseAllows = phaseAllowsBoard || DirectionBoardSession.selfCheckMode != nil
+        if phaseAllows && !spokenText.isEmpty {
             show()
         } else {
             hide()
@@ -61,6 +88,8 @@ final class DirectionBoardPanelController {
     func startSelfCheckIfRequested() {
         guard DirectionBoardSession.selfCheckMode != nil else { return }
         print("🎛️ 方向看板自检：把面板拉起来（不发请求）")
+        // 自检不走相位，所以那道闸门要手动打开（否则 `applyVisibility` 会立刻把它收掉）。
+        phaseAllowsBoard = true
         show()
     }
 
@@ -121,7 +150,6 @@ final class DirectionBoardPanelController {
         let settings = AppSettingsStore.snapshot()
         let hostingView = NSHostingView(rootView: DirectionBoardView(
             session: .shared,
-            configuration: DirectionBoardConfiguration.validated(settings.directionBoard),
             theme: AnswerCardTheme(style: settings.answerCardStyle),
             onInputFocused: { [weak panel] in
                 // 用户点了输入框：这时候要键盘，成为 key 是**他的**意思。

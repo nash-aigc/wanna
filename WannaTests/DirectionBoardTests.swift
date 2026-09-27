@@ -75,6 +75,8 @@ struct DirectionBoardTests {
 
     // MARK: - 校验（手改过 JSON 之后仍然能画）
 
+    /// **行数 1…5 都是合法的**（用户可以在设置里删到 1 类）；缺的按钮/标题/短语才回落默认。
+    /// ⚠️ 关键词**原样保留**：清空关键词是"这一格我要自己判断"的正当表达，不许改写回去。
     @Test func validationRepairsAHandEditedConfiguration() throws {
         let broken = DirectionBoardConfiguration(rows: [
             DirectionBoardRow(title: "  ", buttons: []),
@@ -82,14 +84,62 @@ struct DirectionBoardTests {
                               buttons: [DirectionBoardButton(id: "", presetText: "", keywords: ["甲"])]),
         ])
         let repaired = DirectionBoardConfiguration.validated(broken)
-        #expect(repaired.rows.count == 3)
+        #expect(repaired.rows.count == 2)
         #expect(repaired.rows.allSatisfy { $0.buttons.count == 2 })
         #expect(repaired.rows[0].title == "笔记类")
         #expect(repaired.rows[1].buttons[0].presetText == "指给我看")
         #expect(repaired.rows[1].buttons[0].id == "show.point")
-        #expect(repaired.rows[2].buttons[1].id == "act.agent")
-        // **用户写的关键词原样保留**：清空关键词是"这一行我要自己判断"的正当表达，不许改写回去。
+        #expect(repaired.rows[1].buttons[1].id == "show.circle")
         #expect(repaired.rows[1].buttons[0].keywords == ["甲"])
+
+        let oneRow = DirectionBoardConfiguration.validated(DirectionBoardConfiguration(rows: []))
+        #expect(oneRow.rows.count == 1)
+        #expect(oneRow.rows[0].title == "笔记类")
+
+        let tooMany = DirectionBoardConfiguration.validated(
+            DirectionBoardConfiguration(rows: DirectionBoardConfiguration.default.rows
+                                        + DirectionBoardConfiguration.default.rows))
+        #expect(tooMany.rows.count == DirectionBoardConfiguration.maximumRowCount)
+    }
+
+    /// **只显示说到的那些方向**（用户 2026-09-27 第二版：不要一上来就把六格都摆出来）。
+    @Test func onlyDisplaysWhatTheUserMentioned() throws {
+        let matched = DirectionBoardConfiguration.displayedItems(
+            transcriptText: "帮我把这段记下来，再指给我看是哪个",
+            modelRowLabels: [:], configuration: configuration)
+        #expect(matched.map(\.number) == [1, 2])
+        #expect(matched.map(\.rowTitle) == ["笔记类", "显示类"])
+        #expect(matched.map(\.text) == ["保存到 Notion", "指给我看"])
+
+        #expect(DirectionBoardConfiguration.displayedItems(
+            transcriptText: "今天天气怎么样", modelRowLabels: [:], configuration: configuration).isEmpty)
+
+        let modelOnly = DirectionBoardConfiguration.displayedItems(
+            transcriptText: "今天天气怎么样", modelRowLabels: [2: "查一下天气"], configuration: configuration)
+        #expect(modelOnly.map(\.text) == ["查一下天气"])
+        #expect(modelOnly.map(\.number) == [1])
+
+        let both = DirectionBoardConfiguration.displayedItems(
+            transcriptText: "帮我把这段记下来", modelRowLabels: [0: "AI 乱写的", 2: "操作电脑"],
+            configuration: configuration)
+        #expect(both.map(\.text) == ["保存到 Notion", "操作电脑"])
+    }
+
+    /// **口述也能选方向**：认出「第 N 个方向」「方向N」「选第 N」，中文数字与阿拉伯数字都认。
+    @Test func spokenNumbersSelectDirections() throws {
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "选择第二个方向", displayedItemCount: 5) == 2)
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "第三个方向吧", displayedItemCount: 5) == 3)
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "参考第二个方向", displayedItemCount: 5) == 2)
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "就方向4", displayedItemCount: 5) == 4)
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "选第5个", displayedItemCount: 5) == 5)
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "第十一个方向", displayedItemCount: 12) == 11)
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "今天天气怎么样", displayedItemCount: 5) == nil)
+        // 超出屏幕上现有的格数 → 不许越界。
+        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "第六个方向", displayedItemCount: 5) == nil)
+        #expect(DirectionBoardConfiguration.chineseNumeral("十") == 10)
+        #expect(DirectionBoardConfiguration.chineseNumeral("十五") == 15)
+        #expect(DirectionBoardConfiguration.spokenRowSelection(in: "这个是关于显示方向的任务",
+                                                               configuration: configuration) != nil)
     }
 
     // MARK: - 解析
