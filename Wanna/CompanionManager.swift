@@ -568,6 +568,27 @@ final class CompanionManager: ObservableObject {
     /// which is what keeps the setting to one gate, in the pipeline that fills this.
     @Published private(set) var streamingAnswerText: String = ""
 
+    /// **右下角那张卡片此刻显示的文字**（复制按钮复制的东西）。
+    ///
+    /// 与 `OverlayWindow.conversationBubbleText` 的优先级一致：完成通知 → 正在流的答案 →
+    /// 答案预览 → 待确认的转写。这里刻意把**完成通知**也包含进来 —— 用户看到什么就复制什么。
+    private func conversationBubbleTextForCopying() -> String {
+        if let notice = taskCompletionNotice, !notice.isEmpty { return notice }
+        if !streamingAnswerText.isEmpty { return streamingAnswerText }
+        if !answerPreviewText.isEmpty { return answerPreviewText }
+        return liveTranscriptText
+    }
+
+    /// 复制到剪贴板（`MessageCopyButton` 里那套的同一件事）。
+    private func copyLiveReplyToPasteboard() {
+        let text = conversationBubbleTextForCopying().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        print("📋 看板：复制了右下角那段回复（\(text.count) 字）")
+    }
+
     /// **把答案预览收掉**（右下角那张卡片回到"没有东西"的状态）。
     ///
     /// ⚠️ **不要在"提交"那一刻收**（2026-09-27 实测踩到）：提交之后真正的答案要 1~2 秒才到，
@@ -804,6 +825,22 @@ final class CompanionManager: ObservableObject {
         // 第一句就要读 `hasScreenContentPermission`，它读不到就会把 app 锁死。见
         // `LegacyDefaultsMigration` 的头注释。
         LegacyDefaultsMigration.runIfNeeded()
+
+        // **看板上那两个按钮**（用户 2026-09-27：取消行最左侧的「复制」与「复制并退出」）。
+        // 复制的是**右下角那张卡片此刻显示的文字**（实时回复）—— 那正是用户盯着看的东西，
+        // 而它可能只是"答案预览"（还没发送）也可能是"真答案"，所以直接从显示的那一份取。
+        let boardSession = DirectionBoardSession.shared
+        boardSession.hasCopyableReplyProvider = { [weak self] in
+            !(self?.conversationBubbleTextForCopying().isEmpty ?? true)
+        }
+        boardSession.copyReplyAction = { [weak self] in
+            self?.copyLiveReplyToPasteboard()
+        }
+        boardSession.copyReplyAndExitAction = { [weak self] in
+            self?.copyLiveReplyToPasteboard()
+            // 复制完就退出这一轮 —— 与按 ESC **同一条路**（他说的"自动发送类似 ESC 的效果"）。
+            self?.handleEscapeKeyPressed()
+        }
 
         // **看板那一轮的答案写到右下角那张卡片上**（与最终结果同一张）。
         // 注入闭包而不是让看板直接持有一个 `CompanionManager`：跨子系统只走注入，
@@ -2161,6 +2198,8 @@ final class CompanionManager: ObservableObject {
                 // 开始说话的那一秒即启动」）。它只起一块表，不发请求 —— 要等识别文本出来。
                 // 带上这一次大循环的 id：「取消本次」只在同一个 id 内有效，新循环自动恢复显示。
                 DirectionBoardSession.shared.beginListening(cycleID: currentVoiceCycleID)
+                // **参考材料**：按下快捷键就自动截一张（用户：「进入录音时，会自动截屏」）。
+                TurnReferenceCollector.shared.beginTurn()
 
                 // **这一轮的录音也从这里开始**（接线图第 4 条，2026-09-27）：用户要
                 //「把用户的每一条指令都保存为录音」。这一刻只是声明"接下来的麦克风音频
@@ -2182,6 +2221,7 @@ final class CompanionManager: ObservableObject {
                         // 方向看板：**本地关键词匹配在这里立刻发生**（不花请求），
                         // 模型的标签随后到、只填没命中的那几行。
                         DirectionBoardSession.shared.noteLiveTranscript(partialTranscript)
+                        TurnReferenceCollector.shared.noteLiveTranscript(partialTranscript)
                 MainFlowDiagnostics.stage("按住说话：收到实时转写")
                         // **刘海下面那行字幕**（2026-09-27）—— 说话时你正在说的字**唯一的**
                         // 显示处就是它。
@@ -2651,7 +2691,8 @@ final class CompanionManager: ObservableObject {
     private static func userPrompt(
         forTranscript transcript: String,
         untrustedAccessibilityContext: String?,
-        userIntentTags: String? = nil
+        userIntentTags: String? = nil,
+        referenceMaterials: String? = nil
     ) -> String {
         // **方向看板那几行**（用户点过确认的方向 + 输入框里的补充说明）拼在最前面 ——
         // 用户 2026-09-27：「作为标签追加到用户提示词的前一行……下方再接用户原始提示词」。
@@ -2670,11 +2711,22 @@ final class CompanionManager: ObservableObject {
             """
         }
 
+        // **参考材料**（屏幕 / 剪贴板 / 访达选中）—— 用户点名的第三类参考；
+        // 与看板那一轮读的是**同一份**（`TurnReferenceCollector`）。
+        let referenceBlock: String? = referenceMaterials.flatMap { block in
+            let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return trimmed + "\n\n"
+        }
+
         // **没有任何附加块时，返回的就是用户原话本身** —— 与从前一字不差（这条快路径很重要：
         // 绝大多数轮次既没有界面读取、也没有看板标签，提示词不该因为它们而变样）。
-        guard untrustedAccessibilityContext != nil || intentTagsBlock != nil else { return transcript }
+        guard untrustedAccessibilityContext != nil || intentTagsBlock != nil || referenceBlock != nil else {
+            return transcript
+        }
 
         var sections: [String] = []
+        if let referenceBlock { sections.append(referenceBlock) }
         if let intentTagsBlock { sections.append(intentTagsBlock) }
         if let untrustedAccessibilityContext {
             sections.append("""
@@ -2924,6 +2976,8 @@ final class CompanionManager: ObservableObject {
         // 追问窗口里用户一开口也是「说话期间」—— 同一块看板、同一条判据。
         // **同一个 cycleID 传下去**：追问仍然属于这一次大循环，所以"取消本次"在这里不会被清掉。
         DirectionBoardSession.shared.beginListening(cycleID: currentVoiceCycleID)
+        // **参考材料**：按下快捷键就自动截一张（用户：「进入录音时，会自动截屏」）。
+        TurnReferenceCollector.shared.beginTurn()
         Task { [weak self] in
             guard let self else { return }
             await self.buddyDictationManager.startContinuousListening(
@@ -2938,6 +2992,7 @@ final class CompanionManager: ObservableObject {
                     // 同上：连续追问的实时转写也喂给 Notion 检测。
                     self?.noteNotionLiveTranscript(interimTranscriptText)
                     DirectionBoardSession.shared.noteLiveTranscript(interimTranscriptText)
+                    TurnReferenceCollector.shared.noteLiveTranscript(interimTranscriptText)
                     // 同上：也喂给刘海下面那行字幕 —— 连续追问期间相位同样是 Listening，
                     // 用户说话时下面那行就应该在（同一条规则，不为这条窗口开例外）。
                     NotchListeningTranscriptModel.shared.setLiveText(interimTranscriptText)
@@ -3084,9 +3139,9 @@ final class CompanionManager: ObservableObject {
         // follow-up — they must not ride into the new question's screenshot.
         screenAnnotationManager.clear()
         figureBoardController.clear()
-        Task { [weak self] in
-            await self?.capturePendingPreScreenshots(reason: "follow-up speech detected")
-        }
+        // ⚠️ 这里原来还要自己截一张"追问时的屏幕"。**删掉了**：截图现在归
+        // `TurnReferenceCollector`（窗口武装时它就自动截了一组，见 `beginTurn`），
+        // 两处各截一张就是一轮两组图 —— 而两组图的内容还会互相矛盾。
     }
 
     /// 「说到“屏幕”立即截屏」 on streaming interim transcripts — shared by the
@@ -3098,10 +3153,12 @@ final class CompanionManager: ObservableObject {
         guard AppSettingsStore.snapshot().autoScreenshotOnScreenKeyword else { return }
         guard screenKeywordDetector.detectNewMention(in: interimTranscriptText) else { return }
 
-        print("📸 Companion: heard 屏幕 — capturing the screen immediately")
-        Task { [weak self] in
-            await self?.capturePendingPreScreenshots(reason: "screen keyword")
-        }
+        // **截图本身交给 `TurnReferenceCollector`**（它按 `notionScreenKeywords` 里的词计数，
+        // 每说到一次加一组，并把数量显示成卡片上的「屏幕一/二/三」）。
+        // 这里只留它独有的那半件事：把上一次回复留下的绿圈清掉，别让它骑进下一张截图。
+        screenAnnotationManager.clear()
+        figureBoardController.clear()
+        TurnReferenceCollector.shared.noteScreenKeywordMention(reason: "说到「屏幕」关键词")
     }
 
     // MARK: - 「存成一条 Notion 笔记」那条路（2026-09-27 从录音搬过来）
@@ -3266,6 +3323,12 @@ final class CompanionManager: ObservableObject {
         //
         // 在这里算一次（而不是在 Task 里随时读设置）：一轮之内设置被改也不该中途换判据。
         let deliversScreenshot = sendsScreenshot && mainLoopChatModeCarriesImages
+        // **这一轮的参考截图**：按下快捷键自动一组 + 每说到一次「屏幕」词再加一组
+        //（用户 2026-09-27 的"参考材料"第一类）。管线**不再自己截** —— 否则一轮两组图，
+        // 而且内容还可能互相矛盾。模式不允许截图（文本模式）时一组都不带。
+        let referenceCaptures: [CompanionScreenCapture] = deliversScreenshot
+            ? TurnReferenceCollector.shared.materials.screenshots.flatMap { $0 }
+            : []
         if sendsScreenshot && !deliversScreenshot {
             print("🚫 主循环「文本」模式：这一轮不带截图（这个模式的模型不吃图）")
         }
@@ -3657,7 +3720,8 @@ final class CompanionManager: ObservableObject {
                         userPromptForThisTurn = Self.userPrompt(
                             forTranscript: transcript,
                             untrustedAccessibilityContext: pendingAccessibilityContext,
-                            userIntentTags: userIntentTags
+                            userIntentTags: userIntentTags,
+                            referenceMaterials: TurnReferenceCollector.shared.promptBlock()
                         )
                     } else {
                         userPromptForThisTurn = Self.continuationUserPrompt(

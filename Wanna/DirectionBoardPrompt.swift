@@ -154,8 +154,18 @@ nonisolated enum DirectionBoardPrompt {
     ///   那一轮分别是什么，然后让它**重点参考最近一轮**」→ 带标签的三环历史。
     static func understandingUserPrompt(transcript: String,
                                         previousRoundItems: [DirectionBoardDisplayItem],
-                                        recentReadings: [String]) -> String {
+                                        recentReadings: [String],
+                                        referenceMaterials: String? = nil) -> String {
         var sections: [String] = []
+        // **参考材料**（屏幕 / 剪贴板 / 访达选中）—— 与主 Agent 那一轮读的是同一份。
+        //
+        // 为什么要给看板：用户 2026-09-27 的动机就是"网页太长，让它参考只能看到一部分；
+        // 选中复制之后它就能看到所有内容" —— 那条路的价值有一半在**右下角那张答案卡片**
+        //（他还在说话的时候就能看到总结），所以这一轮的请求必须也带上材料。
+        if let referenceMaterials {
+            let trimmed = referenceMaterials.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { sections.append(trimmed) }
+        }
         sections.append("""
         用户到目前为止说的话：
         \(transcript)

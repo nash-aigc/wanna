@@ -163,6 +163,30 @@ struct DirectionBoardSettingsSection: View {
             }
         }
 
+        SettingsGroupLabel("参考材料（说这些词就带上）")
+        SettingsCard {
+            SettingsTextEditorRow(
+                label: "屏幕",
+                description: "说到这些词就**再截一张当下的屏幕**（说几次截几张；按下快捷键时本来就已经自动截了一张）。卡片上会显示成「屏幕一 / 屏幕二」。",
+                text: generalSettingsViewModel.binding(\.notionScreenKeywords),
+                placeholder: "参考屏幕\n屏幕内容")
+            SettingsCardRowDivider()
+            SettingsTextEditorRow(
+                label: "剪贴板",
+                description: "说到这些词就把**剪贴板最近一条内容**带上（文字直接发；文字文件抽正文；其他文件与文件夹只发绝对路径）。一轮只取一次。",
+                text: generalSettingsViewModel.binding(\.notionClipboardKeywords),
+                placeholder: "复制内容\n参考剪贴板")
+            SettingsCardRowDivider()
+            SettingsTextEditorRow(
+                label: "选中文件 / 文件夹",
+                description: "说到这些词就去**访达取你当前选中的东西的绝对路径**（只给路径、不给内容）。**只有访达是前台窗口时才取** —— 否则当口误忽略。第一次会弹一次「控制访达」的授权框。",
+                text: generalSettingsViewModel.binding(\.selectedItemKeywords),
+                placeholder: "选中文件\n选中的文件夹")
+        }
+        SettingsNote(
+            text: "这三组词是**代码**在认（不是 AI）：识别到就去取材料，**取到了才在卡片上显示标签** —— 说了词但没取到（比如访达不是前台），标签不会出现。一行一个词。"
+        )
+
         SettingsGroupLabel("方向判断（Jev 决策模型）")
         SettingsCard {
             SettingsRow(

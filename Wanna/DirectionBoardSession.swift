@@ -44,6 +44,19 @@ final class DirectionBoardSession: ObservableObject {
     static let shared = DirectionBoardSession()
     private init() {}
 
+    /// **「复制」按钮要复制的东西**（右下角那张卡片此刻显示的文字）。
+    ///
+    /// 由 `CompanionManager` 注入的闭包提供 —— 卡片的内容归它管，看板不该去猜。
+    /// `false` 时那个按钮置灰（没东西可复制）。
+    var hasCopyableReplyProvider: (() -> Bool)?
+    /// 「复制」：把右下角那段回复放进剪贴板。
+    var copyReplyAction: (() -> Void)?
+    /// 「复制并退出」：复制之后**退出这一轮**（与按 ESC 同效）。
+    var copyReplyAndExitAction: (() -> Void)?
+
+    /// 视图读这个决定那个按钮是亮的还是灰的。
+    var hasCopyableReply: Bool { hasCopyableReplyProvider?() ?? false }
+
     /// **把答案预览写到右下角那张卡片上**（由 `CompanionManager` 注入，与 `voiceIdleProvider` /
     /// `sharedVoicePlaybackEngineProvider` 同一个先例：跨子系统只走注入的闭包，不让对方去猜）。
     /// 传 `nil` = 清掉那张卡片（发送、取消、新一轮都从这里清）。
@@ -79,14 +92,6 @@ final class DirectionBoardSession: ObservableObject {
     private var lastRequestedTranscript = ""
     /// 最近一次 Jev 判断给出的概率（方向 id → P(是)）。
     private var jevProbabilities: [String: Double] = [:]
-    /// **这一句用的那张屏幕截图**（一轮只截一张）。
-    ///
-    /// 2026-09-27 改：原来是**每一轮请求都截一张**（每 3 秒一次全屏抓取）—— 那是为了修
-    /// 「他应该直接看到屏幕啊」而加的，代价是每 3 秒一次 `SCScreenshotManager` 全屏截图。
-    /// 现在改成**一句一张**：第一次请求时截，这一句里复用；用户说「参考屏幕 / 看屏幕」
-    /// 这类词时作废重截（这正是他原来那条「每一次转写识别到就截一次屏」）。
-    private var turnScreenshot: [(data: Data, label: String)] = []
-
     /// **最近三轮**模型的理解原文（最近的那一轮在最前）—— 用户要的连续性：
     /// 「你要在发送给下一轮模型的时候要保留前三轮……让它重点参考最近一轮」。
     private var recentReadings: [String] = []
@@ -126,6 +131,10 @@ final class DirectionBoardSession: ObservableObject {
     func runSelfCheckSequence() {
         guard Self.selfCheckMode != nil, Self.selfCheckMode != "stream" else { return }
         beginListening(cycleID: "self-check-cycle")
+        // ⚠️ 自检**要把它也带上**：参考材料采集器挂在 `CompanionManager` 那两个真实回调上
+        //（按下快捷键 / 每一条实时转写），而自检是**直接**驱动看板的 —— 不显式调它，
+        // 自检里就永远看不到参考材料（第一次跑就是这么扑空的：日志里一条 📎 都没有）。
+        TurnReferenceCollector.shared.beginTurn()
         let lines = [
             "帮我把这段记下来",
             // **用户真实报上来的那一句**（2026-09-27）。它刻意**不含「参考屏幕」这四个字** ——
@@ -135,6 +144,9 @@ final class DirectionBoardSession: ObservableObject {
             // 第三句**不是问题** → 这一轮模型不会再写「答案」那一行。
             // 用来看住那个 bug：没有答案的那一轮**不许**把上一轮已经显示出来的答案抹掉。
             "顺便把这个结果记到我的笔记里面去",
+            // 第四句：**参考材料第二类**（剪贴板）—— 自检时先在剪贴板里放一段文本，
+            // 跑完就能看卡片上有没有长出那个「剪贴板」标签。
+            "根据剪贴板里的内容总结一下",
         ]
         var accumulated = ""
         for (index, line) in lines.enumerated() {
@@ -147,6 +159,7 @@ final class DirectionBoardSession: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 3.5) { [weak self] in
                 NotchListeningTranscriptModel.shared.setLiveText(partial)
                 self?.noteLiveTranscript(partial)
+                TurnReferenceCollector.shared.noteLiveTranscript(partial)
                 let shown = self?.displayedItems.map { "\($0.number).\($0.keyword)" } ?? []
                 print("🎛️ 方向看板自检：第 \(index + 1) 句 → 显示 \(shown.joined(separator: " ｜ "))")
             }
@@ -221,8 +234,6 @@ final class DirectionBoardSession: ObservableObject {
         lastRequestedTranscript = ""
         paragraph = ""
         understandingLines = DirectionBoardPrompt.understandingLabels.map { ($0, "") }
-        // 新的一句 → 上一句那张屏幕截图作废（下一次请求重新截一张）。
-        turnScreenshot = []
         // 新一轮开始 = 上一轮的答案预览作废（这里是"真的换了一轮"，不是同一轮的提交）。
         previewAnswer = nil
         answerPreviewWriter?(nil)
@@ -245,12 +256,9 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         latestTranscript = transcriptText
-        // **说了「参考屏幕 / 看屏幕」这类词 → 把这一句那张图作废**，下一次请求重新截一张。
-        //（原来是"说到才截"；现在截图是每句一张，它退化成"现在重截" —— 用户那句
-        // 「每一次转写识别到就截一次屏」照旧成立。）
-        if DirectionBoardMatching.screenReferenceRequested(in: transcriptText) {
-            turnScreenshot = []
-        }
+        // ⚠️ 参考材料的采集**不在这里**：截图与那三类关键词归 `TurnReferenceCollector`
+        //（2026-09-27 用户把参考材料扩成三类之后，它成了主 Agent 与看板**共用**的东西 ——
+        //  主 Agent 那一轮的提示词、看板这一轮的请求、卡片上那排标签，读的都是它）。
         refreshDisplayedItems()
     }
 
@@ -512,16 +520,13 @@ final class DirectionBoardSession: ObservableObject {
             // 这块板子的用途本来就是"看着屏幕理解你在说什么"，图不该由一句口令来解锁。
             // 截图本身就排除了 Wanna 自己的窗口（`SCContentFilter(display:excludingWindows:)`
             // 按 bundle id 过滤），所以两张卡片模型是看不见的 —— 不会看到自己的界面。
-            // 这一句已经有图就复用，没有才截（一句一张）。
-            let screenshots: [(data: Data, label: String)]
-            if self.turnScreenshot.isEmpty {
-                MainFlowDiagnostics.stage("看板：截屏")
-                let captured = await self.captureScreenForBoard()
-                self.turnScreenshot = captured
-                screenshots = captured
-            } else {
-                screenshots = self.turnScreenshot
-            }
+            // **这一轮的截图来自参考材料采集器**（按下快捷键自动一组 + 每说到一次「屏幕」词再加一组）。
+            //
+            // ⚠️ 这里**只带最近的那一组**：看板回答的是"他此刻在说什么/问什么"，
+            // 最新的那一屏才是判据；把五组全塞进每 3 秒一次的请求里既贵又没有用
+            //（主 Agent 那一轮才需要全部 —— 那才是"参考材料"）。
+            let latestScreenGroup = TurnReferenceCollector.shared.materials.screenshots.last ?? []
+            let screenshots = latestScreenGroup.map { (data: $0.imageData, label: $0.label) }
             let state = "用户到目前为止说的话：\n\(transcript.prefix(500))"
 
             // ① **Jev 判方向**（便宜、给概率）；② **大模型写那段理解**（小提示词）。
@@ -618,7 +623,8 @@ final class DirectionBoardSession: ObservableObject {
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
             transcript: transcript,
             previousRoundItems: previousRoundItems,
-            recentReadings: recentReadings)
+            recentReadings: recentReadings,
+            referenceMaterials: TurnReferenceCollector.shared.promptBlock())
         do {
             let (text, _) = try await visionChatAPI.analyzeImageStreaming(
                 images: screenshots,
@@ -632,26 +638,6 @@ final class DirectionBoardSession: ObservableObject {
         } catch {
             print("🧭 方向看板：这次理解请求失败（保留上一次）—— \(error.localizedDescription)")
             return nil
-        }
-    }
-
-    /// **截一张当下的屏幕**（每一轮请求前调一次，见调用点的理由）。
-    ///
-    /// 用的是设置里「看与截图」那一页的参数（清晰度 / 压缩质量 / 多显示器策略），
-    /// 与主 Agent 那条路**同一份设置** —— 两处各读一次必然会漂。
-    /// 失败就返回空数组（这一轮不带图，照常出理解），不抛给调用方。
-    private func captureScreenForBoard() async -> [(data: Data, label: String)] {
-        let settings = AppSettingsStore.snapshot()
-        do {
-            let captures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
-                maximumDimension: settings.screenshotMaxDimension == 0 ? nil : settings.screenshotMaxDimension,
-                compressionQuality: settings.screenshotCompressionQuality,
-                capturesAllDisplays: settings.capturesAllDisplays)
-            guard isListening else { return [] }
-            return captures.map { (data: $0.imageData, label: $0.label) }
-        } catch {
-            print("🧭 方向看板：这一轮没截到屏（不带图继续）—— \(error.localizedDescription)")
-            return []
         }
     }
 

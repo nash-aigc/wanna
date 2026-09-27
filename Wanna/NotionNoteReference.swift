@@ -60,6 +60,21 @@ enum NotionNoteReferenceGatherer {
     /// 一次最多读这么多个文件（文件夹递归时用）。
     private static let maximumFileCount = 20
 
+    /// **剪贴板里那一条到底是"能直接读的文字文件"还是"只该给路径的东西"** —— 主 Agent 那条路
+    /// （`TurnReferenceMaterials`）按用户 2026-09-27 的规矩分这两档：
+    /// 文字文件（.md/.txt/.pdf…）**抽正文发过去**，其余（二进制、文件夹）**只发绝对路径**。
+    ///
+    /// 为什么不让调用方自己判扩展名：那张表就在 `textFromFile(at:)` 里，
+    /// **两处各存一份必然漂**（改了能读的扩展名却忘了改判据，就会发一个读不出内容的路径）。
+    static func isTextReadableFile(at url: URL) -> Bool {
+        textFileExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// 认得的那几种文字文件（与 `textFromFile` 的那个 switch 是同一份真相）。
+    private static let textFileExtensions: Set<String> = [
+        "md", "markdown", "txt", "text", "json", "csv", "log", "pdf",
+    ]
+
     /// **读剪贴板**。文本 / 图片 / 文件（或文件夹）三种形态都要认。
     ///
     /// 用户的话：「自动的去把当前剪贴板的内容，可能是图片，也可能是文本…也可能是多个文件，
@@ -114,21 +129,23 @@ enum NotionNoteReferenceGatherer {
         return [(url.lastPathComponent, text)]
     }
 
+    /// 单个文件的正文（给外面用：主 Agent 那条路的"剪贴板里是文字文件就抽正文"）。
+    static func textForReference(at url: URL) -> String? {
+        textFromFile(at: url)
+    }
+
     /// 单个文件的正文。**只认 .md / .txt / .pdf** —— 认不出的一律跳过，
     /// 而不是塞一段二进制进去污染提示词。
     private static func textFromFile(at url: URL) -> String? {
-        switch url.pathExtension.lowercased() {
-        case "md", "markdown", "txt", "text", "json", "csv", "log":
-            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-            return text.isEmpty ? nil : String(text.prefix(maximumCharactersPerFile))
-        case "pdf":
+        guard isTextReadableFile(at: url) else { return nil }
+        if url.pathExtension.lowercased() == "pdf" {
             guard let document = PDFDocument(url: url) else { return nil }
             // `string` 会把整份 PDF 抽成纯文本（PDFKit 自带，不需要额外依赖）。
             let text = document.string ?? ""
             return text.isEmpty ? nil : String(text.prefix(maximumCharactersPerFile))
-        default:
-            return nil
         }
+        let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        return text.isEmpty ? nil : String(text.prefix(maximumCharactersPerFile))
     }
 
     // MARK: - 拼提示词

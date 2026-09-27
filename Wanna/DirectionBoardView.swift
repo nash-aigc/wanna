@@ -22,6 +22,8 @@ import SwiftUI
 struct DirectionBoardView: View {
 
     @ObservedObject var session: DirectionBoardSession
+    /// 这一轮带了哪些参考材料（屏幕一/二…、剪贴板、文件、文件夹）—— 采集器说了算。
+    @ObservedObject var referenceCollector: TurnReferenceCollector = .shared
     /// 卡片主题（与右下角那张卡片同一个 `AnswerCardStyle`）。
     let theme: AnswerCardTheme
     /// 输入框被点了一下：宿主面板据此把窗口变成 key（否则打字进不来）。
@@ -79,6 +81,11 @@ struct DirectionBoardView: View {
             //（「你注意，我刚才是把这个任务结果删掉了」）—— **答案归鼠标右下角那张卡片**
             //（`CompanionManager.answerPreviewText`，与最终结果同一张），右上角只回答
             //「我理解得对不对」。所以这一段现在直接从选项跳到理解。
+            // **参考材料的标签**（用户 2026-09-27：「在表格下面、AI 回复上面添加几个小标签」）——
+            // 只有**真的拿到了**才画（采集器只在成功时写材料，所以这条是结构上成立的）。
+            if !referenceCollector.materials.tags.isEmpty {
+                referenceTagRow
+            }
             // 第三段：理解（**固定四行**，见 `understoodRow`）。
             understandingArea
             // 第四段：输入（默认留三行的高度）。
@@ -199,6 +206,26 @@ struct DirectionBoardView: View {
         }
     }
 
+    // MARK: - 参考材料的标签
+
+    /// 这一轮带上了什么：「屏幕一」「屏幕二」「剪贴板」「文件」「文件夹」。
+    private var referenceTagRow: some View {
+        HStack(spacing: 6) {
+            ForEach(referenceCollector.materials.tags, id: \.self) { tag in
+                Text(tag)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.Colors.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(DS.Colors.accent.opacity(0.16)))
+                    .overlay(Capsule().strokeBorder(DS.Colors.accent.opacity(0.35), lineWidth: 1))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .transition(.opacity)
+        .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.tags)
+    }
+
     // MARK: - 说明区（**固定四行，永远画着**）
 
     /// **四行固定**：目标问题 / 类型 / 参考 / 细节（顺序、标签都由 `DirectionBoardPrompt` 给）。
@@ -276,24 +303,48 @@ struct DirectionBoardView: View {
     /// 取消今日 = 到**明天凌晨 0 点**为止（不是"24 小时之后"）。
     private var cancelRow: some View {
         HStack(spacing: 0) {
-            cancelButton(title: "取消本次", help: "这一次循环不再显示看板（录音照旧）") {
-                session.cancelForThisCycle()
+            // **两个"不是取消"的按钮**（用户 2026-09-27：「在取消这一行的最左侧增加一个按钮，
+            // 叫复制按钮……它的右侧还有一个按钮，叫复制并退出」）——
+            // 刻意用中性色并与那三档之间隔一条线：它们是"把结果拿走"，不是"把这一轮丢掉"，
+            // 混成暗红会让人以为按了会丢东西。
+            actionButton(title: "复制", icon: "doc.on.doc",
+                         help: "把右下角那张卡片里 AI 回复的内容复制下来") {
+                session.copyReplyAction?()
             }
-            cancelRowDivider
-            cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
-                session.cancelForTenMinutes()
+            actionButton(title: "复制并退出", icon: "doc.on.doc.fill",
+                         help: "复制这段回复，然后退出这一轮（与按 ESC 同效）") {
+                session.copyReplyAndExitAction?()
             }
-            cancelRowDivider
-            cancelButton(title: "取消今日", help: "到明天凌晨 0 点为止都不显示") {
-                session.cancelUntilNextMidnight()
+            // 中性按钮与三档取消之间隔一条**空白**（不是分割线）：底色的分界本身就把它们分开了。
+            Spacer().frame(width: 8)
+
+            // 三档取消自成一组，**暗红底色只给这一组** —— 那两个按钮是"拿走结果"，
+            // 不该跟着一起变红。
+            HStack(spacing: 0) {
+                cancelButton(title: "取消本次", help: "这一次循环不再显示看板（录音照旧）") {
+                    session.cancelForThisCycle()
+                }
+                cancelRowDivider
+                cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
+                    session.cancelForTenMinutes()
+                }
+                cancelRowDivider
+                cancelButton(title: "取消今日", help: "到明天凌晨 0 点为止都不显示") {
+                    session.cancelUntilNextMidnight()
+                }
             }
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Self.cancelRowColor)
+            )
         }
         .frame(height: Self.cancelRowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Self.cancelRowColor)
-        )
     }
+
+    /// 取消那一行**左侧那两个按钮的底色**（中性 —— 它们不是"取消"）。
+    private static let actionButtonColor = Color.white.opacity(0.06)
+    /// 两个中性按钮各自的宽度（固定，不跟三档取消抢空间 —— 它们文字长短差一倍）。
+    private static let actionButtonWidth: CGFloat = 96
 
     /// 三档之间的分割线 —— 用户 2026-09-27：「它们中间的分割线你给它画得**再亮一点、再大一点，
     /// 颜色再明确一点，用白色**」。所以是**纯白**（不是原来那种 12% 白），而且比原来高
@@ -302,6 +353,31 @@ struct DirectionBoardView: View {
         Rectangle()
             .fill(Self.cancelRowDividerColor)
             .frame(width: 1.5, height: 20)
+    }
+
+    /// 复制 / 复制并退出 —— 中性色（`surface2` 底 + 正文色字），与三档取消明确区分。
+    private func actionButton(title: String,
+                              icon: String,
+                              help: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                Text(title).font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(theme.textColor)
+            .frame(width: Self.actionButtonWidth, height: Self.cancelRowHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Self.actionButtonColor)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        // 右下角那张卡片是空的时候没什么可复制 —— 置灰而不是让它复制一段空字符串。
+        .disabled(!session.hasCopyableReply)
+        .opacity(session.hasCopyableReply ? 1 : 0.4)
     }
 
     private func cancelButton(title: String, help: String, action: @escaping () -> Void) -> some View {

@@ -1344,9 +1344,46 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     var notionClipboardKeywords: String = AppSettings.defaultNotionClipboardKeywords
 
     /// **「参考屏幕」那一组**：说到就**当场**截一张图（说几次截几张），作为参考材料。
+    ///
+    /// ⚠️ 这三组关键词**两条路共用**：录音→Notion 那条，以及主 Agent 的参考材料
+    ///（`TurnReferenceCollector`）。用户 2026-09-27 说参考材料要「贯穿全局」，
+    /// 而"屏幕词 / 剪贴板词"本来就是同一件事 —— 两份清单必然漂。
     var notionScreenKeywords: String = AppSettings.defaultNotionScreenKeywords
 
+    /// **「选中文件 / 选中文件夹」那一组**（只看主 Agent 那条路用）。
+    ///
+    /// 说到这些词 → 去访达取当前选中的**绝对路径**（只给路径、不给内容）。用户 2026-09-27 拍板
+    /// 「用这组默认词」，设置页里可以改。
+    var selectedItemKeywords: String = AppSettings.defaultSelectedItemKeywords
+
+    static let defaultSelectedItemKeywords = """
+    选中文件
+    选中的文件
+    选中文件夹
+    选中的文件夹
+    这个文件
+    这个文件夹
+    选中的这个
+    """
+
+    /// ⚠️ 2026-09-27 补：用户实际说的是「根据剪贴板」「粘贴板」这种**光一个词**的说法，
+    /// 而原来那组只有「参考剪贴板 / 参考复制」—— 他按自己的说法说，一个都不命中。
+    /// 现在把他点名的几种说法都列进来（`剪贴板` / `粘贴板` 只要出现就算）。
+    /// **上一版的默认值**（只有它该被迁移掉 —— 与它不同就说明用户改过，一个字都不动）。
+    static let legacyNotionClipboardKeywords = """
+    复制内容
+    复制的内容
+    选中内容
+    选中的内容
+    参考复制
+    参考剪贴板
+    """
+
     static let defaultNotionClipboardKeywords = """
+    剪贴板
+    粘贴板
+    剪贴板内容
+    剪贴板复制内容
     复制内容
     复制的内容
     选中内容
@@ -1699,6 +1736,7 @@ nonisolated extension AppSettings {
         case notionNoteKeywords
         case notionClipboardKeywords
         case notionScreenKeywords
+        case selectedItemKeywords
         case recordingAutoReconnects
         case recordingRotationMinutes
         case recordingCopiesToClipboard
@@ -1876,8 +1914,21 @@ nonisolated extension AppSettings {
         notionNoteModelID = try container.decodeIfPresent(String.self, forKey: .notionNoteModelID) ?? defaults.notionNoteModelID
         notionNotePrompt = try container.decodeIfPresent(String.self, forKey: .notionNotePrompt) ?? defaults.notionNotePrompt
         notionNoteKeywords = try container.decodeIfPresent(String.self, forKey: .notionNoteKeywords) ?? defaults.notionNoteKeywords
-        notionClipboardKeywords = try container.decodeIfPresent(String.self, forKey: .notionClipboardKeywords) ?? defaults.notionClipboardKeywords
+        // ⚠️ **老默认值要迁移**：这一组在 2026-09-27 补了「剪贴板 / 粘贴板」两条 ——
+        // 而设置文件里**已经把老默认值存下来了**（用户保存过一次设置就会写），
+        // 于是"改了默认值"对老用户**完全无效**（他按自己的说法说「根据剪贴板」，一个词都不命中）。
+        // 判据是"存的正好是老默认值"＝他从没改过 → 换成新的；改过的人一个字都不动。
+        let storedClipboardKeywords = try container.decodeIfPresent(String.self,
+                                                                    forKey: .notionClipboardKeywords)
+        if let storedClipboardKeywords, storedClipboardKeywords != defaults.notionClipboardKeywords,
+           storedClipboardKeywords.trimmingCharacters(in: .whitespacesAndNewlines)
+            == Self.legacyNotionClipboardKeywords.trimmingCharacters(in: .whitespacesAndNewlines) {
+            notionClipboardKeywords = defaults.notionClipboardKeywords
+        } else {
+            notionClipboardKeywords = storedClipboardKeywords ?? defaults.notionClipboardKeywords
+        }
         notionScreenKeywords = try container.decodeIfPresent(String.self, forKey: .notionScreenKeywords) ?? defaults.notionScreenKeywords
+        selectedItemKeywords = try container.decodeIfPresent(String.self, forKey: .selectedItemKeywords) ?? defaults.selectedItemKeywords
         recordingAutoReconnects = try container.decodeIfPresent(Bool.self, forKey: .recordingAutoReconnects) ?? defaults.recordingAutoReconnects
         recordingRotationMinutes = try container.decodeIfPresent(Int.self, forKey: .recordingRotationMinutes) ?? defaults.recordingRotationMinutes
         recordingCopiesToClipboard = try container.decodeIfPresent(Bool.self, forKey: .recordingCopiesToClipboard) ?? defaults.recordingCopiesToClipboard

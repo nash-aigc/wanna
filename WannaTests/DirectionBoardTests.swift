@@ -196,6 +196,105 @@ struct DirectionBoardTests {
             """)
     }
 
+    // MARK: - 参考材料三类（屏幕 / 剪贴板 / 访达选中）
+
+    /// **关键词命中就采集**（用户 2026-09-27：说几次「屏幕」就截几次）。
+    @Test func referenceKeywordsAreRecognised() throws {
+        let screen = TurnReferenceCollector.splitKeywords(AppSettings.defaultNotionScreenKeywords)
+        let clipboard = TurnReferenceCollector.splitKeywords(AppSettings.defaultNotionClipboardKeywords)
+        let selected = TurnReferenceCollector.splitKeywords(AppSettings.defaultSelectedItemKeywords)
+        #expect(screen.contains("参考屏幕"))
+        #expect(clipboard.contains("参考剪贴板"))
+        #expect(selected.contains("选中文件"))
+
+        func mentions(_ keywords: [String], _ text: String) -> Int {
+            NotionNoteDetector.transcriptMentionCount(keywords, in: text,
+                                                      edgeCharacterCount: NotionNoteDetector.edgeCharacterCount)
+        }
+        // ⚠️ 这里断言的是**采集器真正依赖的那条契约**，不是绝对值：
+        // `transcriptMentionCount` 同时看开头 100 字与结尾 100 字，短句两段重叠，
+        // 所以**一次提到会算出 2**。采集器因此按"计数变大就加一组"来采集
+        //（每次事件加一组，而不是按增量加 —— 按增量在短句上会一次加两组，
+        //  那条老路 `NotionNoteSession` 就是这么写的）。
+        let once = mentions(screen, "参考屏幕上的这道题")
+        #expect(once > 0)
+        // 同一句被重放（识别器给的是累积文本）→ 计数不变 → **不会再截**。
+        #expect(mentions(screen, "参考屏幕上的这道题") == once)
+        // 又说了一次 → 计数变大 → 再加一组。
+        #expect(mentions(screen, "参考屏幕上的这道题，再参考屏幕一次") > once)
+
+        #expect(mentions(clipboard, "根据剪贴板里的内容总结一下") > 0)
+        #expect(mentions(clipboard, "帮我看看这个文件") == 0)
+        #expect(mentions(selected, "把这个文件夹里的东西列出来") > 0)
+        #expect(mentions(selected, "帮我把这段记下来") == 0)
+    }
+
+    /// **标签只反映"真的拿到了"**（用户：「只有执行成功、成功获取到，才能显示，
+    /// 而不是根据用户的关键词」）—— 这一条在代码里是结构上成立的：标签读 `materials`，
+    /// 而材料只在取到时才写。
+    @Test func referenceTagsOnlyShowWhatWasActuallyCollected() throws {
+        var materials = TurnReferenceMaterials()
+        #expect(materials.tags.isEmpty)
+        #expect(materials.isEmpty)
+
+        // 光有"关键词"是没有用的 —— 那不在这个类型里。写上材料才算数。
+        materials.clipboard = .text("一段剪贴板文本", sourceName: nil)
+        #expect(materials.tags == ["剪贴板"])
+
+        materials.clipboard = nil
+        materials.selectedPaths = ["/tmp/一个文件.txt", "/tmp/一个文件夹"]
+        // 文件与文件夹**分开两类**（用户点名要这两类）。
+        #expect(materials.tags == ["文件"])
+    }
+
+    /// 文件 / 文件夹按**磁盘上的真实类型**分（不看名字里有没有扩展名）。
+    @Test func referencePathsSplitByRealKind() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent("wanna-ref-test-\(UUID().uuidString)")
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: root) }
+
+        let folder = root.appendingPathComponent("一个文件夹")
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("一个文件.txt")
+        try "内容".write(to: file, atomically: true, encoding: .utf8)
+
+        let (files, folders) = TurnReferenceMaterials.splitPathsByKind([file.path, folder.path])
+        #expect(files == [file.path])
+        #expect(folders == [folder.path])
+    }
+
+    /// **文件和文件夹只给路径、不给内容**（用户：「参考文件夹时，里面的内容可能特别大，
+    /// 可能超过上下文限制，所以最好让 agents 来执行」）。
+    @Test func referencePromptBlockSendsPathsNotContents() throws {
+        var materials = TurnReferenceMaterials()
+        materials.selectedPaths = ["/Users/someone/Desktop/一个文件夹"]
+        materials.clipboard = .paths(["/Users/someone/Desktop/别的东西.bin"])
+        let block = TurnReferenceCollector.promptBlock(for: materials)
+        #expect(block?.contains("<reference_materials>") == true)
+        #expect(block?.contains("/Users/someone/Desktop/一个文件夹") == true)
+        #expect(block?.contains("只给了绝对路径，没有给里面的内容") == true)
+
+        // 剪贴板是**文本**时才把正文带上。
+        var withText = TurnReferenceMaterials()
+        withText.clipboard = .text("这是剪贴板里的正文", sourceName: "笔记.md")
+        let textBlock = TurnReferenceCollector.promptBlock(for: withText)
+        #expect(textBlock?.contains("这是剪贴板里的正文") == true)
+        #expect(textBlock?.contains("笔记.md") == true)
+
+        // 一份材料都没有 → 整块不出现（提示词与没有这个功能时一字不差）。
+        #expect(TurnReferenceCollector.promptBlock(for: TurnReferenceMaterials()) == nil)
+    }
+
+    /// 认得的那几种文字文件（与 `textFromFile` 的 switch 是同一份真相 ——
+    /// 剪贴板那条路靠它决定"抽正文"还是"只给路径"）。
+    @Test func textReadableFileKindsMatchTheExtractor() throws {
+        #expect(NotionNoteReferenceGatherer.isTextReadableFile(at: URL(fileURLWithPath: "/tmp/a.md")))
+        #expect(NotionNoteReferenceGatherer.isTextReadableFile(at: URL(fileURLWithPath: "/tmp/a.PDF")))
+        #expect(!NotionNoteReferenceGatherer.isTextReadableFile(at: URL(fileURLWithPath: "/tmp/a.app")))
+        #expect(!NotionNoteReferenceGatherer.isTextReadableFile(at: URL(fileURLWithPath: "/tmp/一个文件夹")))
+    }
+
     // MARK: - 答案预览的寿命（用户报的"ESC 退出后卡片还跟着鼠标"）
 
     /// **只有"提交"那一轮留着预览，其余出口一律当场作废。**

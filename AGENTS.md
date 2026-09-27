@@ -595,6 +595,30 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 真机实测过用户点的那道题：预览里打开《初中数学浙江中考数学真题.pdf》，注入「参考屏幕内容，分析一下
 这道题可能选哪一个」→ 绿框里给出「第 1 题:-3 的相反数是 3，选 A（选项 A 为 3）。」
 
+**第八版（2026-09-27 深夜）：参考材料三类（屏幕 / 剪贴板 / 访达选中）+ 卡片上的标签与两个按钮。**
+用户把参考材料扩成三类并要求**贯穿全局**（「只要录音识别，最终都要拼接到主 agents 的提示词里……
+实时任务理解卡片和任务答案卡片也要参考这部分内容」），动机是**有的网页太长、截图只能看到一部分，
+选中复制之后它就能看到全部**。新文件 `TurnReferenceMaterials.swift`（`TurnReferenceMaterials` 模型 +
+`TurnReferenceCollector` 单例）**一类一类地采集**：屏幕 = 按下快捷键**自动一张** + 每次说到
+「参考屏幕」**再加一张**（说几次截几次）；剪贴板 = 说到「剪贴板/粘贴板/复制内容」时读一条，
+**文字文件抽正文、其他文件与文件夹只给绝对路径**（他：「参考文件夹时里面的内容可能特别大……
+最好让 agents 来执行，而不是当前这个临时窗口」）；访达选中 = 说到「选中文件」时取**绝对路径**，
+**且只在前台是访达时才取**（「如果不是就放弃……可能是用户口误」）。关键词计数复用
+`NotionNoteDetector.transcriptMentionCount`，剪贴板读取复用 `NotionNoteReferenceGatherer`
+（新加 `isTextReadableFile(at:)`，与 `textFromFile` 的扩展名表**同一份真相**）。
+⭐ **`NSAppleEventsUsageDescription` 必须进 Info.plist**（Debug + Release 两处）——
+没有它 macOS **静默拒绝** Apple events（不弹框不报错）。⭐ **标签只反映"真的拿到了"**
+（他：「只有执行成功、成功获取到，才能显示，而不是根据用户的关键词」）—— 结构上成立：标签读材料，
+材料只在取到时才写。顺手收掉一处重复：**"这一轮的屏幕"原来有三个来源各截各的**（管线的
+`capturePendingPreScreenshots` 两个触发器 + 采集器 + 录音→Notion 那套），现在参考材料这一类归采集器、
+**管线不再自己截**（否则一轮两组图还互相矛盾），「说到屏幕」那个开关继续管着采集器的关键词触发。
+卡片上：**标签行**在表格下面（`[屏幕一][屏幕二][剪贴板][文件][文件夹]`），**取消行最左侧**加
+`复制`（复制右下角那张卡片此刻的文字）与 `复制并退出`（复制 + 走 `handleEscapeKeyPressed()`，
+中性灰、与三档取消留白隔开）。两个只有真跑才会发现的坑写进了 `开发经验/20` 9.5：
+**自检没驱动采集器**（自检直接驱动看板，绕过了真实回调 —— 日志里一条 📎 都没有）、
+**改了默认关键词老用户收不到**（设置文件里存着老默认值，`decodeIfPresent ?? defaults` 让存着的赢
+→ 加了一次性迁移：存的正好是上一版默认值就换新的）。
+
 **第七版三补（2026-09-27 深夜）：ESC 之后右下角那张卡片不退（我引入的回归，已修）。**
 他按住快捷键提问（右下角出现答案预览）→ 按 ESC 退出 → **卡片没退、一直跟着鼠标**。根因是上一版把"收预览"
 从提交那一刻挪走（挪到"真答案的第一个字"）却没给其余出口补上，而 ESC 打断走的
@@ -978,6 +1002,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `DirectionBoardPrompt.swift` | ~351 | 看板那次请求的**提示词与解析**。系统提示词**只给方向清单**（约三百 token，不是主 Agent 那五千字）。**卡片固定四行**（`understandingLabels` = 目标问题 / 类型 / 参考 / 细节，顺序是用户定的）：`parseUnderstandingLines` 的契约是「**永远返回这四行**，缺的行值是空串」（视图画占位符，卡片高度因此恒定 —— 用户：「这几行固定在这，而不是突然间有、突然间没有」）；`understandingLabelAliases` 每行带一串别名（模型常写回 `软件`/`文件`/`目标` 这些老标签）；**去重叠**是必须的（`目标问题:` 里嵌着 `目标:` 与 `问题:`，不处理那一行会被切成三段空值）；`任务结果`/`答案`/`选择` 是**边界标签**（只截断、不成行，见 `boundaryLabels`）。另有 `parseAnswer` / `parseSection`（「答案」那一节，取最后一次出现，最多续两行）、`parseLabelLine`（**不能只认行首**：实测模型写在同一行上）、`leftoverParagraphText`（按"保留没被覆盖的字"拼 —— 删区间会在别名互相嵌套时崩）。⚠️ **`cleanRawResponse`（不截断）给解析、`cleanParagraph`（200 字上限）只给显示**。 |
 | `DirectionBoardSession.swift` | ~668 | 看板的状态机（`@MainActor ObservableObject` 单例）：`beginListening(cycleID:)`（新的一大轮 → 清临时文件）/ `noteLiveTranscript` / `endListening` / `endBigRound` / `consumeTurnDecision`；节奏闸门三条（每 3 秒 + 文本变了 + **新增 ≥10 字、标点不算**，阈值设置页可调）；**一个请求里并行发两路** —— `JevDecisionClient` 判方向（给概率）+ 小提示词写那段理解（说「参考屏幕」时带上当场截的那张图）；代次计数丢弃过期回复；`contentRevision` 每次回复落地 +1（视图据此播那一下淡入）；点过/说过的方向**钉住编号与位置**（口述编号的映射表 `spokenNumberTargets` 见 `DirectionBoardMatching.resolvedSpokenNumber` 的注释）；总闸门三档（取消本次 / 十分钟 / **今日到明天凌晨 0 点**，全程**不轮询** —— 一个布尔 + 一次日期比较）。**纯观察者**：不碰 `currentResponseTask` / `voiceState` / 历史 / TTS / 截图。含 `WANNA_DIRECTION_BOARD_SELFCHECK` 自检（`1` 假转写不发请求 / `live` 真发一次 / `stream` 只喂字幕量卡顿）。 |
 | `DirectionBoardView.swift` | ~386 | 卡片的**四段，每一段都固定画着**：编号方向格（多列，最多 5 列）/ **任务结果**（绿框「结果」小标，没算出来显示 `—`）/ **AI 的理解**（目标问题 / 类型 / 参考 / 细节四行，标签列定宽 50，空值显示 `—`）/ 三行输入框 / 暗红三列取消。值的文字带 `.id(value)` + `.transition(.opacity + offset)`，外层 `.animation(.easeOut(0.28).delay(行号 × 0.05))` —— 逐行错开淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」），**骨架不动**。外壳直接复用结果卡片那几个常量与 `cardBackground`。宽度 = 340 × 设置倍数（默认 2 → 680），**与内容无关、恒定**。 |
+| `TurnReferenceMaterials.swift` | ~330 | **这一轮的参考材料：屏幕 / 剪贴板 / 访达选中**（2026-09-27）。`TurnReferenceMaterials` 是模型（截图组 + 剪贴板那条 + 访达选中的路径 + `tags` + `<reference_materials>` 提示词块）；`TurnReferenceCollector` 是单例采集器（`beginTurn` 自动截第一张 / `noteLiveTranscript` 三类关键词边缘触发 / `promptBlock`）。**文件与文件夹只发绝对路径、不发内容**（用户：里面的内容可能特别大，让 agents 去读）；**标签只反映真拿到了什么**（结构上成立：标签读材料、材料只在取到时写）。访达那条走 AppleScript（在专用串行队列上跑，别堵主线程），**要求 Info.plist 里有 `NSAppleEventsUsageDescription`**，否则 macOS 会**静默拒绝**。 |
 | `MainFlowDiagnostics.swift` | ~175 | **主 Agent 这条语音链的诊断日志 + 主线程看门狗**（2026-09-27 新建）。用户报「连续问到第六七轮就卡死」而那条路**一个字都没落盘**，所以先装仪器：日志落 `~/Library/Application Support/Wanna/主Agent诊断.log`，记**音频心跳**（连续监听期间每 2 秒一行 `N 块/2s 峰值 x.xxx` —— 0 块 = tap/引擎没了、有块但全零 = 设备哑了、有块有峰值 = 故障在下游）、**识别会话生命周期**、**主线程看门狗**（后台每 1 秒往主队列投一次，往返 > 2 秒记一行并带上当时的阶段标记 —— 用来分辨"主线程被堵住"与"主线程闲着各链各自停摆"）。只写文件、纯入队不阻塞调用方、2MB 轮转、不改变任何行为。与长录音那条路的 `录音诊断.log` 是同一条规矩：**发现故障的位置必须从用户手里挪到机器手里**。 |
 | `DirectionBoardPanelController.swift` | ~255 | 看板住的那块**可点击**面板。⚠️ **尺寸归 SwiftUI、位置归我们**：`NSHostingView` 会按内容改窗口尺寸（`updateAnimatedWindowSize`，保持顶边），**刻意不设 `sizingOptions = []`**（这块面板上它挡不住 —— 根因与实测见本节上面第五版那段），改成订阅 `NSWindow.didResizeNotification` → `repositionForCurrentSize()` 每次用「锚点 + 夹进屏幕」重算原点（只改原点，不成环）。显示时只 `orderFrontRegardless()`、`becomesKeyOnlyIfNeeded`（**点了输入框才是 key**）；`holdsTheAutomaticSend()` 是"他正在跟看板打交道"的判据（鼠标在板上 / 面板是 key / 2 秒内交互过），静音自动发送那一下据此按住不发。 |
 | `DirectionBoardSettingsView.swift` | ~225 | 设置 → 操作 的「任务方向看板」一节：总开关、宽度倍数（1 / 1.5 / 2×）、最小新增字数（5…20）、概率阈值（0.3…0.9）、取消状态 + 恢复显示、**两份文件分开显示**（固定那份给「在访达中显示 / 恢复默认」，临时那份给「立刻清空」）、方向清单（每条可删 + 手动添加）、JEV key 一行（保存进 `JevKey.txt`，不在 AppSettings 里）。 |

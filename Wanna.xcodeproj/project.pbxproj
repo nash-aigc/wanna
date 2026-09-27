@@ -418,6 +418,7 @@
 				INFOPLIST_FILE = "Wanna/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Wanna;
 				INFOPLIST_KEY_CFBundleName = Wanna;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Wanna 需要控制「访达」才能拿到你当前选中的文件或文件夹的路径（你说「选中文件」时用）。";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Wanna needs screen recording access to see your screen and help you.";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -458,6 +459,7 @@
 				INFOPLIST_FILE = "Wanna/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Wanna;
 				INFOPLIST_KEY_CFBundleName = Wanna;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Wanna 需要控制「访达」才能拿到你当前选中的文件或文件夹的路径（你说「选中文件」时用）。";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Wanna needs screen recording access to see your screen and help you.";
 				LD_RUNPATH_SEARCH_PATHS = (
