@@ -374,6 +374,16 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     // so changing the setting only affects the NEXT window (the live VAD loop
     // must not have its threshold move under it).
     private var continuousListeningUtteranceEndSilenceSeconds: TimeInterval = 2.0
+
+    /// **静音到点了，但现在不该自动发送** —— 由调用方注入（`CompanionManager`）。
+    ///
+    /// 用户 2026-09-27：「如果两秒之内用户没有说话，而是在操作任务方向的看板，或者在任务方向的看板上
+    /// 打字，就会出现问题。所以一定要加上一个检测机制……如果鼠标在看板上，或者正在跟看板交互，
+    /// 就不要发送。」音频这一层不认识看板，所以只问一个布尔量（与 `sharedVoicePlaybackEngineProvider` /
+    /// `recordingActiveProvider` 同一条规矩：**注入判断，不注入模块**）。
+    var automaticSendShouldWaitProvider: (() -> Bool)?
+    /// 被按住不发的那一下（看板据此呼吸一下，告诉用户"还没发出去"）。
+    var onAutomaticSendHeld: (() -> Void)?
     private static let continuousListeningMaximumUtteranceSeconds: TimeInterval = 15
     /// The VAD loop's tick. Held in seconds and derived into a `Duration` so
     /// the accumulator maths and the sleep can never disagree about it.
@@ -1371,6 +1381,16 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 if audioLevel < Self.continuousListeningSpeechLevelThreshold {
                     if let silenceStartedAt = continuousListeningSilenceStartedAt,
                        now.timeIntervalSince(silenceStartedAt) >= continuousListeningUtteranceEndSilenceSeconds {
+                        // **正在跟看板交互 → 不发**（用户 2026-09-27 点名要求的那个检测机制）。
+                        // 倒计时**从头再来**：他停手（把鼠标挪开 / 不再打字）之后，下一次静音到点才发。
+                        // 这中间他再说话，说的内容自然接在同一句里（窗口没关、识别没停）——
+                        // 这正是他要的「当作后来追加的提示词，而不是一个全新的任务」。
+                        if automaticSendShouldWaitProvider?() == true {
+                            print("⏱️ [listen] 静音到点了，但用户正在看板上操作 —— 这一次不发送")
+                            onAutomaticSendHeld?()
+                            continuousListeningSilenceStartedAt = now
+                            continue
+                        }
                         print("⏱️ [listen] silence lasted \(continuousListeningUtteranceEndSilenceSeconds)s — requesting the final transcript")
                         requestContinuousListeningFinalTranscript()
                     } else if continuousListeningSilenceStartedAt == nil {

@@ -117,6 +117,31 @@ final class DirectionBoardPanelController {
         anchorPoint = nil
     }
 
+    // MARK: - 「用户正在看板上操作吗」（自动发送那一下要问的）
+
+    /// 上一次用户与看板交互（点击/按键）的时刻 —— 点完把鼠标挪开一点也算"还在跟他打交道"。
+    private var lastInteractionAt: Date?
+
+    /// 记录一次交互（面板成为 key / 视图上报点击时调用）。
+    func noteUserInteraction() {
+        lastInteractionAt = Date()
+    }
+
+    /// **静音到点时该不该按住不发**（`BuddyDictationManager.automaticSendShouldWaitProvider` 问它）。
+    ///
+    /// 三个判据，满足一个就算"他正在跟看板打交道"（用户：「检测一次用户的鼠标是不是在这个看板上，
+    /// 或者这个任务方向的看板是不是被激活、被点击、正在输入」）：
+    /// 1. **鼠标在板上**（`NSEvent.mouseLocation` 落在面板矩形里）；
+    /// 2. 面板**是 key**（他刚点过输入框，正在打字）；
+    /// 3. 上一次交互在 2 秒内（点完立刻把鼠标挪开一点，仍然算"他还在弄这个"）。
+    func holdsTheAutomaticSend() -> Bool {
+        guard isVisible, let panel else { return false }
+        if panel.frame.contains(NSEvent.mouseLocation) { return true }
+        if panel.isKeyWindow { return true }
+        if let lastInteractionAt, Date().timeIntervalSince(lastInteractionAt) < 2 { return true }
+        return false
+    }
+
     /// 屏幕参数变了（插拔显示器、分辨率）：重新锚一次。
     func rebuildForCurrentScreens() {
         guard isVisible else { return }
@@ -146,6 +171,8 @@ final class DirectionBoardPanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         // 只有真需要键盘（点输入框）时才成为 key —— 平时绝不抢用户正在用的那个 App。
         panel.becomesKeyOnlyIfNeeded = true
+        // 他点了输入框（面板成为 key）也算"正在跟他打交道"。
+        panel.onBecameKey = { [weak self] in self?.noteUserInteraction() }
 
         let settings = AppSettingsStore.snapshot()
         let hostingView = NSHostingView(rootView: DirectionBoardView(
@@ -189,4 +216,10 @@ final class DirectionBoardPanelController {
 /// 但这里配了 `becomesKeyOnlyIfNeeded = true`：不是"一出现就是 key"，而是"点了输入框才是"。
 private final class DirectionBoardPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+    /// 成为 key 的那一下报一声（"他点了输入框"——自动发送那一下要据此按住不发）。
+    var onBecameKey: (() -> Void)?
+    override func becomeKey() {
+        super.becomeKey()
+        onBecameKey?()
+    }
 }

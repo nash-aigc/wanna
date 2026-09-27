@@ -57,7 +57,15 @@ struct DirectionBoardView: View {
         .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
-                .strokeBorder(theme.borderColor, lineWidth: AnswerCardView.cardBorderWidth)
+                // **被按住不发的那一下，边框亮起来呼吸一下**（用户：「让看板边框闪一下、高亮一下或
+                // 呼吸灯一下，让用户知道任务没有完成、没有发送过去，而不是直接发送任务」）。
+                .strokeBorder(session.isHeldFromAutomaticSend
+                                ? DS.Colors.warning
+                                : theme.borderColor,
+                              lineWidth: session.isHeldFromAutomaticSend
+                                ? AnswerCardView.cardBorderWidth * 2
+                                : AnswerCardView.cardBorderWidth)
+                .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
         )
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
         .background(
@@ -162,6 +170,43 @@ struct DirectionBoardView: View {
     // MARK: - 说明区（**高度固定**）
 
     private var paragraphArea: some View {
+        HStack(alignment: .top, spacing: 6) {
+            paragraphText
+            // **AI 那段总结也要能确认/否认**（用户：「在系统总结这块，也要增加一个选中或者确认、
+            // 否认的按钮，即添加一个 X 叉按钮」）。只有真的有总结时才画。
+            if !session.paragraph.isEmpty {
+                Button {
+                    session.toggleSummaryDeny()
+                } label: {
+                    Image(systemName: session.summaryState == .confirmed ? "checkmark" : "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(summaryTextColor.opacity(session.summaryState == .pending ? 0.5 : 1.0))
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("点一下 = 这个理解不对")
+            }
+        }
+        .frame(height: Self.paragraphHeight, alignment: .topLeading)
+        .clipped()
+        // 点总结正文 = 确认"这个理解对"。
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !session.paragraph.isEmpty else { return }
+            session.toggleSummaryConfirm()
+        }
+    }
+
+    private var summaryTextColor: Color {
+        switch session.summaryState {
+        case .confirmed: return DS.Colors.success
+        case .denied: return DS.Colors.destructive
+        case .pending: return theme.textColor
+        }
+    }
+
+    private var paragraphText: some View {
         Group {
             if session.paragraph.isEmpty {
                 // 还没有结果时**不写占位话**（"正在理解…"这种字只会让人以为出错了）。
@@ -169,17 +214,13 @@ struct DirectionBoardView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(theme.textColor.opacity(0.45))
             } else {
-                Text(session.paragraph)
+                Text(session.summaryConfirmedText ?? session.paragraph)
                     .font(.system(size: AnswerCardView.fontSize))
-                    .foregroundStyle(theme.textColor)
+                    .foregroundStyle(summaryTextColor)
                     .lineSpacing(AnswerCardView.lineSpacing)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-        // **固定高度**：用户要的是"这块高度固定，上面的方向区往上长"。
-        // 说明比这长就裁掉尾巴（让它自己滚动会在面板里再套一个滚动区，不值当）。
-        .frame(height: Self.paragraphHeight, alignment: .topLeading)
-        .clipped()
     }
 
     // MARK: - 输入框区（**高度固定**）

@@ -781,6 +781,15 @@ final class CompanionManager: ObservableObject {
         // `LegacyDefaultsMigration` 的头注释。
         LegacyDefaultsMigration.runIfNeeded()
 
+        // **静音到点时问一句"用户是不是正在看板上操作"**（用户 2026-09-27 点名要的检测机制）。
+        // 音频层不认识看板，所以只把判断与回调注进去（同 `sharedVoicePlaybackEngineProvider`）。
+        buddyDictationManager.automaticSendShouldWaitProvider = {
+            DirectionBoardPanelController.shared.holdsTheAutomaticSend()
+        }
+        buddyDictationManager.onAutomaticSendHeld = {
+            DirectionBoardSession.shared.flagHeldAutomaticSend()
+        }
+
         // **方向看板的自检**（`WANNA_DIRECTION_BOARD_SELFCHECK=1`）：没有麦克风也把看板摆出来，
         // 喂几句假转写、不打任何请求。开发期验界面用，不是用户可见的设置 —— 见
         // `DirectionBoardSession.selfCheckMode` 里写的理由（这台机器没有可用的语音输入）。

@@ -49,6 +49,17 @@ final class DirectionBoardSession: ObservableObject {
     @Published private(set) var selectionStates: [Int: DirectionBoardSelectionState] = [:]
     /// **选下去那一刻那一格显示的文字** —— 用户确认的是他看到的字，不是之后再变的字。
     @Published private(set) var confirmedTexts: [Int: String] = [:]
+    /// **AI 那段总结的选择状态**（用户 2026-09-27：「在系统总结这块，也要增加一个选中或者确认、
+    /// 否认的按钮，即添加一个 X 叉按钮」）。
+    @Published private(set) var summaryState: DirectionBoardSelectionState = .pending
+    /// 选下去那一刻那段总结的原文（冻住 —— 他确认的是他看到的字）。
+    @Published private(set) var summaryConfirmedText: String?
+    /// **静音到点但被按住没发** —— 看板据此呼吸一下，告诉他"还没发出去"。
+    ///
+    /// 用户：「就让看板边框闪一下、高亮一下或呼吸灯一下，让用户知道任务没有完成、没有发送过去，
+    /// 而不是直接发送任务。」由 `DirectionBoardPanelController` 在按住那一下置上，1.2 秒后自己落。
+    @Published private(set) var isHeldFromAutomaticSend = false
+
     /// 输入框（用户手打的补充说明）。
     @Published var typedInput = ""
     /// 有一次请求正在飞（看板上显示一个很轻的"在想"）。
@@ -151,6 +162,9 @@ final class DirectionBoardSession: ObservableObject {
         localMatches = [:]
         selectionStates = [:]
         confirmedTexts = [:]
+        summaryState = .pending
+        summaryConfirmedText = nil
+        isHeldFromAutomaticSend = false
         displayedItems = []
         typedInput = ""
         isListening = true
@@ -184,6 +198,7 @@ final class DirectionBoardSession: ObservableObject {
     /// **提交时取走**：按屏幕上的编号顺序给出确认过的方向短语；输入框那句单独给。取走即清。
     func consumeTurnDecision() -> (directionTexts: [String], typedInput: String) {
         var directionTexts: [String] = []
+        var summaryTexts: [String] = []
         for item in displayedItems {
             guard selectionStates[item.rowIndex] == .confirmed else { continue }
             let text = (confirmedTexts[item.rowIndex] ?? item.text)
@@ -191,14 +206,22 @@ final class DirectionBoardSession: ObservableObject {
             guard !text.isEmpty else { continue }
             directionTexts.append(text)
         }
+        // **AI 那段总结如果被确认过，也当一条标签发过去**（与方向那条同一个形状）。
+        if summaryState == .confirmed,
+           let confirmedSummary = summaryConfirmedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !confirmedSummary.isEmpty {
+            summaryTexts.append("用户确认的任务理解是：\(confirmedSummary)")
+        }
         let typed = typedInput
         selectionStates = [:]
         confirmedTexts = [:]
+        summaryState = .pending
+        summaryConfirmedText = nil
         typedInput = ""
         paragraph = ""
         modelRowLabels = [:]
         displayedItems = []
-        return (directionTexts, typed)
+        return (directionTexts + summaryTexts, typed)
     }
 
     // MARK: - 用户点格子 / 口述选方向
@@ -213,6 +236,38 @@ final class DirectionBoardSession: ObservableObject {
         selectionStates[rowIndex] = .confirmed
         confirmedTexts[rowIndex] = displayedText
         print("🎛️ 方向看板：选中「\(displayedText)」（第 \(rowIndex + 1) 类）")
+    }
+
+    /// AI 那段总结：点一下 = 确认（整段变绿）；再点一次 = 取消。
+    func toggleSummaryConfirm() {
+        if summaryState == .confirmed {
+            summaryState = .pending
+            summaryConfirmedText = nil
+            return
+        }
+        summaryState = .confirmed
+        summaryConfirmedText = paragraph
+        print("🎛️ 方向看板：用户确认了 AI 的理解")
+    }
+
+    /// AI 那段总结右边的叉 = 否认（整段变红）；再点一次 = 取消。
+    func toggleSummaryDeny() {
+        if summaryState == .denied {
+            summaryState = .pending
+            return
+        }
+        summaryState = .denied
+        summaryConfirmedText = nil
+        print("🎛️ 方向看板：用户否认了 AI 的理解")
+    }
+
+    /// 被按住不发的那一下：呼吸 1.2 秒（看板边框亮一下）。
+    func flagHeldAutomaticSend() {
+        isHeldFromAutomaticSend = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            self?.isHeldFromAutomaticSend = false
+        }
     }
 
     /// 点右边的叉 = 否认；再点一次 = 取消。
@@ -333,6 +388,10 @@ final class DirectionBoardSession: ObservableObject {
         modelRowLabels = reading.rowLabels.filter { unmatchedRowIndices.contains($0.key) }
         // **整段存下来**带给下一次请求（用户：「最简单的方法，你就把上一次完整的回复保存下来」）。
         previousReading = String(rawReply.prefix(Self.maximumPreviousReadingCharacters))
+        if Self.selfCheckMode != nil {
+            // 自检时才打：平时每 3 秒一条会把真正的日志淹掉。它回答的是"模型到底认不认那个格式"。
+            print("🎛️ 方向看板自检：模型回了 —— 说明=\(reading.paragraph.prefix(60)) 标签=\(reading.rowLabels)")
+        }
         refreshDisplayedItems()
     }
 
