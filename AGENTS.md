@@ -526,7 +526,8 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 `<user_intent_tags>` 块**加在用户原话之前**（只进提示词，不进历史与界面）。
 显示判据**与刘海那行字幕同一条**（`notchBandSitsAboveTranscriptLine`），面板是可点击的那一种
 （配方 = `AgentHUDController` + `canBecomeKey`，`becomesKeyOnlyIfNeeded` —— **显示时绝不抢 key**）。
-全文见 `开发经验/19-任务方向看板.md`；**全部设置**在 设置 → 操作 → 任务方向看板。
+全文见 `开发经验/20-任务方向看板-完整方案.md`（**读一篇就够的那一篇**：需求 → 设计 → 实现 → 验证）
+与 `开发经验/19-任务方向看板.md`（逐版时间线与根因）；**全部设置**在 设置 → 操作 → 任务方向看板。
 
 **第六版（2026-09-27 深夜，用户八条要求）**：方向不再是代码里的"3 类 × 2 按钮"，而是
 **一个文件**（`~/Library/Application Support/Wanna/TaskDirections.json`，0600）里的
