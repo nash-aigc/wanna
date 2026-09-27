@@ -889,6 +889,37 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 - **两处照搬过来的取舍**：展开时那 718×592 收鼠标事件（编辑框要用，与录音带同一条）；那一行会压在
   展开面板页头那一条（y 32…64）上，也只在说话那几秒。
 
+**第九版（2026-09-27 深夜）：卡片改成**真正的**左右两栏 —— 表格与标签进左列，右列整块是脑图。**
+用户的判定很直接：「你现在还是**上下两种方式**，我说的是**左右布局**。**最上面那个标签和表格也要
+放在左边**，**右侧全部都是脑图**。标签 3 行肯定写不下，**写成 2 行就好**。重新弄。」
+所以 `expandedCard` 是 `HStack`：**左列 40%**（方向表格 → 参考标签 → 目标 → 疑问，全部竖着排在
+左列里）｜**右列 60%**（只有那张脑图，`.frame(maxHeight: .infinity)` 铺满整块）。三处随之而来：
+① **表格恒 2 列**（`directionColumnCount`，左列只有 262pt，按 680 算会排出 4 列挤成一团）、
+`directionGridHeight` 由 3 行改 2 行；② 参考标签那一行**会换行**了 —— 左列放不下时 `HStack` 是从
+**右边截掉**，量到的是「无法识别…」，而被截掉的恰好是"哪一类没取到"这半句，于是写了
+`ReferenceTagFlowLayout`（一个真正会折行的 `Layout`），高度**固定两行**（单行时下面空着，
+他的规矩是"高度不许晃"）；③ 内容块高度 `contentBlockHeight` = max(左列所需, 上一版 264 的两倍) ——
+行数是下限、翻倍是他明写的数，多出来的高度全给右列那张脑图。行数：参考 2 行、**目标 6 行**、
+**疑问 10 行**（他说的「参考 +2 / 目标 +2 / 疑问 +5 / 整体高度再增加一倍」）。
+
+⭐ **同一晚量到并修掉一个只在真机上看得见的截断**：屏幕上是
+「疑问  一、关于「记到哪里」的」，后半句「疑问：是要写进 Notion 某一页……」**凭空消失**，
+而同一轮里不含这两个字的「目标」折行完全正常 —— **这正是指认它的证据**。
+根因不在视图在**解析**：`labelPositions` 在整行里扫标签，模型把「疑问」两个字写进了**值里面**
+（「一、关于「记到哪里」的**疑问**：…」），于是它被当成第二个标签，**第一个值就在那里被切断**。
+修法是 `isAtLabelBoundary`：标签必须落在**行首或空白之后** —— 既挡掉句子里的词，
+又不影响模型把几行挤成一行时写的「目标：… 细节：…」。回归测试用日志里那条真实回复钉住
+（`labelWordInsideAValueIsNotASecondLabel`）。⚠️ 那条测试**红了两次，两次都是我的断言写错**：
+解析会把全角冒号统一成半角；「—」是空值标记、解析出来本来就是空串。**遇到解析类问题先写一个
+能编译真源码的小探针**（`DirectionBoardPrompt.swift` 只 import Foundation，加两个类型桩就能
+`swiftc` 单独跑），比在测试里猜快得多。
+
+**左下角折叠钮贴边那次也走过一次弯路**：负内边距（`.padding(.leading/-.bottom, -内边距)`）是靠
+「**内容的布局高度比它画出来的高度小**」起作用的，后面再套一个 `.frame(height:)` 就把这个高度
+顶了回去、负内边距等于没写（第一版就是这样，屏幕上量到的仍是 15pt 的缝）。去掉那个 frame 之后
+用 AX 核对：折叠钮 `(1293,580,22×36)`、面板 `x:1293 y:32 w:680 h:584` ——
+**左边缘 1293 = 面板左边缘、下边缘 616 = 面板下边缘**，贴住了；三个按钮仍是 26 高、离卡片下沿 10pt。
+
 ### ESC = 打断（2026-09-27 用户定）
 
 用户的原话：「1. 第一次按下：开始触发……2. 第二次按下：保持现有逻辑不变。3. 按下 ESC 键：打断……
@@ -1112,7 +1143,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `TaskDirectionReviewJob.swift` | ~161 | **每天中午 12 点**的复盘：睡到下一个本地中午（`nextNoon`），读最近 7 天会话的最后 20 轮，一次 LLM 调用提炼高频方向，**只追加**到 `TaskDirectionStore`（`source: .review`）、去重、不轮询。 |
 | `DirectionBoardPrompt.swift` | ~351 | 看板那次请求的**提示词与解析**。系统提示词**只给方向清单**（约三百 token，不是主 Agent 那五千字）。**卡片固定四行**（`understandingLabels` = 目标问题 / 类型 / 参考 / 细节，顺序是用户定的）：`parseUnderstandingLines` 的契约是「**永远返回这四行**，缺的行值是空串」（视图画占位符，卡片高度因此恒定 —— 用户：「这几行固定在这，而不是突然间有、突然间没有」）；`understandingLabelAliases` 每行带一串别名（模型常写回 `软件`/`文件`/`目标` 这些老标签）；**去重叠**是必须的（`目标问题:` 里嵌着 `目标:` 与 `问题:`，不处理那一行会被切成三段空值）；`任务结果`/`答案`/`选择` 是**边界标签**（只截断、不成行，见 `boundaryLabels`）。另有 `parseAnswer` / `parseSection`（「答案」那一节，取最后一次出现，最多续两行）、`parseLabelLine`（**不能只认行首**：实测模型写在同一行上）、`leftoverParagraphText`（按"保留没被覆盖的字"拼 —— 删区间会在别名互相嵌套时崩）。⚠️ **`cleanRawResponse`（不截断）给解析、`cleanParagraph`（200 字上限）只给显示**。 |
 | `DirectionBoardSession.swift` | ~668 | 看板的状态机（`@MainActor ObservableObject` 单例）：`beginListening(cycleID:)`（新的一大轮 → 清临时文件）/ `noteLiveTranscript` / `endListening` / `endBigRound` / `consumeTurnDecision`；节奏闸门三条（每 3 秒 + 文本变了 + **新增 ≥10 字、标点不算**，阈值设置页可调）；**一个请求里并行发两路** —— `JevDecisionClient` 判方向（给概率）+ 小提示词写那段理解（说「参考屏幕」时带上当场截的那张图）；代次计数丢弃过期回复；`contentRevision` 每次回复落地 +1（视图据此播那一下淡入）；点过/说过的方向**钉住编号与位置**（口述编号的映射表 `spokenNumberTargets` 见 `DirectionBoardMatching.resolvedSpokenNumber` 的注释）；总闸门三档（取消本次 / 十分钟 / **今日到明天凌晨 0 点**，全程**不轮询** —— 一个布尔 + 一次日期比较）。**纯观察者**：不碰 `currentResponseTask` / `voiceState` / 历史 / TTS / 截图。含 `WANNA_DIRECTION_BOARD_SELFCHECK` 自检（`1` 假转写不发请求 / `live` 真发一次 / `stream` 只喂字幕量卡顿）。 |
-| `DirectionBoardView.swift` | ~386 | 卡片的**四段，每一段都固定画着**：编号方向格（多列，最多 5 列）/ **任务结果**（绿框「结果」小标，没算出来显示 `—`）/ **AI 的理解**（目标问题 / 类型 / 参考 / 细节四行，标签列定宽 50，空值显示 `—`）/ 三行输入框 / 暗红三列取消。值的文字带 `.id(value)` + `.transition(.opacity + offset)`，外层 `.animation(.easeOut(0.28).delay(行号 × 0.05))` —— 逐行错开淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」），**骨架不动**。外壳直接复用结果卡片那几个常量与 `cardBackground`。宽度 = 340 × 设置倍数（默认 2 → 680），**与内容无关、恒定**。 |
+| `DirectionBoardView.swift` | ~695 | 那张卡片。**左右两栏**（2026-09-27 深夜定稿）：左列 40% = 方向表格（**恒 2 列 × 2 行**，`directionColumnCount`）+ **参考标签**（`ReferenceTagFlowLayout`，会折行、高度固定两行）+ 目标（6 行）+ 疑问（10 行）；右列 60% = **那张脑图**（不画标题、铺满整块）。`contentBlockHeight` = max(左列所需, 上一版的两倍) —— 每一行的高度都**提前定死**，空值画 `—`，因为他反复要求「不要让高度总是晃」。最下面一行：折叠钮（`22×36`，**左边缘/下边缘分别贴住卡片左边缘/下边缘**，负内边距实现，⚠️ 后面不许再套 `frame(height:)`）+ `复制｜执行｜退出`（一整块底 + 两条纯白细线，只有「复制」会因无可复制内容置灰）+ `取消｜取消十分钟`（暗红，自成一组）。外壳复用结果卡片的常量与 `cardBackground`。宽度 = 340 × 设置倍数（默认 2 → 680），**与内容无关、恒定**。表格读 `displayedItems`（本地关键词命中 + JEV 概率），值带 `.id(value)` 逐行错开淡入。 |
 | `TurnReferenceMaterials.swift` | ~330 | **这一轮的参考材料：屏幕 / 剪贴板 / 访达选中**（2026-09-27）。`TurnReferenceMaterials` 是模型（截图组 + 剪贴板那条 + 访达选中的路径 + `tags` + `<reference_materials>` 提示词块）；`TurnReferenceCollector` 是单例采集器（`beginTurn` 自动截第一张 / `noteLiveTranscript` 三类关键词边缘触发 / `promptBlock`）。**文件与文件夹只发绝对路径、不发内容**（用户：里面的内容可能特别大，让 agents 去读）；**标签只反映真拿到了什么**（结构上成立：标签读材料、材料只在取到时写）。访达那条走 AppleScript（在专用串行队列上跑，别堵主线程），**要求 Info.plist 里有 `NSAppleEventsUsageDescription`**，否则 macOS 会**静默拒绝**。 |
 | `MainFlowDiagnostics.swift` | ~175 | **主 Agent 这条语音链的诊断日志 + 主线程看门狗**（2026-09-27 新建）。用户报「连续问到第六七轮就卡死」而那条路**一个字都没落盘**，所以先装仪器：日志落 `~/Library/Application Support/Wanna/主Agent诊断.log`，记**音频心跳**（连续监听期间每 2 秒一行 `N 块/2s 峰值 x.xxx` —— 0 块 = tap/引擎没了、有块但全零 = 设备哑了、有块有峰值 = 故障在下游）、**识别会话生命周期**、**主线程看门狗**（后台每 1 秒往主队列投一次，往返 > 2 秒记一行并带上当时的阶段标记 —— 用来分辨"主线程被堵住"与"主线程闲着各链各自停摆"）。只写文件、纯入队不阻塞调用方、2MB 轮转、不改变任何行为。与长录音那条路的 `录音诊断.log` 是同一条规矩：**发现故障的位置必须从用户手里挪到机器手里**。 |
 | `DirectionBoardPanelController.swift` | ~330 | 看板住的那块**可点击**面板。⚠️ **尺寸归 SwiftUI、位置归我们**：`NSHostingView` 会按内容改窗口尺寸（`updateAnimatedWindowSize`，保持顶边），**刻意不设 `sizingOptions = []`**（这块面板上它挡不住 —— 根因与实测见本节上面第五版那段），改成订阅 `NSWindow.didResizeNotification` → `repositionForCurrentSize()` 每次用「锚点 + 夹进屏幕」重算原点（只改原点，不成环）。显示时只 `orderFrontRegardless()`、`becomesKeyOnlyIfNeeded`（**点了输入框才是 key**）；`holdsTheAutomaticSend()` 是"他正在跟看板打交道"的判据（鼠标在板上 / 面板是 key / 2 秒内交互过），静音自动发送那一下据此按住不发。 |

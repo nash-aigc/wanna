@@ -73,6 +73,15 @@ struct DirectionBoardView: View {
         return min(max(min(fitting, max(itemCount, 1)), 1), 5)
     }
 
+    /// **左列里那条表格排几列**：恒为 **2**（用户 2026-09-27 深夜：「标签3行肯定写不下，
+    /// **写成2行就好**」）。
+    ///
+    /// 不能再用整张卡片的宽度去算：表格现在住在**左列**里（262pt），按 680pt 那套算会得出
+    /// 4 列，在 262pt 里挤成一团。2 列 × 2 行 = 看得见 4 个方向，与他要的"两行"一致。
+    private var directionColumnCount: Int {
+        max(min(session.displayedItems.count, 2), 1)
+    }
+
     /// **每一行文字占的高度** —— 用它把「目标 / 细节 / 疑问」的高度**提前定死**。
     ///
     /// 用户 2026-09-27：「目标预留三行内容，细节预留五行内容，固定下来……不要让卡片高度总是变化。
@@ -81,7 +90,8 @@ struct DirectionBoardView: View {
     /// 内容渲染到右侧提前预留的空行部分，**不要因为生成了新内容就让整个标题和内容上下晃动**」。
     static let understandingLineHeight: CGFloat = 16
     /// 每一行预留几行（顺序与 `understandingLabels` 一致）。
-    static let reservedLineCounts: [String: Int] = ["目标": 3, "细节": 7, "疑问": 4]
+    /// 用户 2026-09-27 深夜第二轮：目标 → **6 行**（+2）、疑问 → **10 行**（+5）。
+    static let reservedLineCounts: [String: Int] = ["目标": 6, "细节": 7, "疑问": 10]
 
     /// **脑图那一行是哪一行**（「细节」）—— 它单独占右栏，且**不画标题**。
     static let mindMapLabel = "细节"
@@ -90,19 +100,32 @@ struct DirectionBoardView: View {
         (Self.cardWidth(forMultiplier: widthMultiplier) - Self.horizontalPadding * 2) * 0.4
     }
     /// 方向格**固定三行**的高度（每行 = 一个格子的高度 28 + 行距 6）。
-    private static let directionGridHeight: CGFloat = 3 * 28 + 2 * 6
+    private static let directionGridHeight: CGFloat = 2 * 28 + 6
 
-    /// 理解那块的总高度（固定）—— 左右两栏共用，于是右侧那张脑图的高度就是"整个卡片的高度"。
-    private static let understandingBlockHeight: CGFloat = 9 * understandingLineHeight
+    /// 内容那一整块的高度（固定）：左列要装下「表格 2 行 + 参考 1 行 + 目标 4 行 + 疑问 5 行」，
+    /// 右列的脑图就铺满这个高度（用户：「**右侧全部都是脑图**」）。
+    /// 参考标签那一行的高度：**固定两行**（单行时下面空着）—— 理由见 `referenceTagRow`。
+    private static let referenceTagRowHeight: CGFloat = 38
+
+    private static var contentBlockHeight: CGFloat {
+        // 左列「装得下」的最低要求：表格 2 行 + 参考 2 行 + 目标 6 行 + 疑问 10 行 + 三处间距。
+        let leftColumnRequirement = directionGridHeight
+            + referenceTagRowHeight
+            + understandingLineHeight * 6
+            + understandingLineHeight * 10
+            + 20
+        // 用户 2026-09-27 深夜：「……**整体高度再增加一倍**」—— 上一版这一块是 264，
+        // 所以取两者里更大的那个：行数是下限，翻倍是他明写的数。多出来的高度全给右栏那张脑图
+        //（他要的就是「右侧全部都是脑图」）。
+        let doubledFromPreviousVersion: CGFloat = 2 * 264
+        return max(leftColumnRequirement, doubledFromPreviousVersion)
+    }
 
     /// 用户设的宽度倍数（默认 2）。
     private var widthMultiplier: Double {
         AppSettingsStore.snapshot().directionBoardWidthMultiplier
     }
 
-    private var columnCount: Int {
-        Self.columnCount(forMultiplier: widthMultiplier, itemCount: session.displayedItems.count)
-    }
     /// 编号那一列有多宽（「第三个方向」里的 3）。
     private static let numberColumnWidth: CGFloat = 18
 
@@ -204,70 +227,21 @@ struct DirectionBoardView: View {
     private static let collapseClickableColor = Color.white.opacity(0.13)
     private static let collapseDragColor = Color.white.opacity(0.03)
 
-    private var expandedCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // 上半：**会长高的那一半** —— 只有他说到的方向才出现，最多 5 行。
-            if !session.displayedItems.isEmpty {
-                directionList
-                sectionDivider
-            }
-            // ⚠️ **这里原来有一行「任务结果」**（模型算出来的答案）。用户 2026-09-27 把它删掉了
-            //（「你注意，我刚才是把这个任务结果删掉了」）—— **答案归鼠标右下角那张卡片**
-            //（`CompanionManager.answerPreviewText`，与最终结果同一张），右上角只回答
-            //「我理解得对不对」。所以这一段现在直接从选项跳到理解。
-            // （参考材料的标签**不在这里** —— 它归左栏，见下面那个 `HStack` 里的 `referenceTagRow`。
-            //   第一版两处都留了一份，屏幕上于是出现了两排「参考」标签。）
-            // **左右两栏**（用户 2026-09-27：「整体分成左右两部分，**左侧占 40% 宽度，右侧占 60%**……
-            // 左侧是 AI 对用户的理解，包括所有的疑问、目标、对目标的理解、有哪些困惑的理解；
-            // 右侧是 AI 对用户需求的整体梳理。这样更容易理解」）。
-            // 右侧只有那张**脑图**（连「细节」这个标题都不要了，直接显示整张图），高度撑满整块。
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 6) {
-                    if !referenceCollector.materials.tags.isEmpty ||
-                        !referenceCollector.materials.unresolved.isEmpty {
-                        referenceTagRow
-                    }
-                    understandingColumn
-                }
-                .frame(width: understandingColumnWidth, alignment: .leading)
-                mindMapColumn
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(height: Self.understandingBlockHeight, alignment: .top)
-            // （第四段原来在这里：那个"补充说明"输入框，已按用户要求删掉。
-            //   左侧那条竖折叠条也一起挪走了 —— 用户 2026-09-27：「这个输入框左侧这个折叠的东西，
-            //   你就把它显示到复制的按钮左侧吧，然后把它横向显示」。见 `collapseToggle`。）
-            // 最下面一行：**取消看板**的三档（用户 2026-09-27：「把最下面这一行分成三列：
-            // 第一列叫「取消本次」……第二列叫「取消十分钟」……第三列叫「取消今日」」）。
-            cancelRow
-        }
-        // ⚠️ **拖动不在这里做**：它是面板那一侧用 NSEvent 监听做的（见
-        // `DirectionBoardPanelController` 的 `installDragMonitors`）。
-        // 两个原因，都是量出来的：
-        //  · SwiftUI 的 `DragGesture` 会**吞掉点击**（`minimumDistance` 调大才不吞，
-        //    而那又让它丢掉起步那几 pt）；
-        //  · 它给的 `translation` 是在**卡片自己的坐标系**里量的，而卡片正随着窗口一起动 ——
-        //    于是每次只能拿到"还差的那一半"（实测拖 −180 只走了 −92，增益 1/2）。
-        // 监听走的是**光标的绝对屏幕位置 + 按下那一刻的抓取偏移**，增益恒等于 1，也不吃点击。
-    }
-
-    // MARK: - 方向区（只画说到的那些，每格一个连续编号）
-
     private var directionList: some View {
         // **多列**（用户：「表格上面那几个表格应该是多列的，不是单列，你现在是单列、多行。
         // 我的意思是多行可以多列，可以到 2 到 3 列」）—— 有几个方向就排几列（最多 5），
         // 超过 5 个才换行。
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8),
-                                 count: columnCount),
+                                 count: directionColumnCount),
                   alignment: .leading,
                   spacing: 6) {
             ForEach(session.displayedItems, id: \.directionID) { item in
                 directionRow(item)
             }
         }
-        // **固定占三行的高度**（用户 2026-09-27：「建议固定为最多显示三行，就固定显示三行，
-        // 更多内容以后再说」）—— 于是这一块也**不再随卡片里有多少个方向而变高变矮**，
-        // 多的那几行被裁掉（`maximumItemCount` 那边另有上限）。
+        // **固定占两行的高度**（用户 2026-09-27 深夜：「标签3行肯定写不下，**写成2行就好**」——
+        // 表格现在住在左列里，左列只有 262pt 宽，排 2 列正好、第 3 行放不下）——
+        // 于是这一块也**不再随卡片里有多少个方向而变高变矮**，多的被裁掉（`maximumItemCount` 另有上限）。
         .frame(height: Self.directionGridHeight, alignment: .top)
         .clipped()
     }
@@ -359,37 +333,89 @@ struct DirectionBoardView: View {
     /// 样式也是他定的：「改大一点，做成矩形，**上下边距小一点**，加上圆角，字体大一点」——
     /// 所以从 Capsule(10pt 字) 改成 RoundedRectangle(12pt 字、垂直 1pt)。
     private var referenceTagRow: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             // **左侧标题「参考」**（用户 2026-09-27：「最上面一行（屏幕一、屏幕二）左侧加标题「参考」」）。
-            // 它也是原来那一行「参考」被删掉之后的去处 —— 参考材料这件事现在由这排标签代表。
-            // **「参考」占的正是下面那个标签列**（用户 2026-09-27：「左侧的标题要对齐……
-            // 现在屏幕上这些标签比下面的内容更靠左，应该让它们在竖直方向上的位置固定、确定」）——
-            // 所以它用与「目标/细节/疑问」**同一个宽度**，标签于是从**内容列**开始，整块是齐的。
+            // **「参考」占的正是下面那个标签列**（用户：「左侧的标题要对齐」）—— 用与「目标/疑问」
+            // **同一个宽度**，标签于是从**内容列**开始，整块是齐的。
             Text("参考")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(theme.textColor.opacity(0.55))
                 .frame(width: Self.understandingLabelWidth, alignment: .leading)
-            ForEach(referenceCollector.materials.tags, id: \.self) { tag in
-                referenceTag(tag, tint: DS.Colors.success)
+
+            // ⚠️ **标签放在一个会换行的流里，而不是 HStack**（2026-09-27 实测）：表格搬进左列之后
+            // 这一栏只有 262pt 宽，`HStack` 里放不下就**从右边截掉** —— 屏幕上量到的是
+            // 「无法识别…」，而被截掉的正是"哪一类没拿到"这唯一有用的信息。
+            ReferenceTagFlowLayout(spacing: 6, lineSpacing: 4) {
+                ForEach(referenceCollector.materials.tags, id: \.self) { tag in
+                    referenceTag(tag, tint: DS.Colors.success)
+                }
+                // **多张截图时明确"以最近一次为准"**（用户：「用户询问屏幕内容时，重点关注最近一次
+                // 屏幕截图……避免回复最初的屏幕内容」）。提示词里也写了同一句。
+                if referenceCollector.materials.screenshots.count > 1 {
+                    referenceTag("重点关注最近一次屏幕内容", tint: DS.Colors.accent)
+                }
+                ForEach(referenceCollector.materials.unresolved, id: \.self) { label in
+                    referenceTag("无法识别：" + label, tint: DS.Colors.warning)
+                }
             }
-            Spacer(minLength: 8)
-            // **多张截图时明确"以最近一次为准"**（用户 2026-09-27：「用户询问屏幕内容时，重点关注
-            // 最近一次屏幕截图……避免回复最初的屏幕内容」）。提示词里也写了同一句（见
-            // `TurnReferenceMaterials.promptBlock`）—— 界面上标出来是为了让他知道这条生效了。
-            if referenceCollector.materials.screenshots.count > 1 {
-                referenceTag("重点关注最近一次屏幕内容", tint: DS.Colors.accent)
-            }
-            ForEach(referenceCollector.materials.unresolved, id: \.self) { label in
-                referenceTag("无法识别：" + label, tint: DS.Colors.warning)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // **高度提前定死成两行**（用户那条反复强调的规矩：「它每一个位置上的高度都是固定的……
+        // 不要让高度总是晃」）：只有一行标签时下面也空着，但卡片高度因此恒定 ——
+        // 第二个标签到来时不会把下面所有东西顶下去。
+        .frame(height: Self.referenceTagRowHeight, alignment: .top)
         .transition(.opacity)
         .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.tags)
         .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.unresolved)
     }
 
-    /// 一枚参考标签。**矩形 + 小圆角 + 上下边距很小**（用户：「做成矩形，上下边距小一点，
+    /// **会换行的标签流**（左列只有 262pt，标签数量随参考材料变 —— 一行放不下就换到第二行）。
+///
+/// 用 `Layout` 而不是 `HStack`：`HStack` 放不下是从右边**截掉**，而被截掉的恰好是
+/// 「无法识别：选中文件」里"哪一类"那半句 —— 2026-09-27 在屏幕上量到的就是「无法识别…」。
+private struct ReferenceTagFlowLayout: Layout {
+    var spacing: CGFloat
+    var lineSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maximumWidth = proposal.width ?? .infinity
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var widestLine: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > 0 && currentX + size.width > maximumWidth {
+                currentX = 0
+                currentY += lineHeight + lineSpacing
+                lineHeight = 0
+            }
+            currentX += size.width + spacing
+            widestLine = max(widestLine, currentX - spacing)
+            lineHeight = max(lineHeight, size.height)
+        }
+        return CGSize(width: min(widestLine, maximumWidth), height: currentY + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var currentX = bounds.minX
+        var currentY = bounds.minY
+        var lineHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > bounds.minX && currentX + size.width > bounds.maxX {
+                currentX = bounds.minX
+                currentY += lineHeight + lineSpacing
+                lineHeight = 0
+            }
+            subview.place(at: CGPoint(x: currentX, y: currentY), proposal: ProposedViewSize(size))
+            currentX += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+    }
+}
+
+/// 一枚参考标签。**矩形 + 小圆角 + 上下边距很小**（用户：「做成矩形，上下边距小一点，
     /// 加上圆角，字体大一点」）—— 拿到的用绿色（与复制那两个按钮同一族颜色），
     /// 没拿到的用告警色。
     private func referenceTag(_ text: String, tint: Color) -> some View {
@@ -427,6 +453,39 @@ struct DirectionBoardView: View {
         // ⚠️ 这里原来有一个 ✕（"这个理解不对"）。**删掉了**：理解现在是**无条件**跟着提示词发给
         // 模型的（用户 2026-09-27：「这个大语言模型的理解，你可以去发，发过去」），
         // 也就是说"确认"这个动作没有意义了 —— 一个点了不改变任何事情的按钮比没有按钮更糟。
+    }
+
+    /// **右栏：那张脑图**（「细节」）—— 用户 2026-09-27：「右侧从上到下都是细节，**高度占据整个
+    /// 卡片的高度**。**不再有细节标题**，直接显示整个脑图」。
+
+    private var expandedCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // **左右两栏**（用户 2026-09-27 深夜说清了两次：「我说的是**左右布局**。
+            // **最上面那个标签和表格也要放在左边**，**右侧全部都是脑图**」）：
+            //
+            //   左列（40%）：方向表格（固定 2 行）→ 参考标签 → 目标 → 疑问
+            //   右列（60%）：**从上到下整块都是脑图**（不画标题，高度铺满这一整块）
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !session.displayedItems.isEmpty {
+                        directionList
+                    }
+                    if !referenceCollector.materials.tags.isEmpty ||
+                        !referenceCollector.materials.unresolved.isEmpty {
+                        referenceTagRow
+                    }
+                    understandingColumn
+                }
+                .frame(width: understandingColumnWidth, alignment: .leading)
+
+                mindMapColumn
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: Self.contentBlockHeight, alignment: .top)
+
+            // 最下面一行：折叠钮（贴左下角）+ 复制/执行/退出 + 两档取消。
+            cancelRow
+        }
     }
 
     /// **右栏：那张脑图**（「细节」）—— 用户 2026-09-27：「右侧从上到下都是细节，**高度占据整个
@@ -492,7 +551,7 @@ struct DirectionBoardView: View {
     /// 三档的语义（用户）：取消本次 = 这一次大循环；取消十分钟 = 十分钟内（本循环或新循环）都不显示；
     /// 取消今日 = 到**明天凌晨 0 点**为止（不是"24 小时之后"）。
     private var cancelRow: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             // **两个"不是取消"的按钮**（用户 2026-09-27：「在取消这一行的最左侧增加一个按钮，
             // 叫复制按钮……它的右侧还有一个按钮，叫复制并退出」）——
             // 刻意用中性色并与那三档之间隔一条线：它们是"把结果拿走"，不是"把这一轮丢掉"，
@@ -555,7 +614,16 @@ struct DirectionBoardView: View {
                     .fill(Self.cancelRowColor)
             )
         }
-        .frame(height: Self.cancelRowHeight)
+        // **折叠钮贴左下角**（用户 2026-09-27 深夜：「左下角这个卡片的按钮还是有边距，按钮最左边
+        // 跟卡片外边框之间有间距，**不应该有间距**」）。做法是把**整行**向左、向下各顶出
+        // 卡片内边距那么多 —— 于是折叠钮的左边缘落在卡片外边框上、下边缘落在卡片下沿，
+        // 而右侧那三档的位置**一点没动**（行的左边缘移了 12，右边缘仍在内边距那一条线上）。
+        .padding(.leading, -Self.horizontalPadding)
+        .padding(.bottom, -Self.cardBottomPadding)
+        // ⚠️ **这里不许再加 `frame(height:)`**：负内边距是靠"内容的布局高度比它画出来的高度
+        // 小 10pt"起作用的，再套一个 frame 就把这个高度**顶回去**、负内边距等于没写
+        //（第一版就是这么写的，屏幕上量到的仍是 15pt 的缝）。现在这一行的布局高度 = 26，
+        // 内容（36 高的折叠钮）向下溢出 10pt，正好落进卡片的下内边距里 → 底边贴住卡片下沿。
     }
 
     /// 取消那一行**左侧那两个按钮的底色**（中性 —— 它们不是"取消"）。

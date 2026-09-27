@@ -278,11 +278,15 @@ nonisolated enum DirectionBoardPrompt {
                 let valueEnd = position.valueEnd
                 guard valueStart <= valueEnd else { continue }
                 let value = normalizedValue(String(line[valueStart..<valueEnd]))
-                guard !value.isEmpty, found[position.label] == nil else { continue }
+                // ⚠️ **标签这一行可以是空的，值全在下面几行**（2026-09-27 实测：
+                // 模型写脑图时就是「细节：」单独一行、树从下一行开始 —— 而原来的
+                // `guard !value.isEmpty` 会把整块**直接丢掉**，屏幕上右栏一片空白，
+                // 看起来就像"AI 没生成脑图"，其实生成得好好的）。
+                guard found[position.label] == nil else { continue }
                 // **续行也算这一行的内容**（用户 2026-09-27：「细节保留，但是要简要说明，
                 // 不同类型的任务，换行显示说明」）—— 所以一行标签下面接着的那几行，
                 // 直到下一个标签行或空行为止，都并进这一行的值里（用换行连起来，视图按行显示）。
-                var collected = [value]
+                var collected = value.isEmpty ? [] : [value]
                 var nextIndex = lineIndex + 1
                 while nextIndex < lines.count {
                     let candidate = lines[nextIndex].trimmingCharacters(in: .whitespaces)
@@ -293,7 +297,9 @@ nonisolated enum DirectionBoardPrompt {
                     nextIndex += 1
                     if collected.count >= maximumContinuationLines { break }
                 }
-                found[position.label] = collected.filter { !$0.isEmpty }.joined(separator: "\n")
+                let joined = collected.filter { !$0.isEmpty }.joined(separator: "\n")
+                guard !joined.isEmpty else { continue }   // 真的一个字都没有 → 不记（视图画占位符）
+                found[position.label] = joined
             }
         }
         // 按用户定的顺序返回，**缺的那些留空串**（不是省略）。
@@ -308,6 +314,15 @@ nonisolated enum DirectionBoardPrompt {
     ///
     /// 「去重叠」也是必须的：`目标问题:` 里同时含 `目标:` 与 `问题:` 两个别名的起点，
     /// 不处理的话那一行会被切出三段、值全是空的（第一版就是这样，那一行的内容整段消失）。
+    /// 这个位置算不算"一个标签的开头"：**行首，或者前面是空白**（半角/全角空格、制表符）。
+    ///
+    /// 反例就是它的存在理由：「一、关于「记到哪里」的疑问：…」里的「疑问」前面是「的」，
+    /// 那是句子里的一个词，不是标签 —— 不挡掉它，整行的值就在那里被切断。
+    private static func isAtLabelBoundary(_ start: String.Index, in line: String) -> Bool {
+        guard start > line.startIndex else { return true }
+        return line[line.index(before: start)].isWhitespace
+    }
+
     private static func labelPositions(in line: String)
         -> [(label: String, aliasLength: Int, start: String.Index, valueEnd: String.Index)] {
         var raw: [(label: String, aliasLength: Int, start: String.Index)] = []
@@ -315,6 +330,17 @@ nonisolated enum DirectionBoardPrompt {
             for alias in aliases {
                 var searchStart = line.startIndex
                 while let range = line.range(of: alias + ":", range: searchStart..<line.endIndex) {
+                    // ⚠️ **标签必须落在行首或空白之后**（2026-09-27 在真机上量到的截断）：
+                    // 模型写「一、关于「记到哪里」的**疑问**：是要写进 Notion 某一页……」时，
+                    // 值里面的「疑问」二字也被当成了一个新标签，于是**第一个值在它前面就被切断** ——
+                    // 屏幕上量到的就是「疑问  一、关于「记到哪里」的」，后半句凭空消失
+                    //（而同一轮里没有这个字样的「目标」折行完全正常，这正是指认它的证据）。
+                    // 模型把几行挤在一行时会用空格分开（「目标：… 细节：…」），所以"行首或空白之后"
+                    // 既挡掉这种误判，又不影响真正的一行多标签。
+                    if !isAtLabelBoundary(range.lowerBound, in: line) {
+                        searchStart = range.upperBound
+                        continue
+                    }
                     raw.append((label, alias.count, range.lowerBound))
                     searchStart = range.upperBound
                 }
@@ -323,6 +349,10 @@ nonisolated enum DirectionBoardPrompt {
         for boundary in boundaryLabels {
             var searchStart = line.startIndex
             while let range = line.range(of: boundary + ":", range: searchStart..<line.endIndex) {
+                if !isAtLabelBoundary(range.lowerBound, in: line) {
+                    searchStart = range.upperBound
+                    continue
+                }
                 raw.append(("", boundary.count, range.lowerBound))
                 searchStart = range.upperBound
             }

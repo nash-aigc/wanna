@@ -485,4 +485,29 @@ struct DirectionBoardTests {
         #expect(calendar.component(.hour, from: nextNoon) == 12)
         #expect(!calendar.isDate(nextNoon, inSameDayAs: afternoon))
     }
+
+    /// **值里出现的「疑问」二字不许被当成第二个标签**（2026-09-27 在真机上量到的截断）。
+    ///
+    /// 原始回复来自 `主Agent诊断.log` 的一条真实往返 —— 屏幕上量到的是
+    /// 「疑问  一、关于「记到哪里」的」，后半句凭空消失；同一轮里不含这两个字的「目标」
+    /// 折行完全正常，这正是指认它的证据。
+    @Test func labelWordInsideAValueIsNotASecondLabel() throws {
+        let raw = """
+        目标：把他选中/剪贴板里关于浮动卡片的两条调整意见总结下来，顺带说明「2 存成一条录音」该不该选。
+        疑问：一、关于「记到哪里」的疑问：是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音
+        类型：总结记录
+        """
+        let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
+        let question = try #require(lines.first { $0.label == "疑问" }?.value)
+        // ⚠️ 解析会把全角冒号统一成半角（`parseUnderstandingLines` 第一行就做这件事），
+        // 所以断言里要用半角 —— 第一版用全角写，测试红了，红的是断言不是实现。
+        #expect(question == "一、关于「记到哪里」的疑问:是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音")
+        #expect(lines.first { $0.label == "目标" }?.value.isEmpty == false)
+        // **一行里挤两个标签仍然要认**（模型常这么写）—— 别把上面那条修过头。
+        // ⚠️ 「—」是空值标记，解析出来就是**空串**（见 `dashMeansEmptyNotContent`），
+        // 第一版这里写「—」又红了一次 —— 两次红都是断言写错，实现是对的。
+        let packed = DirectionBoardPrompt.parseUnderstandingLines("目标：整理文件 细节：打个比方")
+        #expect(packed.first { $0.label == "目标" }?.value == "整理文件")
+        #expect(packed.first { $0.label == "细节" }?.value == "打个比方")
+    }
 }
