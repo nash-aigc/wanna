@@ -39,13 +39,6 @@ protocol BuddyTranscriptionProvider {
 }
 
 enum BuddyTranscriptionProviderFactory {
-    private enum PreferredProvider: String {
-        case bailian = "bailian"
-        case appleSpeech = "apple"
-    }
-
-    /// Used when `VoiceTranscriptionProvider` is missing from the bundle config.
-    private static let defaultProvider: PreferredProvider = .bailian
 
     /// `transcriptionModelIDOverride`：语音聊天的**角色独立配置**。对话页不传，
     /// 走「听」页的全局选择；传了就以它为准（工厂按模型名分流，见下面那三行）。
@@ -55,6 +48,44 @@ enum BuddyTranscriptionProviderFactory {
         let provider = resolveProvider(override: transcriptionModelIDOverride)
         print("🎙️ Transcription: using \(provider.displayName)")
         return provider
+    }
+
+    /// 选哪个识别后端，只由这一处决定。
+    ///
+    /// 三条规矩，顺序不能换：
+    ///
+    /// 1. **调用方点名了模型 → 百炼。** 语音聊天的三段式预设会把识别模型
+    ///    （`qwen-audio-3.1-realtime-plus` 那类百炼模型）作为 override 传进来，
+    ///    那个名字本身就是百炼的，换后端等于让角色编辑器里选的那一项失效。
+    ///    实测（2026-09-27）四条三段式预设**全部**带非空 override，所以这条规矩
+    ///    精确地圈出了「语音聊天那条路」。
+    /// 2. **没点名 → 看用户在「听」页选的识别服务**（`VoiceTranscriptionService`，
+    ///    默认豆包）。主 Agent 的按说即发、它的持续追问窗口、卡片通话都走这条。
+    /// 3. **选中的那个没配好 → 退到另一个；两个都没配 → Apple 本地识别。**
+    ///    静默换后端是最坏的结果，所以每一步都打一行日志。
+    private static func resolveProvider(override: String?) -> any BuddyTranscriptionProvider {
+        if let override, !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return bailianProviderForConfiguredModel(override: override)
+        }
+
+        let desiredService = AppSettingsStore.snapshot().voiceTranscriptionService
+        let volcengine = VolcengineTranscriptionProvider()
+        let bailian = bailianProviderForConfiguredModel(override: nil)
+
+        switch desiredService {
+        case .volcengine:
+            if volcengine.isConfigured { return volcengine }
+            if bailian.isConfigured {
+                print("⚠️ Transcription: 选的是豆包，但豆包的 API Key 还没填 —— 先用 \(bailian.displayName)")
+                return bailian
+            }
+            print("⚠️ Transcription: 豆包与百炼都没配好，退到 Apple Speech")
+            return AppleSpeechTranscriptionProvider()
+        case .bailian:
+            if bailian.isConfigured { return bailian }
+            print("⚠️ Transcription: 选的是百炼，但百炼的识别角色没配好，退到 Apple Speech")
+            return AppleSpeechTranscriptionProvider()
+        }
     }
 
     /// 百炼有**三条**识别路，由**模型名**决定走哪条：
@@ -89,23 +120,5 @@ enum BuddyTranscriptionProviderFactory {
         let nonRealtimeProvider = BailianNonRealtimeTranscriptionProvider()
         nonRealtimeProvider.modelIDOverride = override
         return nonRealtimeProvider
-    }
-
-    private static func resolveProvider(override: String?) -> any BuddyTranscriptionProvider {
-        let preferredProviderRawValue = AppBundleConfiguration
-            .stringValue(forKey: "VoiceTranscriptionProvider")?
-            .lowercased()
-        let preferredProvider = preferredProviderRawValue.flatMap(PreferredProvider.init(rawValue:))
-            ?? defaultProvider
-
-        // Apple Speech is the local, always-available fallback, and it is the only
-        // candidate besides 百炼 now. The ordering machinery that used to live here
-        // existed to choose among three cloud providers; with one left, the only
-        // question is whether it is configured.
-        let bailian = bailianProviderForConfiguredModel(override: override)
-        if bailian.isConfigured { return bailian }
-
-        print("⚠️ Transcription: \(preferredProvider.rawValue) preferred but \(bailian.displayName) is not configured, falling back to Apple Speech")
-        return AppleSpeechTranscriptionProvider()
     }
 }

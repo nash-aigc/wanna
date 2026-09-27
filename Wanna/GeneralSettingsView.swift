@@ -629,9 +629,32 @@ struct GeneralSettingsView: View {
     /// 一句「它是什么路、代价是什么」，而不是只给三个名字。
     private var recognitionModelChoiceSection: some View {
         Group {
+            SettingsGroupLabel("识别服务")
+            SettingsCard {
+                SettingsRow(
+                    label: "说话时用哪个识别",
+                    description: generalSettingsViewModel.draftSettings.voiceTranscriptionService.explanation
+                ) {
+                    SettingsMenuPicker(
+                        selection: generalSettingsViewModel.binding(\.voiceTranscriptionService),
+                        options: VoiceTranscriptionService.allCases.map {
+                            SettingsPickerOption(label: $0.displayName, value: $0)
+                        }
+                    )
+                }
+
+                Text("**豆包那条不用这里配任何东西** —— 它读的是「录音」页里已经填好的那一套（API Key、档位、识别语言、热词），与录音快捷键同一个识别服务。下面那个「识别模型」只作用于**百炼**：选百炼时的对话页面，以及语音聊天的三段式（语音聊天的识别模型由角色/预设指定，始终走百炼）。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 2)
+                    .padding(.bottom, 12)
+            }
+
             SettingsGroupLabel("识别模型")
             SettingsCard {
-                Text("**实时识别比非实时更快、也更准**（说完 0.3 秒内出定稿，而整句一次认要等一次 HTTP 往返）。这一项在**两个地方**生效：对话页面，和语音聊天的**三段式**。")
+                Text("**实时识别比非实时更快、也更准**（说完 0.3 秒内出定稿，而整句一次认要等一次 HTTP 往返）。这一项**只作用于百炼**：选百炼时的对话页面，和语音聊天的**三段式**（语音聊天那条路的识别模型由角色/预设指定）。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -731,7 +754,7 @@ struct GeneralSettingsView: View {
             SettingsCard {
                 SettingsRow(
                     label: "识别语言",
-                    description: "告诉识别服务你说的是哪种语言。选「中英混合」则由服务自己判断。"
+                    description: "告诉识别服务你说的是哪种语言。选「中英混合」则由服务自己判断。**只作用于百炼** —— 豆包那条用的是「录音」页的识别语言。"
                 ) {
                     SettingsMenuPicker(
                         selection: generalSettingsViewModel.binding(\.transcriptionLanguage),
