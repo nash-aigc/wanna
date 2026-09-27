@@ -835,6 +835,11 @@ final class CompanionManager: ObservableObject {
         buddyDictationManager.onContinuousListeningUtteranceBegan = { [weak self] in
             self?.armAgentTurnRecordingForFollowUp()
         }
+        // 这一场被取消了（一个字都没认出来）—— 那一轮录音就不算数，立刻收干净。
+        // 少了这一条，它会一直开着，直到下一次按键才被顺手收掉（历史里多一条 0 秒空录音）。
+        buddyDictationManager.onDictationAbandoned = {
+            AgentTurnRecorder.shared.discardTurn()
+        }
 
         // **长录音起采之前，把共享语音引擎放掉。**
         //
@@ -2040,7 +2045,6 @@ final class CompanionManager: ObservableObject {
         // 全都还在原来的位置，这里只是把送进管线的那个字符串换掉。
         let trimmedTranscript = NotchListeningTranscriptModel.shared.consumeEditedTranscript()
             ?? finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-
         guard !trimmedTranscript.isEmpty else {
             // Nothing was heard. With confirmation on, anything already waiting
             // stays waiting; with it off there is nothing to do either way.

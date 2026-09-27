@@ -208,6 +208,15 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
     private var hasDeliveredFinalTranscript = false
     private var isCancelled = false
 
+    /// 这一句里**已经死掉的那几条连接**认出来的字。重连之后新的那条时间轴从零重计，
+    /// 所以旧的段只能拼在最前面，见 `handleConnectionLoss`。
+    private var sealedTranscriptPrefix = ""
+
+    /// 这一句里重连过几次。**有上限**：网络真断了的话，无限重连只会把用户留在
+    /// 「一直显示 Listening 但永远认不出字」的状态里 —— 那比报错更糟。
+    private var connectionRecoveryAttempts = 0
+    private static let maximumConnectionRecoveryAttempts = 3
+
     // 「文字不再变长」的观察状态
     private var transcriptSettleTimer: Timer?
     private var lastSettledTranscriptText = ""
@@ -305,6 +314,8 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
         definiteSegmentStartOrder.removeAll(keepingCapacity: true)
         liveSegmentStartMilliseconds = -1
         liveSegmentText = ""
+        sealedTranscriptPrefix = ""
+        connectionRecoveryAttempts = 0
         hasRequestedFinalTranscript = false
         hasDeliveredFinalTranscript = false
         connectFreshClient()
@@ -404,14 +415,61 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
     private func handleConnectionState(_ state: VolcengineRealtimeASRClient.ConnectionState) {
         switch state {
         case .failed(let message):
-            failSession(message: message)
+            handleConnectionLoss(message: message)
         case .disconnected(let reason):
             // 正常收尾（末包定稿、我们主动 cancel）也会走到这里 —— 那不是故障。
             guard !hasRequestedFinalTranscript, !hasDeliveredFinalTranscript, !isCancelled else { return }
-            failSession(message: reason)
+            handleConnectionLoss(message: reason)
         case .idle, .connecting, .connected:
             break
         }
+    }
+
+    /// **一条连接的死亡不该结束这一场录音。**
+    ///
+    /// 这是 2026-09-27 那次「按了快捷键不提交、退不出来」的根因，也是这条路与长录音那条
+    /// 最关键的一处不同：**长录音那条自己会 `reconnect()`，所以连接死了用户无感**；
+    /// 而主 Agent 这条原来把连接死亡直接当成致命错误交出去，于是
+    ///
+    ///     BuddyDictationManager.handleRecognitionError → cancelCurrentDictation()
+    ///
+    /// 整场录音被取消：**用户说的话一个字都没提交**，界面上什么都不说（那一行错误只出现在
+    /// 展开的设置/对话页里），而下一按只是**重新开一场录音** —— 用户看到的就是「第二次按
+    /// 不提交、进入一个循环、退不出来」（用户 2026-09-27 的原话）。
+    ///
+    /// 判据里那条看门狗（`VolcengineRealtimeASRClient.startWatchdogOnQueue`）对这条路尤其
+    /// 容易误报：它按「喂着音频却 15 秒没有回包」判死，而**用户按下键之后沉默地想事情**时
+    /// 服务端本来就什么都不回 —— 实测复现就是这样（19 秒无回包，一个字都没说过）。
+    ///
+    /// 所以：**只要这一句还没定稿、还有重连次数，就换一条连接接着听**。
+    /// 已经认出来的字一个都不能丢 —— 新连接的服务端时间轴从零重计，所以旧的那几段先
+    /// 「封存」成前缀（见 `sealedTranscriptPrefix`），不能和新的段留在同一个按毫秒索引的
+    /// 字典里（那会被同键覆盖）。
+    private func handleConnectionLoss(message: String) {
+        guard !hasRequestedFinalTranscript, !hasDeliveredFinalTranscript, !isCancelled else { return }
+        guard connectionRecoveryAttempts < Self.maximumConnectionRecoveryAttempts else {
+            failSession(message: message)
+            return
+        }
+        connectionRecoveryAttempts += 1
+        let recognizedSoFar = bestAvailableTranscriptText()
+        print("🎙️ 豆包识别：连接出问题（\(message)），第 \(connectionRecoveryAttempts) 次重连接着听"
+              + (recognizedSoFar.isEmpty ? "（还没有认出来的字）" : "（保住已认出的 \(recognizedSoFar.count) 字）"))
+        sealCurrentTranscriptAsPrefix()
+        client?.cancel()
+        client = nil
+        connectFreshClient()
+    }
+
+    /// 把这条死掉的连接已经认出来的字冻成前缀，然后清空按毫秒索引的那几张表 ——
+    /// 新的连接时间轴从零重计，不清的话同键的段会把旧的覆盖掉。
+    private func sealCurrentTranscriptAsPrefix() {
+        let recognizedSoFar = bestAvailableTranscriptText()
+        sealedTranscriptPrefix += recognizedSoFar
+        definiteSegmentTextByStart.removeAll(keepingCapacity: true)
+        definiteSegmentStartOrder.removeAll(keepingCapacity: true)
+        liveSegmentStartMilliseconds = -1
+        liveSegmentText = ""
     }
 
     /// 连接坏了：把已经认出来的字交出去，而不是把它丢掉。
@@ -439,12 +497,13 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
         onFinalTranscriptReady(transcriptText)
     }
 
-    /// 手上的全部文字：已定稿的段按时间轴顺序，接上正在说的那一段。
+    /// 手上的全部文字：**死掉的那几条连接封存下来的前缀** + 已定稿的段按时间轴顺序 +
+    /// 正在说的那一段。
     private func bestAvailableTranscriptText() -> String {
         let committedText = definiteSegmentStartOrder
             .sorted()
             .compactMap { definiteSegmentTextByStart[$0] }
             .joined()
-        return committedText + liveSegmentText
+        return sealedTranscriptPrefix + committedText + liveSegmentText
     }
 }

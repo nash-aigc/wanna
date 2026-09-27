@@ -1005,7 +1005,14 @@ struct NotchPanelRootSwitchingView: View {
             NotchPillRootView(
                 panelModel: panelModel,
                 audioHistoryProvider: audioHistoryProvider,
-                notionNoteButtonPlacement: notionNoteButtonPlacement
+                notionNoteButtonPlacement: notionNoteButtonPlacement,
+                // ⚠️ **这一行 2026-09-27 补的，缺了它就是「接缝还是没修好」。**
+                // 字幕那行是 `Listening` 时出现在刘海**下面**的，而屏幕上是**收起态那颗
+                // pill 在画黑带**（`NotchPillRootView`）—— 展开态那条 `NotchExpandedWingBand`
+                // 只在面板铺开时才有。所以「两翼外端下圆角归零」必须传**这里**；只传展开态
+                // 那一处，量到的 100/132 是展开面板下的数，用户实际看的那颗 pill 一个像素
+                // 都没变（用户 2026-09-27：「你重新修了，但是现在我发现你没有修好」）。
+                squaresBottomOuterCorner: panelModel.notchBandSitsAboveTranscriptLine
             )
         }
     }

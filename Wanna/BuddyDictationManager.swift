@@ -666,6 +666,15 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     /// 挂在这里只是因为它就是"用户开始说这一句"的准确时刻。
     var onContinuousListeningUtteranceBegan: (() -> Void)?
 
+    /// **这一场录音作废了**（一个字都没认出来就被取消：识别服务出错、权限丢了…）。
+    ///
+    /// 主 Agent 的「一轮一条录音」靠它把那一轮收干净。**没有它就会有一条一直开着的一轮**：
+    /// 没人收尾 → 下一次按键 `armTurn` 时才被顺手 `finishTurn(transcript: "")` 收掉，在历史里
+    /// 留下一条 0 秒 0 字的空录音（用户 2026-09-27 的录音目录里就有 7 条这种）。
+    ///
+    /// 纯观察者：它不改这里的任何状态。
+    var onDictationAbandoned: (() -> Void)?
+
     /// Whether the app is reading an answer aloud right now (injected by
     /// CompanionManager, which owns the lazy TTS client). `isPlaying` is true
     /// for a whole spoken reply, segment gaps included, so it is the faithful
@@ -1878,7 +1887,15 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             return
         }
 
-        if isFinalizingTranscript && !latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // **已经认出来的字必须交出去，哪怕这一轮还没走到「松键/说完」那一步。**
+        //
+        // 2026-09-27 改。原来的条件是 `isFinalizingTranscript && 有字` —— 于是**正在说话
+        // 时连接坏掉**（识别服务在用户开口期间掉线）会掉进下面的 `cancelCurrentDictation`：
+        // 用户刚说出口、屏幕上都认出来了的那句话被直接扔掉，界面上一个字都不说，而
+        // `AgentTurnRecorder` 那一轮也没人收尾 —— 三样加在一起就是用户报的
+        // 「第二次按不提交、进入循环、退不出来」。交出已有的字 = 该发就发、该等确认就等确认。
+        if !latestRecognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            print("🎙️ 识别在收尾之前出问题（\(error)），把已经认出来的字按正常收尾交出去")
             finishCurrentDictationSessionIfNeeded(
                 shouldSubmitFinalDraft: shouldAutomaticallySubmitFinalDraft
             )
@@ -1888,6 +1905,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 from: error,
                 fallback: "couldn't transcribe that. try again."
             )
+            // 一个字都没认出来 —— 这一场作废。同时告诉调用方（主 Agent 的
+            // 「一轮一条录音」要把这一轮丢掉，否则它会一直开着，下一次按键才会被顺手收掉，
+            // 在历史里留下一条 0 秒 0 字的空录音）。
+            onDictationAbandoned?()
             cancelCurrentDictation(preserveDraftText: false)
         }
     }
@@ -1913,7 +1934,14 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         resetSessionState()
 
         guard shouldSubmitFinalDraft else { return }
-        guard !finalTranscriptText.isEmpty else { return }
+        guard !finalTranscriptText.isEmpty else {
+            // **「一个字都没听到」也要告诉调用方。** 这条路是空的转写唯一的出口 ——
+            // 它不会走到 `submitDraftText`，所以主 Agent 那边 `handleFinalTranscript`
+            // 里那次 `discardTurn()` 也不会发生，那一轮会一直开着，直到下一次按键
+            // 才被顺手收掉、在历史里留下一条 0 秒 0 字的空录音。
+            onDictationAbandoned?()
+            return
+        }
 
         currentDraftCallbacks?.submitDraftText(finalDraftText)
     }

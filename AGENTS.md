@@ -326,7 +326,7 @@ The app needs three models, called **roles**:
 | 🧠 `vision` | Looks at the screenshot and answers | `qwen3-vl-plus` |
 | 👄 `speech` | Reads the answer aloud | `qwen-audio-3.1-tts-flash` + cloned 赵今麦 voice |
 
-**Recognition is the one role with a second backend, and since 2026-09-27 the main Agent runs on it.** 设置 → 听 → 「说话时用哪个识别」 picks 豆包（火山引擎）or 阿里百炼; it defaults to 豆包, so the press-to-talk shortcut transcribes with Doubao out of the box. The Doubao path takes its credentials, 档位, language and hotwords from **the 录音 page's existing fields** — one Volcano account, so one place to type the API key — which is why that switch's settings row says outright that the 听 page's 识别语言 and 识别模型 only apply to 百炼. Which path gets which backend is decided in exactly one place, `BuddyTranscriptionProviderFactory`; see its Key Files entry for the three rules.
+**Recognition is the one role with a second backend, and since 2026-09-27 the main Agent runs on it.** 设置 → 听 → 「说话时用哪个识别」 picks 豆包（火山引擎）or 阿里百炼; it defaults to 豆包, so the press-to-talk shortcut transcribes with Doubao out of the box. **A dropped connection must not end the recording** (2026-09-27, the 「第二次按不提交、退不出来」 regression): the Doubao client's own watchdog declares a connection dead after 15 s with no reply *while audio is being fed* — which for press-to-talk is a **false positive**, because a user who presses the key and thinks in silence gets no replies from the server — and the provider used to surface that as a fatal error, so `handleRecognitionError` cancelled the whole dictation: nothing was submitted, nothing was said on screen, and the next press started a *new* recording instead of submitting. The provider now **reconnects** (bounded at 3 per utterance, keeping everything already recognised as a sealed prefix because a fresh connection restarts the server's millisecond timeline), `handleRecognitionError` submits whatever text exists instead of discarding it, and a dictation that dies with **no** text notifies `onDictationAbandoned` so the turn recorder does not leave a turn open. See 开发经验/10-踩过的坑.md D21. The Doubao path takes its credentials, 档位, language and hotwords from **the 录音 page's existing fields** — one Volcano account, so one place to type the API key — which is why that switch's settings row says outright that the 听 page's 识别语言 and 识别模型 only apply to 百炼. Which path gets which backend is decided in exactly one place, `BuddyTranscriptionProviderFactory`; see its Key Files entry for the three rules.
 
 Which provider serves each role, and that provider's URL, API key and model names, are the user's to set. Settings are changed in the notch sheet's embedded 设置 pages (the notch subsystem is the primary entry) or, where the subsystem cannot host them, the titled window; both write:
 
@@ -580,7 +580,17 @@ armTurn()                      按下说话键 / 连续追问里用户开口
 装 tap 几步，任何一步都可能中断（按住说话模式下快速松手就会取消整个启动任务），一 arm 就建文件
 会在历史里留下一串 0 秒的空录音。所以 `AgentTurnRecorder` 分成两半：`AgentTurnAudioSink`
 （`nonisolated`，活在采集线程上，三个状态 idle / armed / recording）与 `AgentTurnRecorder`
-（`@MainActor`）。`BuddyPCM16AudioConverter` 因此标了 `nonisolated` —— 它本来就在渲染线程上被调用。
+（`@MainActor`）。`BuddyPCM16AudioConverter` 因此标了 `nonisolated`。
+
+⚠️ **但"标了 nonisolated"只是让它能在那儿被调用 —— 那一半的工作量本身必须挪走。**
+2026-09-27 实测（tap 内分段计时，每 100 块；一块音频只有 21.3ms）：`AgentTurnAudioSink.append`
+在最开始那版里**在渲染线程上**做重采样（48k 9ch → 16k mono）+ 建文件，平均 **6785µs / 峰值 13874µs**
+一块，加上送识别的 9088µs，**采集线程被占到 ~78%** —— 用户听到的就是「正常说话时会卡一下」。
+现在 `append` 在采集线程上**只 `memcpy` 一份缓冲**（引擎会复用那一块，所以必须拷），
+重采样 / 建文件 / 写盘全在 `writeQueue` 上（`close()` 本来就 `sync` 排干，所以正在转换的那一块
+不会被 `finalize()` 抢在前面）。改后同一段按键：**6785µs → 40µs（峰值 155µs）**，
+`.wav` 逐项核过（`afinfo` 1ch/16kHz/16bit/31.597s、样本峰值 2551 非静音）。
+**剩下的 9ms（识别）是既有成本，不是这条观察者引入的**，但它最大 17.4ms 已经贴近 21.3ms 的块周期。
 
 ⚠️ **取消语义是两条路唯一一处不同，别再改成一样。** 长录音那条点「取消」= 按普通录音走
 （照常存一场录音，只是不写 Notion）；主 Agent 这条点「取消」= **这一轮什么都不发**（不截图、
@@ -589,16 +599,29 @@ armTurn()                      按下说话键 / 连续追问里用户开口
 **实现上靠的是顺序**：`finishTurn(transcript:)` 排在 `consumeNotionNoteTurnIfNeeded` **之前** ——
 三个去向都经过它，不可能漏。另有一件**不是取消**的事：**没听到话**（转写为空）走 `discardTurn()`，
 文件直接删掉 —— 取消是用户对已经听清的一句话说不发，那一条要留；这里根本没有一句话。
+**「没听到话」有两条出口，两条都要通知**（2026-09-27 补）：`handleFinalTranscript` 里那次
+`discardTurn()` 只管得住"转写为空但走到了提交回调"那一条；**另一条是 `BuddyDictationManager`
+里转写为空的正常收尾**（`finishCurrentDictationSessionIfNeeded` 直接 return，根本不调
+`submitDraftText`）—— 少了 `onDictationAbandoned` 那一次通知，那一轮会**一直开着**，直到下一次
+按键 `armTurn` 才被顺手 `finishTurn("")` 收掉，在历史里留下一条 0 秒 0 字的空录音
+（用户 09:11–09:14 那 12 条录音里有 7 条是这种）。识别连接出错那条路也走同一个通知。
 
-**顺带修的接缝**（用户附图，同一屏上的另一件事）：Listening 时刘海那条黑带的**下边缘**要收成直角，
+**那里的接缝**（用户附图，同一屏上的另一件事）：Listening 时刘海那条黑带的**下边缘**要收成直角，
 因为下面那行字幕的上边是方的，而两翼外端 14pt 的圆角会在接缝两端各让出一块 14×14 的三角、
 桌面从那里透出来。判据是 `NotchPanelModel.notchBandSitsAboveTranscriptLine`
 （`== .listening && !isFullscreenSuppressed`）—— **和「那行字幕显不显示」是同一个属性**
 （`syncListeningTranscriptPanel` 也读它），两处不可能分家；实现是 `NotchWingView.squaresBottomOuterCorner`
 把外端下圆角归零，中段本来就是方的。**非 Listening 时一切照旧**（用户：「但在其他情况下，
-即非录音状态下，保持之前的状态最好」）。量到的：带子最下面一行最左黑像素 **100**（Listening）
-对 **132**（Speaking，退掉 32px = 16pt 就是那个圆角），而紧接着的字幕条上边是 101 ——
-两条边差 1px，接缝是通的。
+即非录音状态下，保持之前的状态最好」）。
+
+⚠️ **它第一次只改了一半，用户当天就回来说「你没有修好」**：那个参数带默认值 `false`，
+而**屏幕上的黑带是收起态的 `NotchPillRootView` 画的**（面板没铺开时）—— 上一版只传给了
+展开态那条 `NotchExpandedWingBand`，于是"改了一个调用点、另一个照旧圆角"，编译通过、毫无提示；
+当时量到的 100/132 是**展开面板**下的数，用户实际看的那颗 pill 一个像素都没变。
+**两处调用点都要传**（`NotchActivityView.swift` 的 `NotchPillRootView(...)` 与
+`NotchExpandedWingBand(...)`）。补全之后同一个 build 里 A/B：Listening 时带子最下面一行最左黑
+**88**（直角到底），Speaking 时 **88→123**（那 35px 就是 14pt 的圆角在退），字幕条上边 **89** ——
+两条边差 1px，缝是通的。
 
 ### Acting on the computer
 
@@ -692,7 +715,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `geometry-dsl/` | — | **画图技能子项目（第五出口的引擎）**。完整的上游 Git 项目（shand001/geometry-dsl，自带 `.git`，历史上游），Wanna 不改它、只通过 CLI 调用：`node dist/cli.js 文件.geom -o 图.svg` 渲染、`node scripts/validate_geometry.mjs 文件.geom` 校验（退出码 0 = 通过）。出口⑤的桥接脚本 `geometry-dsl/figure_agent.py` 也住在这里（不在上游仓库的追踪里）：Wanna 的大模型在回复里写 `[SVG_AGENT:任务]`（开文件模式）或 `[SVG_BOARD:元素名：任务]`（屏幕白板模式，加 `--no-open`）→ `MacosUseController`（`figureAgentScriptPath`）用 python3 跑它 → DeepSeek 写 .geom → 校验失败自动让模型修（最多 3 轮）→ SVG 落 `~/Desktop/Wanna图形/`；开文件模式自动打开预览，白板模式由 `FigureBoardController` 画在屏幕上。stdout 第一行固定是「图已画好：<路径>」，Swift 靠这一行取路径。分工是「模型只描述，编译器算坐标」。 |
 | `AudioInputDeviceCatalog.swift` | ~213 | 输入设备的清单与身份：列出所有**真有输入声道**的设备（**聚合体一律不列** —— 它的声道数会随成员变，变到某个形态就是纯静音，选它等于把修掉的故障装回去），每条带 UID / 声道数 / 是否系统默认 / 是否虚拟。设置页那个下拉和录音绑设备读的是同一份真相，所以不会出现「设置页说有、录音说没有」。另有一个查进程的口子 `processesCurrentlyCapturingInput()`（`kAudioHardwarePropertyProcessObjectList` + `kAudioProcessPropertyIsRunningInput`，macOS 14.2+）：**此刻正在开麦的 App** —— 全零故障里「谁占着麦克风」是用户唯一能立刻行动的信息，实测那段时间唯一为真的就是第三方听写软件 `闪电说`。 |
 | `LongFormRecorderController.swift` | ~2600 | 长录音的编排器 + **「重新转写」**（把落盘的 `.wav` 重新喂给同一个识别器，5 倍实时；节奏与两条分寸见上面 长录音 那节）。它和语音管线**零共享** —— 自己的 `AVAudioEngine`（`BuddyDictationManager` 只有一份连续监听窗口，共用必然串台）、自己的状态、自己的快捷键。音频 tap 每 ~100ms 出一块，重采样到 16kHz 单声道 PCM16 之后**一份落盘、一份上行**（同一个缓冲，所以 `.wav` 里的字节就是发给服务端的字节，可原样重放复现一次识别）。3 小时不断靠四条腿：`recordingRotationMinutes`（默认 20 分钟，在**静音处**换连接）、**间隔两倍的硬上限**（连续说话没有停顿的用户也要换，否则连接无限跑）、断线重连、以及接缝的**重叠重喂 + 毫秒时间戳去重**（`RecentAudioRing` 留最近 8 秒，重连时先喂回去，`seamSuppressionMilliseconds` 把重喂那段回来的文字按服务端时间戳丢掉 —— 用时间戳不用文本，因为重喂的段会被重新识别、用词不同）。转写结束后按「自定义风格」重写一遍（`polishIfConfigured`），**没勾选任何风格也没勾截图时一步都不走**，原文直接就是最终内容。`polishScreenshotJPEG` 在**停止那一刻**抓 —— 晚几百毫秒屏幕上就可能换了样。`cancellationGeneration` 是取消的闸门：润色正卡在网络请求里时取消是从另一个入口按下来的，两者不在同一条任务链上，代次是唯一能跨入口说的「这件事作废了」。`transcriptPlainText` 与 `livePartialText` 都**只追加**，`marqueeText` 由两者拼成 —— 位移是 `可用宽度 − 文字宽度`，**文字一旦变短就会向右跳**，而 `liveTranscriptLine`（尾巴 `suffix(90)` + 当前段）每定稿一次就变短。**采集挂在一队候选设备上**（`inputDeviceCandidates(for:)`：用户选定的 → 系统默认 → 其余真设备），看门狗发现「连续 90 块**精确全零**」就 `switchToNextCandidateDevice()` 换下一个、同一场接着录；换不动了才收尾并说明是谁占着麦克风 —— 见上面第五条腿。**2026-09-27：「录音 → Notion 笔记」那一整节（关键词检测 / 参考材料 / 那几颗按钮 / 保存）从这个文件里整块删掉，搬去了 `NotionNoteSession` —— 这里现在一段 Notion 代码都没有，录音只剩「录 → 转写 → 润色 → 落盘 → 剪贴板」。** |
-| `VolcengineTranscriptionProvider.swift` | ~425 | **主 Agent 那条路的识别：豆包（火山引擎）。** 把 `VolcengineRealtimeASRClient` 包成一个符合 `BuddyTranscriptionProvider` 协议的 provider，与百炼那个并列 —— 音频管线、VAD、连续监听、打断一行没动，换的只是「音频送给谁」。配置读「录音」页那一套（同一个火山账号、同一份密钥；「听」页的识别语言因此只作用于百炼，那里写明了）。**两处与录音那条路不同，都是实测逼出来的**（见 `开发经验/09-实测数据.md` 二十）：**不发末包**（这条路末包不回定稿，两次都等满 2.04 秒兜底且回来的文字与实时文字一字不差），改成盯「文字不再变长」（连续 0.4 秒没变就交，收尾 2.04 → 0.40 秒）；`beginNextUtterance` **重连**而不是复用连接（复用会让上一句「定稿晚到」的那一帧落进下一句的累积，而按时间戳做水位又会吃掉「按了发送之后继续说」的半句 —— 重连干净，握手期间音频在 URLSession 里排队不丢）。
+| `VolcengineTranscriptionProvider.swift` | ~425 | **主 Agent 那条路的识别：豆包（火山引擎）。** 把 `VolcengineRealtimeASRClient` 包成一个符合 `BuddyTranscriptionProvider` 协议的 provider，与百炼那个并列 —— 音频管线、VAD、连续监听、打断一行没动，换的只是「音频送给谁」。配置读「录音」页那一套（同一个火山账号、同一份密钥；「听」页的识别语言因此只作用于百炼，那里写明了）。**两处与录音那条路不同，都是实测逼出来的**（见 `开发经验/09-实测数据.md` 二十）：**不发末包**（这条路末包不回定稿，两次都等满 2.04 秒兜底且回来的文字与实时文字一字不差），改成盯「文字不再变长」（连续 0.4 秒没变就交，收尾 2.04 → 0.40 秒）；`beginNextUtterance` **重连**而不是复用连接（复用会让上一句「定稿晚到」的那一帧落进下一句的累积，而按时间戳做水位又会吃掉「按了发送之后继续说」的半句 —— 重连干净，握手期间音频在 URLSession 里排队不丢）。**第三处不同是 2026-09-27 加的：连接死掉不结束这一场录音**（`handleConnectionLoss`）—— 长录音那条自己会 `reconnect()`，所以同一条看门狗在那边误报一次只是换条连接；这条路原来把连接死亡当致命错误，于是「按住键沉默思考」触发看门狗 15 秒判死 → 整场录音被取消 → 用户说的话一个字都没提交（见 `开发经验/10-踩过的坑.md` D21）。现在：**一句还没定稿时连接死掉就重连**（上限 3 次），已经认出来的字冻成 `sealedTranscriptPrefix` 拼在最前面（新连接的时间轴从零重计，留在同一个按毫秒索引的字典里会被同键覆盖）。
 | `VolcengineRealtimeASRClient.swift` | ~450 | 豆包流式识别的 WebSocket 客户端。**可以注入一条共用的 `URLSession`**（`init(configuration:urlSession:)`，不注入时行为与从前一字不差、自己建自己销毁）—— 主 Agent 那条路每句话一条连接，自建就成了仓规 E3 那条坑，所以它注入一条长命的并共用；注入的那条**永不被 invalidate**（归调用方所有）。**四条实测出来的硬约束**（2026-09-25，真服务）：`result_type` 必须是 `"single"`（默认的 `"full"` 每帧回**整场累积**文本，实测 28.6 秒时每帧已 ~150 字且线性增长，3 小时是它的 377 倍）；`compression: none` 服务端接受（省掉手写 gzip 外壳 —— Foundation 的 `.zlib` 出的是裸 deflate，实测 `73 74 1c 05`）；**末包一发出服务端立刻关连接**，所以长录音中途绝不能发；跨重连的判重必须**按文本**不能按时间戳（新连接的时间轴从零重计，按时间戳比会丢真实内容、留重复）。`finishAndAwaitFinalResult` 的定稿回调由**定稿到达**触发，超时只作兜底 —— 原来它是 `asyncAfter(timeout)` 到点才回调，于是每次停止都白等满 4 秒，和说了两个字还是两百个字无关。 |
 | `VolcengineASRFrame.swift` | ~195 | 豆包识别的二进制帧编解码。**只有纯函数**：没有网络、没有状态、没有并发，所以能脱离整个 App 单独编译运行 —— 一个探针就能把每一帧验到底。帧结构是「≥4 字节可变 header + payload 长度 + payload」，header 描述消息类型 / 序列化方式 / 压缩。 |
 | `RecordingAudioWriter.swift` | ~186 | 边录边写的 WAV 落盘器。3 小时 = 345MB，攒在内存里必然出事，所以开文件时先写 44 字节占位头、之后每来一块追加一块、停止时 seek 回开头回填两个长度字段。`appendingToExistingFile` 是「挂断后继续录、内容追加」的地基 —— `createFile` 在文件已存在时是**截断**，直接复用会把上一段录音抹掉且不报错。 |
@@ -704,7 +727,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `RecordingSettingsView.swift` | ~597 | 设置页「录音」。历史在最顶、其余参数在下；每条历史两行（标题 + 复制/播放/在访达中显示/展开，第二行预览或十行全文）。「自定义风格」那一节含总开关、屏幕截图开关、模型 URL/Key/模型 ID，以及**从「模型」页导入**的选择器 —— 模型 ID 跟着服务商一起换，因为一个地址配别家的模型名必然 404。 **2026-09-27 起这一页的历史有两个来源**：长录音（`LongFormRecorderController`）与主 Agent 的每一轮（`AgentTurnRecorder`）—— 两者落的是同一套 `<id>.wav` / `.txt` / `.json`，所以这一页一行都不用改。同一处加了一层 `RecordingLibraryChangeObserver`（一个只订阅 `RecordingLibraryStore.didChangeNotification` 的小 `View`）：主 Agent 每问一句就多一条，而这一页的 `@State` 是 ViewModel 的，中间缺一层的话列表要等下一次别的原因重绘才更新；做成独立 `View` 而不是 `@State` 是因为 **extension 里不能声明存储属性**。 |
 | `RecordingPolishStyle.swift` | ~280 | 「自定义风格」的数据与存储。多条风格各自一个开关 + 可改名的名称 + 提示词，出厂那条是用户给的 3556 字「文本后处理引擎」提示词，**逐字照抄**（那是他写好的规则，改一个字都可能改变行为），**可以关但不给删** —— 恢复它意味着让用户重新贴一遍三千多字。 |
 | `RecordingPolishClient.swift` | ~206 | 转写结束后的模型调用。**必须发 `thinking: {"type": "disabled"}`** —— `deepseek-flash` 是推理模型，会在给出答案前先吐几百上千个推理 token，而这个仓库自己量过那笔账（视觉那条路上 4.5 秒的请求里 3.4 秒是思考）。润色是改写任务，那段思考用户一个字都看不到，全是白等；实测一次 23 秒、一次 8 秒，关掉之后是 1 秒量级。地址留空时回落到「模型」页里 🧠 那个服务商。**失败就用原文** —— 用户要的是「整理一下再给我」，整理失败时他最需要的仍然是他说过的话。 |
-| `AgentTurnRecorder.swift` | ~330 | **主 Agent 的每一条指令都存成一条录音**（接线图第 4 条，2026-09-27）。两半：`AgentTurnAudioSink`（`nonisolated`，活在采集线程上 —— 把 tap 缓冲转 16 kHz 单声道 PCM16、排在一条串行队列上落盘；三个状态 idle / armed / recording）与 `AgentTurnRecorder`（`@MainActor` —— 元数据、转写、写库）。**没有新增任何采集**：音频寄生在 `BuddyDictationManager` 已有的输入 tap 上（`capturedAudioBufferObserver`，三处 tap 各一行），VAD / 连续监听 / 打断一个字节没改；「这一句从哪一秒算起」由 `onContinuousListeningUtteranceBegan`（挂在 `markContinuousListeningUtteranceActive` 里的纯观察者）给。落盘用的是长录音那三个**已经跑通**的组件（`RecordingAudioWriter` / `LongFormTranscriptWriter` / `RecordingLibraryStore`）+ 同一套 16 kHz 格式 + 同一个 `makeSessionID()`，所以设置 → 录音 的历史、播放、重新转写、在访达中显示**一行都没为新来源改**。「第一块音频到达才建文件」是刻意的：`armTurn` 与「真的开始录」之间隔着权限检查、开 ASR 会话、装 tap，任何一步中断都不该在历史里留下 0 秒的空条目。⚠️ **取消语义是它与长录音唯一一处不同**：主 Agent 上点取消 = 什么都不发但**本地那条录音照留**，靠 `finishTurn` 排在 `consumeNotionNoteTurnIfNeeded` **之前**保证（发出 / 存成笔记 / 取消三个去向都过它）；而「没听到话」走 `discardTurn()`（文件删掉），那不是取消。 |
+| `AgentTurnRecorder.swift` | ~330 | **主 Agent 的每一条指令都存成一条录音**（接线图第 4 条，2026-09-27）。两半：`AgentTurnAudioSink`（`nonisolated`，活在采集线程上 —— 把 tap 缓冲转 16 kHz 单声道 PCM16、排在一条串行队列上落盘；三个状态 idle / armed / recording）与 `AgentTurnRecorder`（`@MainActor` —— 元数据、转写、写库）。**没有新增任何采集**：音频寄生在 `BuddyDictationManager` 已有的输入 tap 上（`capturedAudioBufferObserver`，三处 tap 各一行），VAD / 连续监听 / 打断一个字节没改；「这一句从哪一秒算起」由 `onContinuousListeningUtteranceBegan`（挂在 `markContinuousListeningUtteranceActive` 里的纯观察者）给。**采集线程上只做 `memcpy`**（2026-09-27 改）：最初那版在渲染线程上做重采样 + 建文件，实测平均 6785µs / 峰值 13874µs 一块（一块音频才 21.3ms），加上送识别那 9088µs，采集线程被占到 ~78% —— 那就是用户报的「正常说话时会卡一下」；现在重采样 / 建文件 / 写盘全在 `writeQueue` 上（改后 40µs / 峰值 155µs）。「没听到话」有**两条**出口都要收尾（`discardTurn()` 与 `onDictationAbandoned`），少一条就会留下一轮开着的录音 + 历史里一条 0 秒空条目。落盘用的是长录音那三个**已经跑通**的组件（`RecordingAudioWriter` / `LongFormTranscriptWriter` / `RecordingLibraryStore`）+ 同一套 16 kHz 格式 + 同一个 `makeSessionID()`，所以设置 → 录音 的历史、播放、重新转写、在访达中显示**一行都没为新来源改**。「第一块音频到达才建文件」是刻意的：`armTurn` 与「真的开始录」之间隔着权限检查、开 ASR 会话、装 tap，任何一步中断都不该在历史里留下 0 秒的空条目。⚠️ **取消语义是它与长录音唯一一处不同**：主 Agent 上点取消 = 什么都不发但**本地那条录音照留**，靠 `finishTurn` 排在 `consumeNotionNoteTurnIfNeeded` **之前**保证（发出 / 存成笔记 / 取消三个去向都过它）；而「没听到话」走 `discardTurn()`（文件删掉），那不是取消。 |
 | `NotionNoteDetector.swift` | ~241 | 「这一轮要不要存成一条 Notion 笔记」的**纯逻辑**（2026-09-27 从 `LongFormRecorderController` 一行不改地搬出来）：模糊匹配（滑动窗口 + 编辑距离 + 按关键词长度定档的容错）、命中计数、模型回复的三段切分、Markdown → Notion 块、行内样式。整个类型 `nonisolated`、不碰网络与 UI，所以能脱离整个 App 单独编译跑（15 条断言在真源码上全过，含用户给的那四句真实转写）。 |
 | `NotionNoteSession.swift` | ~406 | 那件事的**状态机与执行**：`@MainActor ObservableObject` 单例（形状照 `AgentActivityBoard.shared`），持有 `showsNotionNoteButtons` / 参考材料 / 三态（取消 / 保存中 / 已保存）与那把 2 秒一次、之后每 3 秒的检测表，`saveNote` 走「模型整理 → `NotionNoteClient` 按形状写进那一页」。**它现在只被主 Agent 的语音路径驱动**（录音那条一段都不剩）。三种去向见 `consumeTurnDecision()`，而**取消语义是两条路唯一一处不同**，类型注释里写死了那条理由。日志是**注入的 `log`**（原来是录音页的 `publishDiagnostic`）。 |
 | `NotionNoteButtonRow.swift` | ~90 | 刘海左侧那三颗按钮的"画"（从 `NotchRecordingOverlay.notionNoteButtons` 原样搬来）。⚠️ 它**不吃点击**（`.allowsHitTesting(false)`）：面板是点击穿透的，点击归 `handleGlobalClick` 里那三个 slot —— 少了这一行，面板展开时同一个动作会被触发两次。 |

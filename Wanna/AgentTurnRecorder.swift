@@ -79,11 +79,18 @@ nonisolated final class AgentTurnAudioSink {
 
     private let lock = NSLock()
     private var state: State = .idle
-    /// 只在采集线程上建、也只在采集线程上用；跟着 `state` 一起被 `lock` 守着，
-    /// 因为 `close()` / `abandon()` 会在主线程上把它清掉。
+    /// **只在这条串行队列上碰**（转换与落盘都在那里）。`close()` / `abandon()` 在主线程上
+    /// 把它连同 `state` 一起清掉，但清之前会 `writeQueue.sync` 把排着的那几块排干 ——
+    /// 顺序反了的话，正在转换的那一块会对着一个已经放掉的 writer 写。
     private var converter: BuddyPCM16AudioConverter?
-    /// 落盘排在这条串行队列上。`close()` 会 `sync` 一次，保证最后一个字节已经写完
-    /// 才开始回填 WAV 头。
+    /// 落盘、**以及重采样**，都排在这条串行队列上。`close()` 会 `sync` 一次，保证最后一个
+    /// 字节已经写完才开始回填 WAV 头。
+    ///
+    /// ⚠️ **重采样 2026-09-27 从采集线程搬到这里**：实测（tap 内分段计时，每 100 块）
+    /// 采集线程上 `观察者` 这一段平均 **6785µs / 峰值 13874µs** 一块，而一块音频本身只有
+    /// 21.3ms —— 加上识别那一段的 9088µs，采集线程被占到 **~78%**，用户听到的就是
+    /// 「正常说话时会卡一下」。转换本身跑在哪条线程上不影响结果，所以把它挪到队列上，
+    /// 采集线程只剩一次 `memcpy`（36KB ≈ 数微秒）。
     private let writeQueue = DispatchQueue(label: "wanna.agent-turn.audio")
 
     /// 这一轮开始录了 —— 但还没建文件（第一块音频到达时才建）。幂等。
@@ -94,13 +101,28 @@ nonisolated final class AgentTurnAudioSink {
     }
 
     /// **采集线程**。没有一轮在进行时立刻返回，所以这个观察者可以一直挂着。
+    ///
+    /// **这里只做两件事**：看状态、把这一块音频拷一份出来。转采样、建文件、写盘全在
+    /// `writeQueue` 上 —— 采集线程是实时线程，任何毫秒级的工作都会顶住它。
     func append(_ audioBuffer: AVAudioPCMBuffer) {
         lock.lock()
-        switch state {
-        case .idle:
-            lock.unlock()
-            return
-        case .armed(let fileURL):
+        var isIdle = false
+        if case .idle = state { isIdle = true }
+        lock.unlock()
+        guard !isIdle else { return }
+
+        // 引擎会把同一块缓冲复用，所以必须拷一份再交给别的线程。
+        // 这一步是纯 `memcpy`（1024 帧 × 声道数 × 4 字节 ≈ 36KB）。
+        guard let copiedBuffer = Self.makeIndependentCopy(of: audioBuffer) else { return }
+        writeQueue.async { [weak self] in
+            self?.convertAndWrite(copiedBuffer)
+        }
+    }
+
+    /// **串行队列上**：需要的话建文件，然后把这一块转成 16kHz 单声道 PCM16 写进去。
+    private func convertAndWrite(_ audioBuffer: AVAudioPCMBuffer) {
+        lock.lock()
+        if case .armed(let fileURL) = state {
             // 第一块音频 = 这一轮真的开始录了。建文件只发生这一次。
             do {
                 let writer = try RecordingAudioWriter(
@@ -116,18 +138,38 @@ nonisolated final class AgentTurnAudioSink {
                 lock.unlock()
                 return
             }
-        case .recording:
-            break
         }
-        let converter = self.converter
-        var writer: RecordingAudioWriter?
-        if case .recording(let currentWriter) = state { writer = currentWriter }
+        guard case .recording(let writer) = state, let converter else {
+            lock.unlock()
+            return
+        }
         lock.unlock()
 
-        guard let converter, let writer,
-              let pcm16Data = converter.convertToPCM16Data(from: audioBuffer),
+        // 这一段在队列上，所以 `close()` 的 `writeQueue.sync` 一定排在它后面 —— 不会对着
+        // 一个已经 finalize 过的 writer 写。
+        guard let pcm16Data = converter.convertToPCM16Data(from: audioBuffer),
               !pcm16Data.isEmpty else { return }
-        writeQueue.async { try? writer.append(pcm16Data) }
+        try? writer.append(pcm16Data)
+    }
+
+    /// 把引擎的缓冲拷成一份可以跨线程带走的副本 —— 引擎会复用它那一块。
+    ///
+    /// 格式原样保留（交错 / 非交错都走这里），所以下游那个转换器看到的东西与从前一致。
+    private static func makeIndependentCopy(of audioBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: audioBuffer.format,
+                                                  frameCapacity: audioBuffer.frameLength) else {
+            return nil
+        }
+        copiedBuffer.frameLength = audioBuffer.frameLength
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(audioBuffer.mutableAudioBufferList)
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copiedBuffer.mutableAudioBufferList)
+        for (sourceBuffer, destinationBuffer) in zip(sourceBuffers, destinationBuffers) {
+            guard let sourceData = sourceBuffer.mData,
+                  let destinationData = destinationBuffer.mData else { continue }
+            memcpy(destinationData, sourceData, Int(min(sourceBuffer.mDataByteSize,
+                                                        destinationBuffer.mDataByteSize)))
+        }
+        return copiedBuffer
     }
 
     /// 收尾。返回这一轮**实际录到的秒数**；`nil` = 一块音频都没采到（文件没建）。
