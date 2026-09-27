@@ -122,15 +122,15 @@ struct DirectionBoardView: View {
                                  count: columnCount),
                   alignment: .leading,
                   spacing: 6) {
-            ForEach(session.displayedItems, id: \.rowIndex) { item in
+            ForEach(session.displayedItems, id: \.directionID) { item in
                 directionRow(item)
             }
         }
     }
 
     private func directionRow(_ item: DirectionBoardDisplayItem) -> some View {
-        let state = session.selectionStates[item.rowIndex] ?? .pending
-        let text = session.confirmedTexts[item.rowIndex] ?? item.text
+        let state = session.selectionStates[item.directionID] ?? .pending
+        let text = session.confirmedTexts[item.directionID] ?? item.keyword
         let textColor: Color = {
             switch state {
             case .confirmed: return DS.Colors.success
@@ -158,12 +158,12 @@ struct DirectionBoardView: View {
                 // 点文字 = 选中（用户：「任务方向可以通过点击的方式选择，用户点击某一个方向即可」）。
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    session.toggleConfirm(rowIndex: item.rowIndex, displayedText: text)
+                    session.toggleConfirm(directionID: item.directionID, displayedText: text)
                 }
                 .help("点一下 = 这个是我想做的（也可以直接说「第 \(item.number) 个方向」）")
 
             Button {
-                session.toggleDeny(rowIndex: item.rowIndex)
+                session.toggleDeny(directionID: item.directionID)
             } label: {
                 Image(systemName: state == .confirmed ? "checkmark" : "xmark")
                     .font(.system(size: 9, weight: .bold))

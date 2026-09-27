@@ -795,9 +795,16 @@ final class CompanionManager: ObservableObject {
         // `DirectionBoardSession.selfCheckMode` 里写的理由（这台机器没有可用的语音输入）。
         if DirectionBoardSession.selfCheckMode == "stream" {
             // 只量字幕那条渲染链（不拉看板、不发请求）—— 但相位要钉在 Listening，
-            // 否则那一行根本不画（第一次量的时候就是这么扑空的）。
-            notchWindowController?.beginSelfCheckListeningPhase()
+            // 否则那一行根本不画（第一次量就是这么扑空的）。
+            //
+            // ⚠️ **必须等一秒**：`notchWindowController` 在这一刻还没建好（`start()` 跑在很前面），
+            // 直接调是 nil、静默什么都不做 —— 上一次就是这么扑空的。
             DirectionBoardSession.shared.runStreamingSelfCheckIfRequested()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                self?.notchWindowController?.beginSelfCheckListeningPhase()
+                print("🎛️ 字幕流自检：相位已钉在 Listening")
+            }
         } else if DirectionBoardSession.selfCheckMode != nil {
             DirectionBoardPanelController.shared.startSelfCheckIfRequested()
             DirectionBoardSession.shared.runSelfCheckSequence()
@@ -809,6 +816,10 @@ final class CompanionManager: ObservableObject {
 
         refreshAllPermissions()
         print("🔑 Wanna start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
+
+        // **每天中午 12 点的方向复盘**（用户设计的第三种来源）：它自己排到下一个中午，
+        // 不轮询、不打扰 —— 到点读最近几天的对话，把高频任务方向**追加**进那份清单。
+        TaskDirectionReviewJob.shared.start()
 
         // 两个出口要用的外部命令行工具，启动时查一次。
         //
@@ -2474,17 +2485,6 @@ final class CompanionManager: ObservableObject {
     /// This applies to a user-edited base too: the editor is for the base prompt, so
     /// 回答长度 and 补充指令 keep working on top of whatever they wrote. Anything else
     /// would make those two settings silently dead the moment the editor was touched.
-    /// 看板那次请求用的系统提示词 —— **与主 Agent 逐字相同的正文**，后面追加一节
-    /// 「怎么把理解结果写成看板要的格式」。
-    ///
-    /// 用户 2026-09-27：「提示词：与主 Agent 提示词完全相同，以保证 100% 模拟主 Agent 的思考方式；
-    /// 额外追加一条提示词，规定如何将理解结果转换为标签形式展示」。
-    ///
-    /// ⚠️ 这一节**只加在看板那次请求上**，真正回答用户的那一轮不带它。
-    static func directionBoardSystemPrompt(for settings: AppSettings) -> String {
-        companionSystemPrompt(for: settings) + "\n\n" + DirectionBoardPrompt.roleInstruction
-    }
-
     private static func companionSystemPrompt(for settings: AppSettings) -> String {
         let trimmedCustomPrompt = settings.customSystemPrompt?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

@@ -519,6 +519,12 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 范围 5…20（`clamped()` 兜住手改的 JSON）。
     var directionBoardMinimumAddedCharacters: Int = 10
 
+    /// **Jev 给的 P(是) 到多少才显示这一格**（默认 0.5）。
+    ///
+    /// 用户 2026-09-27：「让它根据用户的意图来判断出来，然后做一个类似于**概率估计**的东西，
+    /// 把高概率的内容显示出来。」—— 阈值就是"多高算高"，夹在 0.3…0.9。
+    var directionBoardProbabilityThreshold: Double = 0.5
+
     /// **看板的宽度 = 结果卡片宽度（340）的几倍**（默认 2 倍）。
     ///
     /// 用户 2026-09-27：「卡片的宽度需要固定……不能超过它的两倍，不能太高，要么一倍，要么两倍……
@@ -1555,6 +1561,8 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
             min(max(settings.directionBoardMinimumAddedCharacters, 5), 20)
         // 看板宽度：1×~2×（用户说"要么一倍，要么两倍"，所以范围就夹在这里）。
         settings.directionBoardWidthMultiplier = min(max(settings.directionBoardWidthMultiplier, 1.0), 2.0)
+        settings.directionBoardProbabilityThreshold =
+            min(max(settings.directionBoardProbabilityThreshold, 0.3), 0.9)
         settings.answerBubbleLingerSeconds = min(max(settings.answerBubbleLingerSeconds, 0), 15)
         settings.rememberedConversationRounds = min(max(settings.rememberedConversationRounds, 0), 30)
         settings.finalTranscriptGracePeriodSeconds = min(max(settings.finalTranscriptGracePeriodSeconds, 0.5), 3)
@@ -1592,6 +1600,7 @@ nonisolated extension AppSettings {
         case directionBoardEnabled
         case directionBoard
         case directionBoardWidthMultiplier
+        case directionBoardProbabilityThreshold
         case directionBoardMinimumAddedCharacters
         case answerBubbleLingerSeconds
         case cursorPresenceMode
@@ -1727,6 +1736,8 @@ nonisolated extension AppSettings {
             Int.self, forKey: .directionBoardMinimumAddedCharacters) ?? defaults.directionBoardMinimumAddedCharacters
         directionBoardWidthMultiplier = try container.decodeIfPresent(
             Double.self, forKey: .directionBoardWidthMultiplier) ?? defaults.directionBoardWidthMultiplier
+        directionBoardProbabilityThreshold = try container.decodeIfPresent(
+            Double.self, forKey: .directionBoardProbabilityThreshold) ?? defaults.directionBoardProbabilityThreshold
         directionBoard = DirectionBoardConfiguration.validated(
             try container.decodeIfPresent(DirectionBoardConfiguration.self, forKey: .directionBoard)
                 ?? defaults.directionBoard)

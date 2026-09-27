@@ -98,7 +98,8 @@ struct SmoothRevealedTranscriptText: View {
         let shown = String(text.dropFirst(windowStart))
         // **文字右边缘永远钉在这一行的右端**，随着字变多向左长 ——
         // 用户的要求：「无论是第一个字还是第二个字，永远都是从右向左移动」。
-        let targetOffset = availableWidth - Self.width(of: shown)
+        let measuredWidth = widthCache.width(of: shown)
+        let targetOffset = availableWidth - measuredWidth
 
         Text(shown.isEmpty ? " " : shown)
             .font(.system(size: Self.fontSize, weight: .medium))
@@ -112,7 +113,7 @@ struct SmoothRevealedTranscriptText: View {
             .clipped()
             .onAppear {
                 windowStart = max(0, text.count - Self.maximumWindowCharacters)
-                slideOffset = availableWidth - Self.width(of: String(text.dropFirst(windowStart)))
+                slideOffset = availableWidth - widthCache.width(of: String(text.dropFirst(windowStart)))
             }
             // **这一行的宽度变了也要重新钉右边缘**（2026-09-27）。
             //
@@ -123,7 +124,7 @@ struct SmoothRevealedTranscriptText: View {
             // 录音带那条没有这个现象，是因为它的宽度从第一帧就是最终的宽度。
             // 宽度变了就**不带动画**地重新钉一次右边缘 —— 那正是"文字右边缘永远钉在右端"的定义。
             .onChange(of: availableWidth) { _, newWidth in
-                slideOffset = newWidth - Self.width(of: String(text.dropFirst(windowStart)))
+                slideOffset = newWidth - widthCache.width(of: String(text.dropFirst(windowStart)))
             }
             .onChange(of: text) { _, newText in
                 let duration = adaptiveSlideDuration()
@@ -134,12 +135,12 @@ struct SmoothRevealedTranscriptText: View {
                     > Self.maximumWindowCharacters + Self.trimHysteresisCharacters
                 if truncated {
                     windowStart = total - Self.maximumWindowCharacters
-                    slideOffset = availableWidth - Self.width(of: String(newText.dropFirst(windowStart)))
+                    slideOffset = availableWidth - widthCache.width(of: String(newText.dropFirst(windowStart)))
                     return
                 }
                 let shownNow = String(newText.dropFirst(windowStart))
                 withAnimation(.linear(duration: duration)) {
-                    slideOffset = availableWidth - Self.width(of: shownNow)
+                    slideOffset = availableWidth - widthCache.width(of: shownNow)
                 }
             }
     }
@@ -161,6 +162,39 @@ struct SmoothRevealedTranscriptText: View {
         let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
         return (string as NSString).size(withAttributes: [.font: font]).width
     }
+
+    /// **带上"上次量过的那一串 + 它的宽度"的量化器** —— 卡顿的根因就在这里。
+    ///
+    /// 2026-09-27 用 `sample` 量出来的事实（自检按 12 字/秒喂假文本、相位钉在 Listening）：
+    /// `body` 的 44 个样本里 **40 个**在 `width(of:)` 上 —— 也就是这一行每次重画的时间
+    /// **约 91% 花在"拿整串去问 NSString 有多宽"**。而它每次 body 求值量两遍（body 里算一次
+    /// 位移、`onChange` 里再算一次），识别结果每秒来约 10 次、串最长 160 字
+    ///（`NSString.size(withAttributes:)` 在中文长串上并不便宜）—— 于是掉帧、看起来就是卡。
+    ///
+    /// 修法是**增量**：识别器给的是**累积**文本，所以新串 = 旧串 + 新增的几个字，
+    /// 宽度也就是「上次的宽度 + 新增那几个字的宽度」。汉字 advance 恒定（本仓实测 14.883268pt），
+    /// 加法成立。于是每次只量 1~2 个字，而不是 160 个。
+    /// 串不是"旧串 + 新字"时（换了新句子、被修剪过）**老老实实整串重量** —— 缓存绝不能猜。
+    private struct TextWidthCache {
+        var measuredText: String = ""
+        var measuredWidth: CGFloat = 0
+
+        mutating func width(of text: String) -> CGFloat {
+            if text.isEmpty { measuredText = ""; measuredWidth = 0; return 0 }
+            if text == measuredText { return measuredWidth }
+            if text.hasPrefix(measuredText), !measuredText.isEmpty {
+                let appended = String(text.dropFirst(measuredText.count))
+                measuredWidth += SmoothRevealedTranscriptText.width(of: appended)
+                measuredText = text
+                return measuredWidth
+            }
+            measuredWidth = SmoothRevealedTranscriptText.width(of: text)
+            measuredText = text
+            return measuredWidth
+        }
+    }
+
+    @State private var widthCache = TextWidthCache()
 }
 
 /// **那一条字幕的外壳**：黑底、两端渐隐、内容按"可用宽度 − 文字宽度"平滑左移。

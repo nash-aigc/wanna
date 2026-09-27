@@ -2,15 +2,13 @@
 //  DirectionBoardTests.swift
 //  WannaTests
 //
-//  「任务方向看板」的纯逻辑断言（2026-09-27）。
+//  「任务方向看板」的纯逻辑断言（2026-09-27，第三版：清单文件 + Jev）。
 //
-//  这一套**与 `/tmp` 里那个独立探针逐条相同**：纯逻辑不依赖 App，所以两边跑的是同一批结论。
-//  留在仓库里的意义是**回归**：以后谁改了匹配档位或解析规则，这里会红。
+//  这一套与 `/tmp` 里那个独立探针逐条相同。留在仓库里的意义是**回归**：以后谁改了匹配规则、
+//  口述解析、节奏闸门或复盘解析，这里会红。
 //
-//  为什么这些断言值钱：这一段的失败方式全是**静默**的 —— 误命中会点亮错的方向（并且压掉
-//  AI 本该给的那个），解析跑偏会把标签变成正文的一部分。探针第一次跑就抓到两个：
-//  「点一下」误命中「存一下」（3 字关键词给了容错），以及 8 字上限把「保存到 Notion」
-//  截成「保存到 Noti」。
+//  这些断言的失败方式全是**静默**的 —— 误命中会点亮错的方向（还会压掉该由概率给的），
+//  口述解析错会把用户随口一句话当成一个新方向存进文件。所以边界都钉死。
 //
 
 import Foundation
@@ -20,126 +18,111 @@ import Testing
 @MainActor
 struct DirectionBoardTests {
 
-    private var configuration: DirectionBoardConfiguration {
-        DirectionBoardConfiguration.validated(.default)
+    private var directions: [TaskDirection] { TaskDirectionStore.builtinDirections }
+
+    // MARK: - 本地关键词匹配（免费那条路）
+
+    private func locallyMatched(_ text: String) -> Set<String> {
+        DirectionBoardMatching.locallyMatchedKeywords(transcriptText: text, directions: directions)
     }
 
-    // MARK: - 布局与默认值
-
-    @Test func defaultConfigurationIsThreeRowsOfTwo() throws {
-        let configuration = self.configuration
-        #expect(configuration.rows.count == 3)
-        #expect(configuration.rows.allSatisfy { $0.buttons.count == 2 })
-        #expect(configuration.rows.map(\.title) == ["笔记类", "显示类", "执行类"])
-        #expect(configuration.rows[0].buttons.map(\.presetText) == ["保存到 Notion", "存成一条录音"])
-        #expect(configuration.rows[1].buttons.map(\.presetText) == ["指给我看", "圈出来"])
-        #expect(configuration.rows[2].buttons.map(\.presetText) == ["操作电脑", "派个 Agent 去做"])
-        #expect(Set(configuration.rows.flatMap { $0.buttons.map(\.id) }).count == 6)
+    @Test func keywordsLightTheRightDirection() throws {
+        #expect(locallyMatched("帮我把这条保存到 notion 里").contains("note.notion"))
+        #expect(locallyMatched("把刚才那段存成一条录音").contains("note.recording"))
+        #expect(locallyMatched("这个按钮在哪儿").contains("show.point"))
+        #expect(locallyMatched("把它圈出来").contains("show.circle"))
+        #expect(locallyMatched("帮我点一下那个发送按钮").contains("act.computer"))
+        #expect(locallyMatched("派个 agent 去做这件事").contains("act.agent"))
+        #expect(locallyMatched("今天天气怎么样").isEmpty)
     }
 
-    // MARK: - 本地匹配（"预设关键词作为首选"那一半）
-
-    private func matchedRow(_ text: String) -> Int? {
-        DirectionBoardConfiguration.match(in: text, configuration: configuration)?.rowIndex
-    }
-
-    @Test func presetKeywordsPickTheRightRow() throws {
-        #expect(matchedRow("帮我把这条保存到 notion 里") == 0)
-        #expect(matchedRow("这一段帮我记下来") == 0)
-        #expect(matchedRow("这个按钮在哪儿") == 1)
-        #expect(matchedRow("把它圈出来") == 1)
-        #expect(matchedRow("帮我点一下那个发送按钮") == 2)
-        #expect(matchedRow("派个 agent 去做这件事") == 2)
-        #expect(matchedRow("今天天气怎么样") == nil)
-    }
-
-    @Test func presetKeywordsPickTheRightButtonInsideTheRow() throws {
-        #expect(DirectionBoardConfiguration.match(in: "帮我点一下那个按钮",
-                                                  configuration: configuration)?.button.id == "act.computer")
-        #expect(DirectionBoardConfiguration.match(in: "帮我圈一下这里",
-                                                  configuration: configuration)?.button.id == "show.circle")
-    }
-
-    /// **短关键词只认精确** —— 这一条是探针逼出来的，别再放宽。
-    ///
-    /// 3 字关键词给容错 1 时，「帮我**点一下**那个发送按钮」会命中笔记类的「**存一下**」：
-    /// 屏幕上点亮「保存到 Notion」，而本地命中还会**压掉**显示类/执行类本该由模型给的标签。
+    /// **短关键词只认精确** —— 放宽过一次，当场误命中（「帮我点一下」撞上「存一下」）。
     @Test func shortKeywordsDoNotFuzzyMatch() throws {
-        #expect(matchedRow("我今天发了个朋友圈") == nil)
-        #expect(matchedRow("帮我把这个存一下") == 0)
-        let rowMatches = DirectionBoardConfiguration.rowMatches(
-            in: "先记下来，然后帮我点一下，再圈出来", configuration: configuration)
-        #expect(rowMatches.keys.sorted() == [0, 1, 2])
-        #expect(rowMatches[0]?.button.id == "note.notion")
+        #expect(!locallyMatched("我今天发了个朋友圈").contains("show.circle"))
+        #expect(locallyMatched("帮我把这个存一下").contains("note.notion"))
     }
 
-    // MARK: - 校验（手改过 JSON 之后仍然能画）
+    // MARK: - 显示哪几格（本地优先 + Jev 概率）
 
-    /// **行数 1…5 都是合法的**（用户可以在设置里删到 1 类）；缺的按钮/标题/短语才回落默认。
-    /// ⚠️ 关键词**原样保留**：清空关键词是"这一格我要自己判断"的正当表达，不许改写回去。
-    @Test func validationRepairsAHandEditedConfiguration() throws {
-        let broken = DirectionBoardConfiguration(rows: [
-            DirectionBoardRow(title: "  ", buttons: []),
-            DirectionBoardRow(title: "只有一行",
-                              buttons: [DirectionBoardButton(id: "", presetText: "", keywords: ["甲"])]),
-        ])
-        let repaired = DirectionBoardConfiguration.validated(broken)
-        #expect(repaired.rows.count == 2)
-        #expect(repaired.rows.allSatisfy { $0.buttons.count == 2 })
-        #expect(repaired.rows[0].title == "笔记类")
-        #expect(repaired.rows[1].buttons[0].presetText == "指给我看")
-        #expect(repaired.rows[1].buttons[0].id == "show.point")
-        #expect(repaired.rows[1].buttons[1].id == "show.circle")
-        #expect(repaired.rows[1].buttons[0].keywords == ["甲"])
-
-        let oneRow = DirectionBoardConfiguration.validated(DirectionBoardConfiguration(rows: []))
-        #expect(oneRow.rows.count == 1)
-        #expect(oneRow.rows[0].title == "笔记类")
-
-        let tooMany = DirectionBoardConfiguration.validated(
-            DirectionBoardConfiguration(rows: DirectionBoardConfiguration.default.rows
-                                        + DirectionBoardConfiguration.default.rows))
-        #expect(tooMany.rows.count == DirectionBoardConfiguration.maximumRowCount)
+    @Test func displayedItemsPreferLocalThenProbability() throws {
+        let items = DirectionBoardMatching.displayedItems(
+            transcriptText: "帮我把这段存到 notion 里",
+            directions: directions,
+            jevProbabilities: ["show.point": 0.9, "act.computer": 0.7, "vision.make": 0.1],
+            probabilityThreshold: 0.5)
+        // 本地命中的排最前，其余按概率从高到低；低于阈值的不出现。
+        #expect(items.first?.directionID == "note.notion")
+        #expect(items.map(\.directionID).contains("show.point"))
+        #expect(items.map(\.directionID).contains("act.computer"))
+        #expect(!items.map(\.directionID).contains("vision.make"))
+        #expect(items.map(\.number) == Array(1...items.count))
     }
 
-    /// **只显示说到的那些方向**（用户 2026-09-27 第二版：不要一上来就把六格都摆出来）。
-    @Test func onlyDisplaysWhatTheUserMentioned() throws {
-        let matched = DirectionBoardConfiguration.displayedItems(
-            transcriptText: "帮我把这段记下来，再指给我看是哪个",
-            modelRowLabels: [:], configuration: configuration)
-        #expect(matched.map(\.number) == [1, 2])
-        #expect(matched.map(\.rowTitle) == ["笔记类", "显示类"])
-        #expect(matched.map(\.text) == ["保存到 Notion", "指给我看"])
-
-        #expect(DirectionBoardConfiguration.displayedItems(
-            transcriptText: "今天天气怎么样", modelRowLabels: [:], configuration: configuration).isEmpty)
-
-        let modelOnly = DirectionBoardConfiguration.displayedItems(
-            transcriptText: "今天天气怎么样", modelRowLabels: [2: "查一下天气"], configuration: configuration)
-        #expect(modelOnly.map(\.text) == ["查一下天气"])
-        #expect(modelOnly.map(\.number) == [1])
-
-        let both = DirectionBoardConfiguration.displayedItems(
-            transcriptText: "帮我把这段记下来", modelRowLabels: [0: "AI 乱写的", 2: "操作电脑"],
-            configuration: configuration)
-        #expect(both.map(\.text) == ["保存到 Notion", "操作电脑"])
+    /// **钉住的排最前、编号不变**（用户：「如果用户选择某一个方向，就应该把这个方向定住」）。
+    @Test func pinnedDirectionsKeepTheirNumber() throws {
+        let items = DirectionBoardMatching.displayedItems(
+            transcriptText: "帮我把这段存到 notion 里",
+            directions: directions,
+            jevProbabilities: ["show.point": 0.9, "act.computer": 0.7],
+            probabilityThreshold: 0.5,
+            pinnedOrder: ["act.computer"])
+        #expect(items.first?.directionID == "act.computer")
+        #expect(items.first?.number == 1)
     }
 
-    /// **发送节奏的三条闸门**（用户 2026-09-27 的第二条是这次新加的）：
-    /// 每 3 秒看一次 + 内容跟上次不一样 + **新增内容 ≥10 字（标点不算）**。
+    /// 他刚口述出来的新方向：没有概率也要显示。
+    @Test func forcedDirectionsAreShownWithoutProbability() throws {
+        let items = DirectionBoardMatching.displayedItems(
+            transcriptText: "随便说点什么",
+            directions: directions,
+            jevProbabilities: [:],
+            forcedDirectionIDs: ["vision.make"])
+        #expect(items.map(\.directionID) == ["vision.make"])
+    }
+
+    // MARK: - 口述
+
+    @Test func spokenNumbersSelectAndCancel() throws {
+        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "选择第二个方向", displayedItemCount: 5) == 2)
+        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "第三个方向吧", displayedItemCount: 5) == 3)
+        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "就方向4", displayedItemCount: 5) == 4)
+        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "第十一个方向", displayedItemCount: 12) == 11)
+        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "第六个方向", displayedItemCount: 5) == nil)
+
+        // 取消（用户点名必须要有的）
+        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "取消第一个方向", displayedItemCount: 5) == 1)
+        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "第二个方向取消", displayedItemCount: 5) == 2)
+        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "去掉第三个方向", displayedItemCount: 5) == 3)
+        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "第一个方向正确", displayedItemCount: 5) == nil)
+    }
+
+    @Test func spokenCancelBoardNeedsTheExactPhrase() throws {
+        #expect(DirectionBoardMatching.spokenCancelBoardRequested(in: "取消任务看板"))
+        #expect(DirectionBoardMatching.spokenCancelBoardRequested(in: "帮我取消任务方向"))
+        #expect(!DirectionBoardMatching.spokenCancelBoardRequested(in: "取消任务"))
+        #expect(!DirectionBoardMatching.spokenCancelBoardRequested(in: "把任务方向改一下"))
+    }
+
+    @Test func spokenNewDirectionIsExtracted() throws {
+        #expect(DirectionBoardMatching.spokenNewDirection(in: "任务方向是整理照片") == "整理照片")
+        #expect(DirectionBoardMatching.spokenNewDirection(in: "这个是关于剪辑视频方向的") == "剪辑视频")
+        #expect(DirectionBoardMatching.spokenNewDirection(in: "今天天气怎么样") == nil)
+    }
+
+    // MARK: - 节奏闸门（每 3 秒 + 内容变了 + 新增 ≥10 字）
+
     @Test func theCadenceGateNeedsTenNewCharacters() throws {
-        typealias Session = DirectionBoardSession
         func added(_ transcript: String, since last: String) -> Int {
-            Session.addedCharacterCount(transcript: transcript, since: last)
+            DirectionBoardSession.addedCharacterCount(transcript: transcript, since: last)
         }
         func shouldRequest(_ transcript: String, last: String,
-                           enabled: Bool = true, listening: Bool = true, requesting: Bool = false) -> Bool {
-            Session.shouldRequest(transcript: transcript, lastRequestedTranscript: last,
-                                  isEnabled: enabled, isListening: listening, isRequesting: requesting)
+                           enabled: Bool = true, listening: Bool = true,
+                           requesting: Bool = false, cancelled: Bool = false) -> Bool {
+            DirectionBoardSession.shouldRequest(transcript: transcript, lastRequestedTranscript: last,
+                                                isEnabled: enabled, isListening: listening,
+                                                isRequesting: requesting, isCancelled: cancelled)
         }
-
         #expect(added("帮我把这段存到 notion 里", since: "") == 14)
-        #expect(added("帮我把这段存到 notion 里", since: "帮我把这段") == 9)
         // **标点不算字数**（用户点名）。
         #expect(added("帮我把这段，存到 notion 里！", since: "帮我把这段存到 notion 里") == 0)
         #expect(added("嗯", since: "") == 1)
@@ -147,138 +130,52 @@ struct DirectionBoardTests {
         #expect(shouldRequest("帮我把这段存到 notion 里", last: ""))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "帮我把这段存到 notion 里"))
         #expect(!shouldRequest("帮我把这段存到 notion 里。", last: "帮我把这段存到 notion 里"))
-        #expect(!shouldRequest("帮我把这段存到 notion 里，再指", last: "帮我把这段存到 notion 里"))
-        #expect(shouldRequest("帮我把这段存到 notion 里，再指给我看是哪一行的按钮",
-                              last: "帮我把这段存到 notion 里"))
-        // 只说「嗯」「啊」这类没有意义的词 → 不发。
         #expect(!shouldRequest("嗯", last: ""))
-        #expect(!shouldRequest("啊", last: ""))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", enabled: false))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", listening: false))
         #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", requesting: true))
-        #expect(!shouldRequest("  帮我把这段存到 notion 里  ", last: "帮我把这段存到 notion 里"))
+        // **被取消（总闸门）→ 不发**。
+        #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", cancelled: true))
     }
 
-    /// **口述也能选方向**：认出「第 N 个方向」「方向N」「选第 N」，中文数字与阿拉伯数字都认。
-    @Test func spokenNumbersSelectDirections() throws {
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "选择第二个方向", displayedItemCount: 5) == 2)
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "第三个方向吧", displayedItemCount: 5) == 3)
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "参考第二个方向", displayedItemCount: 5) == 2)
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "就方向4", displayedItemCount: 5) == 4)
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "选第5个", displayedItemCount: 5) == 5)
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "第十一个方向", displayedItemCount: 12) == 11)
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "今天天气怎么样", displayedItemCount: 5) == nil)
-        // 超出屏幕上现有的格数 → 不许越界。
-        #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "第六个方向", displayedItemCount: 5) == nil)
-        #expect(DirectionBoardConfiguration.chineseNumeral("十") == 10)
-        #expect(DirectionBoardConfiguration.chineseNumeral("十五") == 15)
-        #expect(DirectionBoardConfiguration.spokenRowSelection(in: "这个是关于显示方向的任务",
-                                                               configuration: configuration) != nil)
-    }
-
-    // MARK: - 解析
-
-    @Test func parsesTheCanonicalReply() throws {
-        let reading = DirectionBoardPrompt.parseResponse("""
-        <<<看板
-        说明：用户想让我把屏幕上的那段文字存进 Notion。
-        方向1：保存到 Notion
-        方向2：无
-        方向3：无
-        看板>>>
-        """)
-        #expect(reading.paragraph == "用户想让我把屏幕上的那段文字存进 Notion。")
-        #expect(reading.rowLabels[0] == "保存到 Notion")
-        #expect(reading.rowLabels[1] == nil)
-        #expect(reading.rowLabels[2] == nil)
-    }
-
-    /// **模型原样回一个预设短语时不许被截断**：8 字上限会把「保存到 Notion」变成「保存到 Noti」。
-    @Test func keepsPresetPhrasesIntact() throws {
-        #expect(DirectionBoardPrompt.parseResponse("说明：x\n方向1：保存到 Notion").rowLabels[0] == "保存到 Notion")
-        #expect(DirectionBoardPrompt.parseResponse("说明：x\n方向3：派个 Agent 去做").rowLabels[2] == "派个 Agent 去做")
-    }
-
-    @Test func toleratesFullWidthColonsAndDecorations() throws {
-        #expect(DirectionBoardPrompt.parseResponse("<<<看板\n说明：他要把这段存下来\n方向2：圈出来\n看板>>>")
-            .rowLabels[1] == "圈出来")
-        #expect(DirectionBoardPrompt.parseResponse("<<<看板\n说明：测试\n方向1：`保存到 Notion`\n看板>>>")
-            .rowLabels[0] == "保存到 Notion")
-        let boldKey = DirectionBoardPrompt.parseResponse("<<<看板\n**说明**：把这段存进笔记\n- 方向3：操作电脑\n看板>>>")
-        #expect(boldKey.paragraph == "把这段存进笔记")
-        #expect(boldKey.rowLabels[2] == "操作电脑")
-    }
-
-    /// 认不出来的行一律并进说明 —— 多写的、少写的都不丢；整个不成形时保留上一次（调用方的事）。
-    @Test func neverLosesUnrecognisedLines() throws {
-        let duplicated = DirectionBoardPrompt.parseResponse("说明：第一版\n说明：第二版\n方向1：保存到 Notion\n方向1：操作电脑")
-        #expect(duplicated.paragraph.hasPrefix("第一版"))
-        #expect(duplicated.paragraph.contains("第二版"))
-        #expect(duplicated.rowLabels[0] == "保存到 Notion")
-
-        let truncated = DirectionBoardPrompt.parseResponse("说明：他要把这个文件\n方向2：指给")
-        #expect(truncated.paragraph == "他要把这个文件")
-
-        let nonsense = DirectionBoardPrompt.parseResponse("我不太明白你的意思。")
-        #expect(nonsense.paragraph == "我不太明白你的意思。")
-        #expect(nonsense.rowLabels.isEmpty)
-
-        // 哨兵**之外**的话是模型的前言/后语，不进说明。
-        let withPreamble = DirectionBoardPrompt.parseResponse(
-            "好的，我来分析一下。\n<<<看板\n说明：用户想存一条笔记\n方向1：保存到 Notion\n看板>>>\n以上。")
-        #expect(withPreamble.paragraph == "用户想存一条笔记")
-        #expect(withPreamble.rowLabels[0] == "保存到 Notion")
-    }
-
-    @Test func truncatesOverlongLabels() throws {
-        let reading = DirectionBoardPrompt.parseResponse("说明：x\n方向1：这是一个特别特别长的方向标签超过十二个字了真的超了")
-        #expect(reading.rowLabels[0]?.count == 12)
-    }
-
-    // MARK: - 请求消息
-
-    @Test func requestMessageOnlyAsksForUnmatchedRows() throws {
-        let message = DirectionBoardPrompt.requestUserMessage(
-            transcriptText: "帮我把这段存进 notion",
-            unmatchedRowIndices: [1, 2],
-            configuration: configuration)
-        #expect(message.contains("帮我把这段存进 notion"))
-        #expect(message.contains("方向2") && message.contains("方向3"))
-        #expect(message.contains("保存到 Notion"))
-
-        let allMatched = DirectionBoardPrompt.requestUserMessage(
-            transcriptText: "x", unmatchedRowIndices: [], configuration: configuration)
-        #expect(allMatched.contains("只需要写「说明」"))
-    }
-
-    // MARK: - 注入的标签
+    // MARK: - 提交时那几行
 
     @Test func decorationOnlyCarriesWhatTheUserConfirmed() throws {
         #expect(DirectionBoardPrompt.decoration(confirmedDirectionTexts: [], typedInput: "") == nil)
         #expect(DirectionBoardPrompt.decoration(confirmedDirectionTexts: ["   "], typedInput: "\n ") == nil)
         #expect(DirectionBoardPrompt.decoration(confirmedDirectionTexts: ["保存到 Notion"], typedInput: "")
             == "用户真实意图的任务方向是：保存到 Notion")
-        #expect(DirectionBoardPrompt.decoration(confirmedDirectionTexts: ["保存到 Notion", "指给我看"],
-                                                typedInput: "顺便截图")
+        #expect(DirectionBoardPrompt.decoration(
+            confirmedDirectionTexts: ["保存到 Notion", "用户确认的任务理解是：他在整理文件"],
+            typedInput: "顺便截图")
             == """
             用户真实意图的任务方向是：保存到 Notion
-            用户真实意图的任务方向是：指给我看
+            用户确认的任务理解是：他在整理文件
             用户的补充说明是：顺便截图
             """)
     }
 
-    // MARK: - 屏幕上写什么 = 发出去的是什么
+    // MARK: - 复盘（每天中午 12 点）
 
-    /// 预设命中时**以预设为准**（用户原话：「以用户提前预设的为准」）；没命中才让 AI 的短语占第一格。
-    @Test func displayTextPrefersPresetThenTheModelLabel() throws {
-        let localMatch = DirectionBoardConfiguration.match(in: "帮我圈一下这里", configuration: configuration)
-        // 命中的那一行：整行都是预设，AI 写什么都不算。
-        #expect(configuration.displayText(rowIndex: 1, columnIndex: 0, localMatch: localMatch, modelLabel: "操作电脑") == "指给我看")
-        #expect(configuration.displayText(rowIndex: 1, columnIndex: 1, localMatch: localMatch, modelLabel: "操作电脑") == "圈出来")
-        // 没命中的那一行：第一格显示 AI 的短语，第二格仍然是预设。
-        #expect(configuration.displayText(rowIndex: 2, columnIndex: 0, localMatch: localMatch, modelLabel: "整理这段文字") == "整理这段文字")
-        #expect(configuration.displayText(rowIndex: 2, columnIndex: 1, localMatch: localMatch, modelLabel: "整理这段文字") == "派个 Agent 去做")
-        // 没命中、AI 也说「无」：回落预设。
-        #expect(configuration.displayText(rowIndex: 2, columnIndex: 0, localMatch: localMatch, modelLabel: "  ") == "操作电脑")
+    @Test func reviewParsesTheModelsJSON() throws {
+        let extracted = TaskDirectionReviewJob.parseExtractedDirections("""
+        [{"keyword": "整理照片", "detail": "把相册里的照片按时间归类"},
+         {"keyword": "写周报", "detail": "把这一周做的事整理成周报"}]
+        """)
+        #expect(extracted.map(\.keyword) == ["整理照片", "写周报"])
+        #expect(TaskDirectionReviewJob.parseExtractedDirections("我看不出来").isEmpty)
+    }
+
+    @Test func nextNoonIsTheNextLocalNoon() throws {
+        let calendar = Calendar.current
+        // 上午 9 点 → 今天中午 12 点。
+        let morning = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!
+        #expect(calendar.component(.hour, from: TaskDirectionReviewJob.nextNoon(from: morning)) == 12)
+        #expect(calendar.isDate(TaskDirectionReviewJob.nextNoon(from: morning), inSameDayAs: morning))
+        // 下午 3 点 → 明天中午 12 点。
+        let afternoon = calendar.date(bySettingHour: 15, minute: 0, second: 0, of: Date())!
+        let nextNoon = TaskDirectionReviewJob.nextNoon(from: afternoon)
+        #expect(calendar.component(.hour, from: nextNoon) == 12)
+        #expect(!calendar.isDate(nextNoon, inSameDayAs: afternoon))
     }
 }
