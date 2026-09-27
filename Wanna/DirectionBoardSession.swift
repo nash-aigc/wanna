@@ -79,10 +79,6 @@ final class DirectionBoardSession: ObservableObject {
     private var lastRequestedTranscript = ""
     /// 最近一次 Jev 判断给出的概率（方向 id → P(是)）。
     private var jevProbabilities: [String: Double] = [:]
-    /// 这一轮因为"参考屏幕"截下来的图（发送给模型时带上）。
-    private var referenceScreenshots: [(data: Data, label: String)] = []
-    /// 这一次"参考屏幕"的提到是不是已经截过了（边缘触发）。
-    private var didCaptureForThisMention = false
     /// **最近三轮**模型的理解原文（最近的那一轮在最前）—— 用户要的连续性：
     /// 「你要在发送给下一轮模型的时候要保留前三轮……让它重点参考最近一轮」。
     private var recentReadings: [String] = []
@@ -124,8 +120,13 @@ final class DirectionBoardSession: ObservableObject {
         beginListening(cycleID: "self-check-cycle")
         let lines = [
             "帮我把这段记下来",
-            // 用户的那个场景（屏幕上有数学题）：说了「参考屏幕」就要当场截屏 + 看图给答案。
-            "参考屏幕内容，分析一下这道题可能选哪一个",
+            // **用户真实报上来的那一句**（2026-09-27）。它刻意**不含「参考屏幕」这四个字** ——
+            // 原来正是因为要等那四个字才截图，所以这句问法下模型根本看不到屏幕，
+            // 右下角回的是"我还没看到题目的内容"。自检就用这句钉住修复。
+            "屏幕上的第 2 题该选哪个",
+            // 第三句**不是问题** → 这一轮模型不会再写「答案」那一行。
+            // 用来看住那个 bug：没有答案的那一轮**不许**把上一轮已经显示出来的答案抹掉。
+            "顺便把这个结果记到我的笔记里面去",
         ]
         var accumulated = ""
         for (index, line) in lines.enumerated() {
@@ -133,7 +134,9 @@ final class DirectionBoardSession: ObservableObject {
             // 自检如果按"替换"喂，第二句就把第一句的命中冲掉了（实测过一次：屏幕上只剩空板）。
             accumulated += line
             let partial = accumulated
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 1.4) { [weak self] in
+            // 间隔 3.5 秒：**大于一轮的节奏（3 秒）** —— 这样每一句都真的落到一轮请求上，
+            // 自检才能验到"上一轮写了答案、下一轮没写"这种跨轮行为（1.4 秒那版三句挤在一轮里）。
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 3.5) { [weak self] in
                 NotchListeningTranscriptModel.shared.setLiveText(partial)
                 self?.noteLiveTranscript(partial)
                 let shown = self?.displayedItems.map { "\($0.number).\($0.keyword)" } ?? []
@@ -216,8 +219,6 @@ final class DirectionBoardSession: ObservableObject {
         recentReadings = []
         previousRoundItems = []
         jevProbabilities = [:]
-        referenceScreenshots = []
-        didCaptureForThisMention = false
         displayedItems = []
         typedInput = ""
         isListening = true
@@ -233,17 +234,6 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         latestTranscript = transcriptText
-        // **说了「参考屏幕 / 根据图片」这类组合词 → 当场截一张屏**（用户：
-        // 「每一次转写识别到就截一次屏」）。边缘触发：同一次提到只截一张（与
-        // `BuddyScreenKeywordDetector` 同一个做法 —— 识别器会给整句累积文本，不去重就会连截）。
-        let mentionsScreenReference = DirectionBoardMatching.screenReferenceRequested(in: transcriptText)
-        if mentionsScreenReference, !didCaptureForThisMention {
-            didCaptureForThisMention = true
-            Task { @MainActor [weak self] in await self?.captureReferenceScreenshot() }
-        } else if !mentionsScreenReference {
-            didCaptureForThisMention = false
-        }
-
         refreshDisplayedItems()
     }
 
@@ -472,13 +462,20 @@ final class DirectionBoardSession: ObservableObject {
         lastRequestedTranscript = transcript
         let generation = roundGeneration
         isRequesting = true
-        let screenshots = referenceScreenshots
-        let hasScreenReference = !screenshots.isEmpty
 
         requestTask = Task { [weak self] in
             guard let self else { return }
             defer { self.isRequesting = false }
             let directions = TaskDirectionStore.shared.keywordsAndDetails()
+            // **每一轮都带一张当下的屏幕**（用户 2026-09-27：「他为什么会显示没有看到屏幕呢？
+            // **他应该直接看到屏幕啊**」）。
+            //
+            // 原来只在用户说出「参考屏幕 / 根据图片」这类组合词时才带图 —— 而他说「屏幕上的第 2 题
+            // 该选哪个」时没有那四个字，于是模型**真的看不到**，右下角就回一句"我还没看到题目内容"。
+            // 这块板子的用途本来就是"看着屏幕理解你在说什么"，图不该由一句口令来解锁。
+            // 截图本身就排除了 Wanna 自己的窗口（`SCContentFilter(display:excludingWindows:)`
+            // 按 bundle id 过滤），所以两张卡片模型是看不见的 —— 不会看到自己的界面。
+            let screenshots = await self.captureScreenForBoard()
             let state = "用户到目前为止说的话：\n\(transcript.prefix(500))"
 
             // ① **Jev 判方向**（便宜、给概率）；② **大模型写那段理解**（小提示词）。
@@ -486,8 +483,7 @@ final class DirectionBoardSession: ObservableObject {
             async let probabilitiesTask = self.judgeWithJevIfConfigured(state: state, directions: directions)
             async let paragraphTask = self.writeParagraphWithModel(transcript: transcript,
                                                                    directions: directions,
-                                                                   screenshots: screenshots,
-                                                                   asksForLabel: hasScreenReference)
+                                                                   screenshots: screenshots)
             let probabilities = await probabilitiesTask
             let paragraphText = await paragraphTask
 
@@ -500,6 +496,11 @@ final class DirectionBoardSession: ObservableObject {
             }
             if let paragraphText, !paragraphText.isEmpty {
                 print("🧭 方向看板：理解 = \(paragraphText.prefix(80))")
+                // 自检时把**模型回的原文**整段打出来 —— 判断"答案没出现"是模型没写、还是解析器没认出来，
+                // 只能看原文（这个仓的规矩：先量，别猜）。
+                if Self.selfCheckMode != nil {
+                    print("🎛️ 方向看板自检：模型原文 >>>\n\(paragraphText)\n<<<")
+                }
                 // 显示用的那段话去掉「类型：X」那一截（模型读懂了题目，但那截是给看板用的）。
                 let displayText = DirectionBoardPrompt.paragraphWithoutLabelLine(paragraphText)
                 self.paragraph = DirectionBoardPrompt.cleanParagraph(
@@ -518,11 +519,16 @@ final class DirectionBoardSession: ObservableObject {
                 }
 
                 // **答案** → 右下角那张卡片（与最终结果同一张、同一套渲染）。
-                // 只在模型判断"这一轮包含一个能当场回答的问题"时才有值；没有就把上一次的清掉。
-                let answer = DirectionBoardPrompt.parseAnswer(paragraphText)
-                self.previewAnswer = answer
-                self.answerPreviewWriter?(answer)
-                if let answer { print("🧭 方向看板：答案预览 = \(answer.prefix(60))") }
+                //
+                // ⚠️ **只在真的取到答案时才写** —— 原来这一行是"没有答案就写 nil"，于是同一句话里
+                // 的第 N+1 轮（3 秒后，模型这次没写「答案」那一行）会把第 N 轮已经显示出来的答案
+                // 抹掉：用户看到的是"闪一下就没了"，报的就是「我问他问题的时候他也没有回复我」。
+                // 清空只发生在**一轮结束**（发送 / ESC / 新一轮），不发生在"这一轮没写"上。
+                if let answer = DirectionBoardPrompt.parseAnswer(paragraphText) {
+                    self.previewAnswer = answer
+                    self.answerPreviewWriter?(answer)
+                    print("🧭 方向看板：答案预览 = \(answer.prefix(60))")
+                }
 
                 // **用户对上一轮那些方向的评论，由模型在**这一轮**读懂**（两拍语义，用户 2026-09-27：
                 // 「他的理解是由大语言模型在第二轮……你必须要知道用户表达的是对上一轮 JEV 模型
@@ -559,10 +565,10 @@ final class DirectionBoardSession: ObservableObject {
     /// 那段"AI 怎么理解"：**只用方向清单 + 用户的话**（不再发主 Agent 那 5000 字提示词）。
     private func writeParagraphWithModel(transcript: String,
                                          directions: [(id: String, keyword: String, detail: String)],
-                                         screenshots: [(data: Data, label: String)],
-                                         asksForLabel: Bool) async -> String? {
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions,
-                                                                          asksForLabel: asksForLabel)
+                                         screenshots: [(data: Data, label: String)]) async -> String? {
+        // 每一轮都带图 → 提示词里那段"这一次带了屏幕截图，请看图再回答"成了**常规要求**，
+        // 不再是"带了图才追加的一段"。
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions)
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
             transcript: transcript,
             previousRoundItems: previousRoundItems,
@@ -583,19 +589,23 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    /// 当场截一张屏（用户说「参考屏幕」那一刻的画面）。
-    private func captureReferenceScreenshot() async {
+    /// **截一张当下的屏幕**（每一轮请求前调一次，见调用点的理由）。
+    ///
+    /// 用的是设置里「看与截图」那一页的参数（清晰度 / 压缩质量 / 多显示器策略），
+    /// 与主 Agent 那条路**同一份设置** —— 两处各读一次必然会漂。
+    /// 失败就返回空数组（这一轮不带图，照常出理解），不抛给调用方。
+    private func captureScreenForBoard() async -> [(data: Data, label: String)] {
         let settings = AppSettingsStore.snapshot()
         do {
             let captures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
                 maximumDimension: settings.screenshotMaxDimension == 0 ? nil : settings.screenshotMaxDimension,
                 compressionQuality: settings.screenshotCompressionQuality,
                 capturesAllDisplays: settings.capturesAllDisplays)
-            guard isListening else { return }
-            referenceScreenshots = captures.map { (data: $0.imageData, label: $0.label) }
-            print("🧭 方向看板：说到「参考屏幕/图片」—— 当场截了 \(captures.count) 张，这次判断会带上")
+            guard isListening else { return [] }
+            return captures.map { (data: $0.imageData, label: $0.label) }
         } catch {
-            print("🧭 方向看板：截屏失败（这次就不带图）—— \(error.localizedDescription)")
+            print("🧭 方向看板：这一轮没截到屏（不带图继续）—— \(error.localizedDescription)")
+            return []
         }
     }
 

@@ -58,7 +58,7 @@ nonisolated enum DirectionBoardPrompt {
     ///
     /// 它**不执行任何事**：只输出固定四行，说明"这段话看起来要做哪一类事"。
     static func understandingSystemPrompt(directions: [(id: String, keyword: String, detail: String)],
-                                          asksForLabel: Bool = false) -> String {
+                                          looksAtTheScreen: Bool = true) -> String {
         var lines: [String] = []
         for direction in directions {
             lines.append("- \(direction.keyword)：\(direction.detail)")
@@ -92,12 +92,14 @@ nonisolated enum DirectionBoardPrompt {
         2. 「目标问题」一句话说不完就写「细节」那一行，**不要写成长篇**；
         3. 用中文写（他说英文就用英文）；
         4. 不要加任何别的标题、引号、Markdown 或代码块。
-        """ + (asksForLabel ? """
+        """ + (looksAtTheScreen ? """
 
         \(labelLineInstruction)
 
-        ⚠️ 这一次带了**屏幕截图**：请**看图**再回答，并在上面那句话里直接给出你的判断/答案
-        （比如这道题你选哪个、这几个人是哪几个）。
+        ⚠️ 每一轮都带了**当下的屏幕截图**：请**看图**再回答 ——
+        「目标问题」「参考」「细节」都要基于你**真的看到的**内容写，
+        「答案」那一行更是必须看图算（比如这道题选哪个、这几个人是哪几个）。
+        **看不到就照实说**，不要编。
         """ : "")
     }
 
