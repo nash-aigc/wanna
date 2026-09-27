@@ -34,7 +34,6 @@ struct DirectionBoardView: View {
     /// 在框里按 `Cmd+Enter` 是**执行**，不在框里按 `Cmd+Enter` 是**粘贴**。
     /// 点卡片就抢走输入焦点的话，这两种就没法区分了。
     var onCardTapped: () -> Void = {}
-    @FocusState private var isInputFocused: Bool
 
     /// **宽度固定，不随内容长**（用户 2026-09-27 两次强调）：
     /// 「卡片的宽度需要固定……**不能超过它的两倍**……要么一倍，要么两倍」
@@ -44,7 +43,14 @@ struct DirectionBoardView: View {
     /// 所以宽度 = **结果卡片宽度（340）× 用户设的倍数**（默认 2 → 680），而且**恒定** ——
     /// 内容多了不撑宽，只多排几行（列数由这条宽度反推出来）。
     /// 左下角固定由面板那一侧保证（`directionBoardPanelFrame` 的原点 = 鼠标 +12pt）。
-    static let resultCardWidth: CGFloat = 340
+    /// 卡片的**基准宽度**：1 倍 = 240、1.5 倍 = 360、2 倍 = **480**（默认）。
+    ///
+    /// 用户 2026-09-27：「把卡片的宽度再缩小 50%，现在太宽了」——
+    /// 680 减一半是 340，但那样**选项格会掉到 1 列**（4 列要 ~656pt）、理解四行也会大量折行，
+    /// 卡片会变成又窄又高的一条。问过他之后选的是 **480（−30%）**：选项格 2 列、按钮行照旧放得下。
+    /// 基准跟着从 340 调到 240，这样设置页那三档（1 / 1.5 / 2 倍）的**相对关系不变**，
+    /// 默认值也仍然是 2 倍 —— 不用迁移任何存盘的值。
+    static let resultCardWidth: CGFloat = 240
     /// 一格的最小宽度 —— 它决定"这条宽度里排几列"：680 的卡片用掉 24 的左右边距之后是 656，
     /// 656 / 164 = **4 列**（用户 2026-09-27：「改成 4 列显示吧，现在 3 列太窄了，
     /// 每个卡片的空白间距太大」—— 原来是 190，算出来是 3 列）。
@@ -72,9 +78,6 @@ struct DirectionBoardView: View {
     private var columnCount: Int {
         Self.columnCount(forMultiplier: widthMultiplier, itemCount: session.displayedItems.count)
     }
-    /// **下面那两块固定高度**（用户点名要求）：说明 4 行 + 输入框一行。
-    /// **输入框默认留三行的高度**（用户 2026-09-27：「用户输入默认让用户可以输入三行内容，预留好高度空间」）。
-    private static let inputHeight: CGFloat = 3 * 18 + 12
     /// 编号那一列有多宽（「第三个方向」里的 3）。
     private static let numberColumnWidth: CGFloat = 18
 
@@ -143,13 +146,13 @@ struct DirectionBoardView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .frame(height: Self.inputHeight * 0.6)
+            .frame(height: Self.collapseBarHeight * 0.6)
             .help(session.isCollapsed ? "展开看板" : "把看板折叠成这一条")
 
             // 下方 40%：**故意不给功能**（点了什么都不发生）—— 它是留给鼠标拖动的地方。
-            Color.clear.frame(height: Self.inputHeight * 0.4)
+            Color.clear.frame(height: Self.collapseBarHeight * 0.4)
         }
-        .frame(width: Self.collapseBarWidth, height: Self.inputHeight)
+        .frame(width: Self.collapseBarWidth, height: Self.collapseBarHeight)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(theme.textColor.opacity(0.06))
@@ -162,8 +165,9 @@ struct DirectionBoardView: View {
         )
     }
 
-    /// 折叠条的宽度。
+    /// 折叠条的宽度与高度（高度原来借的是输入框那三行的高度；输入框删掉之后它自己带）。
     private static let collapseBarWidth: CGFloat = 20
+    private static let collapseBarHeight: CGFloat = 66
 
     private var expandedCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -183,11 +187,8 @@ struct DirectionBoardView: View {
             }
             // 第三段：理解（**固定四行**，见 `understoodRow`）。
             understandingArea
-            // 第四段：输入（默认留三行的高度）+ 它左边那条**折叠条**。
-            HStack(alignment: .top, spacing: 6) {
-                collapseBar
-                inputArea
-            }
+            // 第四段：只剩左边那条**折叠条**（输入框按用户要求删掉了）。
+            collapseBar
             // 最下面一行：**取消看板**的三档（用户 2026-09-27：「把最下面这一行分成三列：
             // 第一列叫「取消本次」……第二列叫「取消十分钟」……第三列叫「取消今日」」）。
             cancelRow
@@ -384,49 +385,12 @@ struct DirectionBoardView: View {
 
     // MARK: - 输入框区（**高度固定**）
 
-    /// **三行、能换行的输入框**（用户 2026-09-27：「正常情况下应能显示三行内容，现在只能显示一行，
-    /// 也没法换行。可以让用户通过 Shift + Enter 换行」）。
-    ///
-    /// ⚠️ 用的是 `TextEditor` 而不是 `TextField`：`TextField` **单行**、换行符它根本不收；
-    /// 竖排的 `TextField(axis: .vertical)` 也不行 —— 本仓库量过（2026-09-23，四个来回），
-    /// 那个从键盘**一个换行都拿不到**（`onSubmit` 会响，但绑定的值一个字节都不变）。
-    /// `TextEditor` 底下就是 `NSTextView`，换行、折行、Shift+Enter 全是它自带的行为。
-    private var inputArea: some View {
-        ZStack(alignment: .topLeading) {
-            // 占位符：`TextEditor` 没有 placeholder，只能自己画一个（有字时藏起来）。
-            if session.typedInput.isEmpty {
-                Text(Self.inputPlaceholder)
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.textColor.opacity(0.35))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .allowsHitTesting(false)
-            }
-            TextEditor(text: $session.typedInput)
-                .font(.system(size: 12))
-                .foregroundStyle(theme.textColor)
-                .scrollContentBackground(.hidden)
-                .focused($isInputFocused)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-        }
-        .frame(height: Self.inputHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.textColor.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(theme.textColor.opacity(isInputFocused ? 0.35 : 0.14), lineWidth: 1)
-        )
-        .onTapGesture {
-            // 点了才要键盘：宿主面板据此 `makeKey`（平时面板不是 key，绝不抢你正在用的 App）。
-            isInputFocused = true
-            onInputFocused()
-        }
-    }
-
-    private static let inputPlaceholder = "补充说明（会一起发过去）；Shift + Enter 换行"
+    // ⚠️ **这里原来有个"补充说明"输入框，用户 2026-09-27 让删掉**：
+    // 「把卡片右上角说话时的输入框删掉，这个输入框的功能实在特别低频」。
+    // 删掉之后：`session.typedInput` 再也没有人写（它仍然参与提交时那几行的拼装，
+    // 但恒为空，于是「用户的补充说明是：…」那一行不会再出现 ✓）；
+    // 回车那套里"光标在输入框内"这一支也随之失效 —— `panel.firstResponder is NSTextView`
+    // 永远是 false，于是 `Cmd+Enter` 恒等于"粘贴"、`Enter` 恒等于"执行"，正是他要的。
 
     /// **取消看板那一行**：暗红色、三列、有高度（用户：「这一行要有一定的高度，颜色是暗红色」）。
     ///
@@ -480,8 +444,8 @@ struct DirectionBoardView: View {
     private static let actionButtonColor = DS.Colors.success.opacity(0.12)
     /// 两个按钮各自的宽度（用户 2026-09-27：「复制的按钮要小一点，因为它就两个字；
     /// 复制并退出的按钮大一点」）。
-    private static let copyButtonWidth: CGFloat = 66
-    private static let copyAndExitButtonWidth: CGFloat = 104
+    private static let copyButtonWidth: CGFloat = 60
+    private static let copyAndExitButtonWidth: CGFloat = 96
 
     /// 三档之间的分割线 —— 用户 2026-09-27：「它们中间的分割线你给它画得**再亮一点、再大一点，
     /// 颜色再明确一点，用白色**」。所以是**纯白**（不是原来那种 12% 白），而且比原来高

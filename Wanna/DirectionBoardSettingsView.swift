@@ -49,7 +49,7 @@ struct DirectionBoardSettingsSection: View {
             SettingsCardRowDivider()
             SettingsRow(
                 label: "看板宽度",
-                description: "结果卡片是 340pt，看板按这个倍数走（默认 2 倍 = 680pt）。宽度是固定的，内容多了只多排几列，不会越长越宽。"
+                description: "看板宽度 = 240pt × 这个倍数：1 倍 = 240、1.5 倍 = 360、**2 倍（默认）= 480**。宽度是固定的，内容多了只多排几列，不会越长越宽。"
             ) {
                 SettingsSegmentedPicker(
                     selection: generalSettingsViewModel.binding(\.directionBoardWidthMultiplier),
