@@ -2053,6 +2053,9 @@ final class CompanionManager: ObservableObject {
             endContinuousListeningWindow(reason: "user pressed escape")
             return
         }
+        // 「按住说话」那条路不经过追问窗口，所以这里也清一次（同一次清空重复调是幂等的）——
+        // 用户 2026-09-28：「用户按住 ESC 就是取消任务，取消所有任务，**并且清空历史记录**」。
+        DirectionBoardSession.shared.endBigRound(reason: "ESC 取消（按住说话）")
         pendingKeyboardShortcutStartTask?.cancel()
         pendingKeyboardShortcutStartTask = nil
         buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
@@ -2089,6 +2092,9 @@ final class CompanionManager: ObservableObject {
         let cancelledTasks = AgentActivityBoard.shared.cancelRunningTasks(
             inCycle: cancelledCycle,
             reason: "用户按 ESC 打断了这一个周期")
+        // **看板的整轮清空**（用户 2026-09-28 报的就是这一条：ESC 退出之后，第二次按下
+        // 右上角/右下角显示的**还是上一次的历史**）——在途请求、累积的图、屏幕上那几行一起清。
+        DirectionBoardSession.shared.endBigRound(reason: "ESC 取消（任务执行中）")
         // 这一轮派出去的活如果挂在某张 **Claude Code 卡片**上，那张卡片自己的子进程也要停。
         // ⚠️ 边界（如实记在这里）：一张 Claude Code 卡片只有**一个**子进程，所以这张卡上
         // 更早那一轮的活会被一起停掉 —— 这是那个数据结构本身的边界，不是这里能绕开的；
@@ -3248,8 +3254,9 @@ final class CompanionManager: ObservableObject {
         DirectionBoardSession.shared.endListening()
         _ = DirectionBoardSession.shared.consumeTurnDecision()
         // **一大轮到此结束**（窗口关了就是这一大轮结束 —— 中间几轮打断/续说都算同一个大轮）：
-        // 清掉这一轮口述出来的**临时类型**文件。
-        DirectionBoardSession.shared.endBigRound()
+        // 看板**整轮清空**（图 / 上下文 / 屏幕上那几行 / 在途请求全停）—— 用户 2026-09-28：
+        // 「只要大循环结束，显示的内容都应该是全新的，相当于没有历史」。
+        DirectionBoardSession.shared.endBigRound(reason: "追问窗口关闭")
         print("🎙️ BuddyDictationManager: continuous listening window closing (\(reason)); playback \(bailianTTSClient.isPlaying ? "still active" : "idle")")
         buddyDictationManager.endContinuousListening()
         if voiceState == .listening {

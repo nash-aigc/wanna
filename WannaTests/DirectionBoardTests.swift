@@ -565,6 +565,30 @@ struct DirectionBoardTests {
         #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
     }
 
+    /// **一大轮结束 = 卡片回到"从来没有过"**（用户 2026-09-28 报的那个致命问题）。
+    ///
+    /// 他的原话：「如果上一次任务已经退出，比如按 ESC 退出了，第二次按住快捷键启动后，
+    /// 右上角和右下角的卡片显示的仍然是**之前的历史记录**……只要大循环结束，显示的内容
+    /// 都应该是全新的，**相当于没有历史**」。所以 `endBigRound()` 现在**不只是**清
+    /// `previousRoundItems`：它把在途请求停掉、把累积的上下文与屏幕上那几行一起清空。
+    @Test func endingABigRoundWipesTheBoardBackToNothing() throws {
+        let session = DirectionBoardSession.shared
+        // 摆上一份"跑过一大轮"的样子：模型给过内容、他也说过话。
+        session.applyUnderstandingForTesting(mindMap: "关于行程\n├─ 明天去北京", question: "明天去北京还是天津")
+        session.noteLiveTranscript("明天去北京")   // 这一句会落进 spokenTranscript / 方向匹配
+        #expect(session.understandingLines.first { $0.label == "细节" }?.value.isEmpty == false)
+
+        session.endBigRound(reason: "单测")
+
+        // 图与矛盾都回到占位符（视图画「—」），说过的话与前几轮问答一起没了。
+        #expect(session.understandingLines.allSatisfy { $0.value.isEmpty })
+        #expect(session.accumulatedMindMap.isEmpty)
+        #expect(session.spokenTranscript.isEmpty)
+        #expect(session.displayedItems.isEmpty)
+        // 行数仍然恒定（布局不跳）。
+        #expect(session.understandingLines.map(\.label) == DirectionBoardPrompt.understandingLabels)
+    }
+
     /// **7 字形的几何**：横杠在鼠标上方、竖条一直往下。
     ///
     /// 用户 2026-09-28：「高度……可以测量一下当前电脑屏幕的高度，然后占据它的 **70%**，

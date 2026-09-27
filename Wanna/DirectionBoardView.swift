@@ -716,8 +716,8 @@ private struct ReferenceTagFlowLayout: Layout {
 /// **7 字形那条轮廓**：左上一条横杠 + 右侧一整条竖条（长出来的是那条竖条）。
 ///
 /// 用户 2026-09-28 给的形状 —— 右下角那张 AI 回复卡就嵌进 **凹口** 里（横杠在上、竖条在右）。
-/// 四个外角圆角；**凹口下面那个角（脑图的左下角）也有圆角**（用户：「那个脑图它的左下角
-/// 应该有圆角」）；凹口顶上那个内角是直角。
+/// 四个外角圆角；**凹口那两个内角都是直角** —— 脑图的左下角先是加了圆角，用户在真机上看过之后
+/// 改回直角（2026-09-28：「右侧卡片的左下角，还是设置成**没有圆角**的形式吧」）。
 ///
 /// ⚠️ **左上角那一段圆弧不能漏**（第一版漏了）：`closeSubpath()` 会从底左角直接连回起点，
 /// 左边缘于是成了**斜线** —— 屏幕上看就是"整个左边是畸形的梯形"
@@ -748,11 +748,8 @@ struct DirectionBoardSevenShape: Shape {
         path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
                     radius: radius,
                     startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-        // 竖条的下沿往左，走到**脑图左下角那个圆角** —— 再沿竖条的左边缘往上。
-        path.addLine(to: CGPoint(x: innerX + radius, y: rect.maxY))
-        path.addArc(center: CGPoint(x: innerX + radius, y: rect.maxY - radius),
-                    radius: radius,
-                    startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        // 竖条的下沿往左，走到**脑图的左下角（直角）** —— 再沿竖条的左边缘往上。
+        path.addLine(to: CGPoint(x: innerX, y: rect.maxY))
         path.addLine(to: CGPoint(x: innerX, y: barBottom))
         // 凹口的顶边（横杠的下沿）往左 → 底左角圆角 → 回到起点。
         path.addLine(to: CGPoint(x: rect.minX + radius, y: barBottom))

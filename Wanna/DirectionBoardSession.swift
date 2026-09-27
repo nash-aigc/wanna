@@ -70,11 +70,11 @@ final class DirectionBoardSession: ObservableObject {
     /// 视图读这个决定那个按钮是亮的还是灰的。
     var hasCopyableReply: Bool { hasCopyableReplyProvider?() ?? false }
 
-    /// **把那张累积的图清掉、重新开始整理** —— 只有用户按 ESC（他说的"退出键"）时才调。
+    /// **把那张累积的图清掉、重新开始整理**（图 + 他说过的话）。
     ///
-    /// 这是这张图**唯一**的重置入口：按下快捷键、2 秒一轮、连续追问……**都不清**，
-    /// 因为它要回答的是"**用户到现在为止到底在做什么**"（用户 2026-09-27：
-    /// 「把之前所有的问题都当作需求整理出来，然后看用户到底在做什么」）。
+    /// ⚠️ 2026-09-28：**现在真正的出口是 `endBigRound()`**（一大轮结束／ESC 取消，
+    /// 它清的比这里多得多）。这个函数留着是因为语义仍是"只想把图重开"这一件事 ——
+    /// 界面上暂时没有入口，等他说要。
     func resetAccumulatedMindMap() {
         accumulatedMindMap = ""
         spokenTranscript = []
@@ -337,7 +337,7 @@ final class DirectionBoardSession: ObservableObject {
     /// 都会**统一记录**……把这些需求梳理出来，**无论它们有没有关系**，都梳理出它们的逻辑关系」。
     /// 所以它不能每轮重画：**上一轮那张图要原样带下去，让模型在它上面并新内容** ——
     /// 这也是"一次实时会话里他到底在做什么"唯一的载体。
-    private var accumulatedMindMap = ""
+    private(set) var accumulatedMindMap = ""
     /// 一段文字的**归一化键**：去掉树枝符号、空白与常见标点，只留字。
     ///
     /// 用来比"这一轮的问题是不是新的" —— 识别器给的是**累积**文本，同一句话在它还在说的
@@ -366,7 +366,7 @@ final class DirectionBoardSession: ObservableObject {
     /// 然后让他生成几个标签的文本……**其实就是一次大模型调用就能够解决所有的问题**」。
     /// 所以现在**把"他问过的每一件事"整份发过去**，模型从完整输入里写完整的一张图 ——
     /// 不需要它记住任何东西，也不需要 App 替它拼。
-    private var spokenTranscript: [String] = []
+    private(set) var spokenTranscript: [String] = []
     /// 保留几轮（用户点名 **5**）。
     static let rememberedTurnCount = 3
     /// 最多留多少段（防"说了一整天"把提示词撑爆；一段就是一轮说的话）。
@@ -522,24 +522,35 @@ final class DirectionBoardSession: ObservableObject {
 
     // MARK: - 生命周期
 
+    /// 单测用：把一份"模型给过的内容"塞进来 —— 好在没有网络的情况下验
+    /// 「一大轮结束会不会把卡片清干净」（`endingABigRoundWipesTheBoardBackToNothing`）。
+    func applyUnderstandingForTesting(mindMap: String, question: String) {
+        understandingLines = DirectionBoardPrompt.understandingLabels.map { label in
+            switch label {
+            case DirectionBoardView.mindMapLabel: return (label, mindMap)
+            case DirectionBoardPrompt.questionLabel: return (label, question)
+            default: return (label, "")
+            }
+        }
+        accumulatedMindMap = mindMap
+    }
+
     func beginListening(cycleID: String?) {
         guard isEnabled else { return }
         // **一次全新的按下**：这一轮从头开始 —— 上一轮那一列的引用作废。
         // ⚠️ 只在**真的换了 cycle** 时清：连续追问窗口重新武装时也会走这里，而那种情况下
         // 用户说的还是同一件事（他刚评论过的那些方向还挂在板上），清了就没人认得出「第 2 个」了。
         if let cycleID, cycleID != currentCycleID {
+            // **换了一个大轮 = 从零开始**（用户 2026-09-28：「第二次按住时，应该相当于从零开始的
+            // 状态，没有任何上下文对话这些乱七八糟的东西」）。
+            //
+            // ⚠️ 边界就在这一行上，别改回去：**同一大轮里**（追问窗口还开着，cycleID 不变）
+            // 那几个 `if` 不成立 —— 图与矛盾**一直累积**（那是他 9-27 要的：「只要没有按退出键、
+            // 没有按 ESC，这几个卡片都持续显示」）；**换了大轮**才清空。
+            // 大轮正常结束那条路已经在 `endBigRound()` 里清过一次了，这里是兜底
+            //（幂等，且能盖住"上一次结束没走到那个出口"的情形）。
             cancelledForThisCycle = false
-            previousRoundItems = []
-            // ⚠️ **这里原来会清空那张累积的图 —— 2026-09-27 深夜去掉了。**
-            //
-            // 起因是用户报「屏幕右上角显示的**不是用户所有的问题**……**有大量的问题，
-            // 他没有显示出来**」。量下来机制本身是通的（每轮都带上去、也都并回来了：
-            // 0 → 84 → 83 → 83 字），**问题出在边界上**：他那些问题是**分很多次按下**问的，
-            // 而"一次按下 = 一张新图"意味着每按一次就把之前整理的全部清掉。
-            //
-            // 按他自己的原话定边界（「只要用户**没有按退出键、没有按 ESC**，这几个卡片
-            // 都持续显示」）：**图一直累积**（重开的入口留了一个 `resetAccumulatedMindMap()`，
-            //  但目前**没有任何路径自动调它** —— 见那个方法自己的注释）。
+            endBigRound(reason: "新的一次按下（新的大轮）")
         }
         currentCycleID = cycleID
         refreshCancellationState()
@@ -1217,13 +1228,57 @@ final class DirectionBoardSession: ObservableObject {
     /// 那段"AI 怎么理解"：**只用方向清单 + 用户的话**（不再发主 Agent 那 5000 字提示词）。
     /// **一大轮结束**：清掉临时那份类型文件（用户：「临时文件在每一轮对话结束时清掉。
     /// 是每一大轮……中间可能有打断，这算一个轮，不算两轮」）。
-    /// 一大轮结束（追问窗口关闭）：清掉"这一轮的上下文"。
+    /// **一大轮结束（追问窗口关闭 / 任务完成 / 用户按 ESC 取消）：卡片回到"从来没有过"的状态。**
     ///
-    /// ⚠️ **固定状态不动** —— 用户选的是「一直保留到他说取消」，所以 `TaskDirectionPins.json`
-    /// 这里一个字都不写（这也是它没有临时文件的原因）。
-    func endBigRound() {
+    /// 用户 2026-09-28 的原话：「**非常致命的问题**：用户按住主 Agent 的快捷键进入实时模式时，
+    /// 如果上一次任务已经退出，比如按 ESC 退出了，第二次按住这个快捷键启动后，右上角和右下角的
+    /// 卡片显示的仍然是**之前的历史记录**……任何时候，无论是**任务完成**还是**任务取消**，
+    /// 只要**大循环结束**，显示的**内容都应该是全新的，相当于没有历史、没有历史规划**……
+    /// 第二次按住时，应该相当于**从零开始**的状态，没有任何上下文对话这些乱七八糟的东西」。
+    ///
+    /// 他还有半句是问"是不是后台还在持续显示"，所以这里做三件事（早先那版只清了两样，
+    /// 剩下的会一直跟到下一次按下）：
+    /// ① **停掉在途的一切** —— 那次理解 / 答案的请求（`requestTask`）与节奏表（`cadenceTimer`）：
+    ///    「用户按住 ESC 取消时，**后端那些代码也都要停止掉**」；
+    /// ② **清掉累积的上下文** —— 那张图、说过的话、前几轮问答、还没解决的疑问、上一轮那一列、
+    ///    JEV 概率：这些合起来才是"历史"；
+    /// ③ **清掉屏幕上那几行** —— 理解行（回占位符）、方向格、右下角那张预览、流式文字。
+    ///
+    /// ⚠️ **还把 `currentCycleID` 置空**：在途请求的落地闸门是
+    /// `guard currentCycleID == cycleIDAtRequest`（见 `runOneRound`），置空之后**任何晚到的回复
+    /// 都写不回来** —— 光 cancel 不够（取消是协作式的，网络回包那一拍可能已经过了检查点）。
+    ///
+    /// ⚠️ **固定状态（`TaskDirectionPins.json`）不动** —— 用户选的是「一直保留到他说取消」，
+    /// 所以这里一个字都不写（这也是它没有临时文件的原因）。
+    func endBigRound(reason: String = "追问窗口关闭") {
+        requestTask?.cancel()
+        requestTask = nil
+        cadenceTimer?.invalidate()
+        cadenceTimer = nil
+        isRequesting = false
+        isListening = false
+        isUserSpeaking = false
+        speakingGeneration += 1
+        boardPreviewStreamingWriter?(false)
+
+        currentCycleID = nil
+        accumulatedMindMap = ""
+        spokenTranscript = []
+        recentTurns = []
+        recentCornerAnswers = []
+        pendingQuestions = ""
         previousRoundItems = []
         jevProbabilities = [:]
+        displayedItems = []
+        latestTranscript = ""
+        lastRequestedTranscript = ""
+        paragraph = ""
+        streamingAnswerText = ""
+        understandingLines = DirectionBoardPrompt.understandingLabels.map { ($0, "") }
+        previewAnswer = nil
+        answerPreviewWriter?(nil)
+        contentRevision += 1
+        MainFlowDiagnostics.log("🧭 看板：一大轮结束（\(reason)）→ 卡片与上下文全部清空，下一次按下从零开始")
     }
 
     private func refreshDisplayedItems() {
