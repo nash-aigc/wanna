@@ -912,11 +912,6 @@ final class CompanionManager: ObservableObject {
         // **看板那一轮的答案写到右下角那张卡片上**（与最终结果同一张）。
         // 注入闭包而不是让看板直接持有一个 `CompanionManager`：跨子系统只走注入，
         // 与 `sharedVoicePlaybackEngineProvider` / `voiceIdleProvider` 同一个先例。
-        // **他安静了多久**（看板那一拍改用它当闸门，见 `requestIfTheTranscriptChanged`）。
-        DirectionBoardSession.shared.buddySilenceProvider = { [weak self] in
-            self?.buddyDictationManager.secondsSinceLastSpeech
-        }
-
         DirectionBoardSession.shared.answerPreviewWriter = { [weak self] text in
             MainActor.assumeIsolated {
                 self?.answerPreviewText = text ?? ""

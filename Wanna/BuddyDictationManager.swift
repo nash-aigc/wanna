@@ -772,6 +772,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private var continuousListeningUtteranceStartedAt: Date?
     private var continuousListeningSilenceStartedAt: Date?
 
+
     /// **用户已经安静了多久**（秒）—— 没有在听、或还没开始计时时返回 `nil`。
     ///
     /// 给看板用（用户 2026-09-27：「只有用户 2 秒钟没有说话，才需要提取用户提示词发送给 AI，

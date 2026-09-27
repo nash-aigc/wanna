@@ -61,10 +61,6 @@ final class DirectionBoardSession: ObservableObject {
     /// 视图读这个决定那个按钮是亮的还是灰的。
     var hasCopyableReply: Bool { hasCopyableReplyProvider?() ?? false }
 
-    /// **他安静了多久**（秒；`nil` = 没在听）—— 由 `CompanionManager` 注入
-    ///（看板不去认识 `BuddyDictationManager`，与其它几个 provider 同一个先例）。
-    var buddySilenceProvider: (() -> TimeInterval?)?
-
     /// 右下角那张卡片刚显示过的那段（`CompanionManager` 在写预览/真答案时喂进来）。
     func noteCornerAnswerShown(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -547,6 +543,20 @@ final class DirectionBoardSession: ObservableObject {
 
     static let defaultMinimumAddedCharacters = 10
 
+    /// **他停下来了吗**（用户 2026-09-27：「只有用户 2 秒钟没有说话，才需要提取用户提示词发送给 AI，
+    /// 而不是自动根据时间来确定」）。
+    ///
+    /// 判据是**"距上一次识别到新字有多久"**，不是某个引擎内部的静音计时器 —— 这一点是被一次事故
+    /// 逼出来的：第一版读的是连续监听那条链的静音时刻，而**按住说话那条路根本没有那个值**
+    ///（那个计时器只存在于连续监听的 VAD 循环里），于是「静音时长」恒为 0、闸门永远不过 ——
+    /// 真机上表现为「我怎么说话，它都整个的卡片没有任何的反应」（他附了截图：三张屏幕截图都截到了，
+    /// 四行理解却全是「—」，因为那一轮请求一次都没发出去）。
+    /// 而转写的到达时刻**两条路都有**（它是识别回调，不是引擎状态），所以拿它当判据两边都成立。
+    nonisolated static func hasPausedLongEnough(secondsSinceHeSpoke: TimeInterval,
+                                                threshold: TimeInterval) -> Bool {
+        secondsSinceHeSpoke >= threshold
+    }
+
     /// 这次比上次多说了几个字（标点、空格都不算）。
     nonisolated static func addedCharacterCount(transcript: String,
                                                 since previousTranscript: String) -> Int {
@@ -588,13 +598,12 @@ final class DirectionBoardSession: ObservableObject {
         // ⚠️ 这里的门槛比"发送"那个（`continuousListeningSilenceSendSeconds`，默认 2.0 秒）**短一半**：
         // 两处都用 2 秒的话，预览和真答案会在同一刻到达 —— 预览就没有存在的时间了。
         // 一半留出大约 1 秒的"先看到答案"的窗口（他当初要预览就是为了这个）。
-        if let silence = buddySilenceProvider?() {
-            let boardSilenceThreshold = AppSettingsStore.snapshot()
-                .continuousListeningSilenceSendSeconds / 2
-            guard silence >= boardSilenceThreshold else {
-                MainFlowDiagnostics.stage("看板：他还在说（安静 \(String(format: "%.1f", silence))s）")
-                return
-            }
+        let silenceThreshold = AppSettingsStore.snapshot().continuousListeningSilenceSendSeconds / 2
+        let secondsSinceHeSpoke = Date().timeIntervalSince(latestTranscriptUpdateAt)
+        guard Self.hasPausedLongEnough(secondsSinceHeSpoke: secondsSinceHeSpoke,
+                                       threshold: silenceThreshold) else {
+            MainFlowDiagnostics.stage("看板：他还在说（距上一句 \(String(format: "%.1f", secondsSinceHeSpoke))s）")
+            return
         }
         guard Self.shouldRequest(transcript: latestTranscript,
                                  lastRequestedTranscript: lastRequestedTranscript,
