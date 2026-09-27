@@ -89,14 +89,17 @@ nonisolated enum DirectionBoardMatching {
     /// · 「其他没有说过的、没有做过选择的、都可以**自由的替换、自由的轮换**」→ Jev 那部分可换；
     /// · 「最多不要超过 5 列」→ 超过上限时**先砍 Jev 那部分**，固定项不砍。
     ///
-    /// - Parameter probabilityThreshold: Jev 那条路的门槛（默认 0.5 —— `noul` 只给一个数，
-    ///   0.5 就是"比瞎猜更像"；用户可以在设置里调）。
+    /// - Parameter probabilityThreshold: Jev 那条路的门槛（默认 **0.8**；用户 2026-09-27 深夜
+    ///   把 0.5 抬到了这里 ——「**一定要是非常高的相关性**，而且必须是高相关才可以」）。
+    /// - Parameter localMatchProbabilityFloor: 本地命中的**相关性地板**（默认 0.5）——
+    ///   泛问词（「在哪」）会带来假命中，所以有 Jev 概率时也要过一道。
     /// - Parameter maximumItemCount: 最多显示几格（屏幕上一行 5 个）。
     /// - Parameter pinnedStates: 用户明确说过的那几格（**顺序就是固定的顺序**）。
     nonisolated static func displayedItems(transcriptText: String,
                                            directions: [TaskDirection],
                                            jevProbabilities: [String: Double],
-                                           probabilityThreshold: Double = 0.5,
+                                           probabilityThreshold: Double = 0.8,
+                                           localMatchProbabilityFloor: Double = 0.5,
                                            pinnedStates: [(directionID: String, state: TaskDirectionStore.PinState)] = [],
                                            maximumItemCount: Int = 10) -> [DirectionBoardDisplayItem] {
         let locallyMatched = locallyMatchedKeywords(transcriptText: transcriptText, directions: directions)
@@ -116,7 +119,15 @@ nonisolated enum DirectionBoardMatching {
         var candidates: [(direction: TaskDirection, reason: DirectionBoardDisplayItem.Reason, score: Double)] = []
         for direction in directions where !pinnedIDs.contains(direction.id) {
             if locallyMatched.contains(direction.id) {
-                candidates.append((direction, .localKeyword, jevProbabilities[direction.id] ?? 0))
+                // ⚠️ **本地命中也得过一道相关性**（2026-09-27 深夜）。
+                //
+                // 本地关键词里有「在哪 / 哪里」这种**泛问词** —— 用户问「**北京**在哪」时会命中
+                // 「指给我看」那条（方向没错，但对象完全不是屏幕上那个东西）。
+                // 所以**只要 Jev 给了概率，本地命中也要过一道 0.5 的地板**；
+                // 没配 Jev（没有概率可查）时按老样子只认本地 —— 那条路是他没有 key 时的兜底。
+                let probability = jevProbabilities[direction.id]
+                if let probability, probability < localMatchProbabilityFloor { continue }
+                candidates.append((direction, .localKeyword, probability ?? 0))
                 continue
             }
             if let probability = jevProbabilities[direction.id], probability >= probabilityThreshold {

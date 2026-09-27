@@ -866,7 +866,7 @@ final class DirectionBoardSession: ObservableObject {
         // ⚠️ **梳理那条另有一道更粗的闸**（2026-09-27 深夜）：它每次都要**重画整张图**
         //（输入是整份转写、输出是全部问题），比"只答一句"贵得多 —— 每 10 个字就重画一次
         // 正是用户说的「**明显拖慢速度**」。答案那条不受这条影响（它照旧按 `minimumAdded`）。
-        let analysisMinimumAdded = max(minimumAdded * 3, 30)
+        let analysisMinimumAdded = max(minimumAdded * 2, 20)
         let transcript = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         lastRequestedTranscript = transcript
         // **这一轮的"新问题" = 上一轮回复落地之后他说的那段**（用户 2026-09-27：
@@ -885,8 +885,19 @@ final class DirectionBoardSession: ObservableObject {
         // 把这一轮他说的那段接进"说过的全部内容"（同一段被重放多次时只记一次 ——
         // 识别器给的是累积文本，同一轮里这个函数会被调好几次）。
         let questionKey = Self.mindMapLineKey(newQuestion)
-        if !questionKey.isEmpty, spokenTranscript.last.map(Self.mindMapLineKey) != questionKey {
-            spokenTranscript.append(newQuestion)
+        // ⚠️ **只存"新增的那一段"**（2026-09-27 深夜修）。
+        //
+        // `newQuestion` 是"从 AI 回复停稳到现在的这段转写"—— 而回复往往在他**还在说**的时候就落了地，
+        // 于是它的开头**包含上一段**。直接 append 的话，那份"完整的转写"会变成
+        // 「第一句」「第一句+第二句」「第一句+第二句+第三句」…… —— 同一个内容重复 N 遍，
+        // 模型看到的就是一团重复，实测它只肯画出前面两条（第 B1 轮）。
+        // 所以这里**减掉上一段**，存增量：拼起来才真的是一段连续的说话。
+        let previousSegment = spokenTranscript.last ?? ""
+        let delta = newQuestion.hasPrefix(previousSegment)
+            ? String(newQuestion.dropFirst(previousSegment.count))
+            : newQuestion
+        if !Self.mindMapLineKey(delta).isEmpty {
+            spokenTranscript.append(delta)
             // 上限只是防"说了一整天"把提示词撑爆；正常一次会话到不了。
             if spokenTranscript.count > Self.maximumSpokenSegments {
                 spokenTranscript.removeFirst(spokenTranscript.count - Self.maximumSpokenSegments)
@@ -973,8 +984,24 @@ final class DirectionBoardSession: ObservableObject {
                 let displayText = DirectionBoardPrompt.paragraphWithoutLabelLine(paragraphText)
                 self.paragraph = DirectionBoardPrompt.cleanParagraph(
                     displayText.isEmpty ? paragraphText : displayText)
-                // **永远是四行**（缺的留空串，由视图画占位符）—— 卡片每一段的高度于是恒定。
-                self.understandingLines = DirectionBoardPrompt.parseUnderstandingLines(paragraphText)
+                // **永远是那几行**（缺的留空串，由视图画占位符）。
+                //
+                // ⚠️ 2026-09-27 深夜：**图那一行只许被非空内容覆盖**。
+                // 原来这里是整块赋值 —— 而梳理那次偶尔会回来一份**没有「细节」那一行**的回复
+                //（模型只写了矛盾/拼写错误），于是**已经画好的图被覆盖成空**，
+                // 屏幕上的表现就是"图突然没了"（实测第 A1 轮就是这样：22:55:26 有图，
+                // 22:55:41 那次回来没带细节，图上就只剩一个「—」）。
+                // 那张图是**累积的**：丢一次就等于把用户半小时的问题全抹了，代价远大于"留一次旧值"。
+                let parsed = DirectionBoardPrompt.parseUnderstandingLines(paragraphText)
+                var merged = parsed
+                for index in merged.indices where merged[index].value.isEmpty {
+                    guard merged[index].label == DirectionBoardPrompt.mindMapLabel else { continue }
+                    if let previous = self.understandingLines.first(where: { $0.label == merged[index].label }),
+                       !previous.value.isEmpty {
+                        merged[index].value = previous.value
+                    }
+                }
+                self.understandingLines = merged
                 // 有结构化那几行时，正文只留"标签之外的话"（模型爱在标签前后再写一句）。
                 self.paragraph = DirectionBoardPrompt.cleanParagraph(
                     DirectionBoardPrompt.leftoverParagraphText(paragraphText))

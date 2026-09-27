@@ -783,4 +783,51 @@ struct DirectionBoardTests {
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(newQuestion: "北京跟上海的关系")
         #expect(userPrompt == "北京跟上海的关系")
     }
+
+    /// **相关性门槛必须是"非常高"**（用户 2026-09-27 深夜）：
+    /// 「我发现用户问**北京在哪**，它也显示**保存到 Notion**，这跟保存 Notion 有什么关系？
+    /// **没有阈值的话，相当于相关性 0.1 也放进去，相关性 99 也放进去。一定要是非常高的相关性**」。
+    @Test func onlyHighRelevanceDirectionsShow() throws {
+        let directions = [
+            TaskDirection(id: "d1", keyword: "保存到 Notion", detail: "",
+                          matchKeywords: ["notion", "笔记"],
+                          source: TaskDirection.Source.builtin.rawValue, addedAt: Date()),
+            TaskDirection(id: "d2", keyword: "指给我看", detail: "",
+                          matchKeywords: ["指给", "在哪"],
+                          source: TaskDirection.Source.builtin.rawValue, addedAt: Date()),
+        ]
+        // 「北京在哪」：本地会**假命中**「指给我看」（泛问词「在哪」），而 Jev 说它不相关（0.2）。
+        let items = DirectionBoardMatching.displayedItems(
+            transcriptText: "北京在哪",
+            directions: directions,
+            jevProbabilities: ["d1": 0.15, "d2": 0.2])
+        #expect(items.isEmpty)
+
+        // 真相关时才出来（0.9 ≥ 0.8）。
+        let relevant = DirectionBoardMatching.displayedItems(
+            transcriptText: "把这个记到笔记本里",
+            directions: directions,
+            jevProbabilities: ["d1": 0.9, "d2": 0.1])
+        #expect(relevant.map { $0.keyword } == ["保存到 Notion"])
+
+        // 默认门槛就是 0.8：0.6 不再算"高相关"。
+        #expect(DirectionBoardMatching.displayedItems(
+            transcriptText: "随便说点什么",
+            directions: directions,
+            jevProbabilities: ["d1": 0.6]).isEmpty)
+    }
+
+    /// **图那一行不许被"没有图"的回复覆盖掉**（2026-09-27 深夜实测第 A1 轮）：
+    /// 梳理那次偶尔会回来一份**没写「细节」**的回复（模型只写了矛盾/拼写错误），
+    /// 而落地时是整块赋值 —— 已经画好的图被覆盖成空，屏幕上的表现就是"图突然没了"。
+    /// 那张图是累积的，丢一次等于把用户半小时的问题全抹了。
+    @Test func anEmptyReplyNeverWipesTheMapRow() throws {
+        // 这一条是**解析层的契约**：写不出内容的行返回空串，由调用方决定要不要保留旧值。
+        let withoutMap = DirectionBoardPrompt.parseUnderstandingLines("矛盾：—\n拼写错误：—")
+        #expect(withoutMap.first { $0.label == "细节" }?.value.isEmpty == true)
+        // 而调用方（`DirectionBoardSession`）的规矩是：**只有图这一行**保留旧值。
+        // 这里钉住的是"解析能区分出这一行是空的" —— 保留逻辑在 session 里（见那段注释）。
+        let withMap = DirectionBoardPrompt.parseUnderstandingLines("细节：├─ 甲\n矛盾：—")
+        #expect(withMap.first { $0.label == "细节" }?.value == "├─ 甲")
+    }
 }

@@ -523,7 +523,13 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     ///
     /// 用户 2026-09-27：「让它根据用户的意图来判断出来，然后做一个类似于**概率估计**的东西，
     /// 把高概率的内容显示出来。」—— 阈值就是"多高算高"，夹在 0.3…0.9。
-    var directionBoardProbabilityThreshold: Double = 0.5
+    /// 方向相关性门槛（Jev 那条路的概率）。
+    ///
+    /// ⚠️ 2026-09-27 深夜 **0.5 → 0.8**（用户：「我发现用户问**北京在哪**，它也显示**保存到 Notion**，
+    /// 这跟保存 Notion 有什么关系？**没有阈值的话，相当于相关性 0.1 也放进去，相关性 99 也放进去。
+    /// 一定要是非常高的相关性**，而且必须是高相关才可以」）。
+    /// 0.5 的含义只是"比瞎猜更像"，那正是"一堆跟我当前提示词毫无关系的东西"的来源。
+    var directionBoardProbabilityThreshold: Double = 0.8
 
     /// **看板的宽度 = 结果卡片宽度（340）的几倍**（默认 2 倍）。
     ///
@@ -1622,8 +1628,9 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
             min(max(settings.directionBoardMinimumAddedCharacters, 5), 20)
         // 看板宽度：1×~2×（用户说"要么一倍，要么两倍"，所以范围就夹在这里）。
         settings.directionBoardWidthMultiplier = min(max(settings.directionBoardWidthMultiplier, 1.0), 2.0)
+        // 门槛的可调范围也跟着抬起来：低于 0.5 等于没门槛（用户明确要"非常高"）。
         settings.directionBoardProbabilityThreshold =
-            min(max(settings.directionBoardProbabilityThreshold, 0.3), 0.9)
+            min(max(settings.directionBoardProbabilityThreshold, 0.5), 0.95)
         settings.answerBubbleLingerSeconds = min(max(settings.answerBubbleLingerSeconds, 0), 15)
         settings.rememberedConversationRounds = min(max(settings.rememberedConversationRounds, 0), 30)
         settings.finalTranscriptGracePeriodSeconds = min(max(settings.finalTranscriptGracePeriodSeconds, 0.5), 3)
