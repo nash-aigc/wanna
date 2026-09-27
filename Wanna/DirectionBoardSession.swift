@@ -63,13 +63,17 @@ final class DirectionBoardSession: ObservableObject {
     /// 视图读这个决定那个按钮是亮的还是灰的。
     var hasCopyableReply: Bool { hasCopyableReplyProvider?() ?? false }
 
-    /// 把上一轮的疑问带上（写进提示词的 `<previous_questions>` 段）。
+    /// 把上一轮的**矛盾**带上（写进提示词的 `<previous_questions>` 段）。
+    ///
+    /// 这两个字 2026-09-27 深夜随卡片一起改名（「把**疑问**调整为**矛盾**」）—— 段名
+    /// `<previous_questions>` 保持不变：它是**协议**（提示词那一节按这个名字读它），
+    /// 而卡片上显示的是「矛盾」。
     func pendingQuestionsPromptBlock() -> String? {
         let trimmed = pendingQuestions.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != "—" else { return nil }
         return """
         <previous_questions>
-        你上一轮提的这些疑问**还没解决**（用户可能刚刚补了一句来解决其中某一条）：
+        你上一轮列出的这些**矛盾**还没消除（用户可能刚刚补了一句来解掉其中某一条）：
         \(trimmed)
 
         请判断：他刚补的内容解决了其中哪一条？**解决了的那条不要再写**；没解决的照抄过来。
