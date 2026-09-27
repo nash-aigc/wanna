@@ -612,4 +612,17 @@ struct DirectionBoardTests {
         #expect(systemPrompt.contains("北京欢迎你"))
         #expect(systemPrompt.contains("全新的一件事"))
     }
+
+    /// **「这一轮的新问题」永远不该是空的**（2026-09-27 真机上炸过的那条）：
+    /// 当时算它的判据读了一个**从来没被赋值**的时间戳，于是恒为空串 ——
+    /// 发给模型的是一段空问题，屏幕上表现为「我问他，他没回复」，而且**不报任何错**。
+    /// 现在提示词那一节先是"重点只看这一段"，所以它空掉就等于这一轮没有内容可处理。
+    @Test func theNewQuestionSectionIsNeverEmpty() throws {
+        let prompt = DirectionBoardPrompt.understandingUserPrompt(
+            newQuestion: "北京在哪",
+            previousRoundItems: [])
+        #expect(prompt.contains("【用户这一次的新问题 —— **重点只看这一段**，上面的全是参考】\n北京在哪"))
+        // 顺序：新问题在最后（模型最后读到的是这一轮要做的事）。
+        #expect(prompt.hasSuffix("北京在哪"))
+    }
 }

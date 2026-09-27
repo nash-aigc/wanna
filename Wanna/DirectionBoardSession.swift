@@ -175,7 +175,7 @@ final class DirectionBoardSession: ObservableObject {
     private func latestTranscriptAfter(_ moment: Date) -> String {
         // 看板只有"当前这一句"的累积文本，所以能给的判据很直接：这条回复是**这一句之前**
         // 显示的，那这一句就是"之后说的话"；同一条回复在说话过程中还在刷，就不算"之后"。
-        guard moment < lastTranscriptUpdateAt else { return "" }
+        guard moment < latestTranscriptUpdateAt else { return "" }
         return latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -222,11 +222,16 @@ final class DirectionBoardSession: ObservableObject {
     // MARK: - 内部状态
 
     private var latestTranscript = ""
-    /// 最近一次实时转写更新的时刻（给"这条回复之后他说了什么"当判据，见
-    /// `previousCornerAnswersPromptBlock`）。
+    /// 最近一次实时转写更新的时刻。**只有这一份**（2026-09-27 修）。
+    ///
+    /// ⚠️ 这里原来有**两个**同名字段的孪生兄弟（`latestTranscriptUpdateAt` 与
+    /// `lastTranscriptUpdateAt`），而**后一个从来没被赋值过**、永远是 `distantPast` ——
+    /// 于是所有读它的地方都静默拿到"没有新内容"：`latestTranscriptAfter(_:)` 恒返回空串。
+    /// 它的杀伤力是这一轮才显出来的：那是「这一轮的新问题是哪一段」的判据，
+    /// 空了就等于**发给模型的是一段空问题** —— 屏幕上的表现是需求写「—」、右下角没有答案、
+    /// 方向格也排不出来（用户报的"我问他问题，他没有回复我"）。
+    /// 教训与仓规同一条：**同一件事只留一份状态**，而"声明了却从没写过"的字段不会报错。
     private var latestTranscriptUpdateAt = Date.distantPast
-    /// 最近一次实时转写更新的时刻（给"这条回复之后他说了什么"当判据）。
-    private var lastTranscriptUpdateAt = Date.distantPast
     private var lastRequestedTranscript = ""
     /// 最近一次 Jev 判断给出的概率（方向 id → P(是)）。
     private var jevProbabilities: [String: Double] = [:]
@@ -715,9 +720,14 @@ final class DirectionBoardSession: ObservableObject {
         // 中间的内容要提取出来，**这个文本就是用户全新的问题**，重点关注这个」）。
         //
         // 拿不到"之后"那一段（第一轮、或者回复落地前他就一直在说）就退回整段 —— 那时整段本来就是新问题。
-        let newQuestion = recentTurns.isEmpty
-            ? transcript
+        // ⚠️ **兜底：算出来是空就用整段**（2026-09-27 修）。判据依赖时间戳，而时间戳这种东西
+        // 一旦哪一环没写上（这一轮就是这么炸的），结果就是**把一段空问题发给模型** ——
+        // 屏幕上表现成"问他他没反应"，而且不报任何错。既然"这一轮的新问题"永远不该是空的，
+        // 这里就不允许它是空的。
+        let transcribedAfterLastReply = recentTurns.isEmpty
+            ? ""
             : latestTranscriptAfter(recentTurns[0].at).trimmingCharacters(in: .whitespacesAndNewlines)
+        let newQuestion = transcribedAfterLastReply.isEmpty ? transcript : transcribedAfterLastReply
         MainFlowDiagnostics.log("🧭 看板：第 \(roundGeneration) 轮发请求（转写 \(transcript.count) 字）")
         let generation = roundGeneration
         isRequesting = true

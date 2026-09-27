@@ -232,12 +232,14 @@ struct DirectionBoardView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(DS.Colors.success.opacity(0.26))
+                            // 用户 2026-09-27：「颜色**再深一点**，有点看不见」——
+                            // 底色从 26% 提到 **70%**，呼吸的谷底也从 12% 抬到 30%（谷底太浅会闪没）。
+                            .fill(DS.Colors.success.opacity(0.70))
                             // ⚠️ **呼吸要真的来回**：`repeatForever` 必须挂在**一个会变的布尔**上
                             //（挂在"当前是否在说话"上是没用的 —— 那个值只说了一次，
                             // 动画播完就停，看到的是一亮一灭不是呼吸）。
                             // 这里 `isBreathing` 由 `isUserSpeaking` 驱动，动画交给渲染服务器来回跑。
-                            .opacity(isBreathing ? 0.95 : 0.12)
+                            .opacity(isBreathing ? 1.0 : 0.30)
                             .animation(isBreathing
                                        ? .easeInOut(duration: 0.75).repeatForever(autoreverses: true)
                                        : .easeOut(duration: 0.25),
@@ -281,6 +283,20 @@ struct DirectionBoardView: View {
                                  count: directionColumnCount),
                   alignment: .leading,
                   spacing: 6) {
+            if session.displayedItems.isEmpty {
+                // 一行占位（与别的行同一个宽度、同一个高度）—— 卡片在这一块**高度与位置都不动**。
+                Text(Self.emptyValuePlaceholder)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textColor.opacity(0.35))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(theme.textColor.opacity(0.04))
+                    )
+                    .gridCellColumns(directionColumnCount)
+            }
             ForEach(session.displayedItems, id: \.directionID) { item in
                 directionRow(item)
             }
@@ -509,9 +525,14 @@ private struct ReferenceTagFlowLayout: Layout {
             //   右列（60%）：**从上到下整块都是脑图**（不画标题，高度铺满这一整块）
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 8) {
-                    if !session.displayedItems.isEmpty {
-                        directionList
-                    }
+                    // **表格永远画着**（用户 2026-09-27：「卡片设计出来之后，**整个样式和位置不应该变化**。
+                    // 我发现**左上角这五行突然间消失了**」）。
+                    //
+                    // 原来这里是 `if !displayedItems.isEmpty { directionList }` —— 一旦那一轮
+                    // 本地关键词没命中、Jev 又没给出概率（第一轮请求还没回来时就是这种状态），
+                    // 整块**凭空消失**，下面所有东西一起往上跳。这和"需求/矛盾空着也画占位符"
+                    // 是同一条规矩：**行的集合恒定**，没内容就画占位。
+                    directionList
                     if !referenceCollector.materials.tags.isEmpty ||
                         !referenceCollector.materials.unresolved.isEmpty {
                         referenceTagRow
