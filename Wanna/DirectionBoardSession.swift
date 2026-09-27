@@ -36,10 +36,17 @@ final class DirectionBoardSession: ObservableObject {
 
     @Published private(set) var isListening = false
     @Published private(set) var paragraph = ""
-    /// **结构化理解的那几行**（软件 / 文件 / 目标 / 类型 / 细节）—— 用户要的"换行显示，可以显示为多行"。
-    @Published private(set) var understandingLines: [(label: String, value: String)] = []
-    /// **任务结果**（模型能直接算出来才有）—— 用户要的那一行「选 A」。
+    /// **结构化理解的那四行**（目标问题 / 类型 / 参考 / 细节）—— 用户要的"换行显示，可以显示为多行"。
+    ///
+    /// ⚠️ **永远是四行**（值可能是空串）：用户 2026-09-27 的判定是「这几行固定在这，而不是突然间有、
+    /// 突然间没有，这对体验影响太差了」—— 行的集合恒定，卡片的高度才恒定。
+    @Published private(set) var understandingLines: [(label: String, value: String)] =
+        DirectionBoardPrompt.understandingLabels.map { ($0, "") }
+    /// **任务结果**（模型能直接算出来才有）—— 用户要的那一行「选 A」。**那一行本身也一直画着**。
     @Published private(set) var taskResult: String?
+    /// **内容更新了几次** —— 视图拿它触发那一下"淡入"动画（用户：「我希望让它有一种动画效果，
+    /// 而不是突然间显示出来」）。每次模型回复落下来就 +1。
+    @Published private(set) var contentRevision = 0
     @Published private(set) var displayedItems: [DirectionBoardDisplayItem] = []
     @Published private(set) var selectionStates: [String: DirectionBoardSelectionState] = [:]
     @Published private(set) var confirmedTexts: [String: String] = [:]
@@ -60,6 +67,9 @@ final class DirectionBoardSession: ObservableObject {
     private var forcedDirectionIDs: Set<String> = []
     /// 这一轮因为"参考屏幕"截下来的图（发送给模型时带上）。
     private var referenceScreenshots: [(data: Data, label: String)] = []
+    /// 「第 N 个方向」在这一句里指的是谁（见 `directionForSpokenNumber`）。
+    private var spokenNumberTargets: [Int: String] = [:]
+    private var spokenSelectionUtteranceText = ""
     /// 这一次"参考屏幕"的提到是不是已经截过了（边缘触发）。
     private var didCaptureForThisMention = false
     /// 上一次模型回的那段原文（每次请求都是全新的内容，所以要带上它保持连续）。
@@ -172,8 +182,9 @@ final class DirectionBoardSession: ObservableObject {
         latestTranscript = ""
         lastRequestedTranscript = ""
         paragraph = ""
-        understandingLines = []
+        understandingLines = DirectionBoardPrompt.understandingLabels.map { ($0, "") }
         taskResult = nil
+        contentRevision = 0
         previousReading = ""
         jevProbabilities = [:]
         forcedDirectionIDs = []
@@ -198,6 +209,8 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         latestTranscript = transcriptText
+        // 新的一句开始 → 上一次"第 N 个方向"的映射作废（见 `directionForSpokenNumber`）。
+        noteUtteranceBoundary(in: transcriptText)
         // **说了「参考屏幕 / 根据图片」这类组合词 → 当场截一张屏**（用户：
         // 「每一次转写识别到就截一次屏」）。边缘触发：同一次提到只截一张（与
         // `BuddyScreenKeywordDetector` 同一个做法 —— 识别器会给整句累积文本，不去重就会连截）。
@@ -361,7 +374,20 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         summaryState = .confirmed
-        summaryConfirmedText = paragraph
+        summaryConfirmedText = understandingSummaryText
+    }
+
+    /// 用户在板上看到的**那份理解**，压成一行 —— 点那个对勾确认的就是它。
+    ///
+    /// ⚠️ 它不能用 `paragraph`：那里面只装"标签之外的话"，而固定四行落地之后绝大多数回复
+    /// **一段正文都没有**，于是"确认"会存下一个空串、到提交那一步被 `!isEmpty` 挡掉 ——
+    /// 按钮点了没有任何效果。用户确认的是他看到的那四行。
+    var understandingSummaryText: String {
+        let rows = understandingLines
+            .filter { !$0.value.isEmpty }
+            .map { "\($0.label)：\($0.value)" }
+        if !rows.isEmpty { return rows.joined(separator: "；") }
+        return paragraph
     }
 
     func toggleSummaryDeny() {
@@ -384,7 +410,8 @@ final class DirectionBoardSession: ObservableObject {
     private func applySpokenSelectionIfAny(in transcriptText: String) {
         if let number = DirectionBoardMatching.spokenCancelSelectionNumber(
             in: transcriptText, displayedItemCount: displayedItems.count),
-           let item = displayedItems.first(where: { $0.number == number }) {
+           let item = directionForSpokenNumber(number) {
+            spokenNumberTargets[number] = item.directionID
             if selectionStates[item.directionID] != .pending {
                 selectionStates[item.directionID] = .pending
                 confirmedTexts[item.directionID] = nil
@@ -396,7 +423,8 @@ final class DirectionBoardSession: ObservableObject {
         }
         if let number = DirectionBoardMatching.spokenSelectionNumber(
             in: transcriptText, displayedItemCount: displayedItems.count),
-           let item = displayedItems.first(where: { $0.number == number }) {
+           let item = directionForSpokenNumber(number) {
+            spokenNumberTargets[number] = item.directionID
             selectByVoice(directionID: item.directionID, text: item.keyword,
                           how: "口述「第 \(number) 个方向」")
             return
@@ -414,6 +442,26 @@ final class DirectionBoardSession: ObservableObject {
                 return
             }
         }
+    }
+
+    /// **「第 N 个方向」指的是谁 —— 一旦定下，这一句之内就不再改。**
+    ///
+    /// 判断本身在 `DirectionBoardMatching.resolvedSpokenNumber`（纯函数，有单测）；
+    /// 这里只负责把"这一句的映射表"存住。
+    private func directionForSpokenNumber(_ number: Int) -> DirectionBoardDisplayItem? {
+        DirectionBoardMatching.resolvedSpokenNumber(number,
+                                                    remembered: spokenNumberTargets,
+                                                    in: displayedItems)
+    }
+
+    /// 新的一句开始了吗（不是上一句往后接着说）—— 是就把"第 N 个"的映射表清掉。
+    private func noteUtteranceBoundary(in transcriptText: String) {
+        let previous = DirectionBoardMatching.normalize(spokenSelectionUtteranceText)
+        let current = DirectionBoardMatching.normalize(transcriptText)
+        if previous.isEmpty || !current.hasPrefix(previous) {
+            spokenNumberTargets = [:]
+        }
+        spokenSelectionUtteranceText = transcriptText
     }
 
     private func selectByVoice(directionID: String, text: String, how: String) {
@@ -514,18 +562,17 @@ final class DirectionBoardSession: ObservableObject {
                 let displayText = DirectionBoardPrompt.paragraphWithoutLabelLine(paragraphText)
                 self.paragraph = DirectionBoardPrompt.cleanParagraph(
                     displayText.isEmpty ? paragraphText : displayText)
-                let structured = DirectionBoardPrompt.parseUnderstandingLines(paragraphText)
-                self.understandingLines = structured
-                if !structured.isEmpty {
-                    // 有结构化那几行时，正文只留"标签之外的话"（模型爱在标签前后再写一句）。
-                    let leftover = DirectionBoardPrompt.leftoverParagraphText(paragraphText,
-                                                                              structuredLines: structured)
-                    self.paragraph = DirectionBoardPrompt.cleanParagraph(leftover)
-                }
+                // **永远是四行**（缺的留空串，由视图画占位符）—— 卡片每一段的高度于是恒定。
+                self.understandingLines = DirectionBoardPrompt.parseUnderstandingLines(paragraphText)
+                // 有结构化那几行时，正文只留"标签之外的话"（模型爱在标签前后再写一句）。
+                self.paragraph = DirectionBoardPrompt.cleanParagraph(
+                    DirectionBoardPrompt.leftoverParagraphText(paragraphText))
                 if let result = DirectionBoardPrompt.parseTaskResult(paragraphText) {
                     self.taskResult = result
                     print("🧭 方向看板：任务结果 = \(result)")
                 }
+                // 一次回复落了地 —— 视图据此播那一下淡入（用户：「而不是突然间显示出来」）。
+                self.contentRevision += 1
                 self.previousReading = String(paragraphText.prefix(Self.maximumPreviousReadingCharacters))
                 // **带屏幕参考时，模型给的"这次是什么类型"也变成一个可点的类型**（进临时文件）。
                 // 用户那个数学题的例子：「这道题应该选 A，那结果就是固定的」—— 那个答案本身就是选项。

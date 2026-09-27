@@ -155,62 +155,136 @@ struct DirectionBoardTests {
             """)
     }
 
-    // MARK: - 四段卡片里的解析（理解那几行 + 任务结果）
+    // MARK: - 口述编号：钉住重排之后仍然指回同一格
 
-    /// **「任务结果」不能被「细节」吞掉** —— 这是四段卡片的核心那条边界。
+    /// **一句话不许选两格。**
+    ///
+    /// 2026-09-27 实测（用户：「我让他选择的是第二个方向——看图说话，但他选择的是两个方向」）：
+    /// 识别器给的是累积文本，「第二个方向」会被喂进来好几次；而**选中会把那一格钉到最前**，
+    /// 整列重新编号 —— 第二次喂进来时「第 2 个」已经换成另一格，于是同一句话选了两格。
+    /// 修法是记住「编号 → 方向 id」：后面的重喂还按 id 找，而那一格已经选中 → 空操作。
+    @Test func spokenNumberKeepsItsTargetAfterPinningReorders() throws {
+        func item(_ id: String, _ keyword: String, _ number: Int) -> DirectionBoardDisplayItem {
+            DirectionBoardDisplayItem(directionID: id, keyword: keyword, number: number,
+                                      reason: .localKeyword)
+        }
+        let before = [item("text.write", "写成文字", 1), item("vision.look", "看图说话", 2)]
+        // 第一次：第 2 个 = 看图说话。
+        let first = DirectionBoardMatching.resolvedSpokenNumber(2, remembered: [:], in: before)
+        #expect(first?.directionID == "vision.look")
+
+        // 它被选中 → 钉到最前，整列重新编号（第 2 个现在换成了别人）。
+        let after = [item("vision.look", "看图说话", 1), item("text.write", "写成文字", 2)]
+        #expect(after.first { $0.number == 2 }?.directionID == "text.write")   // 证明真的重排了
+
+        // 同一句重喂 → 仍然指回看图说话（不是新编号下的那一格）。
+        let again = DirectionBoardMatching.resolvedSpokenNumber(2,
+                                                               remembered: [2: "vision.look"],
+                                                               in: after)
+        #expect(again?.directionID == "vision.look")
+    }
+
+    // MARK: - 四段卡片里的解析（固定四行 + 任务结果）
+
+    /// **行的集合恒定** —— 这是卡片"不再跳"的全部依据。
+    ///
+    /// 用户 2026-09-27：「他回复结果的时候总是跳、总是蹦……内容有时候有软件目标细节，有时候没有」
+    /// +「这几行固定在这，而不是突然间有、突然间没有」。所以解析**永远返回那四行**，
+    /// 缺的行值是空串（视图画占位符），行的数量不随模型怎么写而变。
+    @Test func understandingRowsAreAlwaysTheSameFour() throws {
+        #expect(DirectionBoardPrompt.understandingLabels == ["目标问题", "类型", "参考", "细节"])
+        // 什么都不给 → 四行都在，全是空值。
+        let empty = DirectionBoardPrompt.parseUnderstandingLines("")
+        #expect(empty.map(\.label) == DirectionBoardPrompt.understandingLabels)
+        #expect(empty.allSatisfy { $0.value.isEmpty })
+        // 只给一行 → 另外三行仍然在。
+        let partial = DirectionBoardPrompt.parseUnderstandingLines("类型：做题")
+        #expect(partial.map(\.label) == DirectionBoardPrompt.understandingLabels)
+        #expect(partial.first { $0.label == "类型" }?.value == "做题")
+        #expect(partial.filter { $0.value.isEmpty }.count == 3)
+    }
+
+    /// **「任务结果」不能被「细节」吞掉** —— 四段卡片的核心那条边界。
     ///
     /// 2026-09-27 实测截图：模型把 `任务结果：选 A（…）` 写在「细节」那行的**尾巴上**，
-    /// 而解析器只把五个理解标签当边界，于是同一句话在看板上出现两遍 —— 绿框里一次、
-    /// 「细节」那行末尾又一次。这一段就是那次的回归断言。
+    /// 而解析器只把理解标签当边界，于是同一句话在看板上出现两遍 —— 绿框里一次、
+    /// 「细节」那行末尾又一次。
     @Test func taskResultIsNotSwallowedByDetails() throws {
         let raw = """
-        软件：预览（PDF 文件看图）
-        文件：初中数学 浙江中考数学真题.pdf
-        目标：把选这道题答案的判断记下来
+        目标问题：把选这道题答案的判断记下来
         类型：做题
+        参考：预览（PDF 文件看图）
         细节：屏幕上是几何展开图折叠成正方体的题，按「相对面隔一格」推断。 任务结果：选 A（左侧那个带轮廓的图）
         """
         let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
-        #expect(lines.map(\.label) == ["软件", "文件", "目标", "类型", "细节"])
+        #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
         let details = lines.first { $0.label == "细节" }?.value ?? ""
         #expect(!details.contains("任务结果"))
         #expect(details.hasSuffix("推断。"))
         #expect(DirectionBoardPrompt.parseTaskResult(raw) == "选 A（左侧那个带轮廓的图）")
         // 正文里只剩下真正的"标签之外的话"，没有孤零零的「:选 A（…）」。
-        let leftover = DirectionBoardPrompt.leftoverParagraphText(raw, structuredLines: lines)
+        let leftover = DirectionBoardPrompt.leftoverParagraphText(raw)
         #expect(!leftover.contains("选 A"))
     }
 
-    /// 五行写在**同一行**里（模型常这么干）也要切得开。
-    @Test func understandingLinesSplitInsideOneLine() throws {
-        let lines = DirectionBoardPrompt.parseUnderstandingLines(
-            "软件:预览 文件:a.pdf 目标:整理 类型:做题 细节:题图在左侧")
-        #expect(lines.map(\.label) == ["软件", "文件", "目标", "类型", "细节"])
-        #expect(lines.first { $0.label == "细节" }?.value == "题图在左侧")
+    /// **旧标签照样认**（模型不一定照新格式写：实测它常把「软件 / 文件 / 目标」写在原来的位置上）。
+    /// 只认正式名会让那一行的内容掉进正文里 —— 屏幕上就是"这行空了、内容跑到别处"。
+    @Test func legacyLabelsStillLandOnTheFixedRows() throws {
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("""
+        软件：预览
+        文件：a.pdf
+        目标：整理桌面
+        类型：整理文件
+        细节：只动下载目录
+        """)
+        #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
+        // 软件 + 文件 合到「参考」那一行（旧的两种都算"参考材料"）。
+        #expect(lines.first { $0.label == "参考" }?.value == "预览")
+        #expect(lines.first { $0.label == "目标问题" }?.value == "整理桌面")
+        #expect(lines.first { $0.label == "类型" }?.value == "整理文件")
+        #expect(lines.first { $0.label == "细节" }?.value == "只动下载目录")
     }
 
-    /// **「任务类型」嵌着「类型」**：边界标签在里面匹配上时，值不能带上那个「任务」前缀，
-    /// 也不能因为下一个位置落在 valueStart 之前而算出一个无效区间（那会直接崩溃）。
+    /// 四行写在**同一行**里（模型常这么干）也要切得开。
+    @Test func understandingRowsSplitInsideOneLine() throws {
+        let lines = DirectionBoardPrompt.parseUnderstandingLines(
+            "目标问题:整理 类型:整理文件 参考:桌面 细节:题图在左侧")
+        #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
+        #expect(lines.first { $0.label == "细节" }?.value == "题图在左侧")
+        #expect(lines.first { $0.label == "目标问题" }?.value == "整理")
+    }
+
+    /// **「目标问题」自己嵌着两个别名**（`目标:` / `问题:` 都在它里面）：不处理重叠就会切出三段空值，
+    /// 那一行的内容整段消失。
     @Test func nestedLabelDoesNotBreakTheValue() throws {
-        let lines = DirectionBoardPrompt.parseUnderstandingLines("任务类型：做题")
-        #expect(lines.map(\.label) == ["类型"])
-        #expect(lines.first?.value == "做题")
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("目标问题：整理桌面上的文件")
+        #expect(lines.first { $0.label == "目标问题" }?.value == "整理桌面上的文件")
+        // 「任务类型」同理（里面嵌着「类型」）。
+        let typeLines = DirectionBoardPrompt.parseUnderstandingLines("任务类型：做题")
+        #expect(typeLines.first { $0.label == "类型" }?.value == "做题")
+    }
+
+    /// 模型用「—」表示"这一行没有内容"时，我们当**空**处理（占位符由视图统一画）。
+    @Test func dashMeansEmptyNotContent() throws {
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("目标问题：整理文件\n类型：整理\n参考：—\n细节：—")
+        #expect(lines.first { $0.label == "参考" }?.value == "")
+        #expect(lines.first { $0.label == "细节" }?.value == "")
     }
 
     /// 任务结果续到下一行（实测模型写成「任务结果：选」+ 换行 +「A」）。
     @Test func taskResultSpansTwoLines() throws {
-        #expect(DirectionBoardPrompt.parseTaskResult("目标:做题\n任务结果：选\nA") == "选 A")
+        #expect(DirectionBoardPrompt.parseTaskResult("类型:做题\n任务结果：选\nA") == "选 A")
         // 没有这一行时不给结果（不许拿正文当结果）。
-        #expect(DirectionBoardPrompt.parseTaskResult("目标:做题\n细节:题在左边") == nil)
+        #expect(DirectionBoardPrompt.parseTaskResult("类型:做题\n细节:题在左边") == nil)
     }
 
     /// **解析读的是原文，不是被截过的显示文本**。
     ///
-    /// 2026-09-27 实测：`cleanParagraph` 的 200 字上限被用在了**原文**上，五行加起来轻松超过
+    /// 2026-09-27 实测：`cleanParagraph` 的 200 字上限被用在了**原文**上，四行加起来轻松超过
     /// 200 字，于是「细节」那行在屏幕上写到一半就断了（断在「题目在屏幕右」）。
     @Test func longRepliesSurviveParsing() throws {
         let longDetails = String(repeating: "这是一段很长的细节说明。", count: 20)
-        let raw = "软件:预览\n文件:a.pdf\n目标:整理\n类型:做题\n细节:\(longDetails)"
+        let raw = "目标问题:整理\n类型:做题\n参考:a.pdf\n细节:\(longDetails)"
         let cleaned = DirectionBoardPrompt.cleanRawResponse(raw)
         let lines = DirectionBoardPrompt.parseUnderstandingLines(cleaned)
         let details = lines.first { $0.label == "细节" }?.value ?? ""

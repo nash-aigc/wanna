@@ -241,9 +241,28 @@ extension DirectionBoardMatching {
         return false
     }
 
+    /// **「第 N 个方向」指的是哪一格** —— 一句之内**一旦定下就不再改**。
+    ///
+    /// 2026-09-27 实测的 bug（用户：「我让他选择的是第二个方向——看图说话，但他选择的是**两个方向**」）：
+    /// 识别器给的是**累积**文本，同一句里的「第二个方向」会被喂进来好几次；而**选中会把那一格钉到最前**
+    ///（用户自己要的"钉住"），整列于是重新编号 —— 第二次喂进来时「第 2 个」已经换成了另一格，
+    /// 一句话选了两格（截图里 1 看图说话 + 2 做题 同时打勾）。
+    ///
+    /// - Parameter remembered: 这一句里已经定下来的「编号 → 方向 id」。
+    ///   命中时**按 id 找**，于是重排序之后仍然指回原来那一格；调用方对已选中的格子是空操作，
+    ///   重复喂就自然变成幂等。
+    nonisolated static func resolvedSpokenNumber(_ number: Int,
+                                                 remembered: [Int: String],
+                                                 in displayedItems: [DirectionBoardDisplayItem])
+        -> DirectionBoardDisplayItem? {
+        if let rememberedDirectionID = remembered[number] {
+            return displayedItems.first { $0.directionID == rememberedDirectionID }
+        }
+        return displayedItems.first { $0.number == number }
+    }
+
     /// 中文数字 → 整数（只认 1…99；认不出来返回 nil）。
-    nonisolated static func chineseNumeral(_ text: String) -> Int? {
-        let digits: [Character: Int] = ["一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    nonisolated static func chineseNumeral(_ text: String) -> Int? {        let digits: [Character: Int] = ["一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
                                         "六": 6, "七": 7, "八": 8, "九": 9]
         if text == "十" { return 10 }
         var total = 0

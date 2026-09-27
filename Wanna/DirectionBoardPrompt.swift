@@ -24,9 +24,38 @@ nonisolated enum DirectionBoardPrompt {
     /// 说明最多留这么多字（看板那块地方面积固定，长了会顶掉其它内容）。
     static let maximumParagraphCharacters = 200
 
+    /// **卡片上固定显示的四行，顺序也是固定的**（用户 2026-09-27 定）。
+    ///
+    /// 用户的原话：「把顺序调一下。结果肯定显示在这个位置上不变，然后下边这四行：第一行是
+    /// **目标或问题**，就写「目标问题」；第二行是**类型**；第三行是**内容参考**，或者叫**参考**，
+    /// 也就是左边这个标题，**它就是两个字**；最后一行是**细节**。」
+    ///
+    /// ⚠️ **为什么要固定**（同一句里说的）：「他回复结果的时候**总是跳、总是蹦**……因为他回复的
+    /// 内容有时候有软件目标细节，有时候没有，就是突然间有、突然间没有……这几行固定在这，
+    /// 而不是突然间有、突然间没有，这对体验影响太差了。」所以这四行**永远画出来**，
+    /// 模型没给内容的那一行显示占位符，而不是整行消失 —— 卡片的每一段高度于是恒定。
+    static let understandingLabels = ["目标问题", "类型", "参考", "细节"]
+
+    /// 每一行认哪些标签（**第一个是正式名字**，其余是模型爱写的同义说法，一并认）。
+    ///
+    /// 认老名字是刻意的：模型不一定会照新格式写（实测它经常把 `软件` / `文件` 写在「参考」的位置），
+    /// 只认正式名会让那一行的内容掉进正文里 —— 屏幕上就是"这行空了、内容跑到别处"。
+    static let understandingLabelAliases: [(label: String, aliases: [String])] = [
+        ("目标问题", ["目标问题", "目标", "问题"]),
+        ("类型", ["任务类型", "类型"]),
+        ("参考", ["内容参考", "参考", "软件", "文件"]),
+        ("细节", ["细节", "注意", "备注"]),
+    ]
+
+    /// 模型用来表示"这一行没有内容"的写法 —— 一律当成空（占位符由视图画）。
+    private static let emptyValueMarkers: Set<String> = ["—", "-", "–", "无", "没有", "暂无", "n/a", "na", "无。"]
+
+    /// **只截断、自己不成行**的标签（它有自己的显示位置）。
+    private static let boundaryLabels = ["任务结果"]
+
     /// 写"AI 怎么理解"用的系统提示词 —— **只给方向清单，不给主 Agent 提示词**。
     ///
-    /// 它**不执行任何事**：只输出一两句话，说明"这段话看起来要做哪一类事"。
+    /// 它**不执行任何事**：只输出固定四行，说明"这段话看起来要做哪一类事"。
     static func understandingSystemPrompt(directions: [(id: String, keyword: String, detail: String)],
                                           asksForLabel: Bool = false) -> String {
         var lines: [String] = []
@@ -35,25 +64,25 @@ nonisolated enum DirectionBoardPrompt {
         }
         return """
         你是一个任务方向识别器。用户正在对着一台 Mac 说话，你的任务是两件事：
-        **① 用固定的几行说清你理解他这次要做什么；② 如果能立刻算出结果，就把结果直接给出来。**
+        **① 用固定的四行说清你理解他这次要做什么；② 如果能立刻算出结果，就把结果直接给出来。**
 
         可能的方向（你可以从中挑，也可以都不挑）：
         \(lines.joined(separator: "\n"))
 
-        严格按这几行回答（没有内容的行就整行不写，**不要写"无"**）：
+        **下面这四行必须每一行都写**（真的没有内容就写一个「—」，**不要整行省略** ——
+        这几行在界面上是固定的位置，少写一行会让整块跳动）：
 
-        软件：<涉及哪个应用/网站/工具；没有就不写这一行>
-        文件：<涉及哪个文件/文件夹/页面；没有就不写这一行>
-        目标：<这次要达成什么，一句话>
+        目标问题：<这次要达成什么 / 用户在问什么，一句话>
         类型：<3~7 个字，这次是什么类型的任务，例如「做题」「整理文件」>
-        细节：<任何需要知道的前提、约束、你注意到的东西；可以多句>
+        参考：<这次要看或要动的东西：哪个软件、哪个文件、哪个页面、哪个网站；没有就写「—」>
+        细节：<任何需要知道的前提、约束、你注意到的东西；可以多句，也可以写「—」>
 
         任务结果：<如果你**已经能从屏幕/文字直接算出答案**（例如题目选哪个选项、哪几个人最像），
                   就把结果直接写在这一行；算不出来就整行不写>
 
         规则：
         1. **只写理解与结果**，不要执行任何事、不要给操作步骤、不要写代码；
-        2. 「目标」一句话说不完就写「细节」那几行，**不要写成长篇**；
+        2. 「目标问题」一句话说不完就写「细节」那一行，**不要写成长篇**；
         3. 用中文写（他说英文就用英文）；
         4. 不要加任何别的标题、引号、Markdown 或代码块。
         """ + (asksForLabel ? """
@@ -125,77 +154,112 @@ nonisolated enum DirectionBoardPrompt {
         return sections.joined(separator: "\n\n")
     }
 
-    /// 结构化理解的**那几行**（软件/文件/目标/类型/细节）—— 按用户要的顺序、多行显示。
+    /// 结构化理解的**那四行** —— **永远返回四行、顺序固定**（没内容的行值是空串）。
     ///
-    /// 用户 2026-09-27：「AI 对任务的理解是有格式的，比如**软件是什么、文件是什么、目标是什么、
-    /// 类型是什么、细节是什么**，换行显示，可以显示为多行。」
+    /// 用户 2026-09-27：「AI 对任务的理解是有格式的……换行显示，可以显示为多行」，加上后来的
+    /// 「这几行固定在这，而不是突然间有、突然间没有」。所以这里的契约是**行的集合恒定**，
+    /// 谁有没有内容由值决定 —— 视图据此画占位符，卡片的高度于是不再跳。
     static func parseUnderstandingLines(_ raw: String) -> [(label: String, value: String)] {
-        let labels = ["软件", "文件", "目标", "类型", "细节"]
-        // **「任务结果」也是一条边界**：它有一套自己的显示位置（四段里的第二段），不属于"理解"。
-        // 少了这一步，「细节」会把「任务结果:选 A（…）」整段吞进去，于是同一句话在看板上出现两遍
-        // —— 绿框里一次、「细节」那行末尾又一次（2026-09-27 实测截图，用户要的是四段分明）。
-        // 注意「任务类型」也要算边界，否则「类型」会在它中间匹配上（`任务类型:做题` → 值里留个「任务」）。
-        let boundaryLabels = labels + ["任务结果", "任务类型"]
         let normalized = raw.replacingOccurrences(of: "：", with: ":")
-        // ⚠️ **不能只按换行切**：实测模型会把五行**写在同一行**里
-        //（「软件:X 文件:Y 目标:Z 类型:做题 细节:…」）—— 只认行首的话，除了第一行全都留在正文里，
-        // 屏幕上就是"一整段没排版"（第一次实测就是这样）。
-        // 所以先按换行切，再在每一行里**按标签位置切**。
-        var results: [(String, String)] = []
+        var found: [String: String] = [:]
+
         for rawLine in normalized.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = String(rawLine)
-            // 找出这一行里所有 "标签:" 的位置（含那些只用来**截断**、自己不出现在结果里的边界标签）。
-            var positions: [(label: String, start: String.Index)] = []
-            for label in boundaryLabels {
+            for position in labelPositions(in: line) where !position.label.isEmpty {
+                let valueStart = line.index(position.start, offsetBy: position.aliasLength + 1)
+                let valueEnd = position.valueEnd
+                guard valueStart <= valueEnd else { continue }
+                let value = normalizedValue(String(line[valueStart..<valueEnd]))
+                guard !value.isEmpty, found[position.label] == nil else { continue }
+                found[position.label] = value
+            }
+        }
+        // 按用户定的顺序返回，**缺的那些留空串**（不是省略）。
+        return understandingLabels.map { ($0, found[$0] ?? "") }
+    }
+
+    /// 一行里所有标签的位置，已经去过重叠。
+    ///
+    /// **「任务结果」也在这里，但它是个"边界标签"**（`label` 为空）：它只负责把前一个值截断，
+    /// 自己不出现在四行里 —— 它有自己的那一行（绿框）。少了它，「细节」会把整句
+    /// 「…推断。 任务结果：选 A」吞进去，同一句话在看板上出现两遍。
+    ///
+    /// 「去重叠」也是必须的：`目标问题:` 里同时含 `目标:` 与 `问题:` 两个别名的起点，
+    /// 不处理的话那一行会被切出三段、值全是空的（第一版就是这样，那一行的内容整段消失）。
+    private static func labelPositions(in line: String)
+        -> [(label: String, aliasLength: Int, start: String.Index, valueEnd: String.Index)] {
+        var raw: [(label: String, aliasLength: Int, start: String.Index)] = []
+        for (label, aliases) in understandingLabelAliases {
+            for alias in aliases {
                 var searchStart = line.startIndex
-                while let range = line.range(of: label + ":", range: searchStart..<line.endIndex) {
-                    positions.append((label, range.lowerBound))
+                while let range = line.range(of: alias + ":", range: searchStart..<line.endIndex) {
+                    raw.append((label, alias.count, range.lowerBound))
                     searchStart = range.upperBound
                 }
             }
-            positions.sort { $0.start < $1.start }
-            for (index, position) in positions.enumerated() {
-                // 边界标签只负责把前一个值截断，自己不产出理解行。
-                guard labels.contains(position.label) else { continue }
-                let valueStart = line.index(position.start, offsetBy: position.label.count + 1)
-                // `max(valueStart, …)`：边界标签可能**嵌在**另一个标签里（`任务类型:` 里的 `类型:`），
-                // 这时下一个位置会落在 valueStart 之前 —— 直接用会得到一个无效区间（崩溃）。
-                let valueEnd = index + 1 < positions.count
-                    ? max(positions[index + 1].start, valueStart)
-                    : line.endIndex
-                let value = String(line[valueStart..<valueEnd])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !value.isEmpty, !results.contains(where: { $0.0 == position.label }) else { continue }
-                results.append((position.label, value))
+        }
+        for boundary in boundaryLabels {
+            var searchStart = line.startIndex
+            while let range = line.range(of: boundary + ":", range: searchStart..<line.endIndex) {
+                raw.append(("", boundary.count, range.lowerBound))
+                searchStart = range.upperBound
             }
         }
-        // 按固定顺序返回（模型写乱了也照用户的顺序显示）。
-        return labels.compactMap { label in results.first { $0.0 == label } }
+        // 位置相同或**落在前一个标签里面**的，只留最长的那个别名。
+        var accepted: [(label: String, aliasLength: Int, start: String.Index)] = []
+        for position in raw.sorted(by: { lhs, rhs in
+            lhs.start == rhs.start ? lhs.aliasLength > rhs.aliasLength : lhs.start < rhs.start
+        }) {
+            if let last = accepted.last,
+               position.start < line.index(last.start, offsetBy: last.aliasLength) { continue }
+            accepted.append(position)
+        }
+        // 每一段的值 = 从标签后面到**下一个标签之前**（同一行里模型常把几行挤在一起）。
+        return accepted.enumerated().map { index, position in
+            let valueEnd = index + 1 < accepted.count ? accepted[index + 1].start : line.endIndex
+            return (position.label, position.aliasLength, position.start, valueEnd)
+        }
+    }
+
+    /// 「—」「无」这类占位一律当成空（占位符由视图统一画，模型写的不算内容）。
+    private static func normalizedValue(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return emptyValueMarkers.contains(trimmed.lowercased()) ? "" : trimmed
     }
 
     /// 结构化那几行**之外**的正文（模型在标签前后还写了别的话时，留在「细节」里展示）。
-    static func leftoverParagraphText(_ raw: String,
-                                      structuredLines: [(label: String, value: String)]) -> String {
-        var text = raw
-        for line in structuredLines {
-            for colon in ["：", ":"] {
-                if let range = text.range(of: line.label + colon) {
-                    // 把「标签:值」整段去掉（值可能是它到行尾/下一个标签之前的那一段）。
-                    let valueEnd = text.index(range.lowerBound, offsetBy: line.label.count + 1 + line.value.count)
-                    text.removeSubrange(range.lowerBound..<min(valueEnd, text.endIndex))
+    ///
+    /// 挖的范围是「标签 → 该行行尾」：一行的内容本来就归那个标签，剩下的才是正文。
+    static func leftoverParagraphText(_ raw: String) -> String {
+        let text = raw
+        var ranges: [Range<String.Index>] = []
+        for (_, aliases) in understandingLabelAliases {
+            for alias in aliases {
+                for colon in ["：", ":"] {
+                    guard let range = text.range(of: alias + colon) else { continue }
+                    let lineEnd = text[range.upperBound...].firstIndex(of: "\n") ?? text.endIndex
+                    ranges.append(range.lowerBound..<lineEnd)
                 }
             }
         }
         // **「任务结果」那一段整段挖掉**（它是四段里的第二段，已经有自己的绿框了）。
-        // 原来这里是 `replacingOccurrences(of: "任务结果", with: "")` —— 只把那四个字换成空串，
-        // 正文里于是留下一个孤零零的「:选 A（…）」（2026-09-27 实测截图）。
-        for prefix in ["任务结果：", "任务结果:", "任务类型：", "任务类型:"] {
-            if let range = text.range(of: prefix) {
-                let lineEnd = text[range.upperBound...].firstIndex(of: "\n") ?? text.endIndex
-                text.removeSubrange(range.lowerBound..<lineEnd)
-            }
+        for prefix in ["任务结果：", "任务结果:"] {
+            guard let range = text.range(of: prefix) else { continue }
+            let lineEnd = text[range.upperBound...].firstIndex(of: "\n") ?? text.endIndex
+            ranges.append(range.lowerBound..<lineEnd)
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // **按"保留没被覆盖的字"来拼，而不是删区间**：别名之间会互相嵌套
+        //（`内容参考:` 里面就含 `参考:`），删区间时后一个会把前一个的终点带跑，
+        // 拿着过期的上界去 `removeSubrange` 会**直接崩**（2026-09-27 真的把测试进程崩掉了）。
+        var kept = ""
+        var cursor = text.startIndex
+        for range in ranges.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+            guard range.lowerBound >= cursor else { continue }   // 被前一段包住 → 跳过
+            kept += text[cursor..<range.lowerBound]
+            cursor = range.upperBound
+        }
+        kept += text[cursor...]
+        return kept.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// **任务结果**那一行（模型能直接算出来才有）。

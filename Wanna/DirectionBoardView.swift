@@ -76,12 +76,12 @@ struct DirectionBoardView: View {
                 sectionDivider
             }
             // **任务结果**（用户：「整个卡片分成四段：上面那段是选项，中间那段是任务结果，
-            // 下面那段是 AI 对任务的理解，最下面是用户的输入」）—— 只有算得出结果时才出现。
-            if let taskResult = session.taskResult {
-                taskResultRow(taskResult)
-            }
-            // 第三段：理解（结构化几行，多行显示）。
-            paragraphArea
+            // 下面那段是 AI 对任务的理解，最下面是用户的输入」）——
+            // **这一行也固定画着**（用户 2026-09-27：「包括结果这一行也固定在这」），
+            // 算不出结果时显示占位符，而不是整行消失。
+            taskResultRow(session.taskResult ?? "", revealIndex: 0)
+            // 第三段：理解（**固定四行**，见 `understoodRow`）。
+            understandingArea
             // 第四段：输入（默认留三行的高度）。
             inputArea
             // 最下面一行：**取消看板**的三档（用户 2026-09-27：「把最下面这一行分成三列：
@@ -198,76 +198,72 @@ struct DirectionBoardView: View {
         }
     }
 
-    // MARK: - 说明区（**高度固定**）
+    // MARK: - 说明区（**固定四行，永远画着**）
 
-    private var paragraphArea: some View {
+    /// **四行固定**：目标问题 / 类型 / 参考 / 细节（顺序、标签都由 `DirectionBoardPrompt` 给）。
+    ///
+    /// 用户 2026-09-27 的两句合起来就是这一段的设计：「他回复结果的时候总是跳、总是蹦……
+    /// 内容有时候有软件目标细节，有时候没有」+「这几行固定在这，而不是突然间有、突然间没有，
+    /// 这对体验影响太差了」。所以：行的集合恒定、值可能为空（画占位符）、**卡片高度因此恒定**。
+    private var understandingArea: some View {
         HStack(alignment: .top, spacing: 6) {
-            paragraphText
-            // **AI 那段总结也要能确认/否认**（用户：「在系统总结这块，也要增加一个选中或者确认、
-            // 否认的按钮，即添加一个 X 叉按钮」）。只有真的有总结时才画。
-            if !session.paragraph.isEmpty {
-                Button {
-                    session.toggleSummaryDeny()
-                } label: {
-                    Image(systemName: session.summaryState == .confirmed ? "checkmark" : "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(summaryTextColor.opacity(session.summaryState == .pending ? 0.5 : 1.0))
-                        .frame(width: 14, height: 14)
-                        .contentShape(Rectangle())
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(session.understandingLines.enumerated()), id: \.offset) { index, line in
+                    understandingRow(label: line.label, value: line.value, revealIndex: index + 1)
                 }
-                .buttonStyle(.plain)
-                .help("点一下 = 这个理解不对")
             }
+            // **AI 那段总结也要能确认/否认**（用户：「在系统总结这块，也要增加一个选中或者确认、
+            // 否认的按钮，即添加一个 X 叉按钮」）。确认的是**这四行**（`understandingSummaryText`）——
+            // 固定四行落地之后，"标签之外的话"通常一段都没有，拿它当确认内容会存下一个空串。
+            Button {
+                session.toggleSummaryDeny()
+            } label: {
+                Image(systemName: session.summaryState == .confirmed ? "checkmark" : "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(summaryTextColor.opacity(session.summaryState == .pending ? 0.5 : 1.0))
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("点一下 = 这个理解不对")
         }
-        // **跟着内容长**（用户：「AI 对任务的理解是有格式的……换行显示，**可以显示为多行**」）。
-        // ⚠️ 这里原来是个固定高度（4 行）+ `.clipped()`，实测把「细节」那行直接切掉了 ✗。只有输入框保持固定三行高。
-        // 点总结正文 = 确认"这个理解对"。
         .contentShape(Rectangle())
-        .onTapGesture {
-            guard !session.paragraph.isEmpty else { return }
-            session.toggleSummaryConfirm()
-        }
+        .onTapGesture { session.toggleSummaryConfirm() }
+        .help("点一下 = 这个理解对（会作为一行发给模型）")
     }
 
+    /// 一行理解：左边标签定宽，右边值（**空值画占位符**，不是不画）。
+    private func understandingRow(label: String, value: String, revealIndex: Int) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.textColor.opacity(0.55))
+                // 标签定宽按**最长的那一个**（「目标问题」四个字）算 —— 写死 26 会让它折行。
+                .frame(width: Self.understandingLabelWidth, alignment: .leading)
+            Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id(value)
+                .transition(.opacity.combined(with: .offset(y: 6)))
+        }
+        // 换了内容就淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」）——
+        // 逐行错开一点点，四行看起来是"写进去"的，而不是整块跳出来。
+        .animation(.easeOut(duration: 0.28).delay(Double(revealIndex) * 0.05), value: value)
+    }
+
+    /// 那一行没有内容时画的东西（**占位符**：行不能消失，否则卡片会跳）。
+    private static let emptyValuePlaceholder = "—"
+    /// 标签那一列的宽度（按「目标问题」四个字量出来的）。
+    private static let understandingLabelWidth: CGFloat = 50
+
+    /// 那个对勾/叉的颜色（确认=绿、否认=红、没点=正文色）。
     private var summaryTextColor: Color {
         switch session.summaryState {
         case .confirmed: return DS.Colors.success
         case .denied: return DS.Colors.destructive
         case .pending: return theme.textColor
-        }
-    }
-
-    private var paragraphText: some View {
-        Group {
-            if !session.understandingLines.isEmpty {
-                // 结构化的那几行（软件/文件/目标/类型/细节）—— 用户要的"换行显示，可以多行"。
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(session.understandingLines, id: \.label) { line in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text(line.label)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(theme.textColor.opacity(0.55))
-                                .frame(width: 26, alignment: .leading)
-                            Text(line.value)
-                                .font(.system(size: 12))
-                                .foregroundStyle(theme.textColor)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-            } else if session.paragraph.isEmpty {
-                // 还没有结果时**不写占位话**（"正在理解…"这种字只会让人以为出错了）。
-                Text(session.isRequesting ? "正在理解你这次要做的事…" : "说说你要做什么。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.textColor.opacity(0.45))
-            } else {
-                Text(session.summaryConfirmedText ?? session.paragraph)
-                    .font(.system(size: AnswerCardView.fontSize))
-                    .foregroundStyle(summaryTextColor)
-                    .lineSpacing(AnswerCardView.lineSpacing)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
         }
     }
 
@@ -299,8 +295,9 @@ struct DirectionBoardView: View {
 
     /// **任务结果**那一行 —— 用户要的"直接显示出来任务结果"（例：这道题选 A）。
     ///
-    /// 它是四段里的第二段，夹在选项与理解之间；没有结果时整行不出现。
-    private func taskResultRow(_ text: String) -> some View {
+    /// 它是四段里的第二段，夹在选项与理解之间。**没有结果时也画**（值是占位符）——
+    /// 用户 2026-09-27：「包括结果这一行也固定在这」，理由和下面那四行一样：整行消失会让卡片跳。
+    private func taskResultRow(_ text: String, revealIndex: Int) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("结果")
                 .font(.system(size: 10, weight: .semibold))
@@ -308,12 +305,15 @@ struct DirectionBoardView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Capsule().fill(DS.Colors.success.opacity(0.18)))
-            Text(text)
+            Text(text.isEmpty ? Self.emptyValuePlaceholder : text)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.textColor)
+                .foregroundStyle(theme.textColor.opacity(text.isEmpty ? 0.35 : 1.0))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .id(text)
+                .transition(.opacity.combined(with: .offset(y: 6)))
         }
+        .animation(.easeOut(duration: 0.28).delay(Double(revealIndex) * 0.05), value: text)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(
@@ -335,11 +335,11 @@ struct DirectionBoardView: View {
             cancelButton(title: "取消本次", help: "这一次循环不再显示看板（录音照旧）") {
                 session.cancelForThisCycle()
             }
-            Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1, height: 16)
+            cancelRowDivider
             cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
                 session.cancelForTenMinutes()
             }
-            Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1, height: 16)
+            cancelRowDivider
             cancelButton(title: "取消今日", help: "到明天凌晨 0 点为止都不显示") {
                 session.cancelUntilNextMidnight()
             }
@@ -349,6 +349,15 @@ struct DirectionBoardView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Self.cancelRowColor)
         )
+    }
+
+    /// 三档之间的分割线 —— 用户 2026-09-27：「它们中间的分割线你给它画得**再亮一点、再大一点，
+    /// 颜色再明确一点，用白色**」。所以是**纯白**（不是原来那种 12% 白），而且比原来高
+    /// （16 → 20，跟这一行 26 的高度比是能一眼看见的）。
+    private var cancelRowDivider: some View {
+        Rectangle()
+            .fill(Self.cancelRowDividerColor)
+            .frame(width: 1.5, height: 20)
     }
 
     private func cancelButton(title: String, help: String, action: @escaping () -> Void) -> some View {
@@ -367,7 +376,7 @@ struct DirectionBoardView: View {
     /// 暗红：比正文暗、比背景亮，一眼看出是"关掉它"这一类的动作，但不至于抢走注意。
     private static let cancelRowColor = Color(red: 0.35, green: 0.09, blue: 0.10)
     private static let cancelRowTextColor = Color(red: 0.98, green: 0.72, blue: 0.72)
-    private static let cancelRowDividerColor = Color.white.opacity(0.12)
+    private static let cancelRowDividerColor = Color.white
 
     private var sectionDivider: some View {
         Rectangle()
