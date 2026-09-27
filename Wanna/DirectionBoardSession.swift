@@ -77,6 +77,7 @@ final class DirectionBoardSession: ObservableObject {
     /// 「把之前所有的问题都当作需求整理出来，然后看用户到底在做什么」）。
     func resetAccumulatedMindMap() {
         accumulatedMindMap = ""
+        askedQuestions = []
     }
 
     /// 把上一轮的**矛盾**带上（写进提示词的 `<previous_questions>` 段）。
@@ -326,8 +327,33 @@ final class DirectionBoardSession: ObservableObject {
     /// 所以它不能每轮重画：**上一轮那张图要原样带下去，让模型在它上面并新内容** ——
     /// 这也是"一次实时会话里他到底在做什么"唯一的载体。
     private var accumulatedMindMap = ""
+    /// 一段文字的**归一化键**：去掉树枝符号、空白与常见标点，只留字。
+    ///
+    /// 用来比"这一轮的问题是不是新的" —— 识别器给的是**累积**文本，同一句话在它还在说的
+    /// 时候会被重放很多次（不去重的话，问题清单里同一件事会出现十几条）。
+    nonisolated static func mindMapLineKey(_ line: String) -> String {
+        line.filter { character in
+            !"├│└─-— ：:（）()【】[]「」、,，。.".contains(character)
+        }
+    }
+
+    /// **这一次实时会话里他按顺序问过的每一件事**（原话，短句）。
+    ///
+    /// ⚠️ 2026-09-27 深夜第三次改 —— 前两版都错在**给模型的信息不全**：
+    /// 请求里只有"**前五轮**"，却要模型"把到目前为止**所有**问题整合成一张图" ——
+    /// 它手里根本没有全部信息，只能靠"记住上一轮那张图"来补，于是每次都丢几块
+    ///（用户连着两轮报「右上角**总是**无法把用户所有的问题全都收集起来」）。
+    ///
+    /// 用户的说法才是对的、也是最简单的（他的原话）：
+    /// 「把之前解决的这个回复的内容，当作一个之前解决的对话，包括提示词，当作一个**参考内容**，
+    /// 然后让他生成几个标签的文本……**其实就是一次大模型调用就能够解决所有的问题**」。
+    /// 所以现在**把"他问过的每一件事"整份发过去**，模型从完整输入里写完整的一张图 ——
+    /// 不需要它记住任何东西，也不需要 App 替它拼。
+    private var askedQuestions: [String] = []
     /// 保留几轮（用户点名 **5**）。
     static let rememberedTurnCount = 5
+    /// 最多记住他问过的多少件事（防"说了一整天"把提示词撑爆）。
+    static let maximumAskedQuestions = 40
 
     private var recentCornerAnswers: [(text: String, shownAt: Date)] = []
     static let rememberedCornerAnswerCount = 3
@@ -824,6 +850,16 @@ final class DirectionBoardSession: ObservableObject {
             ? ""
             : latestTranscriptAfter(recentTurns[0].at).trimmingCharacters(in: .whitespacesAndNewlines)
         let newQuestion = transcribedAfterLastReply.isEmpty ? transcript : transcribedAfterLastReply
+        // 记下"他问过的这一件事"（同一个问题被重放多次时只记一次 —— 识别器给的是累积文本，
+        // 同一轮里这个函数会被调好几次）。
+        let questionKey = Self.mindMapLineKey(newQuestion)
+        if !questionKey.isEmpty, askedQuestions.last.map(Self.mindMapLineKey) != questionKey {
+            askedQuestions.append(newQuestion)
+            // 上限只是防"说了一整天"把提示词撑爆；正常一次会话到不了。
+            if askedQuestions.count > Self.maximumAskedQuestions {
+                askedQuestions.removeFirst(askedQuestions.count - Self.maximumAskedQuestions)
+            }
+        }
         MainFlowDiagnostics.log("🧭 看板：第 \(roundGeneration) 轮发请求（转写 \(transcript.count) 字）")
         let generation = roundGeneration
         isRequesting = true
@@ -923,14 +959,10 @@ final class DirectionBoardSession: ObservableObject {
                 // **把这一轮那张图存成"到目前为止的汇总"**（下一轮在它上面继续并）。
                 if let mindMap = self.understandingLines.first(where: { $0.label == "细节" })?.value,
                    !mindMap.isEmpty {
-                    let before = self.accumulatedMindMap
                     self.accumulatedMindMap = mindMap
-                    // **并进去了没有**：回来那张图如果比带上去的还短，就是**丢了内容**
-                    //（用户报的正是这个：问过的一大堆问题在图上不见了）。
                     MainFlowDiagnostics.log("🧭 看板：这一轮的图 \(mindMap.count) 字"
                                             + "（\(mindMap.split(separator: "\n").count) 行）"
-                                            + "，上一轮 \(before.count) 字"
-                                            + (mindMap.count < before.count ? " ⚠️ 比上一轮短了" : ""))
+                                            + "；发上去的是他问过的 \(self.askedQuestions.count) 件事")
                 }
 
                 // **疑问那一行是"常驻"的**：把这一轮的值记下来，下一轮带着它去问模型
@@ -983,7 +1015,7 @@ final class DirectionBoardSession: ObservableObject {
             newQuestion: newQuestion,
             previousRoundItems: previousRoundItems,
             previousTurnsText: previousTurnsPromptBlock(),
-            accumulatedMindMap: accumulatedMindMap.isEmpty ? nil : accumulatedMindMap,
+            askedQuestions: askedQuestions,
             referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
             previousQuestions: pendingQuestionsPromptBlock())
         do {

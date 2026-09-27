@@ -644,22 +644,22 @@ struct DirectionBoardTests {
         let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             looksAtTheScreen: true)
-        #expect(systemPrompt.contains("统一记录"))
-        #expect(systemPrompt.contains("无论它们有没有关系"))
+        // 这一版：图的素材是**整份问题清单**，一次调用写出一张完整的图。
+        #expect(systemPrompt.contains("一张图里要有上面清单里的每一件事"))
         // 他给的那个反例：先 A 后一串 B，不许拿 A 当标准套后面所有的问题。
-        #expect(systemPrompt.contains("不要因为"))
+        #expect(systemPrompt.contains("不许因为"))
         #expect(systemPrompt.contains("两张卡片分工不同"))
 
-        // 请求里要带上"到目前为止那张图"，并明确要求在它上面继续、别推倒重来。
+        // 请求里要带上**他问过的每一件事**（整份清单）——
+        // 这是这一版的关键：**输入完整，输出才可能完整**（前两版只给"前五轮"，
+        // 却要模型写出"所有问题"的图，它手里没有全部信息，只能靠记性，于是每次都丢）。
         let prompt = DirectionBoardPrompt.understandingUserPrompt(
             newQuestion: "行业 B 的第二个问题",
             previousRoundItems: [],
-            accumulatedMindMap: "├─ 行业 A\n└─ 行业 B")
-        // ⚠️ 标签**不能**写成"已经完整"（实测：一写成"到目前为止所有问题的汇总"，
-        // 模型就以为不用再加东西，只把旧图抄一遍 —— 用户报的"新问题没进图"就是这么来的）。
-        #expect(prompt.contains("它还不包含他这一轮刚问的"))
-        #expect(prompt.contains("行业 A"))
-        #expect(prompt.contains("把他这一轮刚问的那件事加进去"))
+            askedQuestions: ["行业 A 的第一件事", "行业 A 的第二件事", "行业 B 的第一个问题"])
+        #expect(prompt.contains("按顺序问过的每一件事"))
+        #expect(prompt.contains("1. 行业 A 的第一件事"))
+        #expect(prompt.contains("3. 行业 B 的第一个问题"))
     }
 
     /// **脑图不许把提示词抄成标题**（2026-09-27 截图里就是
@@ -704,18 +704,22 @@ struct DirectionBoardTests {
     /// **「矛盾」和那张图不是二选一**（用户 2026-09-27：「他即便是矛盾的话，他也应该在右侧显示，
     /// **因为他是用户的一个问题啊**」），而且带上去的旧图**不是"已经完整"**——
     /// 标签一写成"到目前为止所有问题的汇总"，模型就以为不用再加东西了（实测就是这么丢的）。
-    @Test func theMindMapLabelNeverClaimsToBeComplete() throws {
+    /// ⚠️ **图那一行要的是"一张完整的图"，素材是整份问题清单**（2026-09-27 深夜第三版）。
+    /// 前两版都错在**给模型的信息不全**（只给"前五轮"、却要它写出"所有问题"的图），
+    /// 它手里没有全部信息、只能靠"记住上一轮那张图"，于是每次都丢几块 ——
+    /// 用户连着两轮报「右上角**总是**无法把用户所有的问题全都收集起来」。
+    /// 现在把整份清单发过去：**输入完整，输出才可能完整**（他说的"一次调用就能解决"）。
+    @Test func theMindMapIsBuiltFromEveryQuestion() throws {
         let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("进了「矛盾」不等于不用进那张图"))
+        #expect(systemPrompt.contains("他问过的每一件事"))
         let prompt = DirectionBoardPrompt.understandingUserPrompt(
             newQuestion: "北京跟上海的关系是什么",
             previousRoundItems: [],
-            accumulatedMindMap: "├─ 赵今麦的信息")
-        // 标签必须说清"还不包含这一轮"，否则模型只会照着抄一遍。
-        #expect(prompt.contains("它还不包含他这一轮刚问的"))
-        #expect(!prompt.contains("到目前为止所有问题的汇总"))
-        #expect(prompt.contains("把他这一轮刚问的那件事加进去"))
+            askedQuestions: ["赵今麦的信息", "屏幕里是什么软件", "北京跟上海的关系是什么"])
+        #expect(prompt.contains("按顺序问过的每一件事"))
+        #expect(prompt.contains("3. 北京跟上海的关系是什么"))
     }
 }
