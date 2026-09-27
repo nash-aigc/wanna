@@ -17,10 +17,17 @@
 //  > 整个方向现在就是一个文件，**一个关键词加一些描述**，让 AI 知道是否能根据这几个描述匹配
 //  > 用户意图，然后去显示，用关键词形式显示。
 //
-//  所以这里只有三件事：**读这个文件**、**追加（去重）**、**从主 Agent 提示词里带出来的出厂那份**。
+//  所以这里只有两件事：**读这个文件**、**追加（去重）**。
 //  文件在 `~/Library/Application Support/Wanna/TaskDirections.json`（0600，仓库外）——
 //  与 `AppSettings.json` / `ModelConfiguration.json` 同一个形状（`nonisolated` + `NSLock` +
 //  原子写后补 0600 + 变更通知）。
+//
+//  ⚠️ **2026-09-27 又简化过一次**（用户：「当前这个项目的逻辑有点乱……尽可能去简化它的复杂度」
+//  +「就是一个固定的文件。我记得之前我是添加了 3 个还是 4 个来源，什么实时的，这都不要」）：
+//  · 那个「临时类型」文件**整块删掉**了 —— 它装的只有"用户这一轮口述出来的类型"，
+//    而"运行时追加"这条路连同它一起没了。**这个文件是唯一的来源。**
+//  · 文件的三个写入口因此只剩：**人手动改**（设置页 / 直接改文件）、**AI 之后改**、
+//    **每天中午复盘追加**（去重后追加）。
 //
 
 import Foundation
@@ -64,13 +71,13 @@ nonisolated final class TaskDirectionStore {
         supportDirectory.appendingPathComponent("TaskDirections.json")
     }
 
-    /// **临时类型**的文件，与固定那份**同级目录**（用户 2026-09-27：
-    /// 「在文件的同级目录创建一个叫"临时类型"的文件。一个是固定类型的文件，一个是临时类型的文件」）。
+    /// **固定状态**（用户明确说过"这个方向对 / 不对"的那些）。
     ///
-    /// 它装的只有"用户这一轮口述出来的类型"（以及带屏幕参考时模型给出的那个答案），
-    /// **每一大轮结束就清掉** —— 所以它是临时的，不进那份固定清单。
-    static var temporaryFileURL: URL {
-        supportDirectory.appendingPathComponent("TaskDirectionsTemporary.json")
+    /// 用户 2026-09-27 选的是「**一直保留到他说取消**」—— 跨大轮、跨对话都在，所以要落盘。
+    /// **单独一个文件**，不写进上面那份清单：那份清单他说过只由 AI / 人 / 复盘改，
+    /// 而这里写的是"用户的当前状态"，两件事混在一个文件里会让"清单"不再是一份可读的备选项列表。
+    static var pinsFileURL: URL {
+        supportDirectory.appendingPathComponent("TaskDirectionPins.json")
     }
 
     private static var supportDirectory: URL {
@@ -86,26 +93,12 @@ nonisolated final class TaskDirectionStore {
         lock.lock()
         defer { lock.unlock() }
         if let cached { return cached }
-        // ⚠️ **只在这里锁一次**，下面两个都是 `…Locked`（假定已持锁）。
+        // ⚠️ **只在这里锁一次**，下面是 `…Locked`（假定已持锁）。
         // 2026-09-27：这里原来是 `loadFromDisk` + 里面的 `write`，两个都自己 `lock()` ——
         // `NSLock` 不可重入，于是**第一次读清单就死锁**，App 卡死在 Listening（用户当场报「卡死」）。
-        let loaded = loadFromDiskLocked(at: Self.fileURL) + loadFromDiskLocked(at: Self.temporaryFileURL)
+        let loaded = loadFromDiskLocked(at: Self.fileURL)
         cached = loaded
         return loaded
-    }
-
-    /// **固定那份**（不含临时）—— 设置页分别显示两个文件的条数用。
-    func fixedDirections() -> [TaskDirection] {
-        lock.lock()
-        defer { lock.unlock() }
-        return loadFromDiskLocked(at: Self.fileURL)
-    }
-
-    /// **临时那份**（这一轮口述出来的）。
-    func temporaryDirections() -> [TaskDirection] {
-        lock.lock()
-        defer { lock.unlock() }
-        return loadFromDiskLocked(at: Self.temporaryFileURL)
     }
 
     /// 只读关键词与描述（给判断用）。
@@ -118,6 +111,56 @@ nonisolated final class TaskDirectionStore {
         return allDirections().contains { Self.normalizedKeyword($0.keyword) == needle }
     }
 
+    // MARK: - 固定状态（用户明确说过的方向）
+
+    /// 方向 id → 用户给它的判定。
+    enum PinState: String {
+        /// 用户说「这个方向对」。
+        case confirmed
+        /// 用户说「这个方向不对」。
+        case denied
+    }
+
+    /// 读回来（顺序就是**固定的顺序** —— 卡片的编号按它排，用户说过的编号于是不再变）。
+    func pinnedStates() -> [(directionID: String, state: PinState)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadPinsLocked()
+    }
+
+    /// 用户明确说了这一格对 / 不对 → 固定下来。`state == nil` 表示取消固定。
+    ///
+    /// 顺序规则：**第一次固定时追加到末尾**，之后改判（对 ↔ 不对）**不动位置** ——
+    /// 用户说的「方向一就一直在这里显示」要求编号稳定，而编号就是按这个数组排出来的。
+    func setPinned(directionID: String, state: PinState?) {
+        lock.lock()
+        defer { lock.unlock() }
+        var pins = loadPinsLocked()
+        let existingIndex = pins.firstIndex { $0.directionID == directionID }
+        switch state {
+        case .none:
+            guard existingIndex != nil else { return }
+            pins.remove(at: existingIndex!)
+        case .some(let newState):
+            if let existingIndex {
+                pins[existingIndex] = (directionID, newState)
+            } else {
+                pins.append((directionID, newState))
+            }
+        }
+        writePinsLocked(pins)
+        print("🎛️ 任务方向：用户\(state == nil ? "取消了固定" : (state == .confirmed ? "确认" : "否定"))「\(directionID)」")
+    }
+
+    /// 全部取消（设置页那颗按钮）。
+    func clearPins() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !loadPinsLocked().isEmpty else { return }
+        writePinsLocked([])
+        print("🎛️ 任务方向：已清空全部固定")
+    }
+
     // MARK: - 内部（**都假定调用方已经持锁**）
     //
     // 命名带 `Locked` 是硬规矩：这个类型的每一处加锁都只发生在**公开入口的第一行**，
@@ -126,7 +169,9 @@ nonisolated final class TaskDirectionStore {
     // MARK: - 写（只允许追加与删除单条；没有"整份替换"之外的第三种）
 
     /// **追加一条**（去重：关键词归一化之后相同就不加）。返回是否真的加进去了。
-    /// **追加一条**。`source == .user`（用户口述）写进**临时**那份；其余写进固定那份。
+    ///
+    /// 三个调用方：设置页手动加、每天中午复盘追加。**运行时不再有第四个**
+    ///（用户口述的新方向这条路 2026-09-27 已删，见文件头）。
     @discardableResult
     func append(keyword: String, detail: String, source: TaskDirection.Source) -> Bool {
         let trimmedKeyword = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -136,42 +181,25 @@ nonisolated final class TaskDirectionStore {
 
         lock.lock()
         defer { lock.unlock() }
-        let target = source == .user ? Self.temporaryFileURL : Self.fileURL
-        var directions = loadFromDiskLocked(at: target)
+        var directions = loadFromDiskLocked(at: Self.fileURL)
         directions.append(TaskDirection(id: Self.slug(for: trimmedKeyword),
                                         keyword: trimmedKeyword,
                                         detail: trimmedDetail.isEmpty ? trimmedKeyword : trimmedDetail,
                                         source: source.rawValue,
                                         addedAt: Date()))
-        writeLocked(directions, to: target)
-        print("🧭 任务方向：追加了一条（\(source.rawValue)\(source == .user ? "，临时文件" : "")）—— \(trimmedKeyword)")
+        writeLocked(directions, to: Self.fileURL)
+        print("🧭 任务方向：追加了一条（\(source.rawValue)）—— \(trimmedKeyword)")
         return true
-    }
-
-    /// **清掉临时那份**（每一大轮结束时调）。
-    ///
-    /// 用户 2026-09-27：「临时文件在每一轮对话结束时清掉。是每一**大**轮，就是一整个大轮，
-    /// 中间可能有打断、有些东西，这算一个轮，不算两轮，算一轮，然后自动清掉。」
-    func clearTemporaryDirections() {
-        lock.lock()
-        defer { lock.unlock() }
-        let existing = loadFromDiskLocked(at: Self.temporaryFileURL)
-        guard !existing.isEmpty else { return }
-        writeLocked([], to: Self.temporaryFileURL)
-        print("🧭 任务方向：临时文件已清（\(existing.count) 条）")
     }
 
     func remove(id: String) {
         lock.lock()
         defer { lock.unlock() }
-        // 两处都找一遍：它可能在固定那份，也可能在临时那份。
-        for url in [Self.fileURL, Self.temporaryFileURL] {
-            let remaining = loadFromDiskLocked(at: url).filter { $0.id != id }
-            writeLocked(remaining, to: url)
-        }
+        let remaining = loadFromDiskLocked(at: Self.fileURL).filter { $0.id != id }
+        writeLocked(remaining, to: Self.fileURL)
     }
 
-    /// 把用户改过的清单**恢复成出厂那份**（设置页那颗按钮；只动固定那份）。
+    /// 把用户改过的清单**恢复成出厂那份**（设置页那颗按钮）。
     func restoreBuiltinDefaults() {
         lock.lock()
         defer { lock.unlock() }
@@ -197,8 +225,7 @@ nonisolated final class TaskDirectionStore {
 
     private func loadFromDiskLocked(at url: URL) -> [TaskDirection] {
         guard let data = try? Data(contentsOf: url) else {
-            // 固定那份第一次跑：把出厂那份写下去（**从此这个文件就是真相**，代码里那份只是种子）。
-            // 临时那份**不种子** —— 空的就该是空的。
+            // 第一次跑：把出厂那份写下去（**从此这个文件就是真相**，代码里那份只是种子）。
             guard url == Self.fileURL else { return [] }
             writeLocked(Self.builtinDirections, to: url)
             return Self.builtinDirections
@@ -207,6 +234,35 @@ nonisolated final class TaskDirectionStore {
         decoder.dateDecodingStrategy = .iso8601
         guard let directions = try? decoder.decode([TaskDirection].self, from: data) else { return [] }
         return directions
+    }
+
+    /// 固定状态那份文件（`[{"directionID":…,"state":"confirmed"}]`，顺序 = 显示顺序）。
+    private struct StoredPin: Codable {
+        var directionID: String
+        var state: String
+    }
+
+    private func loadPinsLocked() -> [(directionID: String, state: PinState)] {
+        guard let data = try? Data(contentsOf: Self.pinsFileURL),
+              let stored = try? JSONDecoder().decode([StoredPin].self, from: data) else { return [] }
+        // 认不出来的状态直接丢掉（手改坏了不该让整份失效）。
+        return stored.compactMap { pin in
+            guard let state = PinState(rawValue: pin.state) else { return nil }
+            return (pin.directionID, state)
+        }
+    }
+
+    private func writePinsLocked(_ pins: [(directionID: String, state: PinState)]) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let stored = pins.map { StoredPin(directionID: $0.directionID, state: $0.state.rawValue) }
+        guard let data = try? encoder.encode(stored) else { return }
+        try? FileManager.default.createDirectory(at: Self.pinsFileURL.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        try? data.write(to: Self.pinsFileURL, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                               ofItemAtPath: Self.pinsFileURL.path)
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
     }
 
     private static func normalizedKeyword(_ keyword: String) -> String {

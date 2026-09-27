@@ -22,12 +22,16 @@ struct DirectionBoardSettingsSection: View {
     /// 清单变了要重画（store 发通知）。
     @State private var directions: [TaskDirection] = TaskDirectionStore.shared.allDirections()
 
-    private var fixedCount: Int { TaskDirectionStore.shared.fixedDirections().count }
-    private var temporaryCount: Int { TaskDirectionStore.shared.temporaryDirections().count }
+    private var pinnedStates: [(directionID: String, state: TaskDirectionStore.PinState)] {
+        TaskDirectionStore.shared.pinnedStates()
+    }
 
     private func reload() {
         directions = TaskDirectionStore.shared.allDirections()
+        // 固定状态是算出来的（不是我持有的副本），但视图得知道它变了 —— 用一个计数器推一把。
+        pinnedRevision += 1
     }
+    @State private var pinnedRevision = 0
     @State private var newKeyword = ""
     @State private var newDetail = ""
     @State private var jevKeyDraft = JevDecisionClient.apiKey() ?? ""
@@ -97,8 +101,8 @@ struct DirectionBoardSettingsSection: View {
         SettingsGroupLabel("方向清单（一个文件）")
         SettingsCard {
             SettingsRow(
-                label: "固定类型（\(fixedCount) 条）",
-                description: "出厂那份 + 每天中午复盘追加的，都在这个文件里：一个关键词 + 一句描述。出厂那份是从主 Agent 提示词里提炼的；复盘只改这一个文件。"
+                label: "清单（\(directions.count) 条）",
+                description: "**只有一个来源**：这个文件。一个关键词 + 一句描述。出厂那份是从主 Agent 提示词里提炼的；每天中午复盘扫你的历史记录，出现超过两次的才追加进来（先去重）；你也可以在这里手动加或删。"
             ) {
                 HStack(spacing: 6) {
                     Button("在访达中显示") {
@@ -113,18 +117,6 @@ struct DirectionBoardSettingsSection: View {
                 }
             }
 
-            SettingsCardRowDivider()
-            SettingsRow(
-                label: "临时类型（\(temporaryCount) 条）",
-                description: "你说话时口述出来的类型（含「参考屏幕」时模型算出来的那个结果），存在同级目录的另一个文件里。**每一大轮结束自动清掉** —— 它不该沉淀到固定清单里。"
-            ) {
-                Button("立刻清空") {
-                    TaskDirectionStore.shared.clearTemporaryDirections()
-                    reload()
-                }
-                .buttonStyle(DSPillButtonStyle())
-            }
-
             ForEach(directions) { direction in
                 SettingsCardRowDivider()
                 SettingsRow(
@@ -137,6 +129,18 @@ struct DirectionBoardSettingsSection: View {
                     }
                     .buttonStyle(DSPillButtonStyle())
                 }
+            }
+
+            SettingsCardRowDivider()
+            SettingsRow(
+                label: "已固定的方向（\(pinnedStates.count) 条）",
+                description: pinnedDescription
+            ) {
+                Button("全部取消") {
+                    TaskDirectionStore.shared.clearPins()
+                    reload()
+                }
+                .buttonStyle(DSPillButtonStyle())
             }
 
             SettingsCardRowDivider()
@@ -179,6 +183,20 @@ struct DirectionBoardSettingsSection: View {
         SettingsNote(
             text: "为什么用 Jev：它是专门做判断的模型，给的是概率（不是一段话），而且便宜到可以每三秒问一次。方向和理解分开：方向由 Jev 判，那段「我理解你要做什么」由大模型写 —— 两边都只拿「方向清单 + 你说的话」，不再发主 Agent 那一大段提示词。"
         )
+    }
+
+    /// 已固定那一行的说明（有固定项时把它们连起来给用户看）。
+    private var pinnedDescription: String {
+        let pins = pinnedStates
+        guard !pins.isEmpty else {
+            return "你在说话时明确说过「这个方向对 / 不对」的那些会固定显示在板上，并一直留着 —— 这里可以一次全清。"
+        }
+        let names = pins.map { pin -> String in
+            let keyword = directions.first { $0.id == pin.directionID }?.keyword ?? pin.directionID
+            return keyword + (pin.state == .confirmed ? " ✓" : " ✗")
+        }
+        return "这些是你明确说过「对 / 不对」的方向：" + names.joined(separator: "、")
+            + "。固定项永远排在板子最前、编号不变；说「取消任务方向 N」也能取消一条。"
     }
 
     private func sourceLabel(_ source: String) -> String {

@@ -50,8 +50,9 @@ nonisolated enum DirectionBoardPrompt {
     /// 模型用来表示"这一行没有内容"的写法 —— 一律当成空（占位符由视图画）。
     private static let emptyValueMarkers: Set<String> = ["—", "-", "–", "无", "没有", "暂无", "n/a", "na", "无。"]
 
-    /// **只截断、自己不成行**的标签（它有自己的显示位置）。
-    private static let boundaryLabels = ["任务结果"]
+    /// **只截断、自己不成行**的标签 —— 它们各有各的去处（`parseAnswer` / `parseSelectionVerdict`），
+    /// 但不属于"理解那四行"。少了它们，「细节」会把整句「…推断。 答案：选 A」吞进去。
+    private static let boundaryLabels = ["任务结果", "答案", "选择"]
 
     /// 写"AI 怎么理解"用的系统提示词 —— **只给方向清单，不给主 Agent 提示词**。
     ///
@@ -77,8 +78,14 @@ nonisolated enum DirectionBoardPrompt {
         参考：<这次要看或要动的东西：哪个软件、哪个文件、哪个页面、哪个网站；没有就写「—」>
         细节：<任何需要知道的前提、约束、你注意到的东西；可以多句，也可以写「—」>
 
-        任务结果：<如果你**已经能从屏幕/文字直接算出答案**（例如题目选哪个选项、哪几个人最像），
-                  就把结果直接写在这一行；算不出来就整行不写>
+        **答案**：<只在这一轮**包含一个可以当场回答的问题**时才写（「北京在哪」「杨幂是谁」
+                  「左右两张图有什么区别」「这道题选 A 还是 B」），一到三句话，像回答用户一样自然；
+                  不是问题、或者你要靠执行才能知道答案的，**整行不写**>
+        （这一行会被直接显示在用户鼠标右下角，和最终结果的样式一模一样 —— 所以要像成品答案那样写，
+          不要写"我可以帮你查"这种话。）
+
+        **选择**：<只在这一轮**用户明确评论了上一轮看板上那些方向**时才写，用**上一轮给的编号**，
+                  例如「1 对，3 不对」「取消 2」；没有就整行不写>
 
         规则：
         1. **只写理解与结果**，不要执行任何事、不要给操作步骤、不要写代码；
@@ -137,22 +144,73 @@ nonisolated enum DirectionBoardPrompt {
         return text
     }
 
-    /// 用户消息：**用户说的话 +（上一次的理解，供保持连续）**。
-    static func understandingUserPrompt(transcript: String, previousReading: String) -> String {
+    /// 用户消息：**用户说的话 + 上一轮显示的是什么 + 最近三轮的理解（带标签）**。
+    ///
+    /// 三块都是用户点名要的：
+    /// · 「你必须要知道用户表达的是对**上一轮**（JEV）它的结果的一个选择」→ 上一轮的编号映射；
+    /// · 「你要在发送给下一轮模型的时候要**保留前三轮**，然后你要标记一下……最早的那一轮和最近的
+    ///   那一轮分别是什么，然后让它**重点参考最近一轮**」→ 带标签的三环历史。
+    static func understandingUserPrompt(transcript: String,
+                                        previousRoundItems: [DirectionBoardDisplayItem],
+                                        recentReadings: [String]) -> String {
         var sections: [String] = []
         sections.append("""
         用户到目前为止说的话：
         \(transcript)
         """)
-        let previous = previousReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !previous.isEmpty {
+
+        if !previousRoundItems.isEmpty {
+            let lines = previousRoundItems.map { item in
+                let mark: String
+                switch item.state {
+                case .confirmed: mark = "（用户已确认是对的）"
+                case .denied: mark = "（用户已否认）"
+                case .pending: mark = ""
+                }
+                return "\(item.number). \(item.keyword)\(mark)"
+            }
             sections.append("""
-            这是你上一次（几秒前）的理解，供你保持连续；如果他没说什么新的，就沿用：
-            \(previous)
+            上一轮你在看板上显示的是这几条（**编号是上一轮的**）：
+            \(lines.joined(separator: "\n"))
+
+            如果用户这一轮在评论这些方向（「第几个对 / 第几个不对 / 取消第几个」），
+            请按**上面这套编号**理解，并写在「选择：」那一行里。
+            """)
+        }
+
+        let readings = recentReadings
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !readings.isEmpty {
+            // 最近的那一轮排在最前，标签也是照着这个顺序给的（用户要的重点参考最近一次）。
+            let labels = ["最近一次", "倒数第二次", "倒数第三次"]
+            let blocks = readings.enumerated().map { index, reading in
+                let label = index < labels.count ? labels[index] : "更早"
+                return "【\(label)】\n\(reading)"
+            }
+            sections.append("""
+            你前面几轮的理解（**以「最近一次」为主**，其余供你保持连续）：
+            \(blocks.joined(separator: "\n\n"))
             """)
         }
         return sections.joined(separator: "\n\n")
     }
+
+    /// **固定的一段话**，追加在用户原话**后面**（发送执行时用）。
+    ///
+    /// 用户 2026-09-27：「必须要去再增加一个……系统提示词，来去备注到用户的刚才整段转写的文本的后面，
+    /// 然后去让 AI 理解到其中用户关于……方向一方向 2、方向 3，他是关于这个某一个位置卡片的任务的
+    /// 理解，然后这部分**不是真正的要去执行的任务**……**你帮我梳理出来一个这个提示词是固定的就可以，
+    /// 不需要实时生成**」。
+    ///
+    /// 它解决的问题很具体：用户在说话时大量内容是在跟看板交互（「方向一 对，任务方向 3 不对」），
+    /// 转写里于是出现一串**光秃秃的数字**，模型拿到只会当成任务的一部分。
+    static let boardReferenceNote = """
+    <board_reference>
+    上面这段转写里出现的「方向一 / 任务方向 3 / 第 4 个」这类说法，是用户在跟屏幕上那块任务方向看板 \
+    交互（确认或取消某一条方向），**不是**要你执行的任务本身 —— 请忽略这些片段，只按其余的话执行。
+    </board_reference>
+    """
 
     /// 结构化理解的**那四行** —— **永远返回四行、顺序固定**（没内容的行值是空串）。
     ///
@@ -265,39 +323,60 @@ nonisolated enum DirectionBoardPrompt {
     /// **任务结果**那一行（模型能直接算出来才有）。
     ///
     /// 用户 2026-09-27：「如果用户的问题很明确，让他去判断哪一个选项，他不仅理解，不仅有任务方向，
-    /// 还要补充一个**任务结果**……如果他马上就能通过 AI 算出任务结果，就直接把任务结果发给用户。」
-    static func parseTaskResult(_ raw: String) -> String? {
+    /// **答案**那一行（只在用户这一轮包含一个能当场回答的问题时才有）。
+    ///
+    /// 用户 2026-09-27：「鼠标右下角这部分显示的是对用户提示词回复的一个**结果**」——
+    /// 所以这一行不是给看板看的，是**直接显示到右下角那张卡片上**的成品答案。
+    ///
+    /// ⚠️ 与"理解"的四行**互不影响**：这一行没有就返回 nil，右下角于是保持空
+    ///（用户选的：「识别到「问题」才显示」）。
+    static func parseAnswer(_ raw: String) -> String? {
+        parseSection("答案", in: raw, maximumCharacters: maximumAnswerCharacters)
+    }
+
+    /// 答案最多这么长（右下角那张卡片的宽度是按一屏内可读定的）。
+    static let maximumAnswerCharacters = 400
+
+    /// 通用的一节：从「标签:」处取到行尾（或下一个标签处），最多续两行。
+    ///
+    /// 「答案」与「选择」都用它 —— 两处各写一遍必漂（这个文件已经因为"切法写两遍"踩过一次）。
+    private static func parseSection(_ label: String,
+                                     in raw: String,
+                                     maximumCharacters: Int) -> String? {
         let normalized = raw.replacingOccurrences(of: "：", with: ":")
-        guard let range = normalized.range(of: "任务结果:", options: .backwards) else { return nil }
-        // **结果可能续到下一行**（实测模型写成「任务结果：选」+ 换行 +「A」）—— 所以取到
-        // 空行、或下一个"标签行"为止，最多两行。
+        guard let range = normalized.range(of: label + ":", options: .backwards) else { return nil }
+        // 值可能**续到下一行**（实测模型写成「答案：这道题」+ 换行 +「选 A」）—— 取到空行、
+        // 或下一个"标签行"为止，最多两行。
         var collected: [String] = []
         for rawLine in String(normalized[range.upperBound...]).split(separator: "\n",
                                                                     omittingEmptySubsequences: false) {
             let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
             if line.isEmpty { break }
-            let knownLabels = ["软件:", "文件:", "目标:", "类型:", "细节:", "任务结果:"]
-            if !collected.isEmpty, knownLabels.contains(where: { line.hasPrefix($0) }) { break }
+            let knownLabels = understandingLabels.flatMap { label in
+                understandingLabelAliases.first { $0.label == label }?.aliases ?? [label]
+            } + ["答案", "选择", "任务结果"]
+            if !collected.isEmpty, knownLabels.contains(where: { line.hasPrefix($0 + ":") }) { break }
             collected.append(line)
             if collected.count >= 2 { break }
         }
         var value = collected.joined(separator: " ")
-        value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         while let first = value.first, "#*`\"「」 ".contains(first) { value.removeFirst() }
-        while let last = value.last, "#*`\"".contains(last) { value.removeLast() }
+        while let last = value.last, "#*`\"「」".contains(last) { value.removeLast() }
         let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty, cleaned.count <= 60 else { return nil }
-        return cleaned
+        guard !cleaned.isEmpty, cleaned.count <= maximumCharacters else { return nil }
+        // 模型写「—」表示"这一行没有" —— 那是空，不是内容。
+        return normalizedValue(cleaned).isEmpty ? nil : cleaned
     }
 
     /// 模型回的那段**原文**：只做必要的收拾，**不截断**。
     ///
     /// ⚠️ 这里原来是直接把 `cleanParagraph`（**200 字上限**）用在原文上，而那段"上限"是给
-    /// **显示**用的 —— 于是解析（`parseUnderstandingLines` / `parseTaskResult`）拿到的是一段
+    /// **显示**用的 —— 于是解析（`parseUnderstandingLines` / `parseAnswer`）拿到的是一段
     /// **已经被砍掉尾巴**的文本：五行加起来很容易超过 200 字，屏幕上就是「细节」那行写到一半
     /// 突然断在「题目在屏幕右」（2026-09-27 实测截图，用户要的是完整的多行理解）。
     /// 所以截断只能发生在**显示那一步**（`self.paragraph`），原文一律留着 —— 四个上限
-    /// （五个标签 + 任务结果）都得从完整文本里切。
+    /// （四行 + 答案）都得从完整文本里切。
     static func cleanRawResponse(_ raw: String) -> String {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while let first = text.first, "#*`\"' ".contains(first) { text.removeFirst() }
@@ -328,20 +407,27 @@ nonisolated enum DirectionBoardPrompt {
     ///
     /// 用户定的形状：「将记录内容作为标签追加到用户提示词的前一行，格式为
     /// 「用户真实意图的任务方向是：XXX」，下方再接用户原始提示词」。
-    /// **只写点过确认的**（没点的、点否认的都不写；输入框那片空白也整段不出现）。
-    static func decoration(confirmedDirectionTexts: [String], typedInput: String) -> String? {
+    static func decoration(_ decision: DirectionBoardTurnDecision) -> String? {
         var lines: [String] = []
-        for text in confirmedDirectionTexts {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            // 已经带着前缀的那条（"用户确认的任务理解是：…"）原样用。
-            if trimmed.hasPrefix("用户确认的任务理解是：") {
-                lines.append(trimmed)
+        // **用户明确确认过的方向**（关键词 + 描述一起给 —— 描述在文件里，是给模型看的判据）。
+        for direction in decision.confirmedDirections {
+            let keyword = direction.keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !keyword.isEmpty else { continue }
+            let detail = direction.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            if detail.isEmpty || detail == keyword {
+                lines.append("用户真实意图的任务方向是：\(keyword)")
             } else {
-                lines.append("用户真实意图的任务方向是：\(trimmed)")
+                lines.append("用户真实意图的任务方向是：\(keyword)（\(detail)）")
             }
         }
-        let trimmedInput = typedInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        // **大模型这一轮的理解** —— 用户：「这部分全部都作为一个参考」（不再需要他点一下确认）。
+        let understanding = decision.understanding
+            .map { "\($0.label)：\($0.value)" }
+            .joined(separator: "；")
+        if !understanding.isEmpty {
+            lines.append("模型对这次任务的理解是：\(understanding)")
+        }
+        let trimmedInput = decision.typedInput.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedInput.isEmpty {
             lines.append("用户的补充说明是：\(trimmedInput)")
         }

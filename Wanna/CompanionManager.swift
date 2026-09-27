@@ -568,6 +568,18 @@ final class CompanionManager: ObservableObject {
     /// which is what keeps the setting to one gate, in the pipeline that fills this.
     @Published private(set) var streamingAnswerText: String = ""
 
+    /// **答案预览** —— 用户还在说话、任务还没发出去之前，右下角那张卡片上先显示的东西。
+    ///
+    /// 用户 2026-09-27：「鼠标右下角这部分显示的是对用户提示词回复的一个**结果**……右下角这卡片
+    /// 其实就是一个**答案的预览区**」，而且「跟正常的这个任务执行之后返回结果的卡片的动效、
+    /// 文字的效果渲染效果是一样的」—— 所以它走的是**同一条渲染**（`OverlayWindow` 里那张
+    /// `AnswerCardView`），只是这段文字来自看板那一轮请求，而不是执行结果。
+    ///
+    /// 谁写：`DirectionBoardSession` 通过 `answerPreviewWriter` 注入的闭包（跨子系统只走注入）。
+    /// 谁清：发送（`consumeTurnDecision`）、ESC、新一轮开始 —— 清空 = 传 nil。
+    @Published var answerPreviewText: String = ""
+
+
     /// **任务完成的对号 + 一句摘要**，光标旁停 2–3 秒（方案第 4 步）。
     ///
     /// 它刻意是**独立的一个显示位**，不是复用 `streamingAnswerText`：那个属性是
@@ -780,6 +792,15 @@ final class CompanionManager: ObservableObject {
         // 第一句就要读 `hasScreenContentPermission`，它读不到就会把 app 锁死。见
         // `LegacyDefaultsMigration` 的头注释。
         LegacyDefaultsMigration.runIfNeeded()
+
+        // **看板那一轮的答案写到右下角那张卡片上**（与最终结果同一张）。
+        // 注入闭包而不是让看板直接持有一个 `CompanionManager`：跨子系统只走注入，
+        // 与 `sharedVoicePlaybackEngineProvider` / `voiceIdleProvider` 同一个先例。
+        DirectionBoardSession.shared.answerPreviewWriter = { [weak self] text in
+            MainActor.assumeIsolated {
+                self?.answerPreviewText = text ?? ""
+            }
+        }
 
         // **静音到点时问一句"用户是不是正在看板上操作"**（用户 2026-09-27 点名要的检测机制）。
         // 音频层不认识看板，所以只把判断与回调注进去（同 `sharedVoicePlaybackEngineProvider`）。
@@ -2642,6 +2663,12 @@ final class CompanionManager: ObservableObject {
             """)
         }
         sections.append("the user just said, out loud: \(transcript)")
+        // **用户原话后面那一段固定的说明**（用户：「必须要去再增加一个……系统提示词，来去备注到
+        // 用户的刚才整段转写的文本的后面」）—— 只有这一轮真的带过看板那几行时才加：
+        // 没有看板内容时，转写里不可能出现「方向一」这种说法，加了反而是噪音。
+        if intentTagsBlock != nil {
+            sections.append(DirectionBoardPrompt.boardReferenceNote)
+        }
         return sections.joined(separator: "\n\n")
     }
 
@@ -3181,9 +3208,7 @@ final class CompanionManager: ObservableObject {
     /// 只有这一处取 —— 四条提交路径共用 `sendTranscriptToVisionChatWithScreenshot`，所以
     /// 不可能有哪条路漏掉或者取两次。没点过（也没输入过）时返回 `nil`。
     private static func consumeDirectionBoardIntentTags() -> String? {
-        let decision = DirectionBoardSession.shared.consumeTurnDecision()
-        return DirectionBoardPrompt.decoration(confirmedDirectionTexts: decision.directionTexts,
-                                               typedInput: decision.typedInput)
+        DirectionBoardPrompt.decoration(DirectionBoardSession.shared.consumeTurnDecision())
     }
 
     /// - Parameter userIntentTags: **方向看板那几行**（用户点过的方向 + 输入框里的补充说明）。

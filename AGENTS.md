@@ -594,6 +594,29 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 真机实测过用户点的那道题：预览里打开《初中数学浙江中考数学真题.pdf》，注入「参考屏幕内容，分析一下
 这道题可能选哪一个」→ 绿框里给出「第 1 题:-3 的相反数是 3，选 A（选项 A 为 3）。」
 
+**第七版（2026-09-27 深夜）—— 用户判定「整个的复杂度太高了」，做了一次结构性简化。**
+他的原话：「**就是一个固定的文件**。我记得之前我是添加了 3 个还是 4 个来源，什么实时的，**这都不要**」。
+删掉的：`TaskDirectionsTemporary.json` 整个文件、运行时追加用户口述的新方向、带屏幕参考时把模型给的
+标签变成一条方向、`forcedDirectionIDs`、`spokenNewDirection`。`TaskDirections.json` 于是只剩三个写入口
+（人手改 / AI 之后改 / 复盘追加）。**固定状态搬进第二个小文件 `TaskDirectionPins.json`**（他选的是
+「一直保留到他说取消」，跨大轮跨对话都在，所以要落盘；而不写进那份清单 —— 清单只由那三个写入口改）。
+显示规则：**固定项永远排最前、编号稳定、✓ 和 ✗ 都显示**（他：「无论是对还是不对都要显示」），
+后面才是 JEV 补的（可轮换），列数满了**先砍 JEV 那部分**。**判定改成"两拍"**（他讲得很明确：
+「这个理解是由大语言模型在**第二轮**……你必须要知道用户表达的是对**上一轮** JEV 模型它的结果的一个
+选择」）：请求带上「上一轮显示的是哪几格」，模型回一行 `选择：1 对，3 不对`，代码按**上一轮的编号**
+回填 —— 本地那套口述选择正则（含上一版刚加的编号映射表）**整块删掉**，口述走模型那一拍、
+**点击仍然瞬时**。请求还带上**前三轮**的理解（标「最近一次 / 倒数第二次 / 倒数第三次」）。
+**右下角多了一个答案预览**：说话期间右下角那张卡片显示模型对用户提问的回答，走的是**同一条渲染**
+（`conversationBubbleText` 里插在 `streamingAnswerText` 之后、渲染分支一起判空），所以
+「跟正常结果卡片的动效与渲染一模一样」是结构上成立的；不朗读。发送时 `<user_intent_tags>` 里
+**只发用户明确确认过的方向（关键词 + 描述）**、否定的与按概率的一律不发、**理解四行无条件发**
+（因此理解旁那个 ✕ 删掉了），**用户原话后面**补一段固定的 `<board_reference>` 说明
+「转写里那些『方向一 / 任务方向 3』是跟看板交互，不是要执行的任务」。右上角原来那行「任务结果」
+**删掉**（答案归右下角）。顺带堵上一个既有漏洞：`endListening()` 只在按住说话那条路上被调，
+确认模式轻点 / 连续追问 / 打字提问三条不经过它 —— 现在收在 `consumeTurnDecision()` 里（五条路
+唯一都会走的地方）。真机验过两张卡片同屏：右上角固定项 ✓/✗ 排最前、无任务结果行；右下角
+数学题答案是「第 1 题选 A。……-3 的相反数是 3，所以选 A。」
+
 **第六版（2026-09-27 深夜）：行的集合恒定（卡片不再跳）+ 说「第 N 个」不再选两格。**
 用户的两句判定：「他回复结果的时候**总是跳、总是蹦**……内容有时候有软件目标细节，有时候没有」
 +「这几行固定在这，而不是突然间有、突然间没有，这对体验影响太差了，**包括结果这一行也固定在这**」。
@@ -909,7 +932,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `DirectionBoardMatching.swift` | ~299 | 「这一轮显示哪几条」与口述解析的**全部判定**（纯逻辑、能脱 App 编译）：本地关键词命中（比较前只留字母数字；**4 字以下只认精确**）、`displayedItems`（本地命中优先 → Jev 概率过阈值，**钉住的排最前、编号不变**）、`spokenSelectionNumber` / `spokenCancelSelectionNumber`（中文数字也认，越界忽略）、**`resolvedSpokenNumber(_:remembered:in:)`**（「第 N 个方向」一句之内**一旦定下就不改** —— 修「说第二个方向却选了两格」，见 `开发经验/19` 第九版）、`spokenCancelBoardRequested`（只认「取消任务看板 / 取消任务方向」两个精准短语）、`spokenNewDirection`、`screenReferenceRequested`（**相邻**组合词才算：参考/根据/请看/看一下 + 屏幕/图片/桌面/截图/画面）。 |
 | `JevDecisionClient.swift` | ~145 | **方向判断用的 Jev 决策模型**（用户点名要的，因为便宜且回的是概率）。协议是**实测**的：`POST https://openrouter.ai/api/alpha/decisions` + `~typesafe/jev-latest`，OpenRouter 的 key，**一个请求问多题按次计费**，`noul` 的 `criteria` 键**必须字面量是 `"true"`/`"false"`**（写 yes/no 一律 400），只回一个 P(true)。实测一次 $0.0000318。Key 在 `~/Library/Application Support/Wanna/JevKey.txt`（0600，**不进 AppSettings**，所以导出设置不会带出去）。 |
 | `TaskDirectionReviewJob.swift` | ~161 | **每天中午 12 点**的复盘：睡到下一个本地中午（`nextNoon`），读最近 7 天会话的最后 20 轮，一次 LLM 调用提炼高频方向，**只追加**到 `TaskDirectionStore`（`source: .review`）、去重、不轮询。 |
-| `DirectionBoardPrompt.swift` | ~351 | 看板那次请求的**提示词与解析**。系统提示词**只给方向清单**（约三百 token，不是主 Agent 那五千字）。**卡片固定四行**（`understandingLabels` = 目标问题 / 类型 / 参考 / 细节，顺序是用户定的）：`parseUnderstandingLines` 的契约是「**永远返回这四行**，缺的行值是空串」（视图画占位符，卡片高度因此恒定 —— 用户：「这几行固定在这，而不是突然间有、突然间没有」）；`understandingLabelAliases` 每行带一串别名（模型常写回 `软件`/`文件`/`目标` 这些老标签）；**去重叠**是必须的（`目标问题:` 里嵌着 `目标:` 与 `问题:`，不处理那一行会被切成三段空值）；`任务结果` 是**边界标签**（只截断、不成行，见 `boundaryLabels`）。另有 `parseTaskResult`（取最后一次出现，最多续两行）、`parseLabelLine`（**不能只认行首**：实测模型写在同一行上）、`leftoverParagraphText`（按"保留没被覆盖的字"拼 —— 删区间会在别名互相嵌套时崩）。⚠️ **`cleanRawResponse`（不截断）给解析、`cleanParagraph`（200 字上限）只给显示**。 |
+| `DirectionBoardPrompt.swift` | ~351 | 看板那次请求的**提示词与解析**。系统提示词**只给方向清单**（约三百 token，不是主 Agent 那五千字）。**卡片固定四行**（`understandingLabels` = 目标问题 / 类型 / 参考 / 细节，顺序是用户定的）：`parseUnderstandingLines` 的契约是「**永远返回这四行**，缺的行值是空串」（视图画占位符，卡片高度因此恒定 —— 用户：「这几行固定在这，而不是突然间有、突然间没有」）；`understandingLabelAliases` 每行带一串别名（模型常写回 `软件`/`文件`/`目标` 这些老标签）；**去重叠**是必须的（`目标问题:` 里嵌着 `目标:` 与 `问题:`，不处理那一行会被切成三段空值）；`任务结果`/`答案`/`选择` 是**边界标签**（只截断、不成行，见 `boundaryLabels`）。另有 `parseAnswer` / `parseSection`（「答案」那一节，取最后一次出现，最多续两行）、`parseLabelLine`（**不能只认行首**：实测模型写在同一行上）、`leftoverParagraphText`（按"保留没被覆盖的字"拼 —— 删区间会在别名互相嵌套时崩）。⚠️ **`cleanRawResponse`（不截断）给解析、`cleanParagraph`（200 字上限）只给显示**。 |
 | `DirectionBoardSession.swift` | ~668 | 看板的状态机（`@MainActor ObservableObject` 单例）：`beginListening(cycleID:)`（新的一大轮 → 清临时文件）/ `noteLiveTranscript` / `endListening` / `endBigRound` / `consumeTurnDecision`；节奏闸门三条（每 3 秒 + 文本变了 + **新增 ≥10 字、标点不算**，阈值设置页可调）；**一个请求里并行发两路** —— `JevDecisionClient` 判方向（给概率）+ 小提示词写那段理解（说「参考屏幕」时带上当场截的那张图）；代次计数丢弃过期回复；`contentRevision` 每次回复落地 +1（视图据此播那一下淡入）；点过/说过的方向**钉住编号与位置**（口述编号的映射表 `spokenNumberTargets` 见 `DirectionBoardMatching.resolvedSpokenNumber` 的注释）；总闸门三档（取消本次 / 十分钟 / **今日到明天凌晨 0 点**，全程**不轮询** —— 一个布尔 + 一次日期比较）。**纯观察者**：不碰 `currentResponseTask` / `voiceState` / 历史 / TTS / 截图。含 `WANNA_DIRECTION_BOARD_SELFCHECK` 自检（`1` 假转写不发请求 / `live` 真发一次 / `stream` 只喂字幕量卡顿）。 |
 | `DirectionBoardView.swift` | ~386 | 卡片的**四段，每一段都固定画着**：编号方向格（多列，最多 5 列）/ **任务结果**（绿框「结果」小标，没算出来显示 `—`）/ **AI 的理解**（目标问题 / 类型 / 参考 / 细节四行，标签列定宽 50，空值显示 `—`）/ 三行输入框 / 暗红三列取消。值的文字带 `.id(value)` + `.transition(.opacity + offset)`，外层 `.animation(.easeOut(0.28).delay(行号 × 0.05))` —— 逐行错开淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」），**骨架不动**。外壳直接复用结果卡片那几个常量与 `cardBackground`。宽度 = 340 × 设置倍数（默认 2 → 680），**与内容无关、恒定**。 |
 | `DirectionBoardPanelController.swift` | ~255 | 看板住的那块**可点击**面板。⚠️ **尺寸归 SwiftUI、位置归我们**：`NSHostingView` 会按内容改窗口尺寸（`updateAnimatedWindowSize`，保持顶边），**刻意不设 `sizingOptions = []`**（这块面板上它挡不住 —— 根因与实测见本节上面第五版那段），改成订阅 `NSWindow.didResizeNotification` → `repositionForCurrentSize()` 每次用「锚点 + 夹进屏幕」重算原点（只改原点，不成环）。显示时只 `orderFrontRegardless()`、`becomesKeyOnlyIfNeeded`（**点了输入框才是 key**）；`holdsTheAutomaticSend()` 是"他正在跟看板打交道"的判据（鼠标在板上 / 面板是 key / 2 秒内交互过），静音自动发送那一下据此按住不发。 |

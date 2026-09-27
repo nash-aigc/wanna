@@ -205,6 +205,11 @@ struct BlueCursorView: View {
         if !companionManager.streamingAnswerText.isEmpty {
             return companionManager.streamingAnswerText
         }
+        // **说话期间的答案预览**（用户 2026-09-27：「右下角这卡片其实就是一个答案的预览区」）——
+        // 它在真正的答案开始流之后自然让位（上一行的优先级更高）。
+        if !companionManager.answerPreviewText.isEmpty {
+            return companionManager.answerPreviewText
+        }
         return companionManager.liveTranscriptText
     }
 
@@ -409,7 +414,10 @@ struct BlueCursorView: View {
                 Color.clear
                     .overlay(alignment: .topLeading) {
                         Group {
-                            if !companionManager.streamingAnswerText.isEmpty {
+                            // 预览与最终结果**用同一张卡片**（用户：「跟正常的任务执行之后返回结果的
+                            // 卡片的动效、文字的效果渲染效果是一样的」）。
+                            if !companionManager.streamingAnswerText.isEmpty
+                                || !companionManager.answerPreviewText.isEmpty {
                                 answerCardBubble
                             } else {
                                 liveTranscriptBubble

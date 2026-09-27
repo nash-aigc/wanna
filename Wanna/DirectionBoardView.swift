@@ -75,11 +75,10 @@ struct DirectionBoardView: View {
                 directionList
                 sectionDivider
             }
-            // **任务结果**（用户：「整个卡片分成四段：上面那段是选项，中间那段是任务结果，
-            // 下面那段是 AI 对任务的理解，最下面是用户的输入」）——
-            // **这一行也固定画着**（用户 2026-09-27：「包括结果这一行也固定在这」），
-            // 算不出结果时显示占位符，而不是整行消失。
-            taskResultRow(session.taskResult ?? "", revealIndex: 0)
+            // ⚠️ **这里原来有一行「任务结果」**（模型算出来的答案）。用户 2026-09-27 把它删掉了
+            //（「你注意，我刚才是把这个任务结果删掉了」）—— **答案归鼠标右下角那张卡片**
+            //（`CompanionManager.answerPreviewText`，与最终结果同一张），右上角只回答
+            //「我理解得对不对」。所以这一段现在直接从选项跳到理解。
             // 第三段：理解（**固定四行**，见 `understoodRow`）。
             understandingArea
             // 第四段：输入（默认留三行的高度）。
@@ -125,8 +124,10 @@ struct DirectionBoardView: View {
     }
 
     private func directionRow(_ item: DirectionBoardDisplayItem) -> some View {
-        let state = session.selectionStates[item.directionID] ?? .pending
-        let text = session.confirmedTexts[item.directionID] ?? item.keyword
+        // 状态**就在这一格上**（固定状态存在文件里，`displayedItems` 每轮带着它）——
+        // 不再有第二份"界面上的选中状态"要去同步。
+        let state = item.state
+        let text = item.keyword
         let textColor: Color = {
             switch state {
             case .confirmed: return DS.Colors.success
@@ -182,7 +183,7 @@ struct DirectionBoardView: View {
         )
     }
 
-    private func backgroundColor(for state: DirectionBoardSelectionState) -> Color {
+    private func backgroundColor(for state: DirectionBoardDisplayItem.State) -> Color {
         switch state {
         case .confirmed: return DS.Colors.success.opacity(0.18)
         case .denied: return DS.Colors.destructive.opacity(0.18)
@@ -190,7 +191,7 @@ struct DirectionBoardView: View {
         }
     }
 
-    private func borderColor(for state: DirectionBoardSelectionState) -> Color {
+    private func borderColor(for state: DirectionBoardDisplayItem.State) -> Color {
         switch state {
         case .confirmed: return DS.Colors.success.opacity(0.8)
         case .denied: return DS.Colors.destructive.opacity(0.8)
@@ -206,30 +207,14 @@ struct DirectionBoardView: View {
     /// 内容有时候有软件目标细节，有时候没有」+「这几行固定在这，而不是突然间有、突然间没有，
     /// 这对体验影响太差了」。所以：行的集合恒定、值可能为空（画占位符）、**卡片高度因此恒定**。
     private var understandingArea: some View {
-        HStack(alignment: .top, spacing: 6) {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(session.understandingLines.enumerated()), id: \.offset) { index, line in
-                    understandingRow(label: line.label, value: line.value, revealIndex: index + 1)
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(session.understandingLines.enumerated()), id: \.offset) { index, line in
+                understandingRow(label: line.label, value: line.value, revealIndex: index + 1)
             }
-            // **AI 那段总结也要能确认/否认**（用户：「在系统总结这块，也要增加一个选中或者确认、
-            // 否认的按钮，即添加一个 X 叉按钮」）。确认的是**这四行**（`understandingSummaryText`）——
-            // 固定四行落地之后，"标签之外的话"通常一段都没有，拿它当确认内容会存下一个空串。
-            Button {
-                session.toggleSummaryDeny()
-            } label: {
-                Image(systemName: session.summaryState == .confirmed ? "checkmark" : "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(summaryTextColor.opacity(session.summaryState == .pending ? 0.5 : 1.0))
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("点一下 = 这个理解不对")
         }
-        .contentShape(Rectangle())
-        .onTapGesture { session.toggleSummaryConfirm() }
-        .help("点一下 = 这个理解对（会作为一行发给模型）")
+        // ⚠️ 这里原来有一个 ✕（"这个理解不对"）。**删掉了**：理解现在是**无条件**跟着提示词发给
+        // 模型的（用户 2026-09-27：「这个大语言模型的理解，你可以去发，发过去」），
+        // 也就是说"确认"这个动作没有意义了 —— 一个点了不改变任何事情的按钮比没有按钮更糟。
     }
 
     /// 一行理解：左边标签定宽，右边值（**空值画占位符**，不是不画）。
@@ -258,14 +243,6 @@ struct DirectionBoardView: View {
     /// 标签那一列的宽度（按「目标问题」四个字量出来的）。
     private static let understandingLabelWidth: CGFloat = 50
 
-    /// 那个对勾/叉的颜色（确认=绿、否认=红、没点=正文色）。
-    private var summaryTextColor: Color {
-        switch session.summaryState {
-        case .confirmed: return DS.Colors.success
-        case .denied: return DS.Colors.destructive
-        case .pending: return theme.textColor
-        }
-    }
 
     // MARK: - 输入框区（**高度固定**）
 
@@ -291,39 +268,6 @@ struct DirectionBoardView: View {
                 isInputFocused = true
                 onInputFocused()
             }
-    }
-
-    /// **任务结果**那一行 —— 用户要的"直接显示出来任务结果"（例：这道题选 A）。
-    ///
-    /// 它是四段里的第二段，夹在选项与理解之间。**没有结果时也画**（值是占位符）——
-    /// 用户 2026-09-27：「包括结果这一行也固定在这」，理由和下面那四行一样：整行消失会让卡片跳。
-    private func taskResultRow(_ text: String, revealIndex: Int) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("结果")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(DS.Colors.success)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(DS.Colors.success.opacity(0.18)))
-            Text(text.isEmpty ? Self.emptyValuePlaceholder : text)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.textColor.opacity(text.isEmpty ? 0.35 : 1.0))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id(text)
-                .transition(.opacity.combined(with: .offset(y: 6)))
-        }
-        .animation(.easeOut(duration: 0.28).delay(Double(revealIndex) * 0.05), value: text)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DS.Colors.success.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(DS.Colors.success.opacity(0.45), lineWidth: 1)
-        )
     }
 
     /// **取消看板那一行**：暗红色、三列、有高度（用户：「这一行要有一定的高度，颜色是暗红色」）。

@@ -23,14 +23,27 @@ nonisolated struct DirectionBoardDisplayItem: Equatable {
     let keyword: String
     /// 屏幕上的编号，**从 1 开始、连续**（用户说「第三个方向」指的就是它）。
     let number: Int
+    /// 用户明确说过的那几格带着这个状态（✓ / ✗）；其余是 `.pending`。
+    ///
+    /// 用户 2026-09-27：「一定要去在卡片上显示，**无论是对还是不对都要显示**」——
+    /// 所以"对"和"不对"都是**固定**，都要留在板上。
+    var state: State = .pending
     /// 它是怎么被选中的（只用于日志与断言）。
     let reason: Reason
+
+    enum State: String, Equatable, Sendable {
+        case pending
+        case confirmed
+        case denied
+    }
 
     enum Reason: String, Equatable {
         /// 本地关键词命中（免费的那条路）。
         case localKeyword
         /// Jev 判断的概率过了阈值。
         case jevProbability
+        /// **用户明确说过的那一格**（✓ 或 ✗），无条件显示、编号稳定。
+        case pinnedByUser
     }
 }
 
@@ -67,30 +80,43 @@ nonisolated enum DirectionBoardMatching {
         return matched
     }
 
-    /// **算出这一轮显示哪几格**：本地命中优先，其次 Jev 概率过阈值的（按概率从高到低）。
+    /// **算出这一轮显示哪几格**：**固定项永远在最前**，其次 Jev 概率过阈值的（按概率从高到低）。
+    ///
+    /// 用户 2026-09-27 定的规则：
+    /// · 「只要用户明确的说哪一个方向对，哪一个方向不对，就要把这个最终确定的……一定要去在卡片上
+    ///   显示，**无论是对还是不对都要显示**」→ 固定项**两种状态都排在最前**、**编号稳定**
+    ///   （他说的「这个方向一就一直在这里卡片显示出来」）；
+    /// · 「其他没有说过的、没有做过选择的、都可以**自由的替换、自由的轮换**」→ Jev 那部分可换；
+    /// · 「最多不要超过 5 列」→ 超过上限时**先砍 Jev 那部分**，固定项不砍。
     ///
     /// - Parameter probabilityThreshold: Jev 那条路的门槛（默认 0.5 —— `noul` 只给一个数，
     ///   0.5 就是"比瞎猜更像"；用户可以在设置里调）。
-    /// - Parameter maximumItemCount: 最多显示几格（用户：「最多不要超过 5 列」，屏幕上一行 5 个）。
+    /// - Parameter maximumItemCount: 最多显示几格（屏幕上一行 5 个）。
+    /// - Parameter pinnedStates: 用户明确说过的那几格（**顺序就是固定的顺序**）。
     nonisolated static func displayedItems(transcriptText: String,
                                            directions: [TaskDirection],
                                            jevProbabilities: [String: Double],
                                            probabilityThreshold: Double = 0.5,
-                                           forcedDirectionIDs: Set<String> = [],
-                                           maximumItemCount: Int = 10,
-                                           pinnedOrder: [String] = []) -> [DirectionBoardDisplayItem] {
+                                           pinnedStates: [(directionID: String, state: TaskDirectionStore.PinState)] = [],
+                                           maximumItemCount: Int = 10) -> [DirectionBoardDisplayItem] {
         let locallyMatched = locallyMatchedKeywords(transcriptText: transcriptText, directions: directions)
+        let pinnedIDs = Set(pinnedStates.map(\.directionID))
 
+        // ① 固定项：**无条件显示、顺序不动、不参与概率**（用户已经定了，没什么可判断的）。
+        var items: [DirectionBoardDisplayItem] = pinnedStates.compactMap { pin in
+            guard let direction = directions.first(where: { $0.id == pin.directionID }) else { return nil }
+            return DirectionBoardDisplayItem(directionID: direction.id,
+                                             keyword: direction.keyword,
+                                             number: 0,
+                                             state: pin.state == .confirmed ? .confirmed : .denied,
+                                             reason: .pinnedByUser)
+        }
+
+        // ② 其余按本地命中 / Jev 概率，补在后面（这一部分可以自由轮换）。
         var candidates: [(direction: TaskDirection, reason: DirectionBoardDisplayItem.Reason, score: Double)] = []
-        for direction in directions {
+        for direction in directions where !pinnedIDs.contains(direction.id) {
             if locallyMatched.contains(direction.id) {
                 candidates.append((direction, .localKeyword, jevProbabilities[direction.id] ?? 0))
-                continue
-            }
-            // 他刚口述出来的新方向：还没有概率，但要显示（用户：「识别到这样的词语，也要让 AI 把它
-            // 作为任务方向卡片显示在上面」）。
-            if forcedDirectionIDs.contains(direction.id) {
-                candidates.append((direction, .localKeyword, 1.0))
                 continue
             }
             if let probability = jevProbabilities[direction.id], probability >= probabilityThreshold {
@@ -104,26 +130,23 @@ nonisolated enum DirectionBoardMatching {
             }
             return lhs.score > rhs.score
         }
-        var items = candidates.prefix(maximumItemCount).map { candidate in
+        let room = max(maximumItemCount - items.count, 0)
+        items += candidates.prefix(room).map { candidate in
             DirectionBoardDisplayItem(directionID: candidate.direction.id,
                                       keyword: candidate.direction.keyword,
                                       number: 0,
+                                      state: .pending,
                                       reason: candidate.reason)
         }
 
-        // **钉住的那些排到最前、编号不改**（用户：「如果用户选择某一个方向，就应该把这个方向定住，
-        // 位置固定，数字固定……除非用户说取消这个方向」）。
-        let pinned = pinnedOrder.compactMap { directionID in
-            items.first(where: { $0.directionID == directionID })
-        }
-        let rest = items.filter { !pinnedOrder.contains($0.directionID) }
-        items = (pinned + rest).enumerated().map { offset, item in
+        // 编号：从 1 开始、连续 —— **固定项在前**，所以它们的编号在用户说过之后不再变。
+        return items.enumerated().map { offset, item in
             DirectionBoardDisplayItem(directionID: item.directionID,
                                       keyword: item.keyword,
                                       number: offset + 1,
+                                      state: item.state,
                                       reason: item.reason)
         }
-        return items
     }
 
     /// 只留字母与数字（中文是 letter，标点与空格在这一步去掉）。
@@ -132,90 +155,94 @@ nonisolated enum DirectionBoardMatching {
     }
 }
 
-// MARK: - 口述选方向 / 口述取消（数字 → 第几格）
+// MARK: - 口述的选择判定（**由大模型在下一轮给出，这里只解析它的话**）
 
 extension DirectionBoardMatching {
 
-    /// **用户用嘴选了第几格**（「选择第二个方向」「第三个方向」「方向4」「参考第二个方向」）。
+    /// 模型回的那一行「选择：」怎么读 —— **编号指的是"上一轮显示的那一列"**。
     ///
-    /// 中文数字与阿拉伯数字都认；**越界的编号直接忽略**（他说"第六个"而屏幕上只有三格时，
-    /// 猜一个等于替他做决定）。
-    nonisolated static func spokenSelectionNumber(in transcriptText: String,
-                                                  displayedItemCount: Int) -> Int? {
-        guard displayedItemCount > 0 else { return nil }
-        let normalized = normalize(transcriptText)
-        guard !normalized.isEmpty else { return nil }
+    /// 用户 2026-09-27 说清了这条两拍语义：「用户表达的是对**上一轮** JEV 模型它的结果的一个选择。
+    /// 那么也就是说，他要再再下一轮才能够去把真正的用户的结果显示出来，因为大语言模型要思考、要理解，
+    /// 然后生成结果之后，才能去通过代码的方式提取出来，到底是哪一个有固定，哪一个要取消」。
+    ///
+    /// 所以这里**按上一轮的编号映射回方向 id**，而不是当前屏幕上的编号 —— 两次之间那列可能已经
+    /// 重排过（JEV 每 3 秒重新判断一次），用当前编号会张冠李戴。
+    ///
+    /// 认的写法（宽松，模型怎么写都尽量读懂）：
+    /// `选择：1 对，2 不对` / `选择：方向一正确、方向三不正确` / `选择：1✓ 2✗`；
+    /// 也认「取消」当作"取消固定"（`选择：取消 2`）。
+    nonisolated static func parseSelectionVerdict(_ line: String,
+                                                  previousRound: [DirectionBoardDisplayItem])
+        -> [(directionID: String, state: TaskDirectionStore.PinState?)] {
+        guard !previousRound.isEmpty else { return [] }
+        let normalized = line.replacingOccurrences(of: "：", with: ":")
+        // 只取「选择:」后面那一段（模型可能把整段话都回在这一行里）。
+        guard let range = normalized.range(of: "选择:", options: .backwards) else { return [] }
+        var body = String(normalized[range.upperBound...])
+        if let newline = body.firstIndex(of: "\n") { body = String(body[..<newline]) }
 
-        let arabicPatterns = ["第(\\d+)个方向", "方向(\\d+)", "选第(\\d+)个", "参考第(\\d+)个", "第(\\d+)个"]
-        if let number = firstNumber(in: normalized, patterns: arabicPatterns, maximum: displayedItemCount) {
-            return number
-        }
-        let chinesePatterns = ["第([一二三四五六七八九十]+)个方向", "方向([一二三四五六七八九十]+)",
-                               "选第([一二三四五六七八九十]+)个", "第([一二三四五六七八九十]+)个"]
-        for pattern in chinesePatterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            let range = NSRange(normalized.startIndex..., in: normalized)
-            for hit in regex.matches(in: normalized, range: range) {
-                guard let numberRange = Range(hit.range(at: 1), in: normalized),
-                      let number = chineseNumeral(String(normalized[numberRange])),
-                      (1...displayedItemCount).contains(number) else { continue }
-                return number
+        let negativeWords = ["不对", "不正确", "不是", "错的", "错误", "✗", "x", "X", "否定"]
+        let removeWords = ["取消", "删掉", "去掉", "不要了", "不用了"]
+        let positiveWords = ["对", "正确", "是的", "没错", "✓", "√", "确认"]
+
+        // 把这一行切成"每一格一段"：**以编号为锚**，一段 = 上一个编号之后 → 下一个编号之前。
+        //
+        // ⚠️ 不能按空格/逗号切：`1 对，3 不对` 会被切成「1」「对」「3」「不对」四段，每段都缺一半
+        //（编号与判定词被拆开了）；反过来 `取消 2` 的判定词又在编号**前面**，只从编号往后取也会漏。
+        // 所以取的是"两个编号之间那一段"。
+        let tokens = numberTokens(in: body)
+        var verdicts: [(String, TaskDirectionStore.PinState?)] = []
+        var previousEnd = body.startIndex
+        for (index, token) in tokens.enumerated() {
+            let clauseEnd = index + 1 < tokens.count ? tokens[index + 1].start : body.endIndex
+            let piece = String(body[previousEnd..<clauseEnd])
+            previousEnd = clauseEnd
+            guard let item = previousRound.first(where: { $0.number == token.number }) else { continue }
+            // 判定词按"取消 → 否定 → 肯定"的顺序找（「不要了」里既有"不要"也有"要"，先认取消）。
+            if removeWords.contains(where: piece.contains) {
+                verdicts.append((item.directionID, nil))
+            } else if negativeWords.contains(where: piece.contains) {
+                verdicts.append((item.directionID, .denied))
+            } else if positiveWords.contains(where: piece.contains) {
+                verdicts.append((item.directionID, .confirmed))
             }
         }
-        return nil
+        return verdicts
     }
 
-    /// **用户用嘴取消了第几格**（「取消第一个方向」「第二个方向取消」「去掉第三个方向」）。
-    ///
-    /// 与"选中"共用同一套数字识别，只多一个**取消词**门槛（用户 2026-09-27：「说第一个方向正确
-    /// 的时候它能识别……但是说**取消第一个方向**，我发现它无法取消，这个是必须要有的」）。
-    nonisolated static func spokenCancelSelectionNumber(in transcriptText: String,
-                                                        displayedItemCount: Int) -> Int? {
-        let normalized = normalize(transcriptText)
-        guard !normalized.isEmpty else { return nil }
-        let cancelWords = ["取消", "去掉", "删掉", "不要", "不对", "不算"]
-        guard cancelWords.contains(where: { normalized.contains($0) }) else { return nil }
-        return spokenSelectionNumber(in: transcriptText, displayedItemCount: displayedItemCount)
+    /// 一段话里所有**编号**（阿拉伯或中文数字）及它们的位置。
+    private nonisolated static func numberTokens(in text: String)
+        -> [(number: Int, start: String.Index)] {
+        var tokens: [(number: Int, start: String.Index)] = []
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isNumber {
+                let end = text[index...].firstIndex { !$0.isNumber } ?? text.endIndex
+                if let number = Int(text[index..<end]) { tokens.append((number, index)) }
+                index = end
+            } else if "一二三四五六七八九十".contains(character) {
+                let end = text[index...].firstIndex { !"一二三四五六七八九十".contains($0) } ?? text.endIndex
+                if let number = chineseNumeral(String(text[index..<end])) { tokens.append((number, index)) }
+                index = end
+            } else {
+                index = text.index(after: index)
+            }
+        }
+        return tokens
     }
 
     /// **用户口述要取消整个看板吗** —— 只认那两个精准短语。
     ///
     /// 用户：「判断里面有没有准确的「**取消任务看板**」或「**取消任务方向**」这几个字。
     /// 「取消任务」这四个字必须是关联的，后面接「看板」或「方向」，必须是精准的词。」
+    ///
+    /// ⚠️ 这是**总闸门**，所以留在本地判定（立刻生效）；**单个**方向的确认/取消走大模型那一拍
+    ///（见 `parseSelectionVerdict`）。
     nonisolated static func spokenCancelBoardRequested(in transcriptText: String) -> Bool {
         let normalized = normalize(transcriptText)
         guard !normalized.isEmpty else { return false }
         return normalized.contains("取消任务看板") || normalized.contains("取消任务方向")
-    }
-
-    /// **用户口述了一个清单里没有的新方向吗**（「任务方向是 X」「关于 X 方向」「这次是 X 类任务」）。
-    ///
-    /// 用户 2026-09-27：「第二种来源是用户**口述**任务方向或某一类型任务时，识别到这样的词语，
-    /// 也要让 AI 把它作为任务方向卡片显示在上面。」
-    ///
-    /// 只在**明确说了"方向"两个字**的时候才认（否则随手一句话都会被当成新方向存进文件里）。
-    /// 返回抽出来的那一段（已去掉标点与语气词，2~12 字）。
-    nonisolated static func spokenNewDirection(in transcriptText: String) -> String? {
-        let patterns = [
-            "任务方向是([^，。！？,.!?]{2,12})",
-            "方向是([^，。！？,.!?]{2,12})",
-            "关于([^，。！？,.!?]{2,12})方向",
-            "这次是([^，。！？,.!?]{2,12})类任务",
-        ]
-        let text = transcriptText
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            let range = NSRange(text.startIndex..., in: text)
-            guard let hit = regex.firstMatch(in: text, range: range),
-                  let captured = Range(hit.range(at: 1), in: text) else { continue }
-            var candidate = String(text[captured]).trimmingCharacters(in: .whitespacesAndNewlines)
-            candidate = candidate.replacingOccurrences(of: "这个", with: "")
-            candidate = candidate.replacingOccurrences(of: "那个", with: "")
-            candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard candidate.count >= 2, candidate.count <= 12 else { continue }
-            return candidate
-        }
-        return nil
     }
 
     /// **用户说了"参考/根据 + 屏幕/图片/桌面"吗** —— 是就当场截一张屏。
@@ -241,28 +268,9 @@ extension DirectionBoardMatching {
         return false
     }
 
-    /// **「第 N 个方向」指的是哪一格** —— 一句之内**一旦定下就不再改**。
-    ///
-    /// 2026-09-27 实测的 bug（用户：「我让他选择的是第二个方向——看图说话，但他选择的是**两个方向**」）：
-    /// 识别器给的是**累积**文本，同一句里的「第二个方向」会被喂进来好几次；而**选中会把那一格钉到最前**
-    ///（用户自己要的"钉住"），整列于是重新编号 —— 第二次喂进来时「第 2 个」已经换成了另一格，
-    /// 一句话选了两格（截图里 1 看图说话 + 2 做题 同时打勾）。
-    ///
-    /// - Parameter remembered: 这一句里已经定下来的「编号 → 方向 id」。
-    ///   命中时**按 id 找**，于是重排序之后仍然指回原来那一格；调用方对已选中的格子是空操作，
-    ///   重复喂就自然变成幂等。
-    nonisolated static func resolvedSpokenNumber(_ number: Int,
-                                                 remembered: [Int: String],
-                                                 in displayedItems: [DirectionBoardDisplayItem])
-        -> DirectionBoardDisplayItem? {
-        if let rememberedDirectionID = remembered[number] {
-            return displayedItems.first { $0.directionID == rememberedDirectionID }
-        }
-        return displayedItems.first { $0.number == number }
-    }
-
     /// 中文数字 → 整数（只认 1…99；认不出来返回 nil）。
-    nonisolated static func chineseNumeral(_ text: String) -> Int? {        let digits: [Character: Int] = ["一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    nonisolated static func chineseNumeral(_ text: String) -> Int? {
+        let digits: [Character: Int] = ["一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
                                         "六": 6, "七": 7, "八": 8, "九": 9]
         if text == "十" { return 10 }
         var total = 0
@@ -281,19 +289,4 @@ extension DirectionBoardMatching {
         return total > 0 ? total : nil
     }
 
-    private static func firstNumber(in text: String,
-                                    patterns: [String],
-                                    maximum: Int) -> Int? {
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            let range = NSRange(text.startIndex..., in: text)
-            for hit in regex.matches(in: text, range: range) {
-                guard let numberRange = Range(hit.range(at: 1), in: text),
-                      let number = Int(text[numberRange]),
-                      (1...maximum).contains(number) else { continue }
-                return number
-            }
-        }
-        return nil
-    }
 }

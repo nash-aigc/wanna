@@ -19,11 +19,23 @@
 import Combine
 import Foundation
 
-/// 一格被用户点过（或说中/取消）之后的状态。
-nonisolated enum DirectionBoardSelectionState: String {
-    case pending
-    case confirmed
-    case denied
+/// **提交时要带走的东西**（一轮结束时算一份，交给 `CompanionManager` 拼进提示词）。
+///
+/// 用户 2026-09-27 定的内容：用户**明确确认过**的方向（关键词 + 描述）、他在输入框里打的字、
+/// 以及大模型对他的理解那四行 ——「这部分**全部都作为一个参考**」。
+nonisolated struct DirectionBoardTurnDecision: Equatable {
+    /// 「关键词：描述」——**只含用户明确确认过的**（否定的、按概率显示的都不发）。
+    var confirmedDirections: [(keyword: String, detail: String)] = []
+    var typedInput: String = ""
+    /// 大模型这一轮写的理解（四行里非空的那几行）。
+    var understanding: [(label: String, value: String)] = []
+
+    static func == (lhs: DirectionBoardTurnDecision, rhs: DirectionBoardTurnDecision) -> Bool {
+        lhs.typedInput == rhs.typedInput
+            && lhs.confirmedDirections.map(\.keyword) == rhs.confirmedDirections.map(\.keyword)
+            && lhs.understanding.map(\.label) == rhs.understanding.map(\.label)
+            && lhs.understanding.map(\.value) == rhs.understanding.map(\.value)
+    }
 }
 
 @MainActor
@@ -31,6 +43,11 @@ final class DirectionBoardSession: ObservableObject {
 
     static let shared = DirectionBoardSession()
     private init() {}
+
+    /// **把答案预览写到右下角那张卡片上**（由 `CompanionManager` 注入，与 `voiceIdleProvider` /
+    /// `sharedVoicePlaybackEngineProvider` 同一个先例：跨子系统只走注入的闭包，不让对方去猜）。
+    /// 传 `nil` = 清掉那张卡片（发送、取消、新一轮都从这里清）。
+    var answerPreviewWriter: ((String?) -> Void)?
 
     // MARK: - 界面读的状态
 
@@ -42,16 +59,15 @@ final class DirectionBoardSession: ObservableObject {
     /// 突然间没有，这对体验影响太差了」—— 行的集合恒定，卡片的高度才恒定。
     @Published private(set) var understandingLines: [(label: String, value: String)] =
         DirectionBoardPrompt.understandingLabels.map { ($0, "") }
-    /// **任务结果**（模型能直接算出来才有）—— 用户要的那一行「选 A」。**那一行本身也一直画着**。
-    @Published private(set) var taskResult: String?
+    /// **答案预览** —— 用户 2026-09-27：「鼠标右下角这部分显示的是对用户提示词回复的一个结果」。
+    ///
+    /// 它由 `answerPreviewWriter` 写给 `CompanionManager`（右下角那张卡片与最终结果**同一张**），
+    /// 不在这里画。只在模型判断"这一轮包含一个能当场回答的问题"时才有值。
+    @Published private(set) var previewAnswer: String?
     /// **内容更新了几次** —— 视图拿它触发那一下"淡入"动画（用户：「我希望让它有一种动画效果，
     /// 而不是突然间显示出来」）。每次模型回复落下来就 +1。
     @Published private(set) var contentRevision = 0
     @Published private(set) var displayedItems: [DirectionBoardDisplayItem] = []
-    @Published private(set) var selectionStates: [String: DirectionBoardSelectionState] = [:]
-    @Published private(set) var confirmedTexts: [String: String] = [:]
-    @Published private(set) var summaryState: DirectionBoardSelectionState = .pending
-    @Published private(set) var summaryConfirmedText: String?
     @Published private(set) var isRequesting = false
     @Published private(set) var isCancelled = false
     @Published private(set) var isHeldFromAutomaticSend = false
@@ -63,19 +79,16 @@ final class DirectionBoardSession: ObservableObject {
     private var lastRequestedTranscript = ""
     /// 最近一次 Jev 判断给出的概率（方向 id → P(是)）。
     private var jevProbabilities: [String: Double] = [:]
-    /// 这一轮**强制显示**的方向（用户刚口述出来的新方向 —— 它还没有 Jev 概率）。
-    private var forcedDirectionIDs: Set<String> = []
     /// 这一轮因为"参考屏幕"截下来的图（发送给模型时带上）。
     private var referenceScreenshots: [(data: Data, label: String)] = []
-    /// 「第 N 个方向」在这一句里指的是谁（见 `directionForSpokenNumber`）。
-    private var spokenNumberTargets: [Int: String] = [:]
-    private var spokenSelectionUtteranceText = ""
     /// 这一次"参考屏幕"的提到是不是已经截过了（边缘触发）。
     private var didCaptureForThisMention = false
-    /// 上一次模型回的那段原文（每次请求都是全新的内容，所以要带上它保持连续）。
-    private var previousReading = ""
-    /// 被选中的先后顺序 —— 钉住（位置 + 编号）靠它。
-    private var confirmedOrder: [String] = []
+    /// **最近三轮**模型的理解原文（最近的那一轮在最前）—— 用户要的连续性：
+    /// 「你要在发送给下一轮模型的时候要保留前三轮……让它重点参考最近一轮」。
+    private var recentReadings: [String] = []
+    /// **上一轮看板上显示的那一列**（编号 → 方向）—— 用户对方向的评论指的是它，
+    /// 因为两次之间 JEV 会把那一列重排（见 `DirectionBoardMatching.parseSelectionVerdict`）。
+    private var previousRoundItems: [DirectionBoardDisplayItem] = []
     private var cadenceTimer: Timer?
     private var requestTask: Task<Void, Never>?
     private var roundGeneration = 0
@@ -84,7 +97,10 @@ final class DirectionBoardSession: ObservableObject {
     private var cancelledUntil: Date?
     private static let cancelledUntilDefaultsKey = "wannaDirectionBoardCancelledUntil"
     private static let tenMinutes: TimeInterval = 10 * 60
-    private static let maximumPreviousReadingCharacters = 600
+    /// 每轮理解原文留多少字（下一轮当上下文用）。
+    private static let maximumReadingCharacters = 600
+    /// 带几轮给模型（用户：「你要在发送给下一轮模型的时候要保留前三轮」）。
+    static let rememberedReadingCount = 3
     private let visionChatAPI = BailianVisionChatAPI()
 
     static let cadenceSeconds: TimeInterval = 3
@@ -130,13 +146,22 @@ final class DirectionBoardSession: ObservableObject {
     /// 屏幕上看着是"空板"，其实是自检自己把它清空了）。
     func logTurnDecisionForSelfCheck() {
         guard Self.selfCheckMode != nil else { return }
-        let directionTexts = displayedItems.compactMap { item -> String? in
-            guard selectionStates[item.directionID] == .confirmed else { return nil }
-            return confirmedTexts[item.directionID] ?? item.keyword
-        }
-        print("🎛️ 方向看板自检：显示 \(displayedItems.count) 格；提交时会加在提示词前面的是 —— "
-              + (DirectionBoardPrompt.decoration(confirmedDirectionTexts: directionTexts,
-                                                 typedInput: typedInput) ?? "（什么都没点，不加）"))
+        let decision = currentTurnDecisionForSelfCheck()
+        print("🎛️ 方向看板自检：显示 \(displayedItems.count) 格（"
+              + displayedItems.map { "\($0.number).\($0.keyword)" + ($0.state == .pending ? "" : "(固定)") }
+                .joined(separator: " ｜ ")
+              + "）；提交时会加在提示词前面的是 —— "
+              + (DirectionBoardPrompt.decoration(decision) ?? "（什么都没点，不加）"))
+    }
+
+    /// 自检用：像提交那样算一份，但**不取走**任何东西（取走会把板子清空）。
+    private func currentTurnDecisionForSelfCheck() -> DirectionBoardTurnDecision {
+        DirectionBoardTurnDecision(
+            confirmedDirections: displayedItems
+                .filter { $0.state == .confirmed }
+                .map { (keyword: $0.keyword, detail: detailForDirectionID($0.directionID)) },
+            typedInput: typedInput.trimmingCharacters(in: .whitespacesAndNewlines),
+            understanding: understandingLines.filter { !$0.value.isEmpty })
     }
 
     private var streamSelfCheckTask: Task<Void, Never>?
@@ -166,10 +191,12 @@ final class DirectionBoardSession: ObservableObject {
 
     func beginListening(cycleID: String?) {
         guard isEnabled else { return }
+        // **一次全新的按下**：这一轮从头开始 —— 上一轮那一列的引用作废。
+        // ⚠️ 只在**真的换了 cycle** 时清：连续追问窗口重新武装时也会走这里，而那种情况下
+        // 用户说的还是同一件事（他刚评论过的那些方向还挂在板上），清了就没人认得出「第 2 个」了。
         if let cycleID, cycleID != currentCycleID {
             cancelledForThisCycle = false
-            // **新的一大轮**：上一轮口述出来的临时类型清掉。
-            TaskDirectionStore.shared.clearTemporaryDirections()
+            previousRoundItems = []
         }
         currentCycleID = cycleID
         refreshCancellationState()
@@ -183,21 +210,18 @@ final class DirectionBoardSession: ObservableObject {
         lastRequestedTranscript = ""
         paragraph = ""
         understandingLines = DirectionBoardPrompt.understandingLabels.map { ($0, "") }
-        taskResult = nil
+        previewAnswer = nil
+        answerPreviewWriter?(nil)
         contentRevision = 0
-        previousReading = ""
+        recentReadings = []
+        previousRoundItems = []
         jevProbabilities = [:]
-        forcedDirectionIDs = []
         referenceScreenshots = []
         didCaptureForThisMention = false
-        selectionStates = [:]
-        confirmedTexts = [:]
-        confirmedOrder = []
-        summaryState = .pending
-        summaryConfirmedText = nil
         displayedItems = []
         typedInput = ""
         isListening = true
+        refreshDisplayedItems()
         startCadenceTimer()
     }
 
@@ -209,8 +233,6 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         latestTranscript = transcriptText
-        // 新的一句开始 → 上一次"第 N 个方向"的映射作废（见 `directionForSpokenNumber`）。
-        noteUtteranceBoundary(in: transcriptText)
         // **说了「参考屏幕 / 根据图片」这类组合词 → 当场截一张屏**（用户：
         // 「每一次转写识别到就截一次屏」）。边缘触发：同一次提到只截一张（与
         // `BuddyScreenKeywordDetector` 同一个做法 —— 识别器会给整句累积文本，不去重就会连截）。
@@ -222,22 +244,7 @@ final class DirectionBoardSession: ObservableObject {
             didCaptureForThisMention = false
         }
 
-        // **他口述了一个清单里没有的新方向** → 追加进**临时**那份文件（这就是第二种来源）。
-        // 追加之后这一轮**强制显示它**（新方向还没有 Jev 概率，不强制就看不见）。
-        if let newDirection = DirectionBoardMatching.spokenNewDirection(in: transcriptText),
-           !TaskDirectionStore.shared.contains(keyword: newDirection) {
-            let added = TaskDirectionStore.shared.append(keyword: newDirection,
-                                                         detail: newDirection,
-                                                         source: .user)
-            if added {
-                let identifier = TaskDirectionStore.shared.allDirections()
-                    .first { DirectionBoardMatching.normalize($0.keyword)
-                        == DirectionBoardMatching.normalize(newDirection) }?.id
-                if let identifier { forcedDirectionIDs.insert(identifier) }
-            }
-        }
         refreshDisplayedItems()
-        applySpokenSelectionIfAny(in: transcriptText)
     }
 
     func endListening() {
@@ -248,33 +255,52 @@ final class DirectionBoardSession: ObservableObject {
         requestTask = nil
         isRequesting = false
         isListening = false
+        // 这一轮结束了：把面板上那一列**快照**留给下一次（用户对方向的评论指的是它）。
+        previousRoundItems = displayedItems
     }
 
-    /// 提交时取走：确认过的方向（按屏幕编号顺序）+ 输入框那句。取走即清。
-    func consumeTurnDecision() -> (directionTexts: [String], typedInput: String) {
-        var directionTexts: [String] = []
-        for item in displayedItems {
-            guard selectionStates[item.directionID] == .confirmed else { continue }
-            let text = (confirmedTexts[item.directionID] ?? item.keyword)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
-            directionTexts.append(text)
-        }
-        if summaryState == .confirmed,
-           let confirmedSummary = summaryConfirmedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !confirmedSummary.isEmpty {
-            directionTexts.append("用户确认的任务理解是：\(confirmedSummary)")
-        }
-        let typed = typedInput
-        selectionStates = [:]
-        confirmedTexts = [:]
-        confirmedOrder = []
-        summaryState = .pending
-        summaryConfirmedText = nil
+    /// 提交时取走：用户**明确确认过**的方向 + 输入框那句 + 大模型的理解。取走即清。
+    ///
+    /// 用户 2026-09-27 定的两条：
+    /// · 「**如果用户明确的说了哪一个选项**，哪个选项的时候才去发这个选项，**如果没说的话就不要发**……
+    ///   你也不要去把什么猜测的比例概率什么……也不需要去发送到这个真正的执行任务的时刻提示词」
+    ///   → 只有用户**确认**过的发；否定的、以及 JEV 按概率显示的一律不发。
+    /// · 「这个词跟**描述**的部分就会作为提示词的一部分来去发给 AI」（描述在文件里）
+    ///   → 发的是「关键词：描述」。
+    ///
+    /// ⚠️ 它**顺带收尾**（停表 + 收起预览 + 快照上一轮那一列）：`endListening()` 只在"按住说话"那条
+    /// 路上被调，而确认模式轻点 / 连续追问 / 打字提问那三条**不经过它** —— 状态会漏到下一轮
+    ///（2026-09-27 排查时发现的既有漏洞，收在这里一并堵上：它是**唯一**五条路都会走的地方）。
+    func consumeTurnDecision() -> DirectionBoardTurnDecision {
+        let confirmed = displayedItems
+            .filter { userConfirmedDirectionIDs.contains($0.directionID) }
+            .map { (keyword: $0.keyword, detail: detailForDirectionID($0.directionID)) }
+        let decision = DirectionBoardTurnDecision(
+            confirmedDirections: confirmed,
+            typedInput: typedInput.trimmingCharacters(in: .whitespacesAndNewlines),
+            understanding: understandingLines.filter { !$0.value.isEmpty })
+
+        previousRoundItems = displayedItems
         typedInput = ""
         paragraph = ""
         displayedItems = []
-        return (directionTexts, typed)
+        previewAnswer = nil
+        answerPreviewWriter?(nil)
+        // 收尾（见上）：停表、不再听、在飞的请求作废。
+        endListening()
+        return decision
+    }
+
+    /// 方向 id → 它在那份清单里的描述（发提示词时"关键词 + 描述"一起给）。
+    private func detailForDirectionID(_ directionID: String) -> String {
+        TaskDirectionStore.shared.allDirections().first { $0.id == directionID }?.detail ?? ""
+    }
+
+    /// 用户**明确确认过**的那几格（`Set` 便于查）。
+    private var userConfirmedDirectionIDs: Set<String> {
+        Set(TaskDirectionStore.shared.pinnedStates()
+            .filter { $0.state == .confirmed }
+            .map(\.directionID))
     }
 
     // MARK: - 总闸门：取消看板
@@ -341,64 +367,33 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    // MARK: - 用户点格子 / 口述
+    // MARK: - 用户点格子（点 = 明确说了这一格对 / 不对）
 
-    func toggleConfirm(directionID: String, displayedText: String) {
-        if selectionStates[directionID] == .confirmed {
-            selectionStates[directionID] = .pending
-            confirmedTexts[directionID] = nil
-            confirmedOrder.removeAll { $0 == directionID }
-            refreshDisplayedItems()
-            return
-        }
-        selectionStates[directionID] = .confirmed
-        confirmedTexts[directionID] = displayedText
-        if !confirmedOrder.contains(directionID) { confirmedOrder.append(directionID) }
-        refreshDisplayedItems()
-        print("🎛️ 方向看板：选中「\(displayedText)」（已钉住，编号不再变）")
-    }
-
-    func toggleDeny(directionID: String) {
-        if selectionStates[directionID] == .denied {
-            selectionStates[directionID] = .pending
-            return
-        }
-        selectionStates[directionID] = .denied
-        confirmedTexts[directionID] = nil
-    }
-
-    func toggleSummaryConfirm() {
-        if summaryState == .confirmed {
-            summaryState = .pending
-            summaryConfirmedText = nil
-            return
-        }
-        summaryState = .confirmed
-        summaryConfirmedText = understandingSummaryText
-    }
-
-    /// 用户在板上看到的**那份理解**，压成一行 —— 点那个对勾确认的就是它。
+    /// 点文字 = 「这个是我想做的」；再点一次 = 取消。
     ///
-    /// ⚠️ 它不能用 `paragraph`：那里面只装"标签之外的话"，而固定四行落地之后绝大多数回复
-    /// **一段正文都没有**，于是"确认"会存下一个空串、到提交那一步被 `!isEmpty` 挡掉 ——
-    /// 按钮点了没有任何效果。用户确认的是他看到的那四行。
-    var understandingSummaryText: String {
-        let rows = understandingLines
-            .filter { !$0.value.isEmpty }
-            .map { "\($0.label)：\($0.value)" }
-        if !rows.isEmpty { return rows.joined(separator: "；") }
-        return paragraph
+    /// 用户 2026-09-27：「这个表格里面这些选项它可以被点击的……可以被点击，或者是可以被否定，
+    /// 对不对？这个要保留」。**点过就固定下来**（写进 `TaskDirectionPins.json`，跨轮次、跨对话都在），
+    /// 它同时是"发送时要不要带这一条"的唯一依据。
+    func toggleConfirm(directionID: String, displayedText: String) {
+        let isConfirmed = TaskDirectionStore.shared.pinnedStates()
+            .contains { $0.directionID == directionID && $0.state == .confirmed }
+        TaskDirectionStore.shared.setPinned(directionID: directionID,
+                                            state: isConfirmed ? nil : .confirmed)
+        refreshDisplayedItems()
+        if !isConfirmed { print("🎛️ 方向看板：选中「\(displayedText)」（已固定）") }
     }
 
-    func toggleSummaryDeny() {
-        if summaryState == .denied {
-            summaryState = .pending
-            return
-        }
-        summaryState = .denied
-        summaryConfirmedText = nil
+    /// 点右边的叉 = 「这个不是我想做的」。**也是固定**（用户：「无论是对还是不对都要显示」）。
+    func toggleDeny(directionID: String) {
+        let isDenied = TaskDirectionStore.shared.pinnedStates()
+            .contains { $0.directionID == directionID && $0.state == .denied }
+        TaskDirectionStore.shared.setPinned(directionID: directionID,
+                                            state: isDenied ? nil : .denied)
+        refreshDisplayedItems()
     }
 
+    /// **静音到点、但用户正在板上操作** → 标记一下，视图让边框呼吸一下
+    ///（用户：「让看板边框闪一下、高亮一下或呼吸灯一下，让用户知道任务没有完成、没有发送过去」）。
     func flagHeldAutomaticSend() {
         isHeldFromAutomaticSend = true
         Task { @MainActor [weak self] in
@@ -407,70 +402,17 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    private func applySpokenSelectionIfAny(in transcriptText: String) {
-        if let number = DirectionBoardMatching.spokenCancelSelectionNumber(
-            in: transcriptText, displayedItemCount: displayedItems.count),
-           let item = directionForSpokenNumber(number) {
-            spokenNumberTargets[number] = item.directionID
-            if selectionStates[item.directionID] != .pending {
-                selectionStates[item.directionID] = .pending
-                confirmedTexts[item.directionID] = nil
-                confirmedOrder.removeAll { $0 == item.directionID }
-                refreshDisplayedItems()
-                print("🎛️ 方向看板：口述「取消第 \(number) 个方向」→ 取消选中「\(item.keyword)」")
-            }
-            return
-        }
-        if let number = DirectionBoardMatching.spokenSelectionNumber(
-            in: transcriptText, displayedItemCount: displayedItems.count),
-           let item = directionForSpokenNumber(number) {
-            spokenNumberTargets[number] = item.directionID
-            selectByVoice(directionID: item.directionID, text: item.keyword,
-                          how: "口述「第 \(number) 个方向」")
-            return
-        }
-        // 语义那一种（「关于显示方向的」）：要求关键词**紧跟方向词** —— 否则「把这段文字存到 notion」
-        // 里的"文字"会把"写成文字"也选上。
-        let normalized = DirectionBoardMatching.normalize(transcriptText)
-        let markers = ["方向", "类", "方面", "那一类", "这类"]
-        for item in displayedItems {
-            let needle = DirectionBoardMatching.normalize(item.keyword)
-            guard needle.count >= 2 else { continue }
-            if markers.contains(where: { normalized.contains(needle + $0) }) {
-                selectByVoice(directionID: item.directionID, text: item.keyword,
-                              how: "口述「\(item.keyword)」")
-                return
-            }
-        }
-    }
-
-    /// **「第 N 个方向」指的是谁 —— 一旦定下，这一句之内就不再改。**
+    /// **大模型在上一轮读懂了用户的话**（`选择：1 对，3 不对`）→ 落到固定状态上。
     ///
-    /// 判断本身在 `DirectionBoardMatching.resolvedSpokenNumber`（纯函数，有单测）；
-    /// 这里只负责把"这一句的映射表"存住。
-    private func directionForSpokenNumber(_ number: Int) -> DirectionBoardDisplayItem? {
-        DirectionBoardMatching.resolvedSpokenNumber(number,
-                                                    remembered: spokenNumberTargets,
-                                                    in: displayedItems)
-    }
-
-    /// 新的一句开始了吗（不是上一句往后接着说）—— 是就把"第 N 个"的映射表清掉。
-    private func noteUtteranceBoundary(in transcriptText: String) {
-        let previous = DirectionBoardMatching.normalize(spokenSelectionUtteranceText)
-        let current = DirectionBoardMatching.normalize(transcriptText)
-        if previous.isEmpty || !current.hasPrefix(previous) {
-            spokenNumberTargets = [:]
+    /// 编号是**上一轮那一列**的（见 `DirectionBoardMatching.parseSelectionVerdict`）。
+    func applySelectionVerdict(_ verdicts: [(directionID: String, state: TaskDirectionStore.PinState?)]) {
+        guard !verdicts.isEmpty else { return }
+        for verdict in verdicts {
+            TaskDirectionStore.shared.setPinned(directionID: verdict.directionID, state: verdict.state)
         }
-        spokenSelectionUtteranceText = transcriptText
-    }
-
-    private func selectByVoice(directionID: String, text: String, how: String) {
-        guard selectionStates[directionID] != .confirmed else { return }
-        selectionStates[directionID] = .confirmed
-        confirmedTexts[directionID] = text
-        if !confirmedOrder.contains(directionID) { confirmedOrder.append(directionID) }
         refreshDisplayedItems()
-        print("🎛️ 方向看板：\(how) → 自动选中「\(text)」（已钉住）")
+        let summary = verdicts.map { "\($0.directionID)=\($0.state?.rawValue ?? "取消")" }
+        print("🎛️ 方向看板：模型读懂了用户对方向的选择 —— \(summary.joined(separator: " "))")
     }
 
     // MARK: - 节奏闸门（三条，纯函数）
@@ -567,25 +509,32 @@ final class DirectionBoardSession: ObservableObject {
                 // 有结构化那几行时，正文只留"标签之外的话"（模型爱在标签前后再写一句）。
                 self.paragraph = DirectionBoardPrompt.cleanParagraph(
                     DirectionBoardPrompt.leftoverParagraphText(paragraphText))
-                if let result = DirectionBoardPrompt.parseTaskResult(paragraphText) {
-                    self.taskResult = result
-                    print("🧭 方向看板：任务结果 = \(result)")
-                }
                 // 一次回复落了地 —— 视图据此播那一下淡入（用户：「而不是突然间显示出来」）。
                 self.contentRevision += 1
-                self.previousReading = String(paragraphText.prefix(Self.maximumPreviousReadingCharacters))
-                // **带屏幕参考时，模型给的"这次是什么类型"也变成一个可点的类型**（进临时文件）。
-                // 用户那个数学题的例子：「这道题应该选 A，那结果就是固定的」—— 那个答案本身就是选项。
-                if let label = DirectionBoardPrompt.parseLabelLine(paragraphText),
-                   !TaskDirectionStore.shared.contains(keyword: label) {
-                    if TaskDirectionStore.shared.append(keyword: label,
-                                                        detail: "根据屏幕内容判断出来的结果：\(label)",
-                                                        source: .user) {
-                        let identifier = TaskDirectionStore.shared.allDirections()
-                            .first { DirectionBoardMatching.normalize($0.keyword)
-                                == DirectionBoardMatching.normalize(label) }?.id
-                        if let identifier { self.forcedDirectionIDs.insert(identifier) }
-                    }
+                // **最近三轮**（最近的在最前）—— 下一轮请求带着它，让模型保持连续。
+                self.recentReadings.insert(String(paragraphText.prefix(Self.maximumReadingCharacters)), at: 0)
+                if self.recentReadings.count > Self.rememberedReadingCount {
+                    self.recentReadings.removeLast(self.recentReadings.count - Self.rememberedReadingCount)
+                }
+
+                // **答案** → 右下角那张卡片（与最终结果同一张、同一套渲染）。
+                // 只在模型判断"这一轮包含一个能当场回答的问题"时才有值；没有就把上一次的清掉。
+                let answer = DirectionBoardPrompt.parseAnswer(paragraphText)
+                self.previewAnswer = answer
+                self.answerPreviewWriter?(answer)
+                if let answer { print("🧭 方向看板：答案预览 = \(answer.prefix(60))") }
+
+                // **用户对上一轮那些方向的评论，由模型在**这一轮**读懂**（两拍语义，用户 2026-09-27：
+                // 「他的理解是由大语言模型在第二轮……你必须要知道用户表达的是对上一轮 JEV 模型
+                // 它的结果的一个选择」）。编号按**上一轮那一列**回填。
+                let verdicts = DirectionBoardMatching.parseSelectionVerdict(
+                    paragraphText, previousRound: self.previousRoundItems)
+                if !verdicts.isEmpty { self.applySelectionVerdict(verdicts) }
+                // 自检时把"上一轮那一列"打出来 —— 判定是按它回填的，日志里要能核对。
+                if Self.selfCheckMode != nil, !self.previousRoundItems.isEmpty {
+                    print("🎛️ 方向看板自检：上一轮那一列 = "
+                          + self.previousRoundItems.map { "\($0.number).\($0.keyword)" }
+                            .joined(separator: " ｜ "))
                 }
             }
             self.refreshDisplayedItems()
@@ -614,8 +563,10 @@ final class DirectionBoardSession: ObservableObject {
                                          asksForLabel: Bool) async -> String? {
         let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions,
                                                                           asksForLabel: asksForLabel)
-        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(transcript: transcript,
-                                                                      previousReading: previousReading)
+        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
+            transcript: transcript,
+            previousRoundItems: previousRoundItems,
+            recentReadings: recentReadings)
         do {
             let (text, _) = try await visionChatAPI.analyzeImageStreaming(
                 images: screenshots,
@@ -650,9 +601,13 @@ final class DirectionBoardSession: ObservableObject {
 
     /// **一大轮结束**：清掉临时那份类型文件（用户：「临时文件在每一轮对话结束时清掉。
     /// 是每一大轮……中间可能有打断，这算一个轮，不算两轮」）。
+    /// 一大轮结束（追问窗口关闭）：清掉"这一轮的上下文"。
+    ///
+    /// ⚠️ **固定状态不动** —— 用户选的是「一直保留到他说取消」，所以 `TaskDirectionPins.json`
+    /// 这里一个字都不写（这也是它没有临时文件的原因）。
     func endBigRound() {
-        TaskDirectionStore.shared.clearTemporaryDirections()
-        forcedDirectionIDs.removeAll()
+        previousRoundItems = []
+        jevProbabilities = [:]
     }
 
     private func refreshDisplayedItems() {
@@ -662,7 +617,6 @@ final class DirectionBoardSession: ObservableObject {
             directions: TaskDirectionStore.shared.allDirections(),
             jevProbabilities: jevProbabilities,
             probabilityThreshold: settings.directionBoardProbabilityThreshold,
-            forcedDirectionIDs: forcedDirectionIDs,
-            pinnedOrder: confirmedOrder)
+            pinnedStates: TaskDirectionStore.shared.pinnedStates())
     }
 }

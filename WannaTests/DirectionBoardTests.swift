@@ -58,42 +58,71 @@ struct DirectionBoardTests {
         #expect(items.map(\.number) == Array(1...items.count))
     }
 
-    /// **钉住的排最前、编号不变**（用户：「如果用户选择某一个方向，就应该把这个方向定住」）。
-    @Test func pinnedDirectionsKeepTheirNumber() throws {
+    /// **用户明确说过的方向永远排最前、编号稳定**，而且**"对"和"不对"都要留在板上**
+    ///（用户 2026-09-27：「无论是对还是不对都要显示」+「这个方向一就一直在这里卡片显示出来」）。
+    @Test func pinnedDirectionsLeadTheRowAndKeepTheirNumber() throws {
         let items = DirectionBoardMatching.displayedItems(
             transcriptText: "帮我把这段存到 notion 里",
             directions: directions,
             jevProbabilities: ["show.point": 0.9, "act.computer": 0.7],
             probabilityThreshold: 0.5,
-            pinnedOrder: ["act.computer"])
-        #expect(items.first?.directionID == "act.computer")
-        #expect(items.first?.number == 1)
+            pinnedStates: [("act.computer", .denied), ("note.notion", .confirmed)])
+        #expect(items.prefix(2).map(\.directionID) == ["act.computer", "note.notion"])
+        #expect(items.prefix(2).map(\.state) == [.denied, .confirmed])
+        #expect(items.prefix(2).map(\.number) == [1, 2])
+        // 本地命中的"保存到 Notion"已经在固定项里了，不该再出现第二次。
+        #expect(items.filter { $0.directionID == "note.notion" }.count == 1)
     }
 
-    /// 他刚口述出来的新方向：没有概率也要显示。
-    @Test func forcedDirectionsAreShownWithoutProbability() throws {
+    /// 列数满了**先砍 JEV 那部分**，固定项一个都不砍（用户：「最多不要超过 5 列」）。
+    @Test func pinnedItemsSurviveTheColumnCap() throws {
+        let pins: [(directionID: String, state: TaskDirectionStore.PinState)] = [
+            ("note.notion", .confirmed), ("show.point", .confirmed), ("act.computer", .confirmed),
+        ]
         let items = DirectionBoardMatching.displayedItems(
-            transcriptText: "随便说点什么",
+            transcriptText: "帮我画一张图",
             directions: directions,
-            jevProbabilities: [:],
-            forcedDirectionIDs: ["vision.make"])
-        #expect(items.map(\.directionID) == ["vision.make"])
+            jevProbabilities: ["vision.make": 0.99, "text.write": 0.98, "text.chat": 0.97],
+            probabilityThreshold: 0.5,
+            pinnedStates: pins,
+            maximumItemCount: 4)
+        #expect(items.count == 4)
+        #expect(items.map(\.directionID).contains("note.notion"))
+        #expect(items.map(\.directionID).contains("show.point"))
+        #expect(items.map(\.directionID).contains("act.computer"))
     }
 
-    // MARK: - 口述
+    // MARK: - 口述的选择判定（**模型在下一轮给，编号按上一轮那一列**）
 
-    @Test func spokenNumbersSelectAndCancel() throws {
-        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "选择第二个方向", displayedItemCount: 5) == 2)
-        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "第三个方向吧", displayedItemCount: 5) == 3)
-        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "就方向4", displayedItemCount: 5) == 4)
-        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "第十一个方向", displayedItemCount: 12) == 11)
-        #expect(DirectionBoardMatching.spokenSelectionNumber(in: "第六个方向", displayedItemCount: 5) == nil)
+    /// 用户 2026-09-27 的两拍语义：他说「方向一对、方向三不对」，**大模型在下一轮**才读懂，
+    /// 而且它说的编号指的是**上一轮显示的那一列**（这中间 JEV 可能已经重排过）。
+    @Test func selectionVerdictMapsThroughThePreviousRoundsNumbering() throws {
+        func item(_ id: String, _ keyword: String, _ number: Int) -> DirectionBoardDisplayItem {
+            DirectionBoardDisplayItem(directionID: id, keyword: keyword, number: number,
+                                      state: .pending, reason: .jevProbability)
+        }
+        // 上一轮板上是这三格（这一轮 JEV 已经把它们换掉了，所以只能靠这份快照）。
+        let previousRound = [item("vision.look", "看图说话", 1),
+                             item("text.write", "写成文章", 2),
+                             item("act.computer", "操作电脑", 3)]
 
-        // 取消（用户点名必须要有的）
-        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "取消第一个方向", displayedItemCount: 5) == 1)
-        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "第二个方向取消", displayedItemCount: 5) == 2)
-        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "去掉第三个方向", displayedItemCount: 5) == 3)
-        #expect(DirectionBoardMatching.spokenCancelSelectionNumber(in: "第一个方向正确", displayedItemCount: 5) == nil)
+        let verdicts = DirectionBoardMatching.parseSelectionVerdict(
+            "选择：1 对，3 不对", previousRound: previousRound)
+        #expect(verdicts.count == 2)
+        #expect(verdicts.first?.directionID == "vision.look")
+        #expect(verdicts.first?.state == .confirmed)
+        #expect(verdicts.last?.directionID == "act.computer")
+        #expect(verdicts.last?.state == .denied)
+
+        // 中文数字 + 「取消」= 取消固定（state 为 nil）。
+        let cancel = DirectionBoardMatching.parseSelectionVerdict("选择：取消 2", previousRound: previousRound)
+        #expect(cancel.first?.directionID == "text.write")
+        #expect(cancel.first?.state == nil)
+
+        // 用户没在评论方向 → 这一行不写 → 什么都不改。
+        #expect(DirectionBoardMatching.parseSelectionVerdict("目标问题：整理文件", previousRound: previousRound).isEmpty)
+        // 编号越界（上一轮只有三格，他说第四个）→ 忽略，不猜。
+        #expect(DirectionBoardMatching.parseSelectionVerdict("选择：4 对", previousRound: previousRound).isEmpty)
     }
 
     @Test func spokenCancelBoardNeedsTheExactPhrase() throws {
@@ -101,12 +130,6 @@ struct DirectionBoardTests {
         #expect(DirectionBoardMatching.spokenCancelBoardRequested(in: "帮我取消任务方向"))
         #expect(!DirectionBoardMatching.spokenCancelBoardRequested(in: "取消任务"))
         #expect(!DirectionBoardMatching.spokenCancelBoardRequested(in: "把任务方向改一下"))
-    }
-
-    @Test func spokenNewDirectionIsExtracted() throws {
-        #expect(DirectionBoardMatching.spokenNewDirection(in: "任务方向是整理照片") == "整理照片")
-        #expect(DirectionBoardMatching.spokenNewDirection(in: "这个是关于剪辑视频方向的") == "剪辑视频")
-        #expect(DirectionBoardMatching.spokenNewDirection(in: "今天天气怎么样") == nil)
     }
 
     // MARK: - 节奏闸门（每 3 秒 + 内容变了 + 新增 ≥10 字）
@@ -140,48 +163,37 @@ struct DirectionBoardTests {
 
     // MARK: - 提交时那几行
 
-    @Test func decorationOnlyCarriesWhatTheUserConfirmed() throws {
-        #expect(DirectionBoardPrompt.decoration(confirmedDirectionTexts: [], typedInput: "") == nil)
-        #expect(DirectionBoardPrompt.decoration(confirmedDirectionTexts: ["   "], typedInput: "\n ") == nil)
-        #expect(DirectionBoardPrompt.decoration(confirmedDirectionTexts: ["保存到 Notion"], typedInput: "")
-            == "用户真实意图的任务方向是：保存到 Notion")
+    @Test func decorationCarriesConfirmedDirectionsUnderstandingAndTypedInput() throws {
+        func decision(_ confirmed: [(String, String)], _ understanding: [(String, String)], _ typed: String)
+            -> DirectionBoardTurnDecision {
+            DirectionBoardTurnDecision(confirmedDirections: confirmed.map { (keyword: $0.0, detail: $0.1) },
+                                       typedInput: typed,
+                                       understanding: understanding.map { (label: $0.0, value: $0.1) })
+        }
+        // 什么都没点、也没输入、理解也是空的 → 不加任何东西（提示词与从前一字不差）。
+        #expect(DirectionBoardPrompt.decoration(decision([], [], "")) == nil)
+        #expect(DirectionBoardPrompt.decoration(decision([], [], "   ")) == nil)
+
+        // 只有用户**明确确认**的方向才发，而且**关键词和描述一起发**
+        //（用户：「这个词跟描述的部分就会作为提示词的一部分来去发给 AI」）。
         #expect(DirectionBoardPrompt.decoration(
-            confirmedDirectionTexts: ["保存到 Notion", "用户确认的任务理解是：他在整理文件"],
-            typedInput: "顺便截图")
+            decision([("保存到 Notion", "把内容整理成一条 Notion 笔记写进用户指定的那一页")], [], ""))
+            == "用户真实意图的任务方向是：保存到 Notion（把内容整理成一条 Notion 笔记写进用户指定的那一页）")
+        // 描述和关键词一样时不必重复括起来。
+        #expect(DirectionBoardPrompt.decoration(decision([("写周报", "写周报")], [], ""))
+            == "用户真实意图的任务方向是：写周报")
+
+        // **大模型的理解**无条件跟着走（用户：「这部分全部都作为一个参考」）；顺序固定：
+        // 方向 → 理解 → 用户输入。
+        #expect(DirectionBoardPrompt.decoration(
+            decision([("看图说话", "看屏幕描述内容")],
+                     [("目标问题", "判断这道题选哪个"), ("类型", "做题")],
+                     "顺便截图"))
             == """
-            用户真实意图的任务方向是：保存到 Notion
-            用户确认的任务理解是：他在整理文件
+            用户真实意图的任务方向是：看图说话（看屏幕描述内容）
+            模型对这次任务的理解是：目标问题：判断这道题选哪个；类型：做题
             用户的补充说明是：顺便截图
             """)
-    }
-
-    // MARK: - 口述编号：钉住重排之后仍然指回同一格
-
-    /// **一句话不许选两格。**
-    ///
-    /// 2026-09-27 实测（用户：「我让他选择的是第二个方向——看图说话，但他选择的是两个方向」）：
-    /// 识别器给的是累积文本，「第二个方向」会被喂进来好几次；而**选中会把那一格钉到最前**，
-    /// 整列重新编号 —— 第二次喂进来时「第 2 个」已经换成另一格，于是同一句话选了两格。
-    /// 修法是记住「编号 → 方向 id」：后面的重喂还按 id 找，而那一格已经选中 → 空操作。
-    @Test func spokenNumberKeepsItsTargetAfterPinningReorders() throws {
-        func item(_ id: String, _ keyword: String, _ number: Int) -> DirectionBoardDisplayItem {
-            DirectionBoardDisplayItem(directionID: id, keyword: keyword, number: number,
-                                      reason: .localKeyword)
-        }
-        let before = [item("text.write", "写成文字", 1), item("vision.look", "看图说话", 2)]
-        // 第一次：第 2 个 = 看图说话。
-        let first = DirectionBoardMatching.resolvedSpokenNumber(2, remembered: [:], in: before)
-        #expect(first?.directionID == "vision.look")
-
-        // 它被选中 → 钉到最前，整列重新编号（第 2 个现在换成了别人）。
-        let after = [item("vision.look", "看图说话", 1), item("text.write", "写成文字", 2)]
-        #expect(after.first { $0.number == 2 }?.directionID == "text.write")   // 证明真的重排了
-
-        // 同一句重喂 → 仍然指回看图说话（不是新编号下的那一格）。
-        let again = DirectionBoardMatching.resolvedSpokenNumber(2,
-                                                               remembered: [2: "vision.look"],
-                                                               in: after)
-        #expect(again?.directionID == "vision.look")
     }
 
     // MARK: - 四段卡片里的解析（固定四行 + 任务结果）
@@ -204,24 +216,24 @@ struct DirectionBoardTests {
         #expect(partial.filter { $0.value.isEmpty }.count == 3)
     }
 
-    /// **「任务结果」不能被「细节」吞掉** —— 四段卡片的核心那条边界。
+    /// **「答案」不能被「细节」吞掉** —— 理解和答案是**两节**，必须各归各的。
     ///
     /// 2026-09-27 实测截图：模型把 `任务结果：选 A（…）` 写在「细节」那行的**尾巴上**，
-    /// 而解析器只把理解标签当边界，于是同一句话在看板上出现两遍 —— 绿框里一次、
-    /// 「细节」那行末尾又一次。
-    @Test func taskResultIsNotSwallowedByDetails() throws {
+    /// 而解析器当时只把理解标签当边界，于是同一句话在看板上出现两遍。
+    /// 现在「答案」是边界标签（只截断、不成理解行），而它自己由 `parseAnswer` 取走。
+    @Test func answerIsNotSwallowedByDetails() throws {
         let raw = """
         目标问题：把选这道题答案的判断记下来
         类型：做题
         参考：预览（PDF 文件看图）
-        细节：屏幕上是几何展开图折叠成正方体的题，按「相对面隔一格」推断。 任务结果：选 A（左侧那个带轮廓的图）
+        细节：屏幕上是几何展开图折叠成正方体的题，按「相对面隔一格」推断。 答案：选 A（左侧那个带轮廓的图）
         """
         let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
         #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
         let details = lines.first { $0.label == "细节" }?.value ?? ""
-        #expect(!details.contains("任务结果"))
+        #expect(!details.contains("答案："))
         #expect(details.hasSuffix("推断。"))
-        #expect(DirectionBoardPrompt.parseTaskResult(raw) == "选 A（左侧那个带轮廓的图）")
+        #expect(DirectionBoardPrompt.parseAnswer(raw) == "选 A（左侧那个带轮廓的图）")
         // 正文里只剩下真正的"标签之外的话"，没有孤零零的「:选 A（…）」。
         let leftover = DirectionBoardPrompt.leftoverParagraphText(raw)
         #expect(!leftover.contains("选 A"))
@@ -271,11 +283,17 @@ struct DirectionBoardTests {
         #expect(lines.first { $0.label == "细节" }?.value == "")
     }
 
-    /// 任务结果续到下一行（实测模型写成「任务结果：选」+ 换行 +「A」）。
-    @Test func taskResultSpansTwoLines() throws {
-        #expect(DirectionBoardPrompt.parseTaskResult("类型:做题\n任务结果：选\nA") == "选 A")
-        // 没有这一行时不给结果（不许拿正文当结果）。
-        #expect(DirectionBoardPrompt.parseTaskResult("类型:做题\n细节:题在左边") == nil)
+    /// 答案续到下一行（实测模型写成「答案：选」+ 换行 +「A」）。
+    @Test func answerSpansTwoLinesAndStaysOptional() throws {
+        #expect(DirectionBoardPrompt.parseAnswer("类型:做题\n答案：选\nA") == "选 A")
+        // **没有这一行就没有答案** —— 右下角于是保持空（用户选的：「识别到「问题」才显示」）。
+        #expect(DirectionBoardPrompt.parseAnswer("类型:做题\n细节:题在左边") == nil)
+        // 模型用「—」表示"没有" → 也当空。
+        #expect(DirectionBoardPrompt.parseAnswer("答案：—") == nil)
+        // **答案与理解互不影响**：理解那四行照常解析出来。
+        let raw = "目标问题：整理文件\n类型：整理\n答案：北京在中国的北部。"
+        #expect(DirectionBoardPrompt.parseAnswer(raw) == "北京在中国的北部。")
+        #expect(DirectionBoardPrompt.parseUnderstandingLines(raw).first { $0.label == "目标问题" }?.value == "整理文件")
     }
 
     /// **解析读的是原文，不是被截过的显示文本**。
