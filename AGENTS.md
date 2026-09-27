@@ -517,6 +517,23 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 
 ### 主 Agent 说话时刘海下面那一行字幕（2026-09-27，接线图第 2、3 条）
 
+**一句话记住这一节：主 Agent 说话时屏幕上的那一套，是录音子系统的完整重复。**（用户 2026-09-27
+的原话就是「备注这个主 Agent，**完整的重复**」。）逐件对：
+
+| 屏幕上的东西 | 两家共用的实现 | 主 Agent 这一侧 |
+|---|---|---|
+| 刘海那条黑带（两翼 + 中段） | `NotchSupport` 的同一批几何（`leadingWingWidth` / `bandSegmentOverlap` / `wingBandWidth`） | 画在**刘海面板**里（`NotchPillRootView` / `NotchExpandedWingBand`） |
+| 刘海下面那一行滚动字幕 | `NotchTranscriptLine` + `SmoothRevealedTranscriptText`（同一个文件 `NotchTranscriptMarquee.swift`） | 同一行，只换数据源 |
+| 点开之后的转写编辑窗 | `NotchExpandedTranscriptPanel`（同一份排版、材质、圆角、⌘S/⌘Enter） | 同一扇窗，改过的字顶替这一句发出去的话 |
+| 每一条都存成一条录音 | `RecordingAudioWriter` / `LongFormTranscriptWriter` / `RecordingLibraryStore` + 16 kHz 单声道 PCM16 + 同一个 `makeSessionID()` | `AgentTurnRecorder`（每一轮一条，音频寄生在既有 tap 上） |
+
+**唯一的差别是"谁在驱动"**：录音那条是 ⌥C 起的**独立子系统**（自己的引擎、自己的状态机、
+"跟面板里任何功能都没有关系"，用户对它的要求就是这句），黑带与字幕画在**它自己那块面板**里；
+主 Agent 这条挂在说话快捷键那条语音管线上，**由相位驱动**（`== .listening` 就有），
+画在**刘海面板**里 —— 这也是 2026-09-27 那一串「接缝 / 动画 / 窗口高度」问题全出在这一侧的原因：
+它借用的是刘海那块本来就有一堆不变量的窗口。
+
+
 **录音带那条字幕 + 那个转写编辑窗，整块搬到主 Agent 的 `Listening` 上** —— 用户的原话是
 「在当前的主 agent 快捷键触发之后……下面要显示一个类似于录音这个……**你直接照搬这个代码就可以了，
 完整的复制过来**」以及「我让 listening 可以被点击，点击之后展开，展开的是录音，可以让用户编辑录音
