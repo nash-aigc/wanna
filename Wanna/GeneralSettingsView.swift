@@ -295,17 +295,10 @@ struct GeneralSettingsView: View {
                         valueLabel: { $0 < 1 ? "念完就消失" : String(format: "%.0f 秒", $0) }
                     )
                 }
-                SettingsCardRowDivider()
-                SettingsRow(
-                    label: "说话时实时显示识别文字",
-                    description: "按住快捷键说话时，边说边上屏你正在说的内容；关掉只显示波形。"
-                ) {
-                    SettingsSwitch(isOn: generalSettingsViewModel.binding(\.showsLiveTranscript))
-                }
             }
 
             SettingsNote(
-                text: "「显示方式」是这一页影响最直接的一项：嫌蓝色光标碍事就改成后两项，平时它就完全不出现了。回答文字和识别文字不受它影响，仍然会显示在鼠标旁边。"
+                text: "「显示方式」是这一页影响最直接的一项：嫌蓝色光标碍事就改成后两项，平时它就完全不出现了。回答文字不受它影响，仍然会显示在鼠标旁边。说话时你正在说的字显示在刘海下面（与录音那条一样的那一行），不在鼠标旁边 —— 鼠标旁边只显示 AI 返回的结果。"
             )
         }
     }

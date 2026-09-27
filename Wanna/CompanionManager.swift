@@ -2068,7 +2068,6 @@ final class CompanionManager: ObservableObject {
                 // tap *is* the send command, so confirmation mode (a release-time
                 // concept) has nothing to attach to.
                 let appSettings = AppSettingsStore.snapshot()
-                let showsLiveTranscript = appSettings.showsLiveTranscript
                 let sendsImmediately = triggerMode == .doubleTapToTalk
                     ? true
                     : appSettings.sendsTranscriptImmediatelyOnRelease
@@ -2095,16 +2094,22 @@ final class CompanionManager: ObservableObject {
                         //（上面那个函数第一行就按「说到屏幕立即截屏」的开关 return 了，
                         // 而 Notion 有它自己的总闸），所以不能塞进那个函数里。
                         self?.noteNotionLiveTranscript(partialTranscript)
-                        // **刘海下面那行字幕**（2026-09-27）。它**不看下面那个开关** ——
-                        // 那是鼠标旁那颗气泡的开关（`liveTranscriptText`），这条字幕是主
-                        // Agent 说话时自己的显示（用户：「下面要显示一个类似于录音这个…
-                        // 从右到左滑动」），所以必须喂在 guard 之前。
+                        // **刘海下面那行字幕**（2026-09-27）—— 说话时你正在说的字**唯一的**
+                        // 显示处就是它。
                         NotchListeningTranscriptModel.shared.setLiveText(partialTranscript)
-                        // The waveform is the default UI; the words are optional.
-                        // Leaving this empty is what keeps the overlay waveform-only,
-                        // which is why the setting needs no other support.
-                        guard showsLiveTranscript else { return }
-                        self?.liveTranscriptText = partialTranscript
+                        // ⚠️ **不再喂鼠标旁边那颗气泡**（2026-09-27 用户：
+                        // 「用户在点击主 Agent 的快捷键的时候，他的鼠标的右下角**不应该**显示实时字幕，
+                        // 就在刘海的下面显示才对。鼠标右下角显示内容应该是用户发送问题出去、
+                        // **AI 返回出来的这个结果**」）。
+                        //
+                        // 从前的分岔是：`showsLiveTranscript`（通用页那颗「说话时实时显示识别文字」）
+                        // 开着就把这句话同时写进 `liveTranscriptText`，那颗气泡就显示它。**那个开关
+                        // 连同这条支路一起删了** —— 一句话只能有一个落点，两个落点必然打架
+                        //（用户看到的正是"底下也有了、鼠标边上还有一个"）。
+                        //
+                        // `liveTranscriptText` 现在**只有一个写入者**：确认模式（「松开立即发送」关着）
+                        // 把待确认的那句话摆在光标旁边等你轻点发送 —— 那是"让你读回它听到了什么"，
+                        // 与"边说边上屏"是两件事，所以那条路保留（`handleFinalTranscript` 里）。
                     },
                     submitDraftText: { [weak self] finalTranscript in
                         self?.handleFinalTranscript(

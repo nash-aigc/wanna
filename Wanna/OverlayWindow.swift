@@ -186,10 +186,16 @@ struct BlueCursorView: View {
 
     /// What the conversation bubble beside the cursor should say right now.
     ///
-    /// The answer wins over the live transcript: they belong to different phases
-    /// of an interaction and cannot both be current, but if a late partial
-    /// transcript ever arrives after the answer started, showing the answer is
-    /// the only reading that is not stale.
+    /// **那颗气泡只显示 AI 返回的结果**（2026-09-27 用户：「用户在点击主 Agent 的快捷键的时候，
+    /// 他的鼠标的右下角**不应该**显示实时字幕，就在刘海的下面显示才对。鼠标右下角显示内容应该是
+    /// 用户发送问题出去、**AI 返回出来的这个结果**」）。说话时你正在说的字归刘海下面那一行
+    /// （`NotchListeningTranscriptModel`），所以 `liveTranscriptText` 在这里**只剩一个来源**：
+    /// 确认模式（「松开立即发送」关着）把待确认的那句话摆在光标旁边等你轻点发送 —— 那是"让你读回
+    /// 它听到了什么"，与"边说边上屏"是两件事。正常模式下它**始终是空串**，于是这条 fallback
+    /// 不显示任何东西（`conversationBubbleText` 为空 = 气泡不画，见调用点）。
+    ///
+    /// 答案优先于待确认的那句话：它们属于一次交互的不同阶段，不会同时成立；但万一有一句迟到的
+    /// 转写落在答案开始之后，显示答案才是唯一不陈旧的读法。
     private var conversationBubbleText: String {
         // 完成通知优先级最高：一段 2–3 秒的「✓ 一句话」本来就该盖住别的东西 ——
         // 它出现的时刻正好是答案清空、下一句转录可能刚到的时候，不压住就会闪。

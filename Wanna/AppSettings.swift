@@ -507,9 +507,6 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// being generated. The app previously never showed text at all.
     var showsResponseText: Bool = false
 
-    /// Show the in-flight transcription while the user is still holding the key.
-    var showsLiveTranscript: Bool = false
-
     /// How long the answer bubble stays up *after* the spoken answer finishes
     /// playing, before it is cleared.
     ///
@@ -1561,7 +1558,6 @@ nonisolated extension AppSettings {
         case launchesAtLogin
         case opensPanelOnLaunch
         case showsResponseText
-        case showsLiveTranscript
         case answerBubbleLingerSeconds
         case cursorPresenceMode
         case cursorShapeStyle
@@ -1691,7 +1687,6 @@ nonisolated extension AppSettings {
         launchesAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchesAtLogin) ?? defaults.launchesAtLogin
         opensPanelOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .opensPanelOnLaunch) ?? defaults.opensPanelOnLaunch
         showsResponseText = try container.decodeIfPresent(Bool.self, forKey: .showsResponseText) ?? defaults.showsResponseText
-        showsLiveTranscript = try container.decodeIfPresent(Bool.self, forKey: .showsLiveTranscript) ?? defaults.showsLiveTranscript
         answerBubbleLingerSeconds = try container.decodeIfPresent(Double.self, forKey: .answerBubbleLingerSeconds) ?? defaults.answerBubbleLingerSeconds
         cursorPresenceMode = try container.decodeIfPresent(CursorPresenceMode.self, forKey: .cursorPresenceMode) ?? defaults.cursorPresenceMode
         cursorShapeStyle = try container.decodeIfPresent(CursorShapeStyle.self, forKey: .cursorShapeStyle) ?? defaults.cursorShapeStyle
