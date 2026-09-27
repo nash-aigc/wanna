@@ -1857,8 +1857,15 @@ final class NotchWindowController {
         // **任务方向看板走同一个判据**（2026-09-27）：说话期间才出现，提交/说完就收起。
         // 用户：「当用户按住快捷键时，即用户说话时，就持续显示，直到用户按下快捷键发送问题，
         // 或等待 2 秒自动发送问题后才不显示」。写在这一处，两者不可能不一致。
+        // ⚠️ **再加一道"它自己还在实时模式吗"**（2026-09-27）。相位的判据不够：
+        // 追问窗口是在**回答一开始播**就武装的，那一刻相位会回到 `.listening`，
+        // 于是这块板子会在 agent 正在干活/正在回答的时候又冒出来 —— 用户报的
+        // 「agent 模式下它还是显示右上角的内容」就是这个。
+        // 看板自己的 `isListening` 是**唯一**说得清"现在是实时模式还是 agent 模式"的东西：
+        // 按下快捷键开始说话 → 起表；问题交给 agent（`consumeTurnDecision`）→ 停表。
         DirectionBoardPanelController.shared.sync(
-            isVisible: panelModel.notchBandSitsAboveTranscriptLine,
+            isVisible: panelModel.notchBandSitsAboveTranscriptLine
+                && DirectionBoardSession.shared.isListening,
             isSheetExpanded: panelModel.isExpanded)
     }
 

@@ -331,17 +331,18 @@ struct DirectionBoardTests {
     /// +「这几行固定在这，而不是突然间有、突然间没有」。所以解析**永远返回那四行**，
     /// 缺的行值是空串（视图画占位符），行的数量不随模型怎么写而变。
     @Test func understandingRowsAreAlwaysTheSameFour() throws {
-        // 2026-09-27 用户删到两行，随后又加回一行「疑问」（AI 读出来的歧义/矛盾）。
-        #expect(DirectionBoardPrompt.understandingLabels == ["需求", "细节", "矛盾"])
+        // 2026-09-27 深夜：左侧只剩「矛盾」——「需求」并进了右侧那张脑图
+        //（用户：「左侧边现在就让它显示**参考、矛盾**……就只显示这几个」）。
+        #expect(DirectionBoardPrompt.understandingLabels == ["细节", "矛盾"])
         // 什么都不给 → 四行都在，全是空值。
         let empty = DirectionBoardPrompt.parseUnderstandingLines("")
         #expect(empty.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(empty.allSatisfy { $0.value.isEmpty })
         // 只给一行 → 另一行仍然在（占位符由视图画）。
-        let partial = DirectionBoardPrompt.parseUnderstandingLines("目标：整理文件")
+        let partial = DirectionBoardPrompt.parseUnderstandingLines("细节：├─ 整理下载目录")
         #expect(partial.map(\.label) == DirectionBoardPrompt.understandingLabels)
-        #expect(partial.first { $0.label == "需求" }?.value == "整理文件")
-        #expect(partial.filter { $0.value.isEmpty }.count == 2)
+        #expect(partial.first { $0.label == "细节" }?.value == "├─ 整理下载目录")
+        #expect(partial.filter { $0.value.isEmpty }.count == 1)
     }
 
     /// **「答案」不能被「细节」吞掉** —— 理解和答案是**两节**，必须各归各的。
@@ -397,16 +398,19 @@ struct DirectionBoardTests {
         #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
         // 「软件 / 文件 / 类型」这些已被删掉的行现在只当**边界**：它们自己不出现，
         // 内容也不许漏进「细节」（否则模型一时改不过来，屏幕上就多一段莫名其妙的尾巴）。
-        #expect(lines.first { $0.label == "需求" }?.value == "整理桌面")
-        #expect(lines.first { $0.label == "细节" }?.value == "只动下载目录")
+        // 「目标」2026-09-27 起也进了边界那一类（它并进了脑图，不再单列一行）——
+        // 关键是**它的内容不许漏进「细节」**（模型一时改不过来才是常态）。
+        let detailsValue = lines.first { $0.label == "细节" }?.value ?? ""
+        #expect(detailsValue == "只动下载目录", "细节的实际值：[\(detailsValue)]")
+        #expect(!detailsValue.contains("整理桌面"), "细节里混进了「目标」那一行：[\(detailsValue)]")
     }
 
     /// 四行写在**同一行**里（模型常这么干）也要切得开。
     @Test func understandingRowsSplitInsideOneLine() throws {
-        let lines = DirectionBoardPrompt.parseUnderstandingLines("目标:整理 细节:题图在左侧")
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("矛盾:两个数字对不上 细节:题图在左侧")
         #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(lines.first { $0.label == "细节" }?.value == "题图在左侧")
-        #expect(lines.first { $0.label == "需求" }?.value == "整理")
+        #expect(lines.first { $0.label == "矛盾" }?.value == "两个数字对不上")
         // 模型把被删掉的行也写在同一行里时，它们只当边界、不成行。
         let withDropped = DirectionBoardPrompt.parseUnderstandingLines(
             "目标:整理 类型:整理文件 参考:桌面 细节:题图在左侧")
@@ -417,8 +421,8 @@ struct DirectionBoardTests {
     /// **标签互相嵌套**：`目标问题:` 里含 `目标:`、`问题:`；`任务类型:` 里含 `类型:`。
     /// 不处理重叠就会切出几段空值，那一行的内容整段消失。
     @Test func nestedLabelDoesNotBreakTheValue() throws {
-        let lines = DirectionBoardPrompt.parseUnderstandingLines("目标问题：整理桌面上的文件")
-        #expect(lines.first { $0.label == "需求" }?.value == "整理桌面上的文件")
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("细节：整理桌面上的文件")
+        #expect(lines.first { $0.label == "细节" }?.value == "整理桌面上的文件")
         // 「任务类型」已经被删掉了（用户 2026-09-27），但它仍然当**边界**：
         // 它自己不出现，内容也不许漏进「细节」。
         let typeLines = DirectionBoardPrompt.parseUnderstandingLines("任务类型：做题\n细节：只动下载目录")
@@ -440,9 +444,9 @@ struct DirectionBoardTests {
         // 模型用「—」表示"没有" → 也当空。
         #expect(DirectionBoardPrompt.parseAnswer("答案：—") == nil)
         // **答案与理解互不影响**：理解那四行照常解析出来。
-        let raw = "目标：整理文件\n答案：北京在中国的北部。"
+        let raw = "细节：整理文件\n答案：北京在中国的北部。"
         #expect(DirectionBoardPrompt.parseAnswer(raw) == "北京在中国的北部。")
-        #expect(DirectionBoardPrompt.parseUnderstandingLines(raw).first { $0.label == "需求" }?.value == "整理文件")
+        #expect(DirectionBoardPrompt.parseUnderstandingLines(raw).first { $0.label == "细节" }?.value == "整理文件")
     }
 
     /// **解析读的是原文，不是被截过的显示文本**。
@@ -503,12 +507,12 @@ struct DirectionBoardTests {
         //（用户 2026-09-27：「用"关于什么什么的疑问："的形式，冒号后留一个空格」）——
         // 解析时先把全角冒号统一成半角、再在这一步还原成全角并补空格。
         #expect(question == "一、关于「记到哪里」的疑问： 是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音")
-        #expect(lines.first { $0.label == "需求" }?.value.isEmpty == false)
+        #expect(lines.first { $0.label == "矛盾" }?.value.isEmpty == false)
         // **一行里挤两个标签仍然要认**（模型常这么写）—— 别把上面那条修过头。
         // ⚠️ 「—」是空值标记，解析出来就是**空串**（见 `dashMeansEmptyNotContent`），
         // 第一版这里写「—」又红了一次 —— 两次红都是断言写错，实现是对的。
-        let packed = DirectionBoardPrompt.parseUnderstandingLines("目标：整理文件 细节：打个比方")
-        #expect(packed.first { $0.label == "需求" }?.value == "整理文件")
+        let packed = DirectionBoardPrompt.parseUnderstandingLines("矛盾：两个数字对不上 细节：打个比方")
+        #expect(packed.first { $0.label == "矛盾" }?.value == "两个数字对不上")
         #expect(packed.first { $0.label == "细节" }?.value == "打个比方")
     }
 
@@ -520,9 +524,9 @@ struct DirectionBoardTests {
         let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
             directions: [(id: "d1", keyword: "整理文件", detail: "把下载目录收拾一下")],
             looksAtTheScreen: true)
-        // ① 目标：用户的提示词才是目标，屏幕只是参考。
-        #expect(systemPrompt.contains("只看用户自己说的那句话"))
-        #expect(systemPrompt.contains("用户的提示词才是目标"))
+        // ① 脑图要带上他的原话、别过度简化（用户 2026-09-27 深夜那条）。
+        #expect(systemPrompt.contains("不要过度简化"))
+        #expect(systemPrompt.contains("他没说过一样"))
         // ② 疑问：只关注逻辑矛盾，且明写不许问澄清类的问题。
         #expect(systemPrompt.contains("只写逻辑矛盾"))
         #expect(systemPrompt.contains("不要问澄清类的问题"))
@@ -554,7 +558,9 @@ struct DirectionBoardTests {
     /// 这几行是卡片"高度不晃"的全部依据，写死在这里。
     @Test func theReservedRowsMatchTheUsersSizes() throws {
         #expect(DirectionBoardView.reservedLineCounts["矛盾"] == 5)
-        #expect(DirectionBoardView.reservedLineCounts["需求"] == 8)
+        // 「需求」不再是独立一行（并进了脑图）。
+        #expect(DirectionBoardView.reservedLineCounts["需求"] == nil)
+        #expect(DirectionBoardView.reservedLineCounts["细节"] == 7)
         #expect(DirectionBoardView.directionGridRows == 4)
         #expect(DirectionBoardView.referenceTagRowLines == 3)
     }
@@ -590,8 +596,9 @@ struct DirectionBoardTests {
         #expect(lines.first { $0.label == "矛盾" }?.value
                 == "一、关于「这段」的疑问： 他说的和上一句对不上")
         // 别的行不受这条形状约束（它们本来就没有冒号约定）。
-        let goal = DirectionBoardPrompt.parseUnderstandingLines("目标：把这段记下来")
-        #expect(goal.first { $0.label == "需求" }?.value == "把这段记下来")
+        // 「目标」现在只当边界（那一行并进了脑图）—— 它的内容不许漏进别的行里。
+        let goal = DirectionBoardPrompt.parseUnderstandingLines("目标：把这段记下来\n细节：├─ 素材")
+        #expect(goal.first { $0.label == "细节" }?.value == "├─ 素材")
         // 各种写法都收敛到同一个形状。
         #expect(DirectionBoardPrompt.formattedQuestion("关于文件的疑问:没说哪个文件")
                 == "关于文件的疑问： 没说哪个文件")

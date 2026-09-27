@@ -1062,6 +1062,12 @@ final class CompanionManager: ObservableObject {
         }
         buddyDictationManager.onContinuousListeningUtteranceBegan = { [weak self] in
             self?.armAgentTurnRecordingForFollowUp()
+            // **看板的"实时模式"从这一刻开始**（用户开口了，才有东西可分析）——
+            // 同一条判据也用在别处（录音、Notion 检测），这里只多起一块表。
+            // **同一个 cycleID 传下去**：追问仍属于这一次大循环，"取消本次"不会被清掉。
+            Task { @MainActor in
+                DirectionBoardSession.shared.beginListening(cycleID: self?.currentVoiceCycleID)
+            }
         }
         // 这一场被取消了（一个字都没认出来）—— 那一轮录音就不算数，立刻收干净。
         // 少了这一条，它会一直开着，直到下一次按键才被顺手收掉（历史里多一条 0 秒空录音）。
@@ -3066,9 +3072,13 @@ final class CompanionManager: ObservableObject {
         // **连续追问这条窗口开了，Notion 检测也跟着起表**（2026-09-27 从录音搬过来）。
         // 窗口里每一句的实时转写从 `onTranscriptUpdate` 喂进来。
         NotionNoteSession.shared.beginListening()
-        // 追问窗口里用户一开口也是「说话期间」—— 同一块看板、同一条判据。
-        // **同一个 cycleID 传下去**：追问仍然属于这一次大循环，所以"取消本次"在这里不会被清掉。
-        DirectionBoardSession.shared.beginListening(cycleID: currentVoiceCycleID)
+        // ⚠️ **看板不在这里起表**（2026-09-27 改）。这个窗口是"回答一开始播"就武装的，
+        // 那一刻用户一个字都还没说 —— 而用户这次说得很清楚：**按下快捷键把问题交给 agent 之后
+        // 就是 agent 模式，右上角那块卡片不该显示、也不该再轮询**（他的原话：「你现在实时模式
+        // 已经延伸到了这个 agent 的模式，它现在 agent 的模式下它还是显示右上角的内容，
+        // **这个我需要不显示**」）。
+        // 所以看板改在**用户真的开口**那一刻起表（见 `onContinuousListeningUtteranceBegan`）——
+        // 那才是新的实时模式的开始。
         // **参考材料**：按下快捷键就自动截一张（用户：「进入录音时，会自动截屏」）。
         TurnReferenceCollector.shared.beginTurn()
         Task { [weak self] in

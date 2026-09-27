@@ -95,7 +95,8 @@ struct DirectionBoardView: View {
     /// 键就是卡片上显示的那两个字 —— 2026-09-27 深夜随标签一起改名
     ///（用户：「把左侧这个**目标**调整为**需求**，把**疑问**调整为**矛盾**，
     /// 因为左侧其实就是在**了解用户的需求**」）。
-    static let reservedLineCounts: [String: Int] = ["需求": 8, "细节": 7, "矛盾": 5]
+    /// ⚠️ 2026-09-27 深夜：左侧只剩「矛盾」（「需求」并进了右侧那张脑图）。
+    static let reservedLineCounts: [String: Int] = ["细节": 7, "矛盾": 5]
 
     /// **脑图那一行是哪一行**（「细节」）—— 它单独占右栏，且**不画标题**。
     static let mindMapLabel = "细节"
@@ -121,11 +122,11 @@ struct DirectionBoardView: View {
 
     private static var contentBlockHeight: CGFloat {
         // 左列「装得下」的最低要求：表格 2 行 + 参考 2 行 + 目标 6 行 + 疑问 10 行 + 三处间距。
+        // 左列只剩「矛盾」那一行（标题 + 5 行）+ 参考那两块。
         let leftColumnRequirement = directionGridHeight
             + referenceTagRowHeight                       // 含它自己的标题行
-            + understandingLabelHeight + understandingLineHeight * 8   // 目标：标题 + 8 行
-            + understandingLabelHeight + understandingLineHeight * 5   // 疑问：标题 + 5 行
-            + 20                                          // 三处间距：8 + 8 + 4
+            + understandingLabelHeight + understandingLineHeight * 5   // 矛盾：标题 + 5 行
+            + 16                                          // 两处间距：8 + 8
         // 用户 2026-09-27 深夜：「……**整体高度再增加一倍**」—— 上一版这一块是 264，
         // 所以取两者里更大的那个：行数是下限，翻倍是他明写的数。多出来的高度全给右栏那张脑图
         //（他要的就是「右侧全部都是脑图」）。
