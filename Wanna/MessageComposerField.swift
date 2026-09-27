@@ -140,12 +140,41 @@ struct MessageComposerField: View {
     /// 行里的按钮由各页自己给，这样三页将来都加的时候不会各排各的。
     var controlsRow: AnyView? = nil
 
+    /// **输入框上方那一行附件**（2026-09-28）：粘进来的图片 / 文件 / 文件夹。
+    ///
+    /// 由输入框统一画（而不是各页自己画），理由与 `controlsRow` 同一条：**排布只有一处**。
+    /// 三个页面各写一遍，迟早会有一页的边距跟另外两页不一样。
+    ///
+    /// 默认空数组 + 空闭包，所以不传这几样的调用点（临时对话）**一个字都不用改**。
+    var attachments: [ComposerAttachment] = []
+    /// 移除某一条（按 `ComposerAttachment.id`）。
+    var onRemoveAttachment: (String) -> Void = { _ in }
+    /// **粘贴拦截**：认得出来就收下并返回 true，输入框一个字符都不插。
+    /// 返回 false（或没给这个闭包）时走 NSTextView 原来的粘贴。
+    var onPasteAttachments: ((NSPasteboard) -> Bool)?
+    /// 点某一条时做什么。不给就打开面板内的预览 —— 那正是用户 2026-09-28 选的
+    ///（「在面板里预览」，而不是"用系统默认 App 打开"）。
+    var onOpenAttachment: ((ComposerAttachment) -> Void)?
+
     var composerAccessory: ComposerAccessoryButton? = nil
 
 
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // **附件在这一行的按钮上方**（用户红框圈的位置就是"连续对话"那一行之上）。
+            if !attachments.isEmpty {
+                ComposerAttachmentStrip(attachments: attachments,
+                                        onRemove: onRemoveAttachment,
+                                        onOpen: { attachment in
+                                            if let onOpenAttachment {
+                                                onOpenAttachment(attachment)
+                                            } else {
+                                                ComposerAttachmentStore.shared
+                                                    .previewingAttachment = attachment
+                                            }
+                                        })
+            }
             if let controlsRow {
                 controlsRow
             }
@@ -162,7 +191,10 @@ struct MessageComposerField: View {
         ComposerTextView(
             text: $draft,
             isFocused: $isFocused,
-            onSubmit: onSubmit
+            onSubmit: onSubmit,
+            // **粘贴拦截面**（2026-09-28）：粘图片 / 文件 / 文件夹时由调用方收走，
+            // 输入框里**一个字符都不插**；返回 false 时原样走文本粘贴。
+            onPaste: onPasteAttachments
         )
         .padding(.horizontal, 12)
         .padding(.vertical, Self.verticalTextInset)
@@ -358,6 +390,8 @@ private struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
     let onSubmit: () -> Void
+    /// **粘贴拦截**：返回 true = 这次粘贴已经被收走（不进输入框）。
+    let onPaste: ((NSPasteboard) -> Bool)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -401,6 +435,11 @@ private struct ComposerTextView: NSViewRepresentable {
         }
         textView.handleFocusChange = { [weak coordinator = context.coordinator] isFocusedNow in
             coordinator?.reportFocusChange(isFocusedNow)
+        }
+        // **粘贴的拦截点在 NSTextView，不在 SwiftUI 这一层**：⌘V 由 AppKit 的
+        // `paste(_:)` 派发，SwiftUI 收不到它，所以只能在子类里问一句。
+        textView.handlePaste = { [weak coordinator = context.coordinator] pasteboard in
+            coordinator?.handlePaste(pasteboard) ?? false
         }
 
         let scrollView = NSScrollView()
@@ -530,6 +569,16 @@ private struct ComposerTextView: NSViewRepresentable {
             parent.onSubmit()
             return true
         }
+
+        /// **这次粘贴是附件吗。** 返回 true = 已经被收走，`NSTextView` 不许再插任何字符。
+        ///
+        /// 判据全在 `ComposerAttachment.attachments(from:)`（纯逻辑，可单测）：它认得出来
+        /// 才会非空。认不出来就返回 false，粘贴原样走 NSTextView 的老路 —— 纯文本粘贴的
+        /// 行为**一个字都不改**。
+        func handlePaste(_ pasteboard: NSPasteboard) -> Bool {
+            guard let onPaste = parent.onPaste else { return false }
+            return onPaste(pasteboard)
+        }
     }
 }
 
@@ -541,6 +590,30 @@ private struct ComposerTextView: NSViewRepresentable {
 private final class ComposerNSTextView: NSTextView {
 
     var handleSendKeyEvent: ((NSEvent) -> Bool)?
+
+    /// 粘贴的拦截口（返回 true = 这次粘贴不是文本，已经被收走）。
+    var handlePaste: ((NSPasteboard) -> Bool)?
+
+    /// **⌘V 走这里，不走 `keyDown`。**
+    ///
+    /// `paste(_:)` 是 AppKit 的文本命令（菜单里的"粘贴"、`⌘V`、右键菜单的粘贴都会到它），
+    /// 所以拦在它这里，三条入口一次覆盖 —— 比在 `keyDown` 里认 `v` 键可靠得多
+    ///（后者还得自己判断修饰键、还得知道 `⌘V` 是不是被用户改过）。
+    ///
+    /// 收走时**绝不调 `super`**：调了就会把粘贴板里的东西按文本插进输入框
+    ///（一张复制的图在 `isRichText = false` 的框里会变成一串没用的东西），
+    /// 而那正是这次改动要消灭的现象。
+    override func paste(_ sender: Any?) {
+        if handlePaste?(NSPasteboard.general) == true { return }
+        super.paste(sender)
+    }
+
+    /// 「粘贴为纯文本」是同一个动作的另一种入口（⇧⌥⌘V），走同一条判定 ——
+    /// 否则用户换一个快捷键粘贴就会得到两种结果。
+    override func pasteAsPlainText(_ sender: Any?) {
+        if handlePaste?(NSPasteboard.general) == true { return }
+        super.pasteAsPlainText(sender)
+    }
 
     /// 焦点变化的上报口，由 coordinator 接住（见 `reportFocusChange`）。
     var handleFocusChange: ((Bool) -> Void)?

@@ -71,6 +71,15 @@ struct NotchHomeView: View {
     /// 行为（带不带截图），而不是等下一次重开面板。
     @ObservedObject private var cardChatPreferences = CardChatPreferenceModel.shared
 
+    /// **这一页输入框里的附件**（2026-09-28）—— 按卡片存，这一页的卡片就是当前活动会话。
+    /// 观察它是因为：粘贴之后附件条要立刻出现，删掉一条它要立刻消失。
+    @ObservedObject private var composerAttachmentStore = ComposerAttachmentStore.shared
+
+    /// 附件归**哪张卡片**（附件按卡片 id 存，与聊天模式同一个键）。
+    private var composerAttachmentCardID: String? {
+        sessionsModel.activeSessionID?.uuidString
+    }
+
     /// **这一轮带不带截图 —— 由卡片的聊天模式决定**（2026-09-26）。
     ///
     /// 它原来是一颗默认勾上的「屏幕」开关，现在那张卡片最上面那排模式里的**图文 / 文本**
@@ -259,6 +268,11 @@ struct NotchHomeView: View {
                 )
             }
         }
+        // **附件的预览面板**（2026-09-28）：点缩略图打开，盖住整个内容列。
+        // 面板本体与"正在预览哪一条"都只有一份（`ComposerAttachmentStore`），
+        // 这一页只负责把它挂在一个 frame 足够大的层上 —— 挂在那条 64pt 高的附件条上
+        // 会画得出、点不动（见 开发经验/10-踩过的坑.md D14）。
+        .overlay { ComposerAttachmentPreviewOverlay() }
     }
 
     private var isEmptySession: Bool {
@@ -1113,6 +1127,20 @@ struct NotchHomeView: View {
             onStop: { companionManager.interruptActiveResponse() },
             // **输入框上方那一行**（2026-09-26）：两种对话模式 + 新建 / 屏幕 / 声音 / 音色。
             controlsRow: AnyView(composerControlsRow),
+            // **粘进来的图片 / 文件 / 文件夹**（2026-09-28）。文字 / 图文这两个模式都支持 ——
+            // 用户点名要的三个模式里，这一页负责前两个（视频在语音页）。
+            attachments: composerAttachmentCardID.map {
+                composerAttachmentStore.attachments(forCardID: $0)
+            } ?? [],
+            onRemoveAttachment: { attachmentID in
+                guard let cardID = composerAttachmentCardID else { return }
+                composerAttachmentStore.remove(id: attachmentID, forCardID: cardID)
+            },
+            onPasteAttachments: { pasteboard in
+                // 认不出来（纯文本）就返回 false，交回 NSTextView 走原来的粘贴。
+                guard let cardID = composerAttachmentCardID else { return false }
+                return composerAttachmentStore.consumePasteboard(pasteboard, forCardID: cardID)
+            },
             // **输入框内部那颗「临时对话」按钮删掉了**（用户 2026-09-26：
             // 「输入框的内部左下角你有一个临时对话，把这个按钮删掉，因为它功能重复了」）
             // —— 上方那行已经有同一颗了。

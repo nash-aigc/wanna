@@ -62,11 +62,16 @@ final class CascadeVoiceEngine {
     /// 算同一份东西，两处共用 `VoiceCatalog.capability(...)` 这一个实现，
     /// 于是"看得见的"和"真的用的"结构上不可能分家。
     /// `speaksReplies`（2026-09-26）：语音页那颗「声音」关掉时传 false —— 这一轮**只出文字**。
+    ///
+    /// `attachments`（2026-09-28）：用户在输入框里粘进来的图片 / 文件 / 文件夹。**视频模式**才
+    /// 会非空 —— 这一页的打字发送**无论全双工还是三段式都走这里**（`sendText` → `startTurn`
+    /// → `runTurn`，见 `VoiceChatController`），所以附件接在这一处就覆盖了视频模式的全部打字回合。
     func runTurn(utterance: String,
                  role: VoiceChatRole,
                  preset: VoiceChatPreset,
                  channel: VoiceChatChannel,
                  speaksReplies: Bool = true,
+                 attachments: [ComposerAttachment] = [],
                  callbacks: CascadeTurnCallbacks) {
         cancelCurrentTurn()
 
@@ -79,6 +84,7 @@ final class CascadeVoiceEngine {
                 speaksReplies: speaksReplies,
                 preset: preset,
                 capability: capability,
+                attachments: attachments,
                 callbacks: callbacks
             )
         }
@@ -122,6 +128,7 @@ final class CascadeVoiceEngine {
                              speaksReplies: Bool,
                              preset: VoiceChatPreset,
                              capability: VoiceCatalog.VoiceChatCapability,
+                             attachments: [ComposerAttachment],
                              callbacks: CascadeTurnCallbacks) async {
         // TEMPORARY PROBE (2026-09-25)：用户报「语音聊天两种模式都变慢，要等 1~2 秒，
         // 是不是中间插入了什么等待逻辑」。这一行起一把尺子，把三段式这条链**逐段**量出来：
@@ -153,6 +160,21 @@ final class CascadeVoiceEngine {
                         label: "用户摄像头拍到的画面（这是摄像头，不是屏幕）："
                     ))
                 }
+            }
+            // **用户粘进来的图片接在后面**（2026-09-28）。与自动画面一样带 label，
+            // 所以模型分得清"哪张是屏幕、哪张是摄像头、哪张是他自己贴的"。
+            images.append(contentsOf: ComposerAttachment.imagePayloads(for: attachments))
+
+            // **文件 / 文件夹只给路径**（用户拍板：图片给图、文件给路径，交给有工具的一方去读）。
+            // 拼在用户这句话**前面**，与主循环那条路的 `<attachments>` 块是同一个函数 ——
+            // 两个引擎看到的附件形状因此完全一致。
+            let userPromptWithAttachments: String = {
+                guard let block = ComposerAttachment.promptBlock(for: attachments) else { return utterance }
+                return block + "\n" + utterance
+            }()
+            if !attachments.isEmpty {
+                let imageCount = attachments.filter { $0.kind == .image }.count
+                print("📎 附件：随这一轮视频对话发给模型（图片 \(imageCount) 张 / 共 \(attachments.count) 条）")
             }
             if Task.isCancelled { return }
 
@@ -188,10 +210,18 @@ final class CascadeVoiceEngine {
                 ?? VoiceCatalog.defaultUnderstandingModel
 
             if VoiceCatalog.isRealtimeModel(understandingModelID) {
+                // **这条协议只吃文字**（`RealtimeTextUnderstandingClient` 发的是
+                // `input_text`），所以粘进来的图片在这一路**送不出去**。如实记一行 ——
+                // 假装发了比发不出去更坏：用户会以为模型看过那张图了。
+                // 文件 / 文件夹的路径是文字，照常进请求。
+                if attachments.contains(where: { $0.kind == .image }) {
+                    print("⚠️ 附件：这一轮的「理解」用的是实时模型 \(understandingModelID)，它不吃图 ——"
+                          + " 粘进来的图片这一轮没有送给模型（换成 HTTP 图文的理解模型就可以了）")
+                }
                 finalReplyText = try await RealtimeTextUnderstandingClient().generateText(
                     modelID: understandingModelID,
                     systemPrompt: systemPrompt(for: role),
-                    userPrompt: utterance,
+                    userPrompt: userPromptWithAttachments,
                     onTextChunk: { @MainActor accumulatedText in
                         streamedReplyText = accumulatedText
                         // 与 HTTP 那条路同一个 helper：念的是剥掉标签的那份。
@@ -207,7 +237,7 @@ final class CascadeVoiceEngine {
                 let (httpReplyText, _) = try await BailianVisionChatAPI().analyzeImageStreaming(
                     images: images,
                     systemPrompt: systemPrompt(for: role),
-                    userPrompt: utterance,
+                    userPrompt: userPromptWithAttachments,
                     modelIDOverride: understandingModelID,
                     onTextChunk: { @MainActor accumulatedText in
                         // TEMPORARY PROBE (2026-09-25)：每长 200 字打一行 —— 见

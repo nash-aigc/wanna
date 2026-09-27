@@ -63,6 +63,19 @@ struct VoiceChatSessionView: View {
     /// 每张卡片的模式与角色 —— 只读它来决定"现在是不是视频模式"这类事。
     @ObservedObject private var cardChatPreferences = CardChatPreferenceModel.shared
 
+    /// **这一页输入框里的附件**（2026-09-28）—— 只有视频模式有（见下面那条判据）。
+    @ObservedObject private var composerAttachmentStore = ComposerAttachmentStore.shared
+
+    /// 附件归哪张卡片 —— **只有视频模式非 nil**。
+    ///
+    /// 用户 2026-09-28 点名的三个模式是「文本 / 图文 / 视频」，**语音模式不在里面**，
+    /// 所以这一页要按模式分流：视频有附件条、语音没有。判据用的是与模式条同一个值
+    /// （`currentCardChatMode`），所以界面与行为不可能分家。
+    private var videoModeAttachmentCardID: String? {
+        guard let cardID, currentCardChatMode == .video else { return nil }
+        return cardID
+    }
+
     /// 分割线下面那两行（全双工 / 三段式）是否展开 —— 默认收起，由页头那颗
     /// `modeDisclosureButton` 开合（用户 2026-09-26 第 3 条）。
     @State private var showsPresetRows = false
@@ -194,11 +207,16 @@ struct VoiceChatSessionView: View {
     var body: some View {
         // 右键角色卡片 → 编辑：**右侧这一列就地换成角色设置页**（用户的原话：
         // 「右侧的对话页面就变成一个设置页面」）。顶上给一条返回，否则进去就出不来。
-        if controller.isShowingRoleEditor {
-            roleEditorColumn
-        } else {
-            conversationColumn
+        Group {
+            if controller.isShowingRoleEditor {
+                roleEditorColumn
+            } else {
+                conversationColumn
+            }
         }
+        // **附件的预览面板**（2026-09-28，视频模式）：点缩略图打开，盖住整个内容列 ——
+        // 与对话页 / Agent 页同一份面板、同一份状态（`ComposerAttachmentStore`）。
+        .overlay { ComposerAttachmentPreviewOverlay() }
     }
 
     /// 角色编辑形态：一条返回 + 编辑页本身。
@@ -2342,7 +2360,19 @@ struct VoiceChatSessionView: View {
             // 只有整场会话 —— 所以这一颗按钮在这页上等于挂断。
             isResponding: controller.connectionPhase != .idle,
             onStop: { controller.disconnectCurrentSession() },
-            controlsRow: AnyView(voiceComposerControlsRow)
+            controlsRow: AnyView(voiceComposerControlsRow),
+            // **视频模式的附件**（2026-09-28）；语音模式是 nil，附件条整条不出现。
+            attachments: videoModeAttachmentCardID.map {
+                composerAttachmentStore.attachments(forCardID: $0)
+            } ?? [],
+            onRemoveAttachment: { attachmentID in
+                guard let cardID = videoModeAttachmentCardID else { return }
+                composerAttachmentStore.remove(id: attachmentID, forCardID: cardID)
+            },
+            onPasteAttachments: { pasteboard in
+                guard let cardID = videoModeAttachmentCardID else { return false }
+                return composerAttachmentStore.consumePasteboard(pasteboard, forCardID: cardID)
+            }
         )
         .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
         .padding(.top, 10)

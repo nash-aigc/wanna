@@ -821,8 +821,14 @@ nonisolated enum NotchSupport {
     //（`directionBoardPanelFrame` / `DirectionBoardPanelController`）读同一份，
     // 两处各写一遍必然会漂 —— 这个仓库为"画的和点的不一致"付过代价（`trailingWingOriginX` 那次差 71pt）。
 
-    /// 7 的**横杠**（左半内容：方向 ≤4 ／ ? 矛盾 ／ 参考标签 ／ 按钮行）宽。
-    nonisolated static let directionBoardBarWidth: CGFloat = 360
+    /// 7 的**横杠**（左半内容）宽 —— **就取回复卡的宽度**（用户 2026-09-28：「七字形上面那个卡片，
+    /// 它的左半部分宽度，也就是卡片中间那条**分隔线**的位置，我希望**左侧的宽度刚好等于右下角
+    /// 这个卡片的宽度**，让分隔线落在这个位置上」）。
+    ///
+    /// 所以它和「竖条宽」是**同一个数**：整块面板 680 = 340 + 340，那条分隔线正好落在
+    /// **回复卡右边缘的延长线上**（卡最宽时严丝合缝，窄的时候分隔线略靠右一点点 —— 卡的宽度
+    /// 本身是随内容变的，这是它唯一能对齐的那个基准）。
+    nonisolated static var directionBoardBarWidth: CGFloat { answerCardMaximumWidth }
     /// 横杠的高度 —— **定值**（行的集合恒定、每行预留固定行数，卡片高度因此不晃）。
     ///
     /// 算式（2026-09-28 三段定稿）：上边距 12 + 问题 10 行（10×16 + 9×3 = 187）+ 间隔 8

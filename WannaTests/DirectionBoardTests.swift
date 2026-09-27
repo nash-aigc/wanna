@@ -552,14 +552,16 @@ struct DirectionBoardTests {
     /// 用户 2026-09-28 的尺寸（7 字形）：**横杠 360 × 224、竖条 340、方向格子 2 行、
     /// 问题 3 行、参考标签 2 行**。这些数字是卡片"高度不晃"的全部依据，写死在这里。
     ///
-    /// ⚠️ 竖条宽必须**等于右下角那张回复卡的宽度**（用户 2026-09-28：「竖向这个宽度其实跟
-    /// 右下角卡片的宽度应该设置为一样的」）—— 两者是同一个数，改一个必须改另一个。
+    /// ⚠️ **左右两半都等于右下角那张回复卡的宽度**（2026-09-28 两次说的：先是「竖向这个宽度
+    /// 其实跟右下角卡片的宽度应该设置为一样的」，随后是「**左侧的宽度刚好等于右下角这个卡片的
+    /// 宽度**，让分隔线落在这个位置上」）—— 三个数现在是同一个来源，改一个不会只改到一半。
     @Test func theReservedRowsMatchTheUsersSizes() throws {
         // 用户 2026-09-28：「矛盾……**固定 10 行**」「参考……显示在**一行**上」「3 个选项显示在一行」。
         #expect(DirectionBoardView.questionRowLines == 10)
         #expect(DirectionBoardView.referenceTagRowLines == 1)
         #expect(DirectionBoardView.optionSlots == 3)
-        #expect(DirectionBoardView.barWidth == 360)
+        // **左半宽 = 回复卡宽**（用户 2026-09-28：分隔线的位置要落在回复卡右边缘上）。
+        #expect(DirectionBoardView.barWidth == NotchSupport.answerCardMaximumWidth)
         #expect(DirectionBoardView.barHeight == 251)
         #expect(DirectionBoardView.mapWidth == 340)
         #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
@@ -607,11 +609,12 @@ struct DirectionBoardTests {
         // 横杠的下沿正好在鼠标上方 30pt（AppKit：+y 向上），于是它**整个在鼠标上方**。
         let barBottom = frame.maxY - NotchSupport.directionBoardBarHeight
         #expect(abs(barBottom - (anchor.y + NotchSupport.directionBoardBarClearance)) < 0.5)
-        // 竖条的左边缘 = 横杠的右边缘 = 鼠标右侧 (12 + 横杠宽)，比回复卡的最大右边缘还靠右
-        //（回复卡从鼠标 +12 起、最宽 340）—— 中间那条缝就是这么来的。
+        // **分隔线正落在回复卡的右边缘上**（用户 2026-09-28：「左侧的宽度刚好等于右下角这个卡片的
+        // 宽度，让分隔线落在这个位置上」）：横杠宽 = 回复卡宽，所以竖条的左边缘 =
+        // 回复卡**最宽时**的右边缘 —— 卡窄一点的时候自然让出一条缝，卡最宽时严丝合缝。
         let mapLeft = frame.minX + NotchSupport.directionBoardBarWidth
         let answerCardRightEdge = anchor.x + 12 + NotchSupport.answerCardMaximumWidth
-        #expect(mapLeft > answerCardRightEdge)
+        #expect(abs(mapLeft - answerCardRightEdge) < 0.5)
         // 横向：顶边那个偏移不动 x，只动 y。
         #expect(abs(frame.minX - (anchor.x + 12)) < 0.5)
         // **贴到屏幕边也不许夹**（用户 2026-09-28：「右上角那个卡片……撞到边缘之后就不移动了，

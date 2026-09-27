@@ -1415,8 +1415,7 @@ final class VoiceChatController: ObservableObject {
     }
 
     /// 输入框发出去的一句话 —— 与说话走同一个回合，只是没有转写这一步。
-    func sendText(_ rawText: String) {
-        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+    func sendText(_ rawText: String) {        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard connectionPhase == .connected else {
             presentFailure("语音聊天：还没连接，连上之后才能打字发送。")
@@ -1545,6 +1544,19 @@ final class VoiceChatController: ObservableObject {
     /// （不允许开画面），不会一上来就把用户的摄像头打开。
     var currentChannel: VoiceChatChannel {
         VoiceChatChannel(rawValue: currentRole.chatChannel ?? "") ?? .voice
+    }
+
+    /// **视频模式这一轮带的附件**（2026-09-28）。
+    ///
+    /// 判据是**聊天类型 = 视频**：用户点名的三个模式是「文本 / 图文 / 视频」，语音模式不做。
+    /// 而页面那边附件条的出现与消失读的是**卡片模式**（`videoModeAttachmentCardID`），
+    /// 模式又驱动聊天类型（`alignChannelForCardMode`）—— 两者最终落在同一个值上，
+    /// 所以"看得见的"与"真的发出去的"不会分家。
+    ///
+    /// 不从卡片进来（旧的「语音聊天」分区）时没有附件 —— 那里也没有输入框上的附件条。
+    private var videoChannelAttachments: [ComposerAttachment] {
+        guard currentChannel == .video, let cardID = cardBinding?.cardID else { return [] }
+        return ComposerAttachmentStore.shared.attachments(forCardID: cardID)
     }
 
     /// 当前生效的预设。
@@ -1779,6 +1791,7 @@ final class VoiceChatController: ObservableObject {
             preset: currentPreset,
             channel: currentChannel,
             speaksReplies: speaksReplies,
+            attachments: videoChannelAttachments,
             callbacks: CascadeTurnCallbacks(
                 onAnswerTextChanged: { [weak self] answerSoFar in
                     self?.updateAnswerEntry(answerEntryID, text: answerSoFar)

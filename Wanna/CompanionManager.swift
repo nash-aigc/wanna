@@ -3558,6 +3558,24 @@ final class CompanionManager: ObservableObject {
             conversationHistory = turnTargetSession.entries
             compressedHistorySummary = turnTargetSession.summary
 
+            // **用户粘进来的附件**（2026-09-28）—— 一轮之内只取一次。
+            //
+            // 与上面那份 `appSettings` 快照同一个理由：用户在回答流式期间又贴了一张，
+            // 不该让同一次请求里的图和文字对不上（而且 `images` 与提示词块必须来自同一份）。
+            //
+            // 用户拍板的两条：图片给**真图片**（模型直接看），文件 / 文件夹**只给绝对路径**
+            //（交给有工具的 Agent 自己去读）。附件跨轮活着（「一直留着，直到手动删」），
+            // 所以这里读的就是"此刻输入框上方还挂着的那几条"。
+            let turnAttachments = ComposerAttachmentStore.shared
+                .attachments(forCardID: turnSessionID.uuidString)
+            let attachmentImagePayloads = ComposerAttachmentStore.shared
+                .imagePayloads(forCardID: turnSessionID.uuidString)
+            let attachmentPromptBlock = ComposerAttachment.promptBlock(for: turnAttachments)
+            if let attachmentLogLine = ComposerAttachmentStore.shared
+                .logLine(forCardID: turnSessionID.uuidString) {
+                MainFlowDiagnostics.log("\(attachmentLogLine)（随这一轮发给模型）")
+            }
+
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
             clearAnswerBubble()
@@ -3866,10 +3884,15 @@ final class CompanionManager: ObservableObject {
                     // Build image labels with the actual screenshot pixel dimensions
                     // so the model's coordinate space matches the image it sees. We
                     // scale from screenshot pixels to display points ourselves.
+                    //
+                    // **粘进来的图片接在后面**（2026-09-28）：`analyzeImageStreaming` 本来就吃
+                    // 多图（每张一个 `image_url` 块 + 一条带 label 的 text 块），所以这里
+                    // 一行 `+` 就够了，协议一个字没改。它们**不受"这个模式吃不吃图"那条闸门管** ——
+                    // 用户这次明说文本模式也要支持粘贴图片，那条闸门管的是"自动截屏"。
                     let labeledImages = screenCaptures.map { capture in
                         let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
                         return (data: capture.imageData, label: capture.label + dimensionInfo)
-                    }
+                    } + attachmentImagePayloads
 
                     // The interface read on the previous step rides along with this
                     // one, then is dropped: it describes the screen as it was a
@@ -3883,7 +3906,11 @@ final class CompanionManager: ObservableObject {
                             untrustedAccessibilityContext: pendingAccessibilityContext,
                             userIntentTags: userIntentTags,
                             referenceMaterials: [TurnReferenceCollector.shared.promptBlock(),
-                                                 DirectionBoardSession.shared.previousCornerAnswersPromptBlock()]
+                                                 DirectionBoardSession.shared.previousCornerAnswersPromptBlock(),
+                                                 // **粘贴进来的文件 / 文件夹的绝对路径**（2026-09-28）。
+                                                 // 图片那一条不在这个块里 —— 它是真图片，跟着
+                                                 // `labeledImages` 走；这里只管"路径"这一类。
+                                                 attachmentPromptBlock]
                                 .compactMap { $0 }
                                 .filter { !$0.isEmpty }
                                 .joined(separator: "\n\n")

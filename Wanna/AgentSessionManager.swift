@@ -425,6 +425,45 @@ final class AgentSessionManager: ObservableObject {
         }
     }
 
+    /// **把用户粘进来的图片写成文件，返回路径**（2026-09-28）。
+    ///
+    /// 与上面 `writeScreenshotForTurn` 同一条路、同一个理由（那边注释写了为什么不塞进
+    /// stdin 的协议里）：图片落盘，路径进这一轮的话，靠 claude 自己的读图能力看。
+    /// 文件夹与文件不需要落盘 —— 它们本来就是磁盘上的东西，路径直接给。
+    ///
+    /// 返回的顺序与 `attachments` 里**有图的那些**一一对应（`claudeCodePreamble` 按这个
+    /// 顺序取路径）。
+    private func writeAttachmentImagesForTurn(_ attachments: [ComposerAttachment]) async -> [String] {
+        let imageAttachments = attachments.filter { $0.hasImage }
+        guard !imageAttachments.isEmpty else { return [] }
+        let directory = AppSupportDirectory.folderURL?
+            .appendingPathComponent("AgentAttachments", isDirectory: true)
+        guard let directory else { return [] }
+
+        var writtenPaths: [String] = []
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let stamp = ISO8601DateFormatter().string(from: Date())
+                .replacingOccurrences(of: ":", with: "-")
+            for (index, attachment) in imageAttachments.enumerated() {
+                guard let imageData = attachment.imageData else { continue }
+                // 文件名带上用户那边的原名（去掉扩展名里的花哨字符），这样用户在访达里
+                // 翻这个目录时认得出哪张是哪张。
+                let baseName = (attachment.displayName as NSString).deletingPathExtension
+                    .replacingOccurrences(of: "/", with: "-")
+                let fileURL = directory.appendingPathComponent("附件-\(stamp)-\(index + 1)-\(baseName).jpg")
+                try imageData.write(to: fileURL, options: .atomic)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                                       ofItemAtPath: fileURL.path)
+                writtenPaths.append(fileURL.path)
+            }
+            print("📎 Agent 这一轮的附件图落盘 \(writtenPaths.count) 张 → \(directory.path)")
+        } catch {
+            print("⚠️ Agent 这轮的附件图没落盘：\(error)")
+        }
+        return writtenPaths
+    }
+
     /// Spawn-or-reuse and write. Split out of `sendTurn` so the recording
     /// above happens synchronously and this part can await the (blocking)
     /// executable resolution.
@@ -433,14 +472,34 @@ final class AgentSessionManager: ObservableObject {
                              attachesScreenshot: Bool) async {
         // 「图文」模式这一轮带屏幕：先把截图落盘，再把路径写进这一轮的话里。
         // **在重试之前算好** —— 下面若因进程刚死而重启一次，用的是同一份（截图一次就够）。
+        //
+        // **用户粘进来的附件走同一段**（2026-09-28）：图片落盘给路径、文件/文件夹直接给
+        // 路径，与截图那段拼在同一个前言里。附件跨轮活着，所以每一轮都读一次现在的样子。
         var deliveredText = turnText
+        var preambleSections: [String] = []
         if attachesScreenshot, let screenshotPath = await writeScreenshotForTurn() {
-            deliveredText = """
+            preambleSections.append("""
             这一轮带了屏幕截图：\(screenshotPath)
             （需要看屏幕时用它 —— 你有读文件的能力，不要猜屏幕上有什么。）
+            """)
+        }
 
-            \(turnText)
-            """
+        let turnAttachments = ComposerAttachmentStore.shared.attachments(forCardID: agent.id.uuidString)
+        if !turnAttachments.isEmpty {
+            let writtenImagePaths = await writeAttachmentImagesForTurn(turnAttachments)
+            if let attachmentPreamble = ComposerAttachment.claudeCodePreamble(
+                for: turnAttachments,
+                writtenImagePaths: writtenImagePaths
+            ) {
+                preambleSections.append(attachmentPreamble)
+            }
+            if let attachmentLogLine = ComposerAttachmentStore.shared.logLine(forCardID: agent.id.uuidString) {
+                print("\(attachmentLogLine)（随这一轮发给 \(agent.name)）")
+            }
+        }
+
+        if !preambleSections.isEmpty {
+            deliveredText = preambleSections.joined(separator: "\n\n") + "\n\n" + turnText
         }
 
         do {

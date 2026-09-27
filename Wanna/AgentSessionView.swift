@@ -56,6 +56,9 @@ struct AgentSessionView: View {
     /// 每张卡片的聊天模式 —— 只为了让换模式那一下重绘这一页（模式条自己也在观察它）。
     @ObservedObject private var cardChatPreferences = CardChatPreferenceModel.shared
 
+    /// **这一页输入框里的附件**（2026-09-28）—— 按卡片存，这一页的卡片就是选中的那个 agent。
+    @ObservedObject private var composerAttachmentStore = ComposerAttachmentStore.shared
+
     var body: some View {
         if let agent = agentSessionManager.selectedAgent {
             VStack(spacing: 0) {
@@ -90,6 +93,10 @@ struct AgentSessionView: View {
                         }
                 }
             )
+            // **附件的预览面板**（2026-09-28）：点缩略图打开，盖住整个内容列。
+            // 挂在这一层而不是那条 64pt 高的附件条上 —— 后者画得出、点不动
+            //（见 开发经验/10-踩过的坑.md D14）。
+            .overlay { ComposerAttachmentPreviewOverlay() }
         } else {
             emptyRosterHint
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -557,7 +564,18 @@ struct AgentSessionView: View {
             // `interrupt(_:)` guards on, so the button can never be live for a
             // turn there is nothing to stop.
             isResponding: agent.status == .running,
-            onStop: { agentSessionManager.interrupt(agent.id) }
+            onStop: { agentSessionManager.interrupt(agent.id) },
+            // **粘进来的图片 / 文件 / 文件夹**（2026-09-28）。这张卡片是 Claude Code ——
+            // 图片那一条在这条路上是**落盘 + 给路径**（协议理由见
+            // `AgentSessionManager.writeScreenshotForTurn`），文件/文件夹本来就只给路径。
+            attachments: composerAttachmentStore.attachments(forCardID: agent.id.uuidString),
+            onRemoveAttachment: { attachmentID in
+                composerAttachmentStore.remove(id: attachmentID, forCardID: agent.id.uuidString)
+            },
+            onPasteAttachments: { pasteboard in
+                composerAttachmentStore.consumePasteboard(pasteboard,
+                                                          forCardID: agent.id.uuidString)
+            }
         )
         .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
         .padding(.top, 10)
