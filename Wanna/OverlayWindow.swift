@@ -231,10 +231,45 @@ struct BlueCursorView: View {
             style: AppSettingsStore.snapshot().answerCardStyle
         )
         .frame(maxWidth: 340, alignment: .leading)
+        // **高度封顶 + 超出隐藏**（用户 2026-09-27：「若文本内容过长，建议限定右下角卡片高度……
+        // 高度设计参考当前 Mac 电脑屏幕高度：从菜单栏下方到屏幕最下方，取该高度的 **70%**
+        // 作为右下角卡片的最大长度，显示不完的内容在下方隐藏即可」）。
+        //
+        // 为什么必须有：答案现在允许长（他说"按用户需求来，别为了整齐截断"），
+        // 而这张卡片是浮在桌面上的 —— 一封长 Markdown 能长到比屏幕还高，把鼠标埋掉。
+        //
+        // 用 `.frame(maxHeight:)` ＋ `.clipped()` 而不是滚动：他说的是"隐藏即可，无需渲染"，
+        // 而这张卡片是跟着鼠标走的浮层，给它加滚动条既不好点也不好滚。
+        .frame(maxHeight: Self.maximumAnswerCardHeight, alignment: .top)
+        .clipped()
+        .mask(
+            // 底部收一点渐隐：硬切在深色卡片上看着像被裁坏了，淡出才读得出"下面还有"。
+            LinearGradient(
+                stops: [.init(color: .black, location: 0),
+                        .init(color: .black, location: 0.93),
+                        .init(color: .clear, location: 1.0)],
+                startPoint: .top, endPoint: .bottom)
+        )
         // The card carries its own theme fill and border; the shadow only lifts
         // it off whatever is behind — a card floating over arbitrary windows
         // needs to read as one object, not as text painted on the desktop.
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
+    }
+
+    /// **鼠标旁那张卡片最多能有多高** —— 菜单栏下方到屏幕底部那段的 **70%**。
+    ///
+    /// 用户给的算法就是这个（「鼠标最高位置在屏幕顶侧菜单栏处，测量从菜单栏下方到屏幕最下方的高度，
+    /// 取该高度的 70%」）。取**鼠标所在那块屏**的尺寸 —— 多显示器时每块屏不一样高，
+    /// 用主屏算会在副屏上要么浪费一半、要么还是超出去。
+    static var maximumAnswerCardHeight: CGFloat {
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+            ?? NSScreen.main
+        guard let screen else { return 600 }
+        // 他说的量法是「从**菜单栏下方**到**屏幕最下方**」—— 所以去掉菜单栏那一条，
+        // **不去掉 Dock**（`visibleFrame` 会把 Dock 也算掉，那样在 Dock 常驻的机器上会矮一截）。
+        let menuBarHeight = max(screen.frame.maxY - screen.visibleFrame.maxY, 0)
+        let heightBelowMenuBar = screen.frame.height - menuBarHeight
+        return max(heightBelowMenuBar * 0.7, 200)
     }
 
     /// The user's live recognition text, in the small blue bubble.
