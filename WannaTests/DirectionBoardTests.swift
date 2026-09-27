@@ -657,4 +657,26 @@ struct DirectionBoardTests {
         #expect(prompt.contains("行业 A"))
         #expect(prompt.contains("在它上面继续"))
     }
+
+    /// **脑图不许把提示词抄成标题**（2026-09-27 截图里就是
+    /// `<用户到目前为止问过的所有问题，整合成关系图:` 那一行），
+    /// 而且**这一轮他刚问的那件事必须在图里**（他：「我明明问的是屏幕里是什么软件……
+    /// 但右上角的脑图为什么没有把这个问题记录下来呢？」）。
+    @Test func theMindMapDropsAnEchoedTitleAndKeepsTheQuestion() throws {
+        let parsed = DirectionBoardPrompt.parseUnderstandingLines("""
+        细节：<用户到目前为止问过的所有问题，整合成关系图:
+        ├─ 屏幕里是什么软件
+        │  └─ 他问的是「屏幕里是什么软件？版本是多少？」
+        └─ 这轮任务有没有完成
+        """)
+        let map = try #require(parsed.first { $0.label == "细节" }?.value)
+        #expect(!map.contains("整合成关系图"))
+        #expect(map.hasPrefix("├─"))
+        #expect(map.contains("屏幕里是什么软件"))
+
+        // 判据很窄：**不含树枝符号**且**以冒号结尾**才算标题 —— 别误删真正的内容行。
+        #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("├─ 甲\n└─ 乙") == "├─ 甲\n└─ 乙")
+        #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("他说的是：") == "")
+        #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("├─ 甲：乙") == "├─ 甲：乙")
+    }
 }

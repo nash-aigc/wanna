@@ -94,7 +94,17 @@ nonisolated enum DirectionBoardPrompt {
           用户 2026-09-27 深夜拍的 ——「左侧边就只显示**参考、矛盾**……再简化一点」。
           他要什么、他在关心什么，**全部由「细节」那张图承担**，所以那张图要以"需求"开头。）
         细节：<**把用户到目前为止问过的所有问题，整合成一张竖形的关系图**（这就是"他在关心什么"
-              的全貌，**也是这张卡片存在的意义**）：
+              的全貌，**也是这张卡片存在的意义**）。
+
+              ⚠️⚠️ **这一行只写那张图本身：直接从 `├─` 开始，不要写任何标题、不要写这句话**。
+              （2026-09-27 实测：模型把"用户到目前为止问过的所有问题，整合成关系图"这句
+              **原样抄成了图的第一行**，屏幕上就是 `<用户到目前为止问过的所有问题，整合成关系图:`。）
+
+              ⚠️ **这一轮他刚问的那件事，必须在图里**（用户 2026-09-27：「我明明问的是屏幕里
+              是什么软件，右下角确实显示了没有问题，**但右上角的脑图为什么没有把这个问题
+              记录下来呢**？右上角应该记录用户**所有**的问题」）。所以写完图自己检查一遍：
+              他这一轮问的，是图里的哪一条？如果找不到，说明你漏了 —— 补上
+              （新的一件事就新开一个分支，同一件事就加在对应分支下面）。
               · **不管连续还是跳跃，全部记进来**（用户 2026-09-27 深夜：「屏幕卡片右上角的卡片，
                 它显示的脑图是把用户之前问过的**所有问题**，无论是连续的还是间断的，
                 只要是在实时模式下没有停止，都会**统一记录**……把这些需求梳理出来，
@@ -384,8 +394,15 @@ nonisolated enum DirectionBoardPrompt {
                 // 「疑问」那一行**在解析处统一形状**（用户 2026-09-27：「用"关于什么什么的疑问："的
                 // 形式，**冒号后留一个空格**，右侧显示具体的疑问内容」）—— 提示词里写了，但模型
                 // 不保证照做，而这一行是直接画给用户看的，所以这里再兜一次。
-                found[position.label] = position.label == questionLabel
-                    ? formattedQuestion(joined) : joined
+                if position.label == questionLabel {
+                    found[position.label] = formattedQuestion(joined)
+                } else if position.label == mindMapLabel {
+                    // 脑图那一行去掉模型抄进来的标题（见 `mindMapWithoutEchoedTitle`）。
+                    let map = mindMapWithoutEchoedTitle(joined)
+                    if !map.isEmpty { found[position.label] = map }
+                } else {
+                    found[position.label] = joined
+                }
             }
         }
         // 按用户定的顺序返回，**缺的那些留空串**（不是省略）。
@@ -460,10 +477,31 @@ nonisolated enum DirectionBoardPrompt {
     }
 
     /// 「—」「无」这类占位一律当成空（占位符由视图统一画，模型写的不算内容）。
-    /// 「疑问」那一行是**哪一行**（它与别的行形状不同，多一道整理）。
+    /// 「矛盾」那一行是**哪一行**（它与别的行形状不同，多一道整理）。
     static let questionLabel = "矛盾"
+    /// 那张脑图是**哪一行**（它要去掉模型抄进来的标题）。
+    static let mindMapLabel = "细节"
 
-    /// 把一条疑问整成用户定的形状：**`一、关于〈什么〉的疑问： 〈具体内容〉`**。
+    /// 那张脑图**第一行如果是标题就丢掉**（不是图的内容）。
+    ///
+    /// 2026-09-27 实测：模型把提示词里那句"用户到目前为止问过的所有问题，整合成关系图"
+    /// **原样抄成了图的第一行**，屏幕上就是 `<用户到目前为止问过的所有问题，整合成关系图:`。
+    /// 判据刻意写得很窄 —— **不含树枝符号（├ │ └）且以「：」或「:」结尾**才算标题，
+    /// 免得把真正的一行内容误删。
+    nonisolated static func mindMapWithoutEchoedTitle(_ raw: String) -> String {
+        var lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        while let first = lines.first {
+            let trimmed = first.trimmingCharacters(in: .whitespaces)
+            let hasBranchGlyph = trimmed.contains("├") || trimmed.contains("│") || trimmed.contains("└")
+            let looksLikeTitle = !hasBranchGlyph
+                && (trimmed.hasSuffix("：") || trimmed.hasSuffix(":"))
+            guard looksLikeTitle else { break }
+            lines.removeFirst()
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 把一条疑问整成用户定的形状    /// 把一条疑问整成用户定的形状：**`一、关于〈什么〉的疑问： 〈具体内容〉`**。
     ///
     /// 三件事，缺一不可：① **不带 Markdown**（模型爱把整行包进 `**`，屏幕上就是两个裸星号）；
     /// ② 冒号统一成全角；③ **冒号后面留一个空格**（用户 2026-09-27：「冒号后留一个空格，

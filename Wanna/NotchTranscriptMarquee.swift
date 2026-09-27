@@ -152,8 +152,23 @@ struct SmoothRevealedTranscriptText: View {
         let now = Date()
         let interval = lastUpdateAt.map { now.timeIntervalSince($0) } ?? Self.slideDurationUpperBound
         lastUpdateAt = now
-        return min(max(interval, Self.slideDurationLowerBound), Self.slideDurationUpperBound)
+        // ⚠️ **乘 1.2，让动画永远跑不完**（2026-09-27 量出来的）。
+        //
+        // 只取"上一条的间隔"是不够的：识别结果的到达时刻本身有抖动（实测 0.09–0.12s），
+        // 而动画时长刚好等于**上一次**的间隔 —— 于是间隔变长的那一次，动画先跑完、
+        // **空等几毫秒、再跳一下**。连拍 20 帧量位移剖面，每 100ms 的位移是
+        // **34px / 22px 交替**（±30% 的速度摆动，约 5Hz）—— 那就是用户说的"一顿一顿"。
+        //
+        // 乘 1.2 之后动画总在下一批到达时**还没跑完**，被从当前呈现值平滑接上（这条性质
+        // 这个文件早就量过：打断瞬间的位置跳变全是 0.000pt）。目标值是**绝对值**
+        // （`可用宽度 − 文字宽度`），所以"永远差一点点"不会累积 —— 稳态只落后一步，
+        // 一步是 1 个字 ≈ 15pt 的 20%，屏幕上看不出来。
+        return min(max(interval * Self.slideDurationOvershoot, Self.slideDurationLowerBound),
+                   Self.slideDurationUpperBound)
     }
+
+    /// 动画时长比"到达间隔"长这么多 —— **它存在的唯一理由是"别让动画跑完"**（见上）。
+    private static let slideDurationOvershoot: Double = 1.2
 
     /// 用同一个字体直接量文字宽度。批判者实测过：SwiftUI 自己渲染的宽度 =
     /// `ceil(NSString 量出来的)` ±1pt，两者一致，所以拿它算位移是可靠的。

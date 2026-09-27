@@ -1849,7 +1849,12 @@ final class NotchWindowController {
         // 判据是 `NotchPanelModel.notchBandSitsAboveTranscriptLine` —— **不是**在这里
         // 重写一遍 `== .listening && !isFullscreenSuppressed`：刘海那条黑带的下边缘
         // （两翼外端的圆角）读的是同一个属性，两处必须是同一个条件。
-        if panelModel.notchBandSitsAboveTranscriptLine {
+        // ⚠️ **自检的"字幕流"模式要强行把它显示出来**（`WANNA_DIRECTION_BOARD_SELFCHECK=stream`）——
+        // 那一行本来只在相位是 Listening 时出现，而自检没有真实语音、相位永远到不了 ——
+        // 于是"量这一行的卡顿"这件事**根本没有可复现的入口**（这个仓库为它猜过两次动画时长，
+        // 两次都不对，就是因为量不到）。给自检开一道门，卡顿就能在机器上复现、用 `sample` 量。
+        let forcesTranscriptRowForProfiling = DirectionBoardSession.selfCheckMode == "stream"
+        if panelModel.notchBandSitsAboveTranscriptLine || forcesTranscriptRowForProfiling {
             NotchListeningTranscriptPanelController.shared.show()
         } else {
             NotchListeningTranscriptPanelController.shared.hide()
