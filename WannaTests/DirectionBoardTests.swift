@@ -548,12 +548,12 @@ struct DirectionBoardTests {
             </previous_turns>
             """)
         // 新问题的标题（这一段是这一轮唯一要做的事）。
-        #expect(userPrompt.contains("用户这一次的新问题"))
+        #expect(userPrompt.contains("<current_question>"))
         #expect(userPrompt.contains("帮我把下载目录整理一下"))
         // 前五轮那一段在，而且**排在新问题之前**（模型最后读到的才是这一轮的事）。
         #expect(userPrompt.contains("previous_turns"))
         #expect(userPrompt.range(of: "previous_turns")!.lowerBound
-                < userPrompt.range(of: "用户这一次的新问题")!.lowerBound)
+                < userPrompt.range(of: "<current_question>")!.lowerBound)
     }
 
     /// 用户 2026-09-27 的尺寸：**矛盾缩小两次 30%**、**需求再增加一点**、表格 **4 行**、参考 **3 行**。
@@ -634,9 +634,9 @@ struct DirectionBoardTests {
         let prompt = DirectionBoardPrompt.understandingUserPrompt(
             newQuestion: "北京在哪",
             previousRoundItems: [])
-        #expect(prompt.contains("【用户这一次的新问题 —— **重点只看这一段**，上面的全是参考】\n北京在哪"))
-        // 顺序：新问题在最后（模型最后读到的是这一轮要做的事）。
-        #expect(prompt.hasSuffix("北京在哪"))
+        #expect(prompt.contains("<current_question>\n北京在哪\n</current_question>"))
+        // 顺序：新问题在**最后一段**（模型最后读到的就是这一轮要做的事）。
+        #expect(prompt.contains("<current_question>\n北京在哪\n</current_question>"))
     }
 
     /// **两张卡片分工不同**（用户 2026-09-27 深夜）：右上角那张图**统筹全部** ——
@@ -745,12 +745,49 @@ struct DirectionBoardTests {
         #expect(prompt.contains("杨幂拍过的电影"))
         // 而且要在**新问题之前**（它是背景，新问题排最后）。
         #expect(prompt.range(of: "previous_answers")!.lowerBound
-                < prompt.range(of: "用户这一次的新问题")!.lowerBound)
+                < prompt.range(of: "<current_question>")!.lowerBound)
         // 提示词里还要明说：追问就基于上一条改，**不许说"我看不到"**。
         let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("改/追问"))
         #expect(systemPrompt.contains("绝对不要写"))
+    }
+
+    /// ⚠️ **两个真 bug 的钉子**（2026-09-27 深夜，用户："他为什么只是显示一部分呢？"）：
+    /// ① 续行上限原来是 **4** —— 而提示词要模型画"最多 **20** 行"的图、矛盾也允许多条，
+    ///   于是**超过 5 行的内容全被解析器丢掉**；
+    /// ② 标签下面先空一行再写内容（画树枝图时很常见）原来会**把整块丢掉**（空行 = 结束信号）。
+    @Test func longMapsAndListsAreNotTruncated() throws {
+        // ① 12 行的图必须整块留下（原来只剩 5 行）。
+        let mapLines = (1...12).map { "├─ 第 \($0) 件事" }.joined(separator: "\n")
+        let parsed = DirectionBoardPrompt.parseUnderstandingLines("细节：\n" + mapLines)
+        let map = try #require(parsed.first { $0.label == "细节" }?.value)
+        #expect(map.split(separator: "\n").count == 12)
+        // ② 标签下面空一行再写内容，也要收得到。
+        let withBlank = DirectionBoardPrompt.parseUnderstandingLines("细节：\n\n├─ 甲\n└─ 乙")
+        #expect(withBlank.first { $0.label == "细节" }?.value == "├─ 甲\n└─ 乙")
+        // 矛盾那一行同样不许被截成 5 条。
+        let many = (1...9).map { "一、关于第 \($0) 件事的矛盾：前后不一致" }.joined(separator: "\n")
+        let q = DirectionBoardPrompt.parseUnderstandingLines("矛盾：\n" + many)
+        #expect(q.first { $0.label == "矛盾" }?.value.split(separator: "\n").count == 9)
+    }
+
+    /// **请求里每一块都要有 tag**（用户 2026-09-27 深夜点名的做法：「用 tag……标签、书签这个
+    /// 符号的形式来给它分开」）—— 模型据此**机械地**分清"哪段要答、哪段只是参考"。
+    @Test func everyRequestBlockIsTagged() throws {
+        let prompt = DirectionBoardPrompt.understandingUserPrompt(
+            newQuestion: "北京跟上海的关系",
+            previousRoundItems: [],
+            previousTurnsText: "<previous_turns>…</previous_turns>",
+            previousAnswers: "<previous_answers>…</previous_answers>",
+            referenceMaterials: "<reference_materials>…</reference_materials>")
+        for tag in ["<reference_materials>", "<previous_turns>", "<previous_answers>", "<current_question>"] {
+            #expect(prompt.contains(tag))
+        }
+        // 当前问题仍然是**最后一段**（它后面只有那段说明，没有别的参考块）。
+        #expect(prompt.range(of: "<current_question>")!.lowerBound
+                > prompt.range(of: "<previous_answers>")!.lowerBound)
+        #expect(prompt.contains("<current_question>\n北京跟上海的关系\n</current_question>"))
     }
 }

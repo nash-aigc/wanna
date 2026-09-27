@@ -543,7 +543,11 @@ private struct ReferenceTagFlowLayout: Layout {
                     }
                     understandingColumn
                 }
-                .frame(width: understandingColumnWidth, alignment: .leading)
+                .frame(width: understandingColumnWidth, alignment: .topLeading)
+                // 行不再各自裁剪，所以**由整列兜底**：超出这块就裁掉
+                //（卡片高度仍然恒定 —— 它挂在这块上，不挂在行上）。
+                .frame(height: Self.contentBlockHeight, alignment: .top)
+                .clipped()
 
                 mindMapColumn
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -592,10 +596,18 @@ private struct ReferenceTagFlowLayout: Layout {
                 .id(value)
                 .transition(.opacity.combined(with: .offset(y: 6)))
         }
-        // **高度提前定死**：这些行有多少内容都占这么多（超出隐藏）——
-        // 于是新内容只是填进预留的位置，标题与内容都不会上下晃。
-        .frame(height: reservedHeight, alignment: .top)
-        .clipped()
+        // ⚠️ **不再给每一行定高 + 裁剪**（2026-09-27 深夜修，用户：「他为什么只是显示一部分呢？
+        // **他留这么大的空间**，不就是让你把这个文字能够完全地显示到这个空间里面吗？
+        // 好像你把这个组件限制的高度，**这个文字被掩盖了，但是下边还有很大的空白空间**呢」）。
+        //
+        // 原来每行写死 `reservedLineCounts × 行高` 再 `.clipped()` —— 那是**左列还是自由高度**
+        // 的年代留下的（为了让卡片高度不随内容变）。现在**卡片高度由整块 `contentBlockHeight`
+        // 钉死**、左右两列各自固定，行里多出来的字**没有理由再裁**：左列整体有边界（见下面
+        // 左列的 `.clipped()`），单行就让它按内容长。
+        //
+        // 于是"卡片高度恒定"这条不变量仍然成立（它现在挂在**块**上，不挂在行上），
+        // 而"文字被裁掉、下面却空着"这类现象从结构上消失了。
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         // 换了内容就淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」）——
         // 逐行错开一点点，四行看起来是"写进去"的，而不是整块跳出来。
         .animation(.easeOut(duration: 0.28).delay(Double(revealIndex) * 0.05), value: value)

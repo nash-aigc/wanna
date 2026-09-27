@@ -57,7 +57,12 @@ nonisolated enum DirectionBoardPrompt {
     ]
 
     /// 一行标签下面最多再吃几行续行（防模型跑题写成一大篇）。
-    private static let maximumContinuationLines = 4
+    ///
+    /// ⚠️ **2026-09-27 深夜从 4 改成 24** —— 这是个真 bug，不是调参：
+    /// 提示词让模型画"最多 **20** 行"的关系图、矛盾/拼写错误也允许多条，
+    /// 而解析器**只收 4 行续行**（＝整块最多 5 行）—— **多出来的全被丢掉**。
+    /// 用户报的「他为什么只是显示一部分呢？**他留这么大的空间**……」有一半是这个。
+    private static let maximumContinuationLines = 24
 
     /// 模型用来表示"这一行没有内容"的写法 —— 一律当成空（占位符由视图画）。
     private static let emptyValueMarkers: Set<String> = ["—", "-", "–", "无", "没有", "暂无", "n/a", "na", "无。"]
@@ -165,6 +170,11 @@ nonisolated enum DirectionBoardPrompt {
            反过来：他连着说「北京在哪」「北京欢迎你」「北京是一个语言吗」都在讲**北京**，
            有关系 —— 那就接着往下答。
            ⚠️ 不管前面问过多少轮、多长，**当前这一问必须答**。
+        1.42 **请求里每一段都有标签，按标签认**：
+             · `<current_question>` = **这一轮要你回答的那件事**（唯一要处理的）；
+             · `<previous_turns>` / `<previous_answers>` = 之前几轮你回过什么（**参考**）；
+             · `<reference_materials>` = 屏幕截图 / 剪贴板（**参考**）。
+             参考只在你判断"**有关系**"时才用；没关系时**连提都不许提**。
         1.45 **没关系时的答案长什么样**：**就事论事地答他刚问的那件事，全文不提任何背景**
              （不提屏幕、不提剪贴板、不提之前几轮）。答案是"他问的东西"的答案，不是"他问的东西
              和背景的关系"的说明。
@@ -380,9 +390,18 @@ nonisolated enum DirectionBoardPrompt {
 
         // **新问题排在整段请求的最后**（用户 2026-09-27：「让 AI **重点关注最近这一次**」）——
         // 模型最后读到的就是这一轮要做的那件事，上面全是背景。
+        // **打上标签**（用户 2026-09-27 深夜点名的做法：「你提的词是用**提示**写的吗？
+        // ……用 **tag**，标签、书签这个符号的形式来给它分开」）——
+        // 上面每一块都是 `<xxx>` 包着的，当前问题也包一个：模型于是能**机械地**分清
+        // "哪一段是这一轮要做的事、哪几段是参考"，不必靠读说明去猜。
         sections.append("""
-        【用户这一次的新问题 —— **重点只看这一段**，上面的全是参考】
+        <current_question>
         \(newQuestion)
+        </current_question>
+
+        ⚠️ **只有 `<current_question>` 里的是要你回答的**；其余各段（`<reference_materials>` /
+        `<previous_turns>` / `<previous_answers>`）**全是参考**。
+        如果当前问题跟那些参考**没有关系**，就**按 1.4/1.45 只答它、一个字都不提参考内容**。
         """)
 
         return sections.joined(separator: "\n\n")
@@ -430,9 +449,21 @@ nonisolated enum DirectionBoardPrompt {
                 // 直到下一个标签行或空行为止，都并进这一行的值里（用换行连起来，视图按行显示）。
                 var collected = value.isEmpty ? [] : [value]
                 var nextIndex = lineIndex + 1
+                var skippedLeadingBlankLines = 0
                 while nextIndex < lines.count {
                     let candidate = lines[nextIndex].trimmingCharacters(in: .whitespaces)
-                    if candidate.isEmpty { break }
+                    // ⚠️ **标签下面先空一行再写内容是常见的**（尤其画那张图：「细节：」换行、
+                    // 空一行、再开始画树枝）。原来遇到空行直接 `break`，于是**整块被丢掉** ——
+                    // 屏幕上就是"这一行空了 / 整张图没了"。
+                    // 只跳过**开头的**空行（最多两行）：已经开始收内容之后，空行仍然是结束信号。
+                    if candidate.isEmpty {
+                        if collected.isEmpty, skippedLeadingBlankLines < 2 {
+                            skippedLeadingBlankLines += 1
+                            nextIndex += 1
+                            continue
+                        }
+                        break
+                    }
                     // 下一行如果是别的标签（含边界标签），就到此为止。
                     if !labelPositions(in: candidate).isEmpty { break }
                     collected.append(normalizedValue(candidate))
