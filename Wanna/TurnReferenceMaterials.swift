@@ -73,10 +73,19 @@ nonisolated struct TurnReferenceMaterials {
     var clipboard: ClipboardMaterial?
     /// 访达当前选中的文件 / 文件夹的**绝对路径**。
     var selectedPaths: [String] = []
+    /// **用户说了「参考」，但代码没拿到 / 拿不到的那几类**（用户 2026-09-27：
+    /// 「即便用户说了"参考"，但没有找到，就直接在……看板上显示"无法识别"」）。
+    ///
+    /// 它们**不进提示词**（没拿到的东西没什么可发），只显示在标签那行的**右侧** ——
+    /// 「左侧是识别到的，右侧是用户需求需要、但没有识别到的东西」。
+    var unresolved: [String] = []
 
     var isEmpty: Bool {
         screenshots.isEmpty && (clipboard?.isEmpty ?? true) && selectedPaths.isEmpty
     }
+
+    /// 有材料可发吗（**只看拿到的** —— `unresolved` 不算材料）。
+    var hasAnyMaterial: Bool { !isEmpty }
 
     /// 相等按"图有多少张、剪贴板与路径是否一样"算（`CompanionScreenCapture` 本身不是 Equatable）。
     static func == (lhs: TurnReferenceMaterials, rhs: TurnReferenceMaterials) -> Bool {
@@ -203,14 +212,16 @@ final class TurnReferenceCollector: ObservableObject {
             appendScreenshot(reason: "说到「屏幕」关键词（第 \(screenMentions) 次）")
         }
 
-        // ② 剪贴板：一轮只取一次。
+        // ② 剪贴板：一轮只取一次（读不到就重试，最多三次）。
         let clipboardMentions = NotionNoteDetector.transcriptMentionCount(clipboardKeywords, in: transcriptText,
                                                                           edgeCharacterCount: window)
         if clipboardMentions > lastClipboardMentionCount {
             lastClipboardMentionCount = clipboardMentions
             if !didReadClipboardThisTurn {
                 didReadClipboardThisTurn = true
-                readClipboardForTurn()
+                // 剪贴板是同步读的，没有"失败"的返回 —— 读不到就是"剪贴板里没有可用的东西"，
+                // 那不需要重试（用户没复制东西，重试三次还是同样的结果）。
+                if !readClipboardForTurn() { markUnresolved("剪贴板") }
             }
         }
 
@@ -262,8 +273,13 @@ final class TurnReferenceCollector: ObservableObject {
         }
     }
 
+    /// **重试三次就放弃**（用户 2026-09-27：「尝试的话，重试三次就可以了；代码实现错误的话，
+    /// 也重试三次。重试三次失败后，就在任务意图识别的看板上显示……用这样的方式来避免无限循环」）。
+    static let maximumAttemptsPerReference = 3
+
     /// 读剪贴板。**文字文件抽正文、其余只取路径**（用户 2026-09-27 拍板的那条分工）。
-    private func readClipboardForTurn() {
+    @discardableResult
+    private func readClipboardForTurn() -> Bool {
         let pasteboard = NSPasteboard.general
 
         // ① 文件 / 文件夹（访达里复制的那种）。
@@ -289,7 +305,7 @@ final class TurnReferenceCollector: ObservableObject {
                 materials.clipboard = .paths(paths)
             }
             MainFlowDiagnostics.log("📎 参考材料：剪贴板 \(materials.clipboard?.logLine ?? "无")")
-            return
+            return true
         }
 
         // ② 图片。
@@ -299,7 +315,7 @@ final class TurnReferenceCollector: ObservableObject {
            let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
             materials.clipboard = .image(jpeg)
             MainFlowDiagnostics.log("📎 参考材料：剪贴板 \(materials.clipboard?.logLine ?? "无")")
-            return
+            return true
         }
 
         // ③ 纯文本。
@@ -307,10 +323,11 @@ final class TurnReferenceCollector: ObservableObject {
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             materials.clipboard = .text(text, sourceName: nil)
             MainFlowDiagnostics.log("📎 参考材料：剪贴板 \(materials.clipboard?.logLine ?? "无")")
-            return
+            return true
         }
 
         MainFlowDiagnostics.log("📎 参考材料：说了剪贴板，但剪贴板里没有可用的内容")
+        return false
     }
 
     /// 读访达当前选中的文件 / 文件夹的**绝对路径**。
@@ -320,17 +337,50 @@ final class TurnReferenceCollector: ObservableObject {
     ///
     /// 走 AppleScript：`NSAppleScript` 会**阻塞**（等 Finder 回事件），所以放到专用串行队列上跑 ——
     /// 主线程上跑它就是拿界面去等访达（而今天刚加的主线程看门狗会立刻把它抓出来）。
-    private func readFinderSelection() {
+    /// - Parameter onMainThread: 这次是不是"为了拿到授权而走主线程"的那一试（见 `-1743` 那段注释）。
+    private func readFinderSelection(attempt: Int = 1, onMainThread: Bool = false) {
         guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else {
             MainFlowDiagnostics.log("📎 参考材料：说了选中文件，但前台不是访达 → 放弃"
                                     + "（当前是 \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "未知")）")
+            markUnresolved("选中文件")
             return
         }
-        Self.finderSelectionQueue.async {
-            let paths = Self.finderSelectedPaths()
+        // ⚠️ **`-1743`（Not authorized）必须回主线程再试一次**（2026-09-27 实测）：
+        // 第一次是在专用串行队列上发的，系统**没有弹授权框**、直接回了
+        // `Not authorized to send Apple events to Finder.`（错误号 -1743），
+        // 而 Info.plist 里 `NSAppleEventsUsageDescription` 是有的（`plutil -p` 核对过）。
+        // 授权框只能由主线程上的那次发送带出来 —— 所以拿到 -1743 就回主线程重发一次，
+        // 那一发才会把「Wanna 想要控制访达」问出来。
+        let send: (@escaping ([String]) -> Void) -> Void = { completion in
+            let work = {
+                let result = Self.finderSelectedPaths()
+                Task { @MainActor in completion(result.paths) }
+            }
+            if onMainThread {
+                DispatchQueue.main.async(execute: work)
+            } else {
+                Self.finderSelectionQueue.async(execute: work)
+            }
+        }
+        send { paths in
             Task { @MainActor in
+                if let failure = Self.lastFinderSelectionFailure, failure.isNotAuthorized, !onMainThread {
+                    MainFlowDiagnostics.log("📎 参考材料：访达事件没被授权（-1743）→ 回主线程再试一次"
+                                            + "（这一次系统才会弹「控制访达」那个框）")
+                    self.readFinderSelection(attempt: attempt, onMainThread: true)
+                    return
+                }
                 guard !paths.isEmpty else {
-                    MainFlowDiagnostics.log("📎 参考材料：访达是前台，但没有选中任何东西")
+                    // **重试三次就放弃**（用户：「尝试的话，重试三次就可以了……用这样的方式来避免无限循环」）。
+                    // 退避很短：这里多半是"访达刚切过去、选中项还没读到"那种瞬态。
+                    guard attempt < Self.maximumAttemptsPerReference else {
+                        MainFlowDiagnostics.log("📎 参考材料：访达选中取不到，试了 \(attempt) 次 → 放弃")
+                        TurnReferenceCollector.shared.markUnresolved("选中文件")
+                        return
+                    }
+                    MainFlowDiagnostics.log("📎 参考材料：访达这次没拿到选中项，第 \(attempt) 次重试")
+                    try? await Task.sleep(for: .milliseconds(200 * attempt))
+                    TurnReferenceCollector.shared.readFinderSelection(attempt: attempt + 1)
                     return
                 }
                 TurnReferenceCollector.shared.materials.selectedPaths = paths
@@ -338,6 +388,13 @@ final class TurnReferenceCollector: ObservableObject {
                                         + paths.joined(separator: "、"))
             }
         }
+    }
+
+    /// 说了「参考」但没拿到 → 记下来（**只显示、不进提示词**）。
+    private func markUnresolved(_ label: String) {
+        guard !materials.unresolved.contains(label) else { return }
+        materials.unresolved.append(label)
+        MainFlowDiagnostics.log("📎 参考材料：\(label) —— 说了参考但没拿到，看板上标「无法识别」")
     }
 
     /// AppleScript 在**专用串行队列**上跑（它阻塞；放主线程就是拿界面去等访达）。
@@ -349,7 +406,10 @@ final class TurnReferenceCollector: ObservableObject {
     /// **必须由人在系统对话框里点**（这是仓库里写明的"三种躲不掉的用户参与"之一）。
     /// 另外 Info.plist 里要有 `NSAppleEventsUsageDescription`：**没有那个键的话
     /// macOS 会静默拒绝**（不弹框、不报错、什么都不发生）—— 这个仓库最怕的就是那种失败。
-    nonisolated static func finderSelectedPaths() -> [String] {
+    /// 上一次取访达选中时的失败信息（给调用方判断"是不是没授权"）。
+    nonisolated(unsafe) static var lastFinderSelectionFailure: (isNotAuthorized: Bool, message: String)?
+
+    nonisolated static func finderSelectedPaths() -> (paths: [String], error: (isNotAuthorized: Bool, message: String)?) {
         let source = """
         tell application "Finder"
             set theSelection to selection
@@ -362,23 +422,29 @@ final class TurnReferenceCollector: ObservableObject {
             return thePaths
         end tell
         """
-        guard let script = NSAppleScript(source: source) else { return [] }
+        guard let script = NSAppleScript(source: source) else { return ([], nil) }
         var errorInfo: NSDictionary?
         let result = script.executeAndReturnError(&errorInfo)
         if let errorInfo {
+            let number = (errorInfo[NSAppleScript.errorNumber] as? Int) ?? 0
+            let failure = (isNotAuthorized: number == -1743,
+                           message: (errorInfo[NSAppleScript.errorMessage] as? String) ?? "\(errorInfo)")
             MainFlowDiagnostics.log("📎 参考材料：访达 AppleScript 出错 —— \(errorInfo)")
-            return []
+            // 记下来给调用方判"是不是没授权"（要回主线程再试一次那一支靠它）。
+            lastFinderSelectionFailure = failure
+            return ([], failure)
         }
+        lastFinderSelectionFailure = nil
         var paths: [String] = []
         let count = result.numberOfItems
-        guard count > 0 else { return [] }
+        guard count > 0 else { return ([], nil) }
         for index in 1...count {
             if let value = result.atIndex(index)?.stringValue, !value.isEmpty {
                 // 访达给文件夹的 POSIX 路径带一个结尾斜杠，统一去掉（拼进提示词里更干净）。
                 paths.append(value.hasSuffix("/") && value.count > 1 ? String(value.dropLast()) : value)
             }
         }
-        return paths
+        return (paths, nil)
     }
 
     // MARK: - 拼提示词（主 Agent 与看板共用同一份）

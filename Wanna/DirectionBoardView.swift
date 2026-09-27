@@ -28,7 +28,6 @@ struct DirectionBoardView: View {
     let theme: AnswerCardTheme
     /// 输入框被点了一下：宿主面板据此把窗口变成 key（否则打字进不来）。
     var onInputFocused: () -> Void = {}
-
     @FocusState private var isInputFocused: Bool
 
     /// **宽度固定，不随内容长**（用户 2026-09-27 两次强调）：
@@ -40,7 +39,10 @@ struct DirectionBoardView: View {
     /// 内容多了不撑宽，只多排几行（列数由这条宽度反推出来）。
     /// 左下角固定由面板那一侧保证（`directionBoardPanelFrame` 的原点 = 鼠标 +12pt）。
     static let resultCardWidth: CGFloat = 340
-    static let columnWidth: CGFloat = 190
+    /// 一格的最小宽度 —— 它决定"这条宽度里排几列"：680 的卡片用掉 24 的左右边距之后是 656，
+    /// 656 / 164 = **4 列**（用户 2026-09-27：「改成 4 列显示吧，现在 3 列太窄了，
+    /// 每个卡片的空白间距太大」—— 原来是 190，算出来是 3 列）。
+    static let columnWidth: CGFloat = 164
     static let horizontalPadding: CGFloat = 12
 
     /// 这张卡片该多宽（**与内容无关**，只看设置里那个倍数）。
@@ -112,6 +114,14 @@ struct DirectionBoardView: View {
                 .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
         )
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
+        // ⚠️ **拖动不在这里做**：它是面板那一侧用 NSEvent 监听做的（见
+        // `DirectionBoardPanelController` 的 `installDragMonitors`）。
+        // 两个原因，都是量出来的：
+        //  · SwiftUI 的 `DragGesture` 会**吞掉点击**（`minimumDistance` 调大才不吞，
+        //    而那又让它丢掉起步那几 pt）；
+        //  · 它给的 `translation` 是在**卡片自己的坐标系**里量的，而卡片正随着窗口一起动 ——
+        //    于是每次只能拿到"还差的那一半"（实测拖 −180 只走了 −92，增益 1/2）。
+        // 监听走的是**光标的绝对屏幕位置 + 按下那一刻的抓取偏移**，增益恒等于 1，也不吃点击。
     }
 
     // MARK: - 方向区（只画说到的那些，每格一个连续编号）
@@ -208,22 +218,45 @@ struct DirectionBoardView: View {
 
     // MARK: - 参考材料的标签
 
-    /// 这一轮带上了什么：「屏幕一」「屏幕二」「剪贴板」「文件」「文件夹」。
+    /// 这一轮带上了什么：**左边是拿到的**（「屏幕一」「屏幕二」「剪贴板」「文件」「文件夹」），
+    /// **右边是说了「参考」但没拿到的**（「无法识别：剪贴板」）。
+    ///
+    /// 用户 2026-09-27：「即便用户说了"参考"，但没有找到，就直接在……看板上显示"无法识别"」
+    /// +「左侧是识别到的，右侧是用户需求需要、但没有识别到的东西」。
+    ///
+    /// 样式也是他定的：「改大一点，做成矩形，**上下边距小一点**，加上圆角，字体大一点」——
+    /// 所以从 Capsule(10pt 字) 改成 RoundedRectangle(12pt 字、垂直 1pt)。
     private var referenceTagRow: some View {
         HStack(spacing: 6) {
             ForEach(referenceCollector.materials.tags, id: \.self) { tag in
-                Text(tag)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.Colors.accent)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(DS.Colors.accent.opacity(0.16)))
-                    .overlay(Capsule().strokeBorder(DS.Colors.accent.opacity(0.35), lineWidth: 1))
+                referenceTag(tag, tint: DS.Colors.success)
+            }
+            Spacer(minLength: 8)
+            ForEach(referenceCollector.materials.unresolved, id: \.self) { label in
+                referenceTag("无法识别：" + label, tint: DS.Colors.warning)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .transition(.opacity)
         .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.tags)
+        .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.unresolved)
+    }
+
+    /// 一枚参考标签。**矩形 + 小圆角 + 上下边距很小**（用户：「做成矩形，上下边距小一点，
+    /// 加上圆角，字体大一点」）—— 拿到的用绿色（与复制那两个按钮同一族颜色），
+    /// 没拿到的用告警色。
+    private func referenceTag(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 1)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(tint.opacity(0.16)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(tint.opacity(0.45), lineWidth: 1)
+            )
     }
 
     // MARK: - 说明区（**固定四行，永远画着**）
@@ -273,29 +306,49 @@ struct DirectionBoardView: View {
 
     // MARK: - 输入框区（**高度固定**）
 
+    /// **三行、能换行的输入框**（用户 2026-09-27：「正常情况下应能显示三行内容，现在只能显示一行，
+    /// 也没法换行。可以让用户通过 Shift + Enter 换行」）。
+    ///
+    /// ⚠️ 用的是 `TextEditor` 而不是 `TextField`：`TextField` **单行**、换行符它根本不收；
+    /// 竖排的 `TextField(axis: .vertical)` 也不行 —— 本仓库量过（2026-09-23，四个来回），
+    /// 那个从键盘**一个换行都拿不到**（`onSubmit` 会响，但绑定的值一个字节都不变）。
+    /// `TextEditor` 底下就是 `NSTextView`，换行、折行、Shift+Enter 全是它自带的行为。
     private var inputArea: some View {
-        TextField("补充说明（会一起发过去）", text: $session.typedInput)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12))
-            .foregroundStyle(theme.textColor)
-            .focused($isInputFocused)
-            .onSubmit { isInputFocused = false }
-            .padding(.horizontal, 8)
-            .frame(height: Self.inputHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.textColor.opacity(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.textColor.opacity(isInputFocused ? 0.35 : 0.14), lineWidth: 1)
-            )
-            .onTapGesture {
-                // 点了才要键盘：宿主面板据此 `makeKey`（平时面板不是 key，绝不抢你正在用的 App）。
-                isInputFocused = true
-                onInputFocused()
+        ZStack(alignment: .topLeading) {
+            // 占位符：`TextEditor` 没有 placeholder，只能自己画一个（有字时藏起来）。
+            if session.typedInput.isEmpty {
+                Text(Self.inputPlaceholder)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textColor.opacity(0.35))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .allowsHitTesting(false)
             }
+            TextEditor(text: $session.typedInput)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.textColor)
+                .scrollContentBackground(.hidden)
+                .focused($isInputFocused)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+        }
+        .frame(height: Self.inputHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.textColor.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(theme.textColor.opacity(isInputFocused ? 0.35 : 0.14), lineWidth: 1)
+        )
+        .onTapGesture {
+            // 点了才要键盘：宿主面板据此 `makeKey`（平时面板不是 key，绝不抢你正在用的 App）。
+            isInputFocused = true
+            onInputFocused()
+        }
     }
+
+    private static let inputPlaceholder = "补充说明（会一起发过去）；Shift + Enter 换行"
 
     /// **取消看板那一行**：暗红色、三列、有高度（用户：「这一行要有一定的高度，颜色是暗红色」）。
     ///
@@ -307,11 +360,11 @@ struct DirectionBoardView: View {
             // 叫复制按钮……它的右侧还有一个按钮，叫复制并退出」）——
             // 刻意用中性色并与那三档之间隔一条线：它们是"把结果拿走"，不是"把这一轮丢掉"，
             // 混成暗红会让人以为按了会丢东西。
-            actionButton(title: "复制", icon: "doc.on.doc",
+            actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
                          help: "把右下角那张卡片里 AI 回复的内容复制下来") {
                 session.copyReplyAction?()
             }
-            actionButton(title: "复制并退出", icon: "doc.on.doc.fill",
+            actionButton(title: "复制并退出", icon: "doc.on.doc.fill", width: Self.copyAndExitButtonWidth,
                          help: "复制这段回复，然后退出这一轮（与按 ESC 同效）") {
                 session.copyReplyAndExitAction?()
             }
@@ -342,9 +395,11 @@ struct DirectionBoardView: View {
     }
 
     /// 取消那一行**左侧那两个按钮的底色**（中性 —— 它们不是"取消"）。
-    private static let actionButtonColor = Color.white.opacity(0.06)
-    /// 两个中性按钮各自的宽度（固定，不跟三档取消抢空间 —— 它们文字长短差一倍）。
-    private static let actionButtonWidth: CGFloat = 96
+    private static let actionButtonColor = DS.Colors.success.opacity(0.12)
+    /// 两个按钮各自的宽度（用户 2026-09-27：「复制的按钮要小一点，因为它就两个字；
+    /// 复制并退出的按钮大一点」）。
+    private static let copyButtonWidth: CGFloat = 66
+    private static let copyAndExitButtonWidth: CGFloat = 104
 
     /// 三档之间的分割线 —— 用户 2026-09-27：「它们中间的分割线你给它画得**再亮一点、再大一点，
     /// 颜色再明确一点，用白色**」。所以是**纯白**（不是原来那种 12% 白），而且比原来高
@@ -358,6 +413,7 @@ struct DirectionBoardView: View {
     /// 复制 / 复制并退出 —— 中性色（`surface2` 底 + 正文色字），与三档取消明确区分。
     private func actionButton(title: String,
                               icon: String,
+                              width: CGFloat,
                               help: String,
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -365,8 +421,9 @@ struct DirectionBoardView: View {
                 Image(systemName: icon).font(.system(size: 10, weight: .semibold))
                 Text(title).font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(theme.textColor)
-            .frame(width: Self.actionButtonWidth, height: Self.cancelRowHeight)
+            // **绿色**（用户 2026-09-27：「它的字体、背景颜色是绿色」，与右侧那套极简风格一致）。
+            .foregroundStyle(DS.Colors.success)
+            .frame(width: width, height: Self.cancelRowHeight)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Self.actionButtonColor)

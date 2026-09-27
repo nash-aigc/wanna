@@ -147,6 +147,8 @@ final class DirectionBoardSession: ObservableObject {
             // 第四句：**参考材料第二类**（剪贴板）—— 自检时先在剪贴板里放一段文本，
             // 跑完就能看卡片上有没有长出那个「剪贴板」标签。
             "根据剪贴板里的内容总结一下",
+            // 第五句：**说了参考但拿不到**（自检时前台多半不是访达）→ 看板右侧应出现「无法识别：选中文件」。
+            "参考一下我选中的文件",
         ]
         var accumulated = ""
         for (index, line) in lines.enumerated() {

@@ -619,6 +619,20 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 **改了默认关键词老用户收不到**（设置文件里存着老默认值，`decodeIfPresent ?? defaults` 让存着的赢
 → 加了一次性迁移：存的正好是上一版默认值就换新的）。
 
+**第八版补（2026-09-27 深夜）：参考材料的四处调整 + 两个只有真跑才会发现的坑。**
+① 说了「参考」但**没拿到** → 看板标签行**右侧**显示琥珀色「无法识别：X」（**不进提示词**）；
+重试**三次**就放弃（他：「用这样的方式来避免无限循环」）。② 标签改成矩形/12pt/上下边距 1pt；
+两个按钮改成绿色、`复制` 66pt / `复制并退出` 104pt（他：「复制就两个字，要小一点」）。
+③ **看板可拖动** —— 这里踩了一个坑：`DragGesture.translation` **在卡片自己的坐标系里量**，
+而卡片正随窗口一起动 → **增益正好 1/2**（实测拖 −180 只走 −92），与设置里那个缩放手柄当年同一个坑；
+改成 **NSEvent 本地监听 + 绝对定位**，实测增益 **1.000**。⚠️ 监听里 `return nil` ＝**吞事件**，
+而 SwiftUI 按钮靠 mouseUp 触发 —— 吞了它板上**每个按钮都点不动**，必须 `return event`
+（用合成点击验的：点「复制」→ 剪贴板里出现那段回复）。④ 选项格 3 列 → **4 列**（`columnWidth` 164）。
+⑤ 输入框从单行 `TextField` 换成 **`TextEditor`**（三行、能折行、Shift+Enter 换行；竖排 TextField 本仓库
+量过拿不到换行）。⚠️ 访达那条实测回 **`-1743 Not authorized`** 且**没弹授权框** ——
+键在（`plutil` 核对过）、脚本编译通过，问题是那一发在**非主线程**上发的；现在拿到 -1743 就
+**回主线程再发一次**，那一发才会把「控制访达」问出来。
+
 **第七版三补（2026-09-27 深夜）：ESC 之后右下角那张卡片不退（我引入的回归，已修）。**
 他按住快捷键提问（右下角出现答案预览）→ 按 ESC 退出 → **卡片没退、一直跟着鼠标**。根因是上一版把"收预览"
 从提交那一刻挪走（挪到"真答案的第一个字"）却没给其余出口补上，而 ESC 打断走的
@@ -1004,7 +1018,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `DirectionBoardView.swift` | ~386 | 卡片的**四段，每一段都固定画着**：编号方向格（多列，最多 5 列）/ **任务结果**（绿框「结果」小标，没算出来显示 `—`）/ **AI 的理解**（目标问题 / 类型 / 参考 / 细节四行，标签列定宽 50，空值显示 `—`）/ 三行输入框 / 暗红三列取消。值的文字带 `.id(value)` + `.transition(.opacity + offset)`，外层 `.animation(.easeOut(0.28).delay(行号 × 0.05))` —— 逐行错开淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」），**骨架不动**。外壳直接复用结果卡片那几个常量与 `cardBackground`。宽度 = 340 × 设置倍数（默认 2 → 680），**与内容无关、恒定**。 |
 | `TurnReferenceMaterials.swift` | ~330 | **这一轮的参考材料：屏幕 / 剪贴板 / 访达选中**（2026-09-27）。`TurnReferenceMaterials` 是模型（截图组 + 剪贴板那条 + 访达选中的路径 + `tags` + `<reference_materials>` 提示词块）；`TurnReferenceCollector` 是单例采集器（`beginTurn` 自动截第一张 / `noteLiveTranscript` 三类关键词边缘触发 / `promptBlock`）。**文件与文件夹只发绝对路径、不发内容**（用户：里面的内容可能特别大，让 agents 去读）；**标签只反映真拿到了什么**（结构上成立：标签读材料、材料只在取到时写）。访达那条走 AppleScript（在专用串行队列上跑，别堵主线程），**要求 Info.plist 里有 `NSAppleEventsUsageDescription`**，否则 macOS 会**静默拒绝**。 |
 | `MainFlowDiagnostics.swift` | ~175 | **主 Agent 这条语音链的诊断日志 + 主线程看门狗**（2026-09-27 新建）。用户报「连续问到第六七轮就卡死」而那条路**一个字都没落盘**，所以先装仪器：日志落 `~/Library/Application Support/Wanna/主Agent诊断.log`，记**音频心跳**（连续监听期间每 2 秒一行 `N 块/2s 峰值 x.xxx` —— 0 块 = tap/引擎没了、有块但全零 = 设备哑了、有块有峰值 = 故障在下游）、**识别会话生命周期**、**主线程看门狗**（后台每 1 秒往主队列投一次，往返 > 2 秒记一行并带上当时的阶段标记 —— 用来分辨"主线程被堵住"与"主线程闲着各链各自停摆"）。只写文件、纯入队不阻塞调用方、2MB 轮转、不改变任何行为。与长录音那条路的 `录音诊断.log` 是同一条规矩：**发现故障的位置必须从用户手里挪到机器手里**。 |
-| `DirectionBoardPanelController.swift` | ~255 | 看板住的那块**可点击**面板。⚠️ **尺寸归 SwiftUI、位置归我们**：`NSHostingView` 会按内容改窗口尺寸（`updateAnimatedWindowSize`，保持顶边），**刻意不设 `sizingOptions = []`**（这块面板上它挡不住 —— 根因与实测见本节上面第五版那段），改成订阅 `NSWindow.didResizeNotification` → `repositionForCurrentSize()` 每次用「锚点 + 夹进屏幕」重算原点（只改原点，不成环）。显示时只 `orderFrontRegardless()`、`becomesKeyOnlyIfNeeded`（**点了输入框才是 key**）；`holdsTheAutomaticSend()` 是"他正在跟看板打交道"的判据（鼠标在板上 / 面板是 key / 2 秒内交互过），静音自动发送那一下据此按住不发。 |
+| `DirectionBoardPanelController.swift` | ~330 | 看板住的那块**可点击**面板。⚠️ **尺寸归 SwiftUI、位置归我们**：`NSHostingView` 会按内容改窗口尺寸（`updateAnimatedWindowSize`，保持顶边），**刻意不设 `sizingOptions = []`**（这块面板上它挡不住 —— 根因与实测见本节上面第五版那段），改成订阅 `NSWindow.didResizeNotification` → `repositionForCurrentSize()` 每次用「锚点 + 夹进屏幕」重算原点（只改原点，不成环）。显示时只 `orderFrontRegardless()`、`becomesKeyOnlyIfNeeded`（**点了输入框才是 key**）；`holdsTheAutomaticSend()` 是"他正在跟看板打交道"的判据（鼠标在板上 / 面板是 key / 2 秒内交互过），静音自动发送那一下据此按住不发。 |
 | `DirectionBoardSettingsView.swift` | ~225 | 设置 → 操作 的「任务方向看板」一节：总开关、宽度倍数（1 / 1.5 / 2×）、最小新增字数（5…20）、概率阈值（0.3…0.9）、取消状态 + 恢复显示、**两份文件分开显示**（固定那份给「在访达中显示 / 恢复默认」，临时那份给「立刻清空」）、方向清单（每条可删 + 手动添加）、JEV key 一行（保存进 `JevKey.txt`，不在 AppSettings 里）。 |
 | `NotchListeningTranscript.swift` | ~390 | **主 Agent 说话时刘海下面那一行字幕，和点开之后的转写编辑窗**（2026-09-27，接线图第 2、3 条）。三块：`NotchListeningTranscriptModel`（这一轮的文本 + 编辑草稿，单例）、`NotchListeningTranscriptView`（收起=那一行 `NotchTranscriptLine`，展开=`NotchExpandedTranscriptPanel`）、`NotchListeningTranscriptPanelController`（它那块透明、点击穿透、永不改尺寸的面板，层级 `.popUpMenu` —— 在刘海面板之上，所以展开面板时那一行照样看得见）。**只由相位驱动**：`== .listening` 就出现、其余收起（用户：「如果用户说完了，然后进入 thinking，那么这个录音的内容就消失掉了」），**不碰状态机**。`CompanionManager` 在两条实时转写回调里喂它（按住说话 + 连续追问）—— 它是说话时那些字**唯一的**落点（鼠标旁那颗气泡不再显示实时转写，见 Settings 那一节）；刘海左侧那颗「Listening」的点击归 `handleGlobalClick`，读的是录音两翼那一份矩形（`recordingWingFrames`）。**编辑窗里改过的字会顶替这一句发出去的话**（`consumeEditedTranscript()`，取走即清、一轮一次）—— 这是它与录音那条唯一的语义差别，也是「可以让用户编辑录音里面的内容」唯一有意义的落点。 |
 | `RecordingSettingsView.swift` | ~597 | 设置页「录音」。历史在最顶、其余参数在下；每条历史两行（标题 + 复制/播放/在访达中显示/展开，第二行预览或十行全文）。「自定义风格」那一节含总开关、屏幕截图开关、模型 URL/Key/模型 ID，以及**从「模型」页导入**的选择器 —— 模型 ID 跟着服务商一起换，因为一个地址配别家的模型名必然 404。 **2026-09-27 起这一页的历史有两个来源**：长录音（`LongFormRecorderController`）与主 Agent 的每一轮（`AgentTurnRecorder`）—— 两者落的是同一套 `<id>.wav` / `.txt` / `.json`，所以这一页一行都不用改。同一处加了一层 `RecordingLibraryChangeObserver`（一个只订阅 `RecordingLibraryStore.didChangeNotification` 的小 `View`）：主 Agent 每问一句就多一条，而这一页的 `@State` 是 ViewModel 的，中间缺一层的话列表要等下一次别的原因重绘才更新；做成独立 `View` 而不是 `@State` 是因为 **extension 里不能声明存储属性**。 |

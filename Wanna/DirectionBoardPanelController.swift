@@ -118,9 +118,81 @@ final class DirectionBoardPanelController {
         show()
     }
 
+    /// **用户自己把它拖走过** —— 一旦拖过，就**不再自动摆位**（否则下一次内容变高又会跳回鼠标旁边，
+    /// 把他刚摆好的位置抢走）。用户 2026-09-27：「现在没法拖动，相当于它完全占据了屏幕空间」。
+    private var isUserPositioned = false
+
+    // MARK: - 拖动（用户 2026-09-27：「看板可以通过拖动上面的文字部分或其他部分来移动位置」）
+
+    private var dragMonitors: [Any] = []
+    /// 按下那一刻：光标在哪、窗口在哪。之后每一次移动都**按绝对位置重算原点**
+    /// （不是累加位移 —— 累加会漂，而绝对值不会）。
+    private var dragStartMouseLocation: CGPoint?
+    private var dragStartPanelOrigin: CGPoint?
+
+    /// **拖动走 NSEvent 本地监听，不用 SwiftUI 的 `DragGesture`** —— 两个理由都是量出来的：
+    ///  · `DragGesture` 会**吞掉点击**（`minimumDistance` 调大才不吞，而那又让它丢掉起步那几 pt）；
+    ///  · 它给的 `translation` 是在**卡片自己的坐标系**里量的，而卡片正随窗口一起动 ——
+    ///    于是每次只拿到"还差的那一半"（实测拖 −180pt 窗口只走 −92pt，**增益 1/2**）。
+    ///    这与设置里那个窗口缩放手柄当年踩的是同一个坑，修法也一样：用**绝对屏幕位置**。
+    ///
+    /// 本地监听只看得见发给**本 App** 的事件，所以其他软件照常收不到影响；而且监听
+    /// **不消耗事件** —— 按钮、输入框全都照常工作。
+    private func installDragMonitors() {
+        guard dragMonitors.isEmpty else { return }
+        let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+            self?.beginDragIfInsidePanel(with: event)
+            return event
+        }
+        let dragged = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] event in
+            self?.continueDrag()
+            return event
+        }
+        let up = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            self?.endDrag()
+            // ⚠️ **必须把事件放回去**：本地监听返回 `nil` ＝ **吞掉这个事件**，
+            // 而 SwiftUI 的按钮是**靠 mouseUp 才触发的** —— 吞了它，板上每一个按钮
+            //（选项、复制、取消三档）就全都点不动了。
+            return event
+        }
+        dragMonitors = [down, dragged, up].compactMap { $0 }
+    }
+
+    private func removeDragMonitors() {
+        for monitor in dragMonitors { NSEvent.removeMonitor(monitor) }
+        dragMonitors = []
+        dragStartMouseLocation = nil
+        dragStartPanelOrigin = nil
+    }
+
+    private func beginDragIfInsidePanel(with event: NSEvent) {
+        guard isVisible, let panel, event.window === panel else { return }
+        dragStartMouseLocation = NSEvent.mouseLocation
+        dragStartPanelOrigin = panel.frame.origin
+    }
+
+    private func continueDrag() {
+        guard isVisible, let panel, let startMouse = dragStartMouseLocation,
+              let startOrigin = dragStartPanelOrigin else { return }
+        // 第一次真的移动了才算"他挪过它" —— 单纯点一下不该把这轮自动摆位关掉。
+        isUserPositioned = true
+        let current = NSEvent.mouseLocation
+        var frame = panel.frame
+        frame.origin = CGPoint(x: startOrigin.x + (current.x - startMouse.x),
+                               y: startOrigin.y + (current.y - startMouse.y))
+        lastPlacedFrame = frame
+        panel.setFrame(frame, display: true)
+    }
+
+    private func endDrag() {
+        dragStartMouseLocation = nil
+        dragStartPanelOrigin = nil
+    }
+
     private func show() {
         guard !isVisible else { return }
         isVisible = true
+        isUserPositioned = false
         // 锚点取一次。没有鼠标事件过（比如自检注入）时退回鼠标当前位置。
         anchorPoint = NSEvent.mouseLocation
         lastPlacedFrame = .zero
@@ -133,12 +205,14 @@ final class DirectionBoardPanelController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.repositionForCurrentSize() }
         panel.orderFrontRegardless()
+        installDragMonitors()
         repositionForCurrentSize()
     }
 
     private func hide() {
         guard isVisible else { return }
         isVisible = false
+        removeDragMonitors()
         sizeObserver = nil
         panel?.orderOut(nil)
         panel = nil
@@ -229,6 +303,8 @@ final class DirectionBoardPanelController {
     /// 「左下角固定、内容往上长」。只改原点不改尺寸，所以不会再触发一次 resize 通知（不成环）。
     private func repositionForCurrentSize() {
         guard isVisible, let panel, let anchorPoint else { return }
+        // 用户拖过之后就不再自动摆位（内容变高变矮时只保住他放的位置）。
+        guard !isUserPositioned else { return }
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) })
                 ?? NSScreen.main else { return }
         let frame = NotchSupport.directionBoardPanelFrame(anchor: anchorPoint,
