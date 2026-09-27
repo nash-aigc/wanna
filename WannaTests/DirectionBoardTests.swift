@@ -125,6 +125,40 @@ struct DirectionBoardTests {
         #expect(both.map(\.text) == ["保存到 Notion", "操作电脑"])
     }
 
+    /// **发送节奏的三条闸门**（用户 2026-09-27 的第二条是这次新加的）：
+    /// 每 3 秒看一次 + 内容跟上次不一样 + **新增内容 ≥10 字（标点不算）**。
+    @Test func theCadenceGateNeedsTenNewCharacters() throws {
+        typealias Session = DirectionBoardSession
+        func added(_ transcript: String, since last: String) -> Int {
+            Session.addedCharacterCount(transcript: transcript, since: last)
+        }
+        func shouldRequest(_ transcript: String, last: String,
+                           enabled: Bool = true, listening: Bool = true, requesting: Bool = false) -> Bool {
+            Session.shouldRequest(transcript: transcript, lastRequestedTranscript: last,
+                                  isEnabled: enabled, isListening: listening, isRequesting: requesting)
+        }
+
+        #expect(added("帮我把这段存到 notion 里", since: "") == 14)
+        #expect(added("帮我把这段存到 notion 里", since: "帮我把这段") == 9)
+        // **标点不算字数**（用户点名）。
+        #expect(added("帮我把这段，存到 notion 里！", since: "帮我把这段存到 notion 里") == 0)
+        #expect(added("嗯", since: "") == 1)
+
+        #expect(shouldRequest("帮我把这段存到 notion 里", last: ""))
+        #expect(!shouldRequest("帮我把这段存到 notion 里", last: "帮我把这段存到 notion 里"))
+        #expect(!shouldRequest("帮我把这段存到 notion 里。", last: "帮我把这段存到 notion 里"))
+        #expect(!shouldRequest("帮我把这段存到 notion 里，再指", last: "帮我把这段存到 notion 里"))
+        #expect(shouldRequest("帮我把这段存到 notion 里，再指给我看是哪一行的按钮",
+                              last: "帮我把这段存到 notion 里"))
+        // 只说「嗯」「啊」这类没有意义的词 → 不发。
+        #expect(!shouldRequest("嗯", last: ""))
+        #expect(!shouldRequest("啊", last: ""))
+        #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", enabled: false))
+        #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", listening: false))
+        #expect(!shouldRequest("帮我把这段存到 notion 里", last: "", requesting: true))
+        #expect(!shouldRequest("  帮我把这段存到 notion 里  ", last: "帮我把这段存到 notion 里"))
+    }
+
     /// **口述也能选方向**：认出「第 N 个方向」「方向N」「选第 N」，中文数字与阿拉伯数字都认。
     @Test func spokenNumbersSelectDirections() throws {
         #expect(DirectionBoardConfiguration.spokenSelectionNumber(in: "选择第二个方向", displayedItemCount: 5) == 2)

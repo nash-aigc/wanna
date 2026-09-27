@@ -80,8 +80,6 @@ final class DirectionBoardSession: ObservableObject {
 
     /// 每 3 秒看一次（用户定的节奏）。
     static let cadenceSeconds: TimeInterval = 3
-    /// 少于这么多字不值得问。
-    static let minimumTranscriptCharacters = 4
     /// 上一次的结论带过去时最多留这么多字（防止越滚越长）。
     private static let maximumPreviousReadingCharacters = 600
 
@@ -308,15 +306,43 @@ final class DirectionBoardSession: ObservableObject {
     // MARK: - 节奏与请求
 
     /// **这一次该不该发请求** —— 闸门全部收在这一个纯函数里，好让探针把每一条都试一遍。
+    ///
+    /// 用户 2026-09-27 定的两条（第二条是这次新加的）：
+    /// 1. 「检测这 3 秒之内用户的提示词是否跟上次相同，如果相同就不发送」；
+    /// 2. 「如果 3 秒之内用户新增的内容**少于 10 个字**，也不发送，因为相当于这句话还没说完。
+    ///    **标点符号不算字数**……比如用户只说「嗯」「啊」这类没有意义的词，发送也没有意义。」
     nonisolated static func shouldRequest(transcript: String,
                                           lastRequestedTranscript: String,
                                           isEnabled: Bool,
                                           isListening: Bool,
                                           isRequesting: Bool) -> Bool {
         guard isEnabled, isListening, !isRequesting else { return false }
-        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= minimumTranscriptCharacters else { return false }
-        return trimmed != lastRequestedTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return addedCharacterCount(transcript: transcript, since: lastRequestedTranscript)
+            >= minimumAddedCharacters
+    }
+
+    /// **新增了这么多字才值得问一次**（用户点名要的 10）。
+    static let minimumAddedCharacters = 10
+
+    /// 这次比上次**多说了几个字**（标点、空格、表情都不算 —— 用户：「标点符号不算字数」）。
+    ///
+    /// 识别器给的是**累积**文本，所以"新增"= 这次比上次多的那一段：
+    /// - 上次那份是这次的前缀（最常见）→ 增量就是长度差；
+    /// - 不是前缀（识别器改写了前面几个字，或者这是追问窗口里的**新一句**）→ 从最长公共前缀之后算起。
+    nonisolated static func addedCharacterCount(transcript: String,
+                                                since previousTranscript: String) -> Int {
+        // 只留字母与数字：中文是 letter，标点与空格在这一步就被丢掉了（也就是"不算字数"）。
+        let current = DirectionBoardConfiguration.normalizedForMatching(transcript)
+        let previous = DirectionBoardConfiguration.normalizedForMatching(previousTranscript)
+        guard !current.isEmpty else { return 0 }
+        guard !previous.isEmpty else { return current.count }
+        if current.hasPrefix(previous) { return current.count - previous.count }
+        var commonPrefixCount = 0
+        for (currentCharacter, previousCharacter) in zip(current, previous) {
+            guard currentCharacter == previousCharacter else { break }
+            commonPrefixCount += 1
+        }
+        return current.count - commonPrefixCount
     }
 
     private func startCadenceTimer() {
