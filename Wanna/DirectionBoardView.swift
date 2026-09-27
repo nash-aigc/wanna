@@ -310,10 +310,21 @@ struct DirectionBoardView: View {
     /// 所以从 Capsule(10pt 字) 改成 RoundedRectangle(12pt 字、垂直 1pt)。
     private var referenceTagRow: some View {
         HStack(spacing: 6) {
+            // **左侧标题「参考」**（用户 2026-09-27：「最上面一行（屏幕一、屏幕二）左侧加标题「参考」」）。
+            // 它也是原来那一行「参考」被删掉之后的去处 —— 参考材料这件事现在由这排标签代表。
+            Text("参考")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textColor.opacity(0.55))
             ForEach(referenceCollector.materials.tags, id: \.self) { tag in
                 referenceTag(tag, tint: DS.Colors.success)
             }
             Spacer(minLength: 8)
+            // **多张截图时明确"以最近一次为准"**（用户 2026-09-27：「用户询问屏幕内容时，重点关注
+            // 最近一次屏幕截图……避免回复最初的屏幕内容」）。提示词里也写了同一句（见
+            // `TurnReferenceMaterials.promptBlock`）—— 界面上标出来是为了让他知道这条生效了。
+            if referenceCollector.materials.screenshots.count > 1 {
+                referenceTag("重点关注最近一次屏幕内容", tint: DS.Colors.accent)
+            }
             ForEach(referenceCollector.materials.unresolved, id: \.self) { label in
                 referenceTag("无法识别：" + label, tint: DS.Colors.warning)
             }
@@ -444,10 +455,8 @@ struct DirectionBoardView: View {
                 cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
                     session.cancelForTenMinutes()
                 }
-                cancelRowDivider
-                cancelButton(title: "取消今日", help: "到明天凌晨 0 点为止都不显示") {
-                    session.cancelUntilNextMidnight()
-                }
+                // 「取消今日」按用户 2026-09-27 的要求删掉（「卡片右下角「取消」「今日」删除」）。
+                // 那三档的总闸门仍在设置页与「取消任务看板」那句话里 —— 只是这一行不再画它。
             }
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)

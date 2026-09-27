@@ -482,7 +482,12 @@ final class TurnReferenceCollector: ObservableObject {
         let screenshotCount = materials.screenshots.reduce(0) { $0 + $1.count }
         if screenshotCount > 0 {
             body.append("【屏幕截图】共 \(screenshotCount) 张，按用户说到的顺序附在后面"
-                        + (materials.screenshots.count > 1 ? "（他提到过多次，每一张都是那一刻的屏幕）" : "")
+                        + (materials.screenshots.count > 1
+                           // 用户 2026-09-27：「用户询问屏幕内容时，**重点关注最近一次屏幕截图**……
+                           // 避免回复最初的屏幕内容」。多张时最后一张才是他现在问的那一刻。
+                           ? "。**请以最后那一张（最近一次截的）为准** —— 前面几张是他早些时候说到的，"
+                             + "只作背景，不要拿它们回答他现在的问题。"
+                           : "。")
                         + "。")
         }
         switch materials.clipboard {

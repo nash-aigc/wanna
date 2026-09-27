@@ -1781,16 +1781,32 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         pendingStartRequestIdentifier = UUID()
 
         guard activeStartSource == expectedStartSource else {
+            // **这条 guard 是静默的**（2026-09-27）：它不匹配时松手什么都不做 ——
+            // 话筒照常在出声音，屏幕上却一个字都不会有。所以这里必须留一行。
+            MainFlowDiagnostics.log("⚠️ 松手被忽略：这一场不是从\(expectedStartSource)起的"
+                                    + "（activeStartSource=\(activeStartSource.map(String.init(describing:)) ?? "nil")）")
             isPreparingToRecord = false
             return
         }
-        guard !isFinalizingTranscript else { return }
+        guard !isFinalizingTranscript else {
+            // **同上**：上一场的定稿没收尾的话，这一条会把之后每一次松手都吞掉 ——
+            // 用户感觉就是「说多少遍都没有反应」。
+            MainFlowDiagnostics.log("⚠️ 松手被忽略：上一场的定稿还没收尾（isFinalizingTranscript 一直为 true）"
+                                    + " —— 见下面那条看门狗")
+            return
+        }
 
         print("🎙️ BuddyDictationManager: stop requested (\(expectedStartSource))")
+        MainFlowDiagnostics.log("🎙️ 松手：请求定稿（\(expectedStartSource)）")
 
         isRecordingFromMicrophoneButton = false
         isRecordingFromKeyboardShortcut = false
         isFinalizingTranscript = true
+        // **定稿看门狗**（2026-09-27）：上面那条 `isFinalizingTranscript` 的 guard 是静默的，
+        // 而"定稿永远回不来"完全可能（连接死了、回包丢了、provider 卡住）——那之后每一次松手
+        // 都会被它吞掉，表现就是用户说的「连续几轮之后卡住、完全没反应」。
+        // 所以给它一个上限：超时就自己收尾，让下一次按键能用。
+        armFinalizationWatchdog()
 
         let finalTranscriptFallbackDelaySeconds = activeTranscriptionSession?.finalTranscriptFallbackDelaySeconds
             ?? Self.defaultFinalTranscriptFallbackDelaySeconds
@@ -2042,6 +2058,24 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         }
     }
 
+    /// 定稿最多等这么久（超过就强制收尾）。
+    private static let finalizationWatchdogSeconds: TimeInterval = 10
+    private var finalizationWatchdogTask: Task<Void, Never>?
+
+    /// 定稿看门狗：超时就把这一场收掉，免得 `isFinalizingTranscript` 把之后每一次松手都吞掉。
+    private func armFinalizationWatchdog() {
+        finalizationWatchdogTask?.cancel()
+        finalizationWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.finalizationWatchdogSeconds))
+            guard let self, !Task.isCancelled, self.isFinalizingTranscript else { return }
+            MainFlowDiagnostics.log("⚠️ 定稿等了 \(Int(Self.finalizationWatchdogSeconds)) 秒还没回来 → 强制收尾"
+                                    + "（不收的话，之后每一次松手都会被那道 guard 静默吞掉）")
+            self.finalizationWatchdogTask = nil
+            // 把这一场当"没有文字可交"收掉：该复位的一次性状态全部复位（见那个函数）。
+            self.finishCurrentDictationSessionIfNeeded(shouldSubmitFinalDraft: false)
+        }
+    }
+
     private func finishCurrentDictationSessionIfNeeded(shouldSubmitFinalDraft: Bool) {
         guard !hasFinishedCurrentDictationSession else { return }
         hasFinishedCurrentDictationSession = true
@@ -2120,6 +2154,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         isRecordingFromKeyboardShortcut = false
         isKeyboardShortcutSessionActiveOrFinalizing = false
         isFinalizingTranscript = false
+        // 正常收尾 → 撤掉看门狗（不然它十秒后还会再来一次）。
+        finalizationWatchdogTask?.cancel()
+        finalizationWatchdogTask = nil
         currentAudioPowerLevel = 0
         recordedAudioPowerHistory = Array(
             repeating: Self.recordedAudioPowerHistoryBaselineLevel,

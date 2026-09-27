@@ -2383,6 +2383,9 @@ final class CompanionManager: ObservableObject {
         _ finalTranscript: String,
         sendsImmediately: Bool
     ) {
+        // 他报的「说了没反应」那条链上，这是最后一个没有记录可查的环节。
+        MainFlowDiagnostics.log("📥 拿到定稿：\(finalTranscript.count) 字「\(finalTranscript.prefix(24))」"
+                                + "，sendsImmediately=\(sendsImmediately)")
         // **用户在刘海下面那行字幕的编辑窗里改过字，就以他改的为准**（2026-09-27）。
         // 取走即清：一轮只顶替一次（下一轮由 `beginRound` 归零）。
         //

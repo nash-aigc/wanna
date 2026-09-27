@@ -34,25 +34,32 @@ nonisolated enum DirectionBoardPrompt {
     /// 内容有时候有软件目标细节，有时候没有，就是突然间有、突然间没有……这几行固定在这，
     /// 而不是突然间有、突然间没有，这对体验影响太差了。」所以这四行**永远画出来**，
     /// 模型没给内容的那一行显示占位符，而不是整行消失 —— 卡片的每一段高度于是恒定。
-    static let understandingLabels = ["目标问题", "类型", "参考", "细节"]
+    static let understandingLabels = ["目标", "细节"]
 
     /// 每一行认哪些标签（**第一个是正式名字**，其余是模型爱写的同义说法，一并认）。
     ///
     /// 认老名字是刻意的：模型不一定会照新格式写（实测它经常把 `软件` / `文件` 写在「参考」的位置），
     /// 只认正式名会让那一行的内容掉进正文里 —— 屏幕上就是"这行空了、内容跑到别处"。
     static let understandingLabelAliases: [(label: String, aliases: [String])] = [
-        ("目标问题", ["目标问题", "目标", "问题"]),
-        ("类型", ["任务类型", "类型"]),
-        ("参考", ["内容参考", "参考", "软件", "文件"]),
+        ("目标", ["目标", "目标问题", "问题"]),
         ("细节", ["细节", "注意", "备注"]),
     ]
+
+    /// 一行标签下面最多再吃几行续行（防模型跑题写成一大篇）。
+    private static let maximumContinuationLines = 4
 
     /// 模型用来表示"这一行没有内容"的写法 —— 一律当成空（占位符由视图画）。
     private static let emptyValueMarkers: Set<String> = ["—", "-", "–", "无", "没有", "暂无", "n/a", "na", "无。"]
 
     /// **只截断、自己不成行**的标签 —— 它们各有各的去处（`parseAnswer` / `parseSelectionVerdict`），
     /// 但不属于"理解那四行"。少了它们，「细节」会把整句「…推断。 答案：选 A」吞进去。
-    private static let boundaryLabels = ["任务结果", "答案", "选择"]
+    private static let boundaryLabels = [
+        "任务结果", "答案", "选择",
+        // ⚠️ 用户 2026-09-27 删掉的三个理解行（类型 / 参考 / 软件 / 文件）。
+        // 它们**仍然要当边界**：模型一时改不过来还会写「类型：做题」，
+        // 不当边界的话那一截会并进「细节」里，屏幕上就是一段莫名其妙的尾巴。
+        "类型", "任务类型", "参考", "内容参考", "软件", "文件",
+    ]
 
     /// 写"AI 怎么理解"用的系统提示词 —— **只给方向清单，不给主 Agent 提示词**。
     ///
@@ -70,13 +77,13 @@ nonisolated enum DirectionBoardPrompt {
         可能的方向（你可以从中挑，也可以都不挑）：
         \(lines.joined(separator: "\n"))
 
-        **下面这四行必须每一行都写**（真的没有内容就写一个「—」，**不要整行省略** ——
+        **下面这两行必须每一行都写**（真的没有内容就写一个「—」，**不要整行省略** ——
         这几行在界面上是固定的位置，少写一行会让整块跳动）：
 
-        目标问题：<这次要达成什么 / 用户在问什么，一句话>
-        类型：<3~7 个字，这次是什么类型的任务，例如「做题」「整理文件」>
-        参考：<这次要看或要动的东西：哪个软件、哪个文件、哪个页面、哪个网站；没有就写「—」>
-        细节：<任何需要知道的前提、约束、你注意到的东西；可以多句，也可以写「—」>
+        目标：<这次要达成什么 / 用户在问什么，一句话>
+        细节：<**要简短**，而且是**分行写的**：每一行说一件事（同一个方面、同一个方向的内容放同一行），
+              最多四行，每行十几个字。不要写成一大段 —— 用户看着这块板子是为了扫一眼就明白，
+              堆一大段反而成了负担。没有就写「—」>
 
         **答案**：<只在这一轮**包含一个可以当场回答的问题**时才写（「北京在哪」「杨幂是谁」
                   「左右两张图有什么区别」「这道题选 A 还是 B」），一到三句话，像回答用户一样自然；
@@ -240,15 +247,29 @@ nonisolated enum DirectionBoardPrompt {
         let normalized = raw.replacingOccurrences(of: "：", with: ":")
         var found: [String: String] = [:]
 
-        for rawLine in normalized.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(rawLine)
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for (lineIndex, line) in lines.enumerated() {
             for position in labelPositions(in: line) where !position.label.isEmpty {
                 let valueStart = line.index(position.start, offsetBy: position.aliasLength + 1)
                 let valueEnd = position.valueEnd
                 guard valueStart <= valueEnd else { continue }
                 let value = normalizedValue(String(line[valueStart..<valueEnd]))
                 guard !value.isEmpty, found[position.label] == nil else { continue }
-                found[position.label] = value
+                // **续行也算这一行的内容**（用户 2026-09-27：「细节保留，但是要简要说明，
+                // 不同类型的任务，换行显示说明」）—— 所以一行标签下面接着的那几行，
+                // 直到下一个标签行或空行为止，都并进这一行的值里（用换行连起来，视图按行显示）。
+                var collected = [value]
+                var nextIndex = lineIndex + 1
+                while nextIndex < lines.count {
+                    let candidate = lines[nextIndex].trimmingCharacters(in: .whitespaces)
+                    if candidate.isEmpty { break }
+                    // 下一行如果是别的标签（含边界标签），就到此为止。
+                    if !labelPositions(in: candidate).isEmpty { break }
+                    collected.append(normalizedValue(candidate))
+                    nextIndex += 1
+                    if collected.count >= maximumContinuationLines { break }
+                }
+                found[position.label] = collected.filter { !$0.isEmpty }.joined(separator: "\n")
             }
         }
         // 按用户定的顺序返回，**缺的那些留空串**（不是省略）。

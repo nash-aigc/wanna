@@ -331,16 +331,17 @@ struct DirectionBoardTests {
     /// +「这几行固定在这，而不是突然间有、突然间没有」。所以解析**永远返回那四行**，
     /// 缺的行值是空串（视图画占位符），行的数量不随模型怎么写而变。
     @Test func understandingRowsAreAlwaysTheSameFour() throws {
-        #expect(DirectionBoardPrompt.understandingLabels == ["目标问题", "类型", "参考", "细节"])
+        // 2026-09-27 用户删到只剩两行：「目标问题」→「目标」，删掉「类型」「参考」。
+        #expect(DirectionBoardPrompt.understandingLabels == ["目标", "细节"])
         // 什么都不给 → 四行都在，全是空值。
         let empty = DirectionBoardPrompt.parseUnderstandingLines("")
         #expect(empty.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(empty.allSatisfy { $0.value.isEmpty })
-        // 只给一行 → 另外三行仍然在。
-        let partial = DirectionBoardPrompt.parseUnderstandingLines("类型：做题")
+        // 只给一行 → 另一行仍然在（占位符由视图画）。
+        let partial = DirectionBoardPrompt.parseUnderstandingLines("目标：整理文件")
         #expect(partial.map(\.label) == DirectionBoardPrompt.understandingLabels)
-        #expect(partial.first { $0.label == "类型" }?.value == "做题")
-        #expect(partial.filter { $0.value.isEmpty }.count == 3)
+        #expect(partial.first { $0.label == "目标" }?.value == "整理文件")
+        #expect(partial.filter { $0.value.isEmpty }.count == 1)
     }
 
     /// **「答案」不能被「细节」吞掉** —— 理解和答案是**两节**，必须各归各的。
@@ -366,6 +367,23 @@ struct DirectionBoardTests {
         #expect(!leftover.contains("选 A"))
     }
 
+    /// **「细节」要能多行**（用户 2026-09-27：「细节保留，但是要简要说明，**不同类型的任务，
+    /// 换行显示说明**」）—— 标签下面接着的几行都算它的内容，直到下一个标签行或空行为止。
+    @Test func detailsCollectTheirContinuationLines() throws {
+        let raw = """
+        目标：把这段整理成一条笔记
+        细节：涉及 Notion 的一个页面
+        用户希望保留原来的标题
+        时间上不急
+        类型：做题
+        """
+        let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
+        let details = lines.first { $0.label == "细节" }?.value ?? ""
+        #expect(details == "涉及 Notion 的一个页面\n用户希望保留原来的标题\n时间上不急")
+        // 被删掉的「类型」仍然当**边界** —— 它的内容不许并进「细节」里。
+        #expect(!details.contains("做题"))
+    }
+
     /// **旧标签照样认**（模型不一定照新格式写：实测它常把「软件 / 文件 / 目标」写在原来的位置上）。
     /// 只认正式名会让那一行的内容掉进正文里 —— 屏幕上就是"这行空了、内容跑到别处"。
     @Test func legacyLabelsStillLandOnTheFixedRows() throws {
@@ -377,50 +395,54 @@ struct DirectionBoardTests {
         细节：只动下载目录
         """)
         #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
-        // 软件 + 文件 合到「参考」那一行（旧的两种都算"参考材料"）。
-        #expect(lines.first { $0.label == "参考" }?.value == "预览")
-        #expect(lines.first { $0.label == "目标问题" }?.value == "整理桌面")
-        #expect(lines.first { $0.label == "类型" }?.value == "整理文件")
+        // 「软件 / 文件 / 类型」这些已被删掉的行现在只当**边界**：它们自己不出现，
+        // 内容也不许漏进「细节」（否则模型一时改不过来，屏幕上就多一段莫名其妙的尾巴）。
+        #expect(lines.first { $0.label == "目标" }?.value == "整理桌面")
         #expect(lines.first { $0.label == "细节" }?.value == "只动下载目录")
     }
 
     /// 四行写在**同一行**里（模型常这么干）也要切得开。
     @Test func understandingRowsSplitInsideOneLine() throws {
-        let lines = DirectionBoardPrompt.parseUnderstandingLines(
-            "目标问题:整理 类型:整理文件 参考:桌面 细节:题图在左侧")
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("目标:整理 细节:题图在左侧")
         #expect(lines.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(lines.first { $0.label == "细节" }?.value == "题图在左侧")
-        #expect(lines.first { $0.label == "目标问题" }?.value == "整理")
+        #expect(lines.first { $0.label == "目标" }?.value == "整理")
+        // 模型把被删掉的行也写在同一行里时，它们只当边界、不成行。
+        let withDropped = DirectionBoardPrompt.parseUnderstandingLines(
+            "目标:整理 类型:整理文件 参考:桌面 细节:题图在左侧")
+        #expect(withDropped.map(\.label) == DirectionBoardPrompt.understandingLabels)
+        #expect(withDropped.first { $0.label == "细节" }?.value == "题图在左侧")
     }
 
-    /// **「目标问题」自己嵌着两个别名**（`目标:` / `问题:` 都在它里面）：不处理重叠就会切出三段空值，
-    /// 那一行的内容整段消失。
+    /// **标签互相嵌套**：`目标问题:` 里含 `目标:`、`问题:`；`任务类型:` 里含 `类型:`。
+    /// 不处理重叠就会切出几段空值，那一行的内容整段消失。
     @Test func nestedLabelDoesNotBreakTheValue() throws {
         let lines = DirectionBoardPrompt.parseUnderstandingLines("目标问题：整理桌面上的文件")
-        #expect(lines.first { $0.label == "目标问题" }?.value == "整理桌面上的文件")
-        // 「任务类型」同理（里面嵌着「类型」）。
-        let typeLines = DirectionBoardPrompt.parseUnderstandingLines("任务类型：做题")
-        #expect(typeLines.first { $0.label == "类型" }?.value == "做题")
+        #expect(lines.first { $0.label == "目标" }?.value == "整理桌面上的文件")
+        // 「任务类型」已经被删掉了（用户 2026-09-27），但它仍然当**边界**：
+        // 它自己不出现，内容也不许漏进「细节」。
+        let typeLines = DirectionBoardPrompt.parseUnderstandingLines("任务类型：做题\n细节：只动下载目录")
+        #expect(typeLines.map(\.label) == ["目标", "细节"])
+        #expect(typeLines.first { $0.label == "细节" }?.value == "只动下载目录")
     }
 
     /// 模型用「—」表示"这一行没有内容"时，我们当**空**处理（占位符由视图统一画）。
     @Test func dashMeansEmptyNotContent() throws {
-        let lines = DirectionBoardPrompt.parseUnderstandingLines("目标问题：整理文件\n类型：整理\n参考：—\n细节：—")
-        #expect(lines.first { $0.label == "参考" }?.value == "")
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("目标：整理文件\n细节：—")
         #expect(lines.first { $0.label == "细节" }?.value == "")
     }
 
     /// 答案续到下一行（实测模型写成「答案：选」+ 换行 +「A」）。
     @Test func answerSpansTwoLinesAndStaysOptional() throws {
-        #expect(DirectionBoardPrompt.parseAnswer("类型:做题\n答案：选\nA") == "选 A")
+        #expect(DirectionBoardPrompt.parseAnswer("目标:做题\n答案：选\nA") == "选 A")
         // **没有这一行就没有答案** —— 右下角于是保持空（用户选的：「识别到「问题」才显示」）。
-        #expect(DirectionBoardPrompt.parseAnswer("类型:做题\n细节:题在左边") == nil)
+        #expect(DirectionBoardPrompt.parseAnswer("目标:做题\n细节:题在左边") == nil)
         // 模型用「—」表示"没有" → 也当空。
         #expect(DirectionBoardPrompt.parseAnswer("答案：—") == nil)
         // **答案与理解互不影响**：理解那四行照常解析出来。
-        let raw = "目标问题：整理文件\n类型：整理\n答案：北京在中国的北部。"
+        let raw = "目标：整理文件\n答案：北京在中国的北部。"
         #expect(DirectionBoardPrompt.parseAnswer(raw) == "北京在中国的北部。")
-        #expect(DirectionBoardPrompt.parseUnderstandingLines(raw).first { $0.label == "目标问题" }?.value == "整理文件")
+        #expect(DirectionBoardPrompt.parseUnderstandingLines(raw).first { $0.label == "目标" }?.value == "整理文件")
     }
 
     /// **解析读的是原文，不是被截过的显示文本**。
