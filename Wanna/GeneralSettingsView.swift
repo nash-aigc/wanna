@@ -802,7 +802,7 @@ struct GeneralSettingsView: View {
                 SettingsCardRowDivider()
                 SettingsRow(
                     label: "静音多久自动发送",
-                    description: "说完停下后等这么久没声音，就自动把这句话作为新问题发送。中间要想一想就按一下说话快捷键，立刻发送，不用等。"
+                    description: "说完停下后等这么久没声音，就自动把这句话作为新问题发送 —— **与说了几个字无关**，再短的一句（「好」「停」）也会发出去。中间要想一想就按一下说话快捷键，立刻发送，不用等。"
                 ) {
                     SettingsSlider(
                         value: generalSettingsViewModel.binding(\.continuousListeningSilenceSendSeconds),

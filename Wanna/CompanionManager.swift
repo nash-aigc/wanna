@@ -77,6 +77,15 @@ nonisolated final class MainThreadHitchProbe {
 
 @MainActor
 final class CompanionManager: ObservableObject {
+    /// **主 Agent 这条监听窗口的字数门槛 = 1**（只挡"一个字都没有"）。
+    ///
+    /// 用户 2026-09-28：「我正常的要求是说完话 **1.5 秒之内**没有说话，自动发送，但我发现有时候
+    /// 说话字数特别少，它就不执行……【**跟说话字数完全无关**】」。
+    /// 原来是 4 —— 「好」「停」「嗯。」这种短句会被 `handleContinuousListeningFinalTranscript`
+    /// **静默丢掉**（屏幕上什么都没有，看起来就是"它没反应"）。
+    /// 现在唯一剩下的判据是"识别出了内容"：0 字的空句仍然不发 —— 那不是一句话。
+    /// 抽成常量是为了让单测和调用点读同一份（`silenceAutoSendIsOneAndAHalfSeconds...`）。
+    static let mainAgentListeningMinimumTranscriptCharacters = 1
     @Published private(set) var voiceState: CompanionVoiceState = .idle
     @Published private(set) var lastTranscript: String?
     @Published private(set) var currentAudioPowerLevel: CGFloat = 0
@@ -3143,7 +3152,7 @@ final class CompanionManager: ObservableObject {
             await self.buddyDictationManager.startContinuousListening(
                 utteranceEndSilenceSeconds: appSettings.continuousListeningSilenceSendSeconds,
                 // 对话页面维持 4 字门槛（语气词不该变成新问题）。
-                minimumContentCharacters: 4,
+                minimumContentCharacters: Self.mainAgentListeningMinimumTranscriptCharacters,
                 onSpeechDetected: { [weak self] in
                     self?.handleContinuousListeningSpeechDetected()
                 },

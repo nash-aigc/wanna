@@ -864,7 +864,16 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// reliable send marker and this wait is only the auto path — surfaced in
     /// the 听 page so it can be pushed out of the way of the user's own pauses.
     /// Clamped to 1...5.
-    var continuousListeningSilenceSendSeconds: Double = 2.0
+    /// **说完停下后等多久没声音就自动发送**（用户 2026-09-28：「我说完话之后 **1.5 秒之内**没有说话，
+    /// 自动发送」——原来是 2.0）。
+    ///
+    /// ⚠️ 这个数**只决定"等多久"**，与"说了几个字"**没有任何关系**：短句被丢掉是另一道闸门
+    /// （`minimumContentCharacters`，主 Agent 那条已经降到 1 = 只挡"一个字都没有"）。
+    var continuousListeningSilenceSendSeconds: Double = 1.5
+
+    /// **上一版的默认值（2.0 秒）** —— 用户存的是它（= 从没改过）就一次性换成 1.5
+    /// （仓规：改默认值必须配一次迁移，否则老用户设置文件里存着旧值、新默认值永远不生效）。
+    static let legacyContinuousListeningSilenceSendSeconds: Double = 2.0
 
     /// 「引擎保持时间」: how long the shared audio engine stays up after the last
     /// activity before it is released.
@@ -1918,7 +1927,16 @@ nonisolated extension AppSettings {
         usesAutomaticSpeechSegmentation = try container.decodeIfPresent(Bool.self, forKey: .usesAutomaticSpeechSegmentation) ?? defaults.usesAutomaticSpeechSegmentation
         continuousListeningEnabled = try container.decodeIfPresent(Bool.self, forKey: .continuousListeningEnabled) ?? defaults.continuousListeningEnabled
         continuousListeningWindowSeconds = try container.decodeIfPresent(Int.self, forKey: .continuousListeningWindowSeconds) ?? defaults.continuousListeningWindowSeconds
-        continuousListeningSilenceSendSeconds = try container.decodeIfPresent(Double.self, forKey: .continuousListeningSilenceSendSeconds) ?? defaults.continuousListeningSilenceSendSeconds
+        // 存的正好是上一版默认值（2.0）＝ 他从没动过这一项 → 换成新的 1.5（用户 2026-09-28 点名改的）。
+        let storedSilenceSendSeconds = try container.decodeIfPresent(
+            Double.self, forKey: .continuousListeningSilenceSendSeconds)
+        if let storedSilenceSendSeconds,
+           abs(storedSilenceSendSeconds - Self.legacyContinuousListeningSilenceSendSeconds) < 0.001 {
+            continuousListeningSilenceSendSeconds = defaults.continuousListeningSilenceSendSeconds
+        } else {
+            continuousListeningSilenceSendSeconds =
+                storedSilenceSendSeconds ?? defaults.continuousListeningSilenceSendSeconds
+        }
         audioEngineIdleReleaseMinutes = try container.decodeIfPresent(Int.self, forKey: .audioEngineIdleReleaseMinutes) ?? defaults.audioEngineIdleReleaseMinutes
         releaseAudioEngineShortcut = try container.decodeIfPresent(RecordedKeyboardShortcut.self, forKey: .releaseAudioEngineShortcut)
         taskListShortcut = try container.decodeIfPresent(RecordedKeyboardShortcut.self, forKey: .taskListShortcut)

@@ -567,6 +567,31 @@ struct DirectionBoardTests {
         #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
     }
 
+    /// **「静音多久自动发送」= 1.5 秒，而且与字数无关**（用户 2026-09-28）。
+    ///
+    /// 他的原话：「我正常的要求是说完话 **1.5 秒之内**没有说话，自动发送……
+    /// 【**跟说话字数完全无关**】」。所以这一条同时钉两件事：
+    /// ① 新默认值是 1.5；
+    /// ② **存的正好是上一版默认值（2.0）＝ 他从没改过 → 一次性换成 1.5**（仓规：改默认值必须配迁移）；
+    ///    **他真改过的值（比如 3.0）不许动**。
+    @Test func silenceAutoSendIsOneAndAHalfSecondsAndIgnoresWordCount() throws {
+        #expect(AppSettings().continuousListeningSilenceSendSeconds == 1.5)
+        #expect(AppSettings().continuousListeningSilenceSendSeconds == 1.5)
+        // 存的正好是旧默认值 2.0 → 迁移成 1.5；他自己设过的值（3.0）保持不动。
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self, from: Data(#"{"continuousListeningSilenceSendSeconds": 2.0}"#.utf8))
+        #expect(legacy.continuousListeningSilenceSendSeconds == 1.5)
+        let chosen = try JSONDecoder().decode(
+            AppSettings.self, from: Data(#"{"continuousListeningSilenceSendSeconds": 3.0}"#.utf8))
+        #expect(chosen.continuousListeningSilenceSendSeconds == 3.0)
+        // **跟字数完全无关**：主 Agent 那条窗口的门槛是 1（只挡"一个字都没有"）。
+        #expect(CompanionManager.mainAgentListeningMinimumTranscriptCharacters == 1)
+        let bar = CompanionManager.mainAgentListeningMinimumTranscriptCharacters
+        #expect(BuddyDictationManager.continuousListeningContentCharacterCount(in: "嗯。") >= bar)
+        #expect(BuddyDictationManager.continuousListeningContentCharacterCount(in: "好") >= bar)
+        #expect(BuddyDictationManager.continuousListeningContentCharacterCount(in: "   ") < bar)
+    }
+
     /// **一大轮结束 = 卡片回到"从来没有过"**（用户 2026-09-28 报的那个致命问题）。
     ///
     /// 他的原话：「如果上一次任务已经退出，比如按 ESC 退出了，第二次按住快捷键启动后，

@@ -420,6 +420,15 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     /// 用户问「演过谁？」「还在吗？」各 3 个内容字，识别完全正确，然后被这一行丢掉，
     /// 既不回答也不报错，看起来就像应用死了）。所以门槛改为按会话传入，
     /// 语音聊天传 1。
+    /// **没有显式传值的调用方**用的默认门槛（4）—— 语音聊天传 3、卡片通话自己那条，
+    /// **主 Agent 那条现在传 1**。
+    ///
+    /// ⚠️ 2026-09-28（用户：「说话字数特别少，它就不执行……【跟说话字数完全无关】」）：
+    /// 主 Agent 那条从 4 降到 **1**（只挡"一个字都没有"）。**为什么现在敢降**：这个 4 当年的理由
+    /// 是"识别器会从播报的残余回声里猜出「嗯。」「啊。」这类 1~3 字的假句子" —— 而那条路
+    /// 2026-09-24 起已经堵死了：**开一轮只能由本地能量 VAD 触发**（转写一律不能开新的一轮），
+    /// 而 `disableAutomaticGainControlOnProcessedUplink` 之后播报期间麦克风峰值只有 0.241
+    /// （门槛 0.25）—— 残余回声**过不了 VAD**。所以 1~3 个字的转写现在只可能是**人真的说了**。
     static let continuousListeningMinimumTranscriptCharacters = 4
     // There is NO content bar on the interrupt path, and there must not be one:
     // the interrupt has a single source, the level VAD (2026-09-24).
@@ -451,7 +460,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     /// literally. This counts the same thing that test counts in English: how
     /// many words the recognizer really heard, rather than how many marks it
     /// emitted into a silent room.
-    private static func continuousListeningContentCharacterCount(in transcriptText: String) -> Int {
+    /// 纯函数：一句转写里有多少"内容字符"（标点与空白不算）。
+    /// `internal` 是刻意的 —— 单测要拿它验"再短的一句也会发、空句不发"（门槛现由调用方给）。
+    static func continuousListeningContentCharacterCount(in transcriptText: String) -> Int {
         transcriptText.reduce(into: 0) { contentCharacterCount, character in
             if character.isLetter || character.isNumber { contentCharacterCount += 1 }
         }
@@ -1503,9 +1514,12 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         // press does nothing. Both are needed, and they answer different
         // questions.
         guard continuousListeningDidRequestBargeIn else { return false }
+        // ⚠️ 门槛读**本窗口自己那条**（原来是写死的常量 4）—— 两条必须一致：交付那道闸门
+        // （`handleContinuousListeningFinalTranscript`）按窗口的门槛判，这里若还按 4 判，
+        // 1~3 个字的短句就会被"按了没反应"（用户 2026-09-28 明确要**跟字数完全无关**）。
         return Self.continuousListeningContentCharacterCount(
             in: continuousListeningLatestInterimTranscript
-        ) >= Self.continuousListeningMinimumTranscriptCharacters
+        ) >= continuousListeningMinimumTranscriptCharactersForThisWindow
     }
 
     /// Whether the user's speech is being captured RIGHT NOW inside a listening
@@ -1610,7 +1624,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             self.activeTranscriptionSession?.cancel()
             self.activeTranscriptionSession = nil
 
-            if fallbackTranscriptText.count >= Self.continuousListeningMinimumTranscriptCharacters {
+            if Self.continuousListeningContentCharacterCount(in: fallbackTranscriptText)
+                >= self.continuousListeningMinimumTranscriptCharactersForThisWindow {
                 self.continuousListeningCallbacks?.onUtteranceFinalized(fallbackTranscriptText)
             } else {
                 print("🎙️ BuddyDictationManager: fallback interim transcript too short to send (\(fallbackTranscriptText.count) chars)")
