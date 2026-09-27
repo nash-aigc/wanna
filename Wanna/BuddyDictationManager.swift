@@ -1859,10 +1859,48 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             // 只读观察者：主 Agent 的「一轮一条录音」从这里拿音频（接线图第 4 条）。
             self?.capturedAudioBufferObserver?(buffer)
         }
+        // **先开一路"快采"，再把采集交给开了 VPIO 的共享引擎。**（2026-09-27）
+        //
+        // 用户的原话：「为什么录音那条瞬间就显示，主 agent 这条要等两秒？它们的逻辑应该是一样的呀」。
+        // 实测（按下算起）：识别会话建好 **0ms**（豆包在按下那一刻就连，握手不是瓶颈）、
+        // **tap 装好 1537ms**、第一块音频 1892ms —— 那 1.5 秒全在**共享引擎的 VPIO 重配置**
+        // 上（`setVoiceProcessingEnabled(true)` 把整个硬件 IO 重配成语音处理格式，本机 ~2 秒），
+        // 而这段时间里用户说的话**根本没被采集**。录音那条（⌥C）用自己的 AUHAL 采集、
+        // **不开 VPIO**，所以 17ms 就起来了 —— 这就是两条路的差距。
+        //
+        // ⚠️ **为什么"先不开、后开"是安全的**（用户自己定的方案）：AEC 保护的是
+        // 「我们正在播报时，别把播报当成用户说话」，而**用户开口的这头几秒里没有任何播报在放**
+        // （按下说话键那一刻就会 `stopPlayback`）—— 这段窗口里 AEC 没有可保护的东西。
+        // 所以只在「此刻确实没有播报」时走快路；一旦有播报在放（「新提问立刻打断播报」关掉的
+        // 用户），就照旧等 VPIO 起来再采，那条已写死的 AEC 契约一个字不改。
+        let isPlayingBack = isBotSpeakingProvider?() ?? false
+        if !isPlayingBack, await installOwnEngineTapIfPossible(handler: tapHandler) {
+            // **这一场录音就交给它了 —— 现在不去动共享引擎。**
+            //
+            // 第一版是在这里**立刻**把共享引擎的 VPIO 拉起来、起来后交班。实测那一次的缝是
+            // **1204ms**：`installInputTap` 一开始重配硬件 IO，快采那一路的 tap 就**不再出块**
+            //（同一个输入设备被两条引擎占着，重配会把另一条掐掉），而共享引擎要 1.2 秒才出
+            // 第一块 —— 用户还在说的那 1.2 秒**整段丢了** ✗。用户要的是"说完第一句立刻看到字"，
+            // 不是"看一半"。
+            //
+            // 所以改成**按需**：这一场录音全程走快采（不开 VPIO），**到真需要回声消除的时候**
+            // （回答开始播、连续追问窗口开）共享引擎自己会被拉起来 —— 那条路本来就存在
+            // （`startContinuousListening` 用共享引擎），而且那一刻用户已经说完、正在听回答，
+            // 正是 AEC 该在场的时刻（用户自己的推理一字不差）。
+            //
+            // 收尾照旧：`stopPushToTalkCapture` 的 else 分支会停这个引擎、拆掉它的 tap。
+            isPushToTalkCaptureOnSharedEngine = false
+            print("🎙️ BuddyDictationManager: 这一场录音走快采（不开 VPIO；需要时共享引擎自己会起来）")
+            return
+        }
+
         if let sharedEngine = sharedVoicePlaybackEngineProvider?() {
             do {
                 try await sharedEngine.installInputTap(bufferSize: 1024, handler: tapHandler)
                 isPushToTalkCaptureOnSharedEngine = true
+                // 走到这里只有两种情形：**按下时正在播报**（照旧等 VPIO 就位再采，AEC 契约不变），
+                // 或者快采那条路起不来（引擎故障）—— 两种都该走共享引擎。
+                print("🎙️ BuddyDictationManager: 采集走共享引擎（含 VPIO 回声消除）")
                 return
             } catch {
                 print("⚠️ BuddyDictationManager: the shared engine would not carry the recording (\(error.localizedDescription)) — falling back to the own engine")
@@ -1892,6 +1930,32 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         if let engineStartFailure {
             throw engineStartFailure
         }
+    }
+
+    /// 快采那一路：自己的引擎（**不开 VPIO**），几十毫秒出第一块音频。
+    ///
+    /// 返回是否装上。只在「按下这一刻没有播报在放」时被调用 —— 见调用点的说明。
+    private func installOwnEngineTapIfPossible(handler: @escaping AVAudioNodeTapBlock) async -> Bool {
+        let engineToStart = audioEngine
+        let failure: Error? = await Task.detached(priority: .userInitiated) {
+            let inputNode = engineToStart.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            inputNode.removeTap(onBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat, block: handler)
+            engineToStart.prepare()
+            do {
+                try engineToStart.start()
+                return nil
+            } catch {
+                return error
+            }
+        }.value
+        if let failure {
+            print("⚠️ BuddyDictationManager: 快采那一路起不来（\(failure.localizedDescription)），改为等共享引擎")
+            return false
+        }
+        print("🎙️ BuddyDictationManager: 快采已就位（自己的引擎、不开 VPIO）")
+        return true
     }
 
     private func handleRecognitionError(_ error: Error) {
