@@ -664,6 +664,18 @@ final class CompanionManager: ObservableObject {
     /// 谁清：发送（`consumeTurnDecision`）、ESC、新一轮开始 —— 清空 = 传 nil。
     @Published var answerPreviewText: String = ""
 
+    /// **看板那条预览此刻是不是流式的**（`AnswerCardView` 据此决定要不要用模糊焦点那套渲染）。
+    ///
+    /// 它刻意**不复用** `isAnswerStreamLive`：那个标志的主人是主 Agent 那条管线，
+    /// 看板刷新与它可能同时在跑，两边共用一个布尔必然互相踩。
+    @Published private(set) var isBoardPreviewStreaming = false
+
+    /// 由 `DirectionBoardSession` 注入的那一侧调用（见 `answerPreviewWriter` 的同一个先例）。
+    func setBoardPreviewStreaming(_ isStreaming: Bool) {
+        guard isBoardPreviewStreaming != isStreaming else { return }
+        isBoardPreviewStreaming = isStreaming
+    }
+
 
     /// **任务完成的对号 + 一句摘要**，光标旁停 2–3 秒（方案第 4 步）。
     ///
@@ -920,6 +932,9 @@ final class CompanionManager: ObservableObject {
         // **看板那一轮的答案写到右下角那张卡片上**（与最终结果同一张）。
         // 注入闭包而不是让看板直接持有一个 `CompanionManager`：跨子系统只走注入，
         // 与 `sharedVoicePlaybackEngineProvider` / `voiceIdleProvider` 同一个先例。
+        DirectionBoardSession.shared.boardPreviewStreamingWriter = { [weak self] isStreaming in
+            Task { @MainActor in self?.setBoardPreviewStreaming(isStreaming) }
+        }
         DirectionBoardSession.shared.answerPreviewWriter = { [weak self] text in
             MainActor.assumeIsolated {
                 self?.answerPreviewText = text ?? ""

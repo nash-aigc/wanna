@@ -227,7 +227,10 @@ struct BlueCursorView: View {
     private var answerCardBubble: some View {
         AnswerCardView(
             text: conversationBubbleText,
-            isStreaming: companionManager.isAnswerStreamLive,
+            // 主 Agent 那条管线在流，**或者看板正在流式写这条预览** —— 两种都是流式，
+            // 卡片都该用模糊焦点那套渲染（用户 2026-09-27：「像流式输出，然后加上渲染逻辑」）。
+            isStreaming: companionManager.isAnswerStreamLive
+                || companionManager.isBoardPreviewStreaming,
             style: AppSettingsStore.snapshot().answerCardStyle
         )
         .frame(maxWidth: 340, alignment: .leading)

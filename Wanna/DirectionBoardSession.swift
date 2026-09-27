@@ -143,6 +143,52 @@ final class DirectionBoardSession: ObservableObject {
 
     private var speakingGeneration = 0
 
+    /// **流式地往卡片上写**：每收到一段就把已经解析得出来的行刷上去。
+    ///
+    /// 三条分寸：
+    /// 1. **节流到 8 次/秒** —— 每来一个分片就整块重排是白烧主线程（这个仓库在回答卡片上
+    ///    已经为"每来一个字重排整串"付过一次代价）；
+    /// 2. **只更新"半截文本里已经有内容"的行** —— 还没写到的行保持上一次的值，
+    ///    否则每来一段，已经写好的行会先退回占位符再长回来（那就是闪）；
+    /// 3. **答案同步流进右下角那张卡**（那张卡的字是流式的，动画由它自己的模糊焦点负责）。
+    private func applyStreamingParagraph(_ partial: String) {
+        let now = Date()
+        guard now.timeIntervalSince(lastStreamingUpdateAt) >= Self.streamingUpdateInterval else { return }
+        lastStreamingUpdateAt = now
+        let parsed = DirectionBoardPrompt.parseUnderstandingLines(partial)
+        var merged = understandingLines
+        var didChange = false
+        for (index, line) in parsed.enumerated() where !line.value.isEmpty {
+            guard index < merged.count else { continue }
+            if merged[index].value != line.value {
+                merged[index].value = line.value
+                didChange = true
+            }
+        }
+        if didChange { understandingLines = merged }
+        streamingUpdateCount += 1
+
+        // 答案：**边出边写**（`parseAnswer` 对半截文本也成立 —— 它取的是「答案：」那一行到行尾）。
+        if let answer = DirectionBoardPrompt.parseAnswer(partial),
+           answer != streamingAnswerText {
+            streamingAnswerText = answer
+            answerPreviewWriter?(answer)
+            // 告诉右下角那张卡片"现在这条是流式的"→ 它才会用模糊焦点那套渲染。
+            boardPreviewStreamingWriter?(true)
+        }
+    }
+
+    /// 节流间隔（8 次/秒）。
+    private static let streamingUpdateInterval: TimeInterval = 0.12
+    private var lastStreamingUpdateAt = Date.distantPast
+    /// 这一轮流式渲染写了几次（只用来核对"它真的在流"）。
+    private var streamingUpdateCount = 0
+    /// 这一轮流式写到右下角的那段（用于去重）。
+    private var streamingAnswerText = ""
+
+    /// **告诉右下角那张卡片"这条是流式的"**（注入，见 `answerPreviewWriter` 的同一个先例）。
+    var boardPreviewStreamingWriter: ((Bool) -> Void)?
+
     /// **前五轮**拼成提示词的一段（用户说的 + 你回的），最近的在前。
     ///
     /// 它取代了原来的两段（`recentReadings` 三轮理解 + `previousAnswers` 三条答案）——
@@ -165,8 +211,10 @@ final class DirectionBoardSession: ObservableObject {
         前面几轮你们说过什么（**最近的在前；这只是参考，不是这一轮要做的事**）：
         \(blocks.joined(separator: "\n\n"))
 
-        拿它判断一件事：**他这次说的，是不是接着上面某一件在说**。
-        接着说的，就把「细节」那张图沿着同一件事往下长；换了一件事，图就重开。
+        拿它判断**唯一的一件事**：他这次说的，跟上面这些**有没有关系**。
+        · **有关系** → 接着往下答（「细节」那张图沿着同一件事往下长）；
+        · **没关系** → **只答这一次的问题**，不要提之前的任何内容，也不要把两件事揉在一起。
+        它们全部只是参考。
         </previous_turns>
         """
     }
@@ -461,7 +509,9 @@ final class DirectionBoardSession: ObservableObject {
         isRequesting = false
         isListening = false
         isUserSpeaking = false
-        speakingGeneration += 1     // 作废在途的那次"熄灭"（它已经没有对象了）
+        speakingGeneration += 1
+        boardPreviewStreamingWriter?(false)
+        streamingAnswerText = ""     // 作废在途的那次"熄灭"（它已经没有对象了）
         // 这一轮结束了：把面板上那一列**快照**留给下一次（用户对方向的评论指的是它）。
         previousRoundItems = displayedItems
     }
@@ -731,6 +781,7 @@ final class DirectionBoardSession: ObservableObject {
         MainFlowDiagnostics.log("🧭 看板：第 \(roundGeneration) 轮发请求（转写 \(transcript.count) 字）")
         let generation = roundGeneration
         isRequesting = true
+        streamingUpdateCount = 0
 
         requestTask = Task { [weak self] in
             guard let self else { return }
@@ -804,6 +855,12 @@ final class DirectionBoardSession: ObservableObject {
                 // 的第 N+1 轮（3 秒后，模型这次没写「答案」那一行）会把第 N 轮已经显示出来的答案
                 // 抹掉：用户看到的是"闪一下就没了"，报的就是「我问他问题的时候他也没有回复我」。
                 // 清空只发生在**一轮结束**（发送 / ESC / 新一轮），不发生在"这一轮没写"上。
+                // 整段回来了：流式那一轮结束（右下角那张卡片从"流式"切成"落定"）。
+                MainFlowDiagnostics.log("🧭 看板：流式渲染完毕 —— 边收边画了 \(self.streamingUpdateCount) 次"
+                                        + "（0 次＝分片被丢掉，只有整段上屏）")
+                self.streamingUpdateCount = 0
+                self.boardPreviewStreamingWriter?(false)
+                self.streamingAnswerText = ""
                 if let answer = DirectionBoardPrompt.parseAnswer(paragraphText) {
                     self.previewAnswer = answer
                     self.answerPreviewWriter?(answer)
@@ -872,7 +929,16 @@ final class DirectionBoardSession: ObservableObject {
                 userPrompt: userPrompt,
                 roleOverride: CompanionManager.visionRoleOverride(
                     forCardID: ConversationSessionsStore.activeSession().id.uuidString),
-                onTextChunk: { _ in })
+                // **边收边渲染**（用户 2026-09-27：「像**流式输出**，然后加上**渲染逻辑**、
+                // 加点动画啊」）。
+                //
+                // 这里原来是 `{ _ in }` —— **分片被丢掉**，于是卡片要等整段回复回来才一次性上屏：
+                // 屏幕上的表现就是"没有渲染逻辑、延迟非常长"。现在每来一段就重解析一次，
+                // 行是**固定高度**的、值带 `.id(value)` 淡入，所以内容是一行一行长出来的，
+                // 骨架一个像素都不动。
+                onTextChunk: { [weak self] partial in
+                    self?.applyStreamingParagraph(partial)
+                })
             // ⚠️ **不截断**：解析（五行 + 任务结果）必须从完整原文里切 —— 显示那一步才限长。
             return DirectionBoardPrompt.cleanRawResponse(text)
         } catch {

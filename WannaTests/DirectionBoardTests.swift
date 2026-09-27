@@ -608,9 +608,11 @@ struct DirectionBoardTests {
             directions: [(id: "d1", keyword: "记笔记", detail: "把内容记到 Notion")],
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("只看最近这一次"))
-        #expect(systemPrompt.contains("只回复最近一次问题"))
+        // **没关系就一个字都别提之前**（用户点名的那条，还给了一个反例）。
+        #expect(systemPrompt.contains("不要回复跟之前问题有关的任何内容"))
+        #expect(systemPrompt.contains("有关系的时候才参考，没关系是不参考"))
+        #expect(systemPrompt.contains("中国在哪"))
         #expect(systemPrompt.contains("北京欢迎你"))
-        #expect(systemPrompt.contains("全新的一件事"))
     }
 
     /// **「这一轮的新问题」永远不该是空的**（2026-09-27 真机上炸过的那条）：
