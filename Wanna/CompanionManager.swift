@@ -1993,6 +1993,10 @@ final class CompanionManager: ObservableObject {
         // 这条路上**没有真答案来接**，留着就是一张永远跟着鼠标的卡片。
         DirectionBoardSession.shared.endListening()
         _ = DirectionBoardSession.shared.consumeTurnDecision()
+        // ⚠️ **这里刻意不清那张累积的图**（2026-09-27 深夜的取舍）：ESC 打断一句没说完的话，
+        // 不代表"他之前问过的问题不算数了" —— 清了才是真丢东西（用户刚报的正是"图上的问题
+        // 少了"）。所以那张图**一直累积**，只有他自己要重开时才清
+        //（`resetAccumulatedMindMap()` 留在那儿等一个入口：设置页或某颗按钮，等他说要）。
         // **界面立刻收掉，而且这一轮结束之前别再冒出来**（用户两遍：「界面应该瞬间消失」/
         // 「用户说话的过程中间按住 ESC，他没有瞬间消失」）。`forceActivityPhaseIdle()` 只按
         // 这一刻 —— 而此刻录音还在收尾（`voiceState` 还是 listening），下一次相位计算立刻又把它

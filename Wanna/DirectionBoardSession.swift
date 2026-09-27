@@ -63,6 +63,15 @@ final class DirectionBoardSession: ObservableObject {
     /// 视图读这个决定那个按钮是亮的还是灰的。
     var hasCopyableReply: Bool { hasCopyableReplyProvider?() ?? false }
 
+    /// **把那张累积的图清掉、重新开始整理** —— 只有用户按 ESC（他说的"退出键"）时才调。
+    ///
+    /// 这是这张图**唯一**的重置入口：按下快捷键、2 秒一轮、连续追问……**都不清**，
+    /// 因为它要回答的是"**用户到现在为止到底在做什么**"（用户 2026-09-27：
+    /// 「把之前所有的问题都当作需求整理出来，然后看用户到底在做什么」）。
+    func resetAccumulatedMindMap() {
+        accumulatedMindMap = ""
+    }
+
     /// 把上一轮的**矛盾**带上（写进提示词的 `<previous_questions>` 段）。
     ///
     /// 这两个字 2026-09-27 深夜随卡片一起改名（「把**疑问**调整为**矛盾**」）—— 段名
@@ -459,9 +468,16 @@ final class DirectionBoardSession: ObservableObject {
         if let cycleID, cycleID != currentCycleID {
             cancelledForThisCycle = false
             previousRoundItems = []
-            // **一次实时会话 = 一张图**（用户：「只要是在实时模式下没有停止，都会统一记录」）——
-            // 所以换了一次大循环（＝又按了一次快捷键）就从空白重新开始整理。
-            accumulatedMindMap = ""
+            // ⚠️ **这里原来会清空那张累积的图 —— 2026-09-27 深夜去掉了。**
+            //
+            // 起因是用户报「屏幕右上角显示的**不是用户所有的问题**……**有大量的问题，
+            // 他没有显示出来**」。量下来机制本身是通的（每轮都带上去、也都并回来了：
+            // 0 → 84 → 83 → 83 字），**问题出在边界上**：他那些问题是**分很多次按下**问的，
+            // 而"一次按下 = 一张新图"意味着每按一次就把之前整理的全部清掉。
+            //
+            // 按他自己的原话定边界（「只要用户**没有按退出键、没有按 ESC**，这几个卡片
+            // 都持续显示」）：**图一直累积**（重开的入口留了一个 `resetAccumulatedMindMap()`，
+            //  但目前**没有任何路径自动调它** —— 见那个方法自己的注释）。
         }
         currentCycleID = cycleID
         refreshCancellationState()
@@ -798,6 +814,10 @@ final class DirectionBoardSession: ObservableObject {
         let generation = roundGeneration
         isRequesting = true
         streamingUpdateCount = 0
+        // **这一轮带上去多少字的旧图** —— 用户报「右上角没有把所有问题都显示出来」时，
+        // 这一行是唯一的判据：带上去是空的（被清了），还是带上去没被并进去（模型的问题）。
+        MainFlowDiagnostics.log("🧭 看板：这一轮带上旧图 \(accumulatedMindMap.count) 字"
+                                + "（\(accumulatedMindMap.split(separator: "\n").count) 行）")
 
         requestTask = Task { [weak self] in
             guard let self else { return }
@@ -889,7 +909,14 @@ final class DirectionBoardSession: ObservableObject {
                 // **把这一轮那张图存成"到目前为止的汇总"**（下一轮在它上面继续并）。
                 if let mindMap = self.understandingLines.first(where: { $0.label == "细节" })?.value,
                    !mindMap.isEmpty {
+                    let before = self.accumulatedMindMap
                     self.accumulatedMindMap = mindMap
+                    // **并进去了没有**：回来那张图如果比带上去的还短，就是**丢了内容**
+                    //（用户报的正是这个：问过的一大堆问题在图上不见了）。
+                    MainFlowDiagnostics.log("🧭 看板：这一轮的图 \(mindMap.count) 字"
+                                            + "（\(mindMap.split(separator: "\n").count) 行）"
+                                            + "，上一轮 \(before.count) 字"
+                                            + (mindMap.count < before.count ? " ⚠️ 比上一轮短了" : ""))
                 }
 
                 // **疑问那一行是"常驻"的**：把这一轮的值记下来，下一轮带着它去问模型
