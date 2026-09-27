@@ -579,6 +579,54 @@ final class CompanionManager: ObservableObject {
         return liveTranscriptText
     }
 
+    /// **看板上按回车 = 把这一轮交给 Agent**（用户：「相当于发给主 Agent，与按下主 Agent 快捷键
+    /// 效果一致」）。
+    ///
+    /// 三条分支，按"他此刻手上有什么"来分：
+    /// 1. 输入框里打了字 → 那一句就是要问的（`submitTypedQuestion`，与对话页那个输入框同一条管线）；
+    /// 2. 没打字、但连续追问窗口里他刚说完一句 → 走快捷键那条"我说完了，发送"
+    ///   （`finishContinuousListeningUtteranceByShortcutSend`，绕过静音等待）；
+    /// 3. 正在按住说话 → 停下录音并提交（与松手同效）。
+    ///
+    /// 三种都没有（没在听、也没打字）→ 什么都不做，只记一行（按了回车但没东西可发）。
+    private func sendTurnFromBoard() {
+        let typed = DirectionBoardSession.shared.typedInput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty {
+            DirectionBoardSession.shared.typedInput = ""
+            submitTypedQuestion(typed)
+            print("⏎ 看板：输入框里的那句话已发给主 Agent（\(typed.count) 字）")
+            return
+        }
+        if buddyDictationManager.isContinuousListening {
+            buddyDictationManager.finishContinuousListeningUtteranceByShortcutSend()
+            print("⏎ 看板：与按快捷键同效 —— 把刚才那一句发出去")
+            return
+        }
+        if buddyDictationManager.isRecordingFromKeyboardShortcut {
+            buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
+            print("⏎ 看板：与松开快捷键同效 —— 停止录音并提交")
+            return
+        }
+        print("⏎ 看板：按了回车，但既没打字、也没在听 —— 什么可发的都没有")
+    }
+
+    /// **光标不在输入框里时按 `Cmd+Enter`**：把右下角那段回复**粘到光标处**，然后退出这一轮。
+    ///
+    /// 用户：「如果用户的光标没有在输入框里面，也没有点击它，那么按住 Command + Enter 就是粘贴，
+    /// 即把右下角这部分的内容粘贴到光标的位置上」。
+    ///
+    /// 粘贴走 `MacosUseController.pasteKeepingClipboard`：它把文本放进剪贴板再合成一次 Cmd+V，
+    /// 而且**不还原剪贴板**（用户事后还能自己粘）。面板是 `.nonactivatingPanel`，
+    /// 所以"最前面的 App"仍然是他原来那个 —— 这一下正好粘在他的光标处，不会粘回我们自己。
+    private func pasteLiveReplyAtCursorThenExit() {
+        let text = conversationBubbleTextForCopying().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let didPaste = MacosUseController.pasteKeepingClipboard(text)
+        print("⏎ 看板：Cmd+Enter → 把那段回复粘到光标处（\(text.count) 字，粘贴\(didPaste ? "已发出" : "失败")）")
+        handleEscapeKeyPressed()
+    }
+
     /// 复制到剪贴板（`MessageCopyButton` 里那套的同一件事）。
     private func copyLiveReplyToPasteboard() {
         let text = conversationBubbleTextForCopying().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -841,10 +889,34 @@ final class CompanionManager: ObservableObject {
             // 复制完就退出这一轮 —— 与按 ESC **同一条路**（他说的"自动发送类似 ESC 的效果"）。
             self?.handleEscapeKeyPressed()
         }
+        // **回车那两个**（用户 2026-09-27）：
+        // · `Enter`（或输入框里的 `Cmd+Enter`）= **执行** —— 与按下主 Agent 快捷键同效，
+        //   把这一轮交给 Agent 去跑；卡片随之收起（发出去之后它默认隐藏），**任务继续**。
+        // · 光标**不在输入框里**时的 `Cmd+Enter` = **粘贴** —— 把右下角那段回复粘到光标处，
+        //   然后卡片退出、任务结束。
+        boardSession.sendTurnAction = { [weak self] in
+            self?.sendTurnFromBoard()
+        }
+        boardSession.pasteReplyAtCursorAndExitAction = { [weak self] in
+            self?.pasteLiveReplyAtCursorThenExit()
+        }
+        // 键盘那套装在**面板**上（本地键盘监听只在事件发给本 App 时触发）——
+        // 它需要的是"执行"与"粘贴并退出"这两个动作，不看板的状态。
+        DirectionBoardPanelController.shared.directionBoardCopyAndSend = { [weak self] in
+            self?.sendTurnFromBoard()
+        }
+        DirectionBoardPanelController.shared.directionBoardPasteAndExit = { [weak self] in
+            self?.pasteLiveReplyAtCursorThenExit()
+        }
 
         // **看板那一轮的答案写到右下角那张卡片上**（与最终结果同一张）。
         // 注入闭包而不是让看板直接持有一个 `CompanionManager`：跨子系统只走注入，
         // 与 `sharedVoicePlaybackEngineProvider` / `voiceIdleProvider` 同一个先例。
+        // **他安静了多久**（看板那一拍改用它当闸门，见 `requestIfTheTranscriptChanged`）。
+        DirectionBoardSession.shared.buddySilenceProvider = { [weak self] in
+            self?.buddyDictationManager.secondsSinceLastSpeech
+        }
+
         DirectionBoardSession.shared.answerPreviewWriter = { [weak self] text in
             MainActor.assumeIsolated {
                 self?.answerPreviewText = text ?? ""
@@ -2422,7 +2494,7 @@ final class CompanionManager: ObservableObject {
 
     rules:
     - reply in whatever language the user spoke to you in. if they spoke chinese, answer in chinese. if they spoke english, answer in english. follow them if they switch languages mid-conversation. this applies to the entire response, including anything outside the square brackets.
-    - default to one or two sentences. be direct and dense. BUT if the user asks you to explain more, go deeper, or elaborate, then go all out — give a thorough, detailed explanation with no length limit.
+    - default to one or two sentences. be direct and dense. BUT the length is the USER'S need, not a style rule: if they ask you to explain more, go deeper, or elaborate — or if what they asked for IS a long thing (a piece of writing, a summary of a long page, a rewrite, a plan, a list of options) — then give it in full at whatever length it takes, and never truncate it to look tidy.
     - a turn where the user asked you to DO something is not a talking turn. it gets done, then you say one short sentence about what happened. no preamble, no plan, no explanation of the steps, no asking whether you should, no offering to do more. whoever does it does the work; your words are only the receipt.
     - casual, warm. no emojis.
     - write for the ear, not the eye. short sentences. no lists, bullet points, markdown, or formatting — just natural speech.
@@ -3721,7 +3793,11 @@ final class CompanionManager: ObservableObject {
                             forTranscript: transcript,
                             untrustedAccessibilityContext: pendingAccessibilityContext,
                             userIntentTags: userIntentTags,
-                            referenceMaterials: TurnReferenceCollector.shared.promptBlock()
+                            referenceMaterials: [TurnReferenceCollector.shared.promptBlock(),
+                                                 DirectionBoardSession.shared.previousCornerAnswersPromptBlock()]
+                                .compactMap { $0 }
+                                .filter { !$0.isEmpty }
+                                .joined(separator: "\n\n")
                         )
                     } else {
                         userPromptForThisTurn = Self.continuationUserPrompt(

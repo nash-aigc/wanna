@@ -28,6 +28,12 @@ struct DirectionBoardView: View {
     let theme: AnswerCardTheme
     /// 输入框被点了一下：宿主面板据此把窗口变成 key（否则打字进不来）。
     var onInputFocused: () -> Void = {}
+    /// **卡片本身被点了一下** → 只把面板变成 key（**不**把焦点给输入框）。
+    ///
+    /// 为什么两件事要分开：回车的行为取决于"光标在不在输入框里"（用户 2026-09-27）——
+    /// 在框里按 `Cmd+Enter` 是**执行**，不在框里按 `Cmd+Enter` 是**粘贴**。
+    /// 点卡片就抢走输入焦点的话，这两种就没法区分了。
+    var onCardTapped: () -> Void = {}
     @FocusState private var isInputFocused: Bool
 
     /// **宽度固定，不随内容长**（用户 2026-09-27 两次强调）：
@@ -73,6 +79,93 @@ struct DirectionBoardView: View {
     private static let numberColumnWidth: CGFloat = 18
 
     var body: some View {
+        Group {
+            if session.isCollapsed {
+                collapsedCard
+            } else {
+                expandedCard
+            }
+        }
+        .padding(.horizontal, Self.horizontalPadding)
+        .padding(.vertical, 10)
+        // **折叠之后整张卡片就只剩那个按钮**（用户：「折叠后……变成一个折叠按钮」）——
+        // 所以宽度也跟着收，不然屏幕上会留一条 680 宽的空条。
+        .frame(width: session.isCollapsed
+               ? Self.collapseBarWidth + Self.horizontalPadding * 2
+               : Self.cardWidth(forMultiplier: widthMultiplier),
+               alignment: .leading)
+        .background(AnswerCardView.cardBackground(theme: theme))
+        .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
+                // 被按住不发 → 告警色呼吸；**折叠着 → 绿色**（用户：「折叠后卡片边缘自动变成绿色，
+                // 便于用户快速在桌面上看到其位置」）；其余用主题边框。
+                .strokeBorder(borderTint, lineWidth: borderWidth)
+                .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
+                .animation(.easeInOut(duration: 0.25), value: session.isCollapsed)
+        )
+        .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
+        .contentShape(Rectangle())
+        .onTapGesture { onCardTapped() }
+    }
+
+    private var borderTint: Color {
+        if session.isHeldFromAutomaticSend { return DS.Colors.warning }
+        if session.isCollapsed { return DS.Colors.success }
+        return theme.borderColor
+    }
+
+    private var borderWidth: CGFloat {
+        if session.isHeldFromAutomaticSend { return AnswerCardView.cardBorderWidth * 2 }
+        if session.isCollapsed { return AnswerCardView.cardBorderWidth * 2 }
+        return AnswerCardView.cardBorderWidth
+    }
+
+    /// **折叠态**：整张卡片只剩那条折叠条（高度＝输入框高度）。
+    private var collapsedCard: some View {
+        collapseBar
+    }
+
+    /// **折叠条**：竖着一条，**上方 60% 是折叠/展开按钮**，下方 40% 是空白（没功能，留给拖动）。
+    ///
+    /// 用户 2026-09-27 的原话：「将折叠钮放在输入框左侧，上下显示，按钮为长条。上方占 60% 的部分是
+    /// 折叠按钮，点击即折叠；折叠后下方 40% 区域为空白区域，点击无效果。目的是折叠后整体高度等于
+    /// 输入框高度，变成一个折叠按钮，上方可点击折叠/展开，下方无功能，可供鼠标拖动。」
+    private var collapseBar: some View {
+        VStack(spacing: 0) {
+            Button {
+                session.isCollapsed.toggle()
+            } label: {
+                Image(systemName: session.isCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(session.isCollapsed ? DS.Colors.success : theme.textColor.opacity(0.6))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(height: Self.inputHeight * 0.6)
+            .help(session.isCollapsed ? "展开看板" : "把看板折叠成这一条")
+
+            // 下方 40%：**故意不给功能**（点了什么都不发生）—— 它是留给鼠标拖动的地方。
+            Color.clear.frame(height: Self.inputHeight * 0.4)
+        }
+        .frame(width: Self.collapseBarWidth, height: Self.inputHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(theme.textColor.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(session.isCollapsed ? DS.Colors.success.opacity(0.6)
+                                                  : theme.textColor.opacity(0.14),
+                              lineWidth: 1)
+        )
+    }
+
+    /// 折叠条的宽度。
+    private static let collapseBarWidth: CGFloat = 20
+
+    private var expandedCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             // 上半：**会长高的那一半** —— 只有他说到的方向才出现，最多 5 行。
             if !session.displayedItems.isEmpty {
@@ -90,30 +183,15 @@ struct DirectionBoardView: View {
             }
             // 第三段：理解（**固定四行**，见 `understoodRow`）。
             understandingArea
-            // 第四段：输入（默认留三行的高度）。
-            inputArea
+            // 第四段：输入（默认留三行的高度）+ 它左边那条**折叠条**。
+            HStack(alignment: .top, spacing: 6) {
+                collapseBar
+                inputArea
+            }
             // 最下面一行：**取消看板**的三档（用户 2026-09-27：「把最下面这一行分成三列：
             // 第一列叫「取消本次」……第二列叫「取消十分钟」……第三列叫「取消今日」」）。
             cancelRow
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(width: Self.cardWidth(forMultiplier: widthMultiplier), alignment: .leading)
-        .background(AnswerCardView.cardBackground(theme: theme))
-        .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
-                // **被按住不发的那一下，边框亮起来呼吸一下**（用户：「让看板边框闪一下、高亮一下或
-                // 呼吸灯一下，让用户知道任务没有完成、没有发送过去，而不是直接发送任务」）。
-                .strokeBorder(session.isHeldFromAutomaticSend
-                                ? DS.Colors.warning
-                                : theme.borderColor,
-                              lineWidth: session.isHeldFromAutomaticSend
-                                ? AnswerCardView.cardBorderWidth * 2
-                                : AnswerCardView.cardBorderWidth)
-                .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
-        )
-        .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
         // ⚠️ **拖动不在这里做**：它是面板那一侧用 NSEvent 监听做的（见
         // `DirectionBoardPanelController` 的 `installDragMonitors`）。
         // 两个原因，都是量出来的：
@@ -364,6 +442,10 @@ struct DirectionBoardView: View {
                          help: "把右下角那张卡片里 AI 回复的内容复制下来") {
                 session.copyReplyAction?()
             }
+            // **两个按钮之间是一条纯白分割线**（用户 2026-09-27：「"复制"与"复制并退出"按钮中间
+            // 应为一条白线，与右侧完全一致，目前中间不是非常白的实线」）——用的是右边那三档
+            // 同一条 `cancelRowDividerColor`（纯白），宽度与它一样。
+            Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1.5, height: 20)
             actionButton(title: "复制并退出", icon: "doc.on.doc.fill", width: Self.copyAndExitButtonWidth,
                          help: "复制这段回复，然后退出这一轮（与按 ESC 同效）") {
                 session.copyReplyAndExitAction?()

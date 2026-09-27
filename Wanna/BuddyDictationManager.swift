@@ -771,6 +771,17 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     }
     private var continuousListeningUtteranceStartedAt: Date?
     private var continuousListeningSilenceStartedAt: Date?
+
+    /// **用户已经安静了多久**（秒）—— 没有在听、或还没开始计时时返回 `nil`。
+    ///
+    /// 给看板用（用户 2026-09-27：「只有用户 2 秒钟没有说话，才需要提取用户提示词发送给 AI，
+    /// 而不是自动根据时间来确定」）：看板那一拍不再按时间走，而是**等他说完这一句**再刷新。
+    /// 它只是读一个时刻，不参与这里的任何判断。
+    var secondsSinceLastSpeech: TimeInterval? {
+        guard isContinuousListening || isRecordingFromKeyboardShortcut else { return nil }
+        guard let startedAt = continuousListeningSilenceStartedAt else { return 0 }
+        return Date().timeIntervalSince(startedAt)
+    }
     /// The latest interim transcript of the current utterance. The fallback
     /// for a dead session: if `requestFinalTranscript` produces no final
     /// within the grace window, THIS text is submitted as the question

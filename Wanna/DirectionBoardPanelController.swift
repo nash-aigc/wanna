@@ -125,6 +125,11 @@ final class DirectionBoardPanelController {
     // MARK: - 拖动（用户 2026-09-27：「看板可以通过拖动上面的文字部分或其他部分来移动位置」）
 
     private var dragMonitors: [Any] = []
+    private var keyMonitors: [Any] = []
+    /// 回车 = 执行（由 `CompanionManager` 注入）。
+    var directionBoardCopyAndSend: (() -> Void)?
+    /// Cmd+Enter（光标不在输入框）= 粘贴并退出。
+    var directionBoardPasteAndExit: (() -> Void)?
     /// 按下那一刻：光标在哪、窗口在哪。之后每一次移动都**按绝对位置重算原点**
     /// （不是累加位移 —— 累加会漂，而绝对值不会）。
     private var dragStartMouseLocation: CGPoint?
@@ -138,6 +143,42 @@ final class DirectionBoardPanelController {
     ///
     /// 本地监听只看得见发给**本 App** 的事件，所以其他软件照常收不到影响；而且监听
     /// **不消耗事件** —— 按钮、输入框全都照常工作。
+    /// **回车那套**（用户 2026-09-27）：
+    /// · `Enter` → **执行**（交给主 Agent，与按快捷键同效）；
+    /// · 输入框里 `Cmd+Enter` → 也是执行（他要的"是执行"）；
+    /// · **光标不在输入框里**时 `Cmd+Enter` → **粘贴**（把右下角那段回复粘到光标处，然后退出）；
+    /// · `Shift+Enter` → 换行（原样放行给 `TextEditor`）。
+    ///
+    /// 走**本地键盘监听**：它只在事件发给**本 App** 时触发（所以他别的 App 里按回车不受影响），
+    /// 而且只在面板是 key（＝他点过这张卡片）时才认。
+    private func installKeyMonitors() {
+        guard keyMonitors.isEmpty else { return }
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard let self, let panel = self.panel, panel.isKeyWindow else { return event }
+            guard event.keyCode == 36 else { return event }   // 36 = Return
+            // 换行留给输入框自己（用户：「可以让用户通过 Shift + Enter 换行」）。
+            if event.modifierFlags.contains(.shift) { return event }
+            let isEditingText = panel.firstResponder is NSTextView
+            if event.modifierFlags.contains(.command) {
+                if isEditingText {
+                    self.directionBoardCopyAndSend?()   // 输入框里 Cmd+Enter = 执行
+                } else {
+                    self.directionBoardPasteAndExit?()  // 光标不在输入框 = 粘贴
+                }
+            } else {
+                self.directionBoardCopyAndSend?()       // 光按回车 = 执行
+            }
+            // **吞掉**：回车在这张卡片上是"执行/粘贴"，不是换行。
+            return nil
+        }
+        keyMonitors = [monitor].compactMap { $0 }
+    }
+
+    private func removeKeyMonitors() {
+        for monitor in keyMonitors { NSEvent.removeMonitor(monitor) }
+        keyMonitors = []
+    }
+
     private func installDragMonitors() {
         guard dragMonitors.isEmpty else { return }
         let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
@@ -181,7 +222,13 @@ final class DirectionBoardPanelController {
         frame.origin = CGPoint(x: startOrigin.x + (current.x - startMouse.x),
                                y: startOrigin.y + (current.y - startMouse.y))
         lastPlacedFrame = frame
-        panel.setFrame(frame, display: true)
+        // ⚠️ **`display: false` 是必须的**（用户 2026-09-27：「拖动这张卡片时，会有明显的卡顿和拖影现象」）：
+        // 这一行在**每一个鼠标移动事件**上都会跑，而 `display: true` 会**同步重绘整张卡片**
+        //（这张卡片的 SwiftUI 树不小：选项格 + 四行理解 + 三行输入 + 按钮行）——
+        // 每个事件都同步画一遍，就是卡顿与拖影的全部来源。
+        // 换成 `false` 让 AppKit 自己合并到下一个绘制周期 —— 这正是设置里那个窗口缩放手柄
+        //（`NotchWindowController` 里那条注释写了同样一句）当年修同一类问题的做法。
+        panel.setFrame(frame, display: false)
     }
 
     private func endDrag() {
@@ -206,6 +253,7 @@ final class DirectionBoardPanelController {
             .sink { [weak self] _ in self?.repositionForCurrentSize() }
         panel.orderFrontRegardless()
         installDragMonitors()
+        installKeyMonitors()
         repositionForCurrentSize()
     }
 
@@ -213,6 +261,7 @@ final class DirectionBoardPanelController {
         guard isVisible else { return }
         isVisible = false
         removeDragMonitors()
+        removeKeyMonitors()
         sizeObserver = nil
         panel?.orderOut(nil)
         panel = nil
@@ -284,6 +333,11 @@ final class DirectionBoardPanelController {
             theme: AnswerCardTheme(style: settings.answerCardStyle),
             onInputFocused: { [weak panel] in
                 // 用户点了输入框：这时候要键盘，成为 key 是**他的**意思。
+                panel?.makeKey()
+            },
+            onCardTapped: { [weak panel] in
+                // 点了卡片（不是输入框）：**也只让它成为 key** —— 这样回车能生效，
+                // 而"光标在不在输入框里"这件事仍然区分得开（Cmd+Enter 执行 vs 粘贴）。
                 panel?.makeKey()
             }))
         // ⚠️ **这里刻意不设 `sizingOptions = []`** —— 这块面板上它挡不住 SwiftUI 按内容改窗口

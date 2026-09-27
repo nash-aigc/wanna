@@ -53,9 +53,70 @@ final class DirectionBoardSession: ObservableObject {
     var copyReplyAction: (() -> Void)?
     /// 「复制并退出」：复制之后**退出这一轮**（与按 ESC 同效）。
     var copyReplyAndExitAction: (() -> Void)?
+    /// **回车 = 执行**（把这一轮交给主 Agent，与按下快捷键同效）。
+    var sendTurnAction: (() -> Void)?
+    /// **光标不在输入框时的 `Cmd+Enter` = 粘贴**（把右下角那段回复粘到光标处，然后退出这一轮）。
+    var pasteReplyAtCursorAndExitAction: (() -> Void)?
 
     /// 视图读这个决定那个按钮是亮的还是灰的。
     var hasCopyableReply: Bool { hasCopyableReplyProvider?() ?? false }
+
+    /// **他安静了多久**（秒；`nil` = 没在听）—— 由 `CompanionManager` 注入
+    ///（看板不去认识 `BuddyDictationManager`，与其它几个 provider 同一个先例）。
+    var buddySilenceProvider: (() -> TimeInterval?)?
+
+    /// 右下角那张卡片刚显示过的那段（`CompanionManager` 在写预览/真答案时喂进来）。
+    func noteCornerAnswerShown(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if recentCornerAnswers.first?.text == trimmed { return }
+        recentCornerAnswers.insert((trimmed, Date()), at: 0)
+        if recentCornerAnswers.count > Self.rememberedCornerAnswerCount {
+            recentCornerAnswers.removeLast(recentCornerAnswers.count - Self.rememberedCornerAnswerCount)
+        }
+    }
+
+    /// 这些"上一轮的回答"拼成提示词的一段（没有就返回 nil）。
+    ///
+    /// 并**标出"卡片出现之后他说了什么"**——用户自己给的判据（时间 A → 时间 B）：
+    /// 「建议通过代码方式截取第一次回复内容的文本，以及第一次回复显示到卡片的时间，作为时间 A；
+    /// 再测量时间 A 到时间 B……提取这段时间用户说的话，作为提示词重点标记」。
+    func previousCornerAnswersPromptBlock() -> String? {
+        guard !recentCornerAnswers.isEmpty else { return nil }
+        var lines: [String] = []
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        for (index, answer) in recentCornerAnswers.enumerated() {
+            let label = index == 0 ? "最近一次" : "倒数第\(TurnReferenceMaterials.chineseNumber(index + 1))次"
+            lines.append("【\(label)｜\(formatter.string(from: answer.shownAt))】\(answer.text)")
+        }
+        let spokenAfter: String
+        if let latest = recentCornerAnswers.first {
+            let after = latestTranscriptAfter(latest.shownAt)
+            spokenAfter = after.isEmpty
+                ? "（他还没说什么新的）"
+                : "他在这条回复**之后**说的是：「\(after)」 —— **这一段最可能就是对上面那条回复的追问或修改**，请优先按它来。"
+        } else {
+            spokenAfter = ""
+        }
+        return """
+        <previous_answers>
+        你刚才在右下角那张卡片上回过这几条（最近的在前）：
+        \(lines.joined(separator: "\n"))
+        \(spokenAfter)
+        如果他这一轮的话像是对上面某一条的补充（「用英文再说一遍」「展开讲讲」这种），
+        就**接着那条回答**，不要重新理解成一个全新的问题。
+        </previous_answers>
+        """
+    }
+
+    /// 某条回复显示出来**之后**用户说的话（看板手里最新的那段转写就是）。
+    private func latestTranscriptAfter(_ moment: Date) -> String {
+        // 看板只有"当前这一句"的累积文本，所以能给的判据很直接：这条回复是**这一句之前**
+        // 显示的，那这一句就是"之后说的话"；同一条回复在说话过程中还在刷，就不算"之后"。
+        guard moment < lastTranscriptUpdateAt else { return "" }
+        return latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// **把答案预览写到右下角那张卡片上**（由 `CompanionManager` 注入，与 `voiceIdleProvider` /
     /// `sharedVoicePlaybackEngineProvider` 同一个先例：跨子系统只走注入的闭包，不让对方去猜）。
@@ -85,13 +146,33 @@ final class DirectionBoardSession: ObservableObject {
     @Published private(set) var isCancelled = false
     @Published private(set) var isHeldFromAutomaticSend = false
     @Published var typedInput = ""
+    /// **卡片折叠了**（用户 2026-09-27：「卡片可折叠，折叠后变成一个小按钮」）——
+    /// 折叠后整张卡片只剩输入框左边那条「折叠条」，面板跟着缩到它那么大，
+    /// **边框变绿**（用户：「折叠后卡片边缘自动变成绿色，便于用户快速在桌面上看到其位置」）。
+    @Published var isCollapsed = false
 
     // MARK: - 内部状态
 
     private var latestTranscript = ""
+    /// 最近一次实时转写更新的时刻（给"这条回复之后他说了什么"当判据，见
+    /// `previousCornerAnswersPromptBlock`）。
+    private var latestTranscriptUpdateAt = Date.distantPast
+    /// 最近一次实时转写更新的时刻（给"这条回复之后他说了什么"当判据）。
+    private var lastTranscriptUpdateAt = Date.distantPast
     private var lastRequestedTranscript = ""
     /// 最近一次 Jev 判断给出的概率（方向 id → P(是)）。
     private var jevProbabilities: [String: Double] = [:]
+    /// **右下角那张卡片回过的最近几条**（最近的在最前）—— 用户 2026-09-27 要的"多轮参考"：
+    ///
+    /// > 例如第一轮回复了一些内容，用户随后说话……要把第一轮回复结果发进去作为参考……
+    /// > 例如用户问「北京在哪」，AI 回复一行字，用户说「你用英文来解释一下」，此时用户无需再说
+    /// > 「北京在哪，然后用英文来解释」，**其实是对刚才卡片返回结果的追问**，所以一定要带上刚才的结果。
+    ///
+    /// 主 Agent 那条路本来有会话历史，但**看板这条线上那些"预览答案"从来没进过历史**（它们没被发送），
+    /// 所以他要的这条链得单独带着。最多三轮（他：「甚至要带上前三轮的结果」）。
+    private var recentCornerAnswers: [(text: String, shownAt: Date)] = []
+    static let rememberedCornerAnswerCount = 3
+
     /// **最近三轮**模型的理解原文（最近的那一轮在最前）—— 用户要的连续性：
     /// 「你要在发送给下一轮模型的时候要保留前三轮……让它重点参考最近一轮」。
     private var recentReadings: [String] = []
@@ -258,6 +339,7 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         latestTranscript = transcriptText
+        latestTranscriptUpdateAt = Date()
         // ⚠️ 参考材料的采集**不在这里**：截图与那三类关键词归 `TurnReferenceCollector`
         //（2026-09-27 用户把参考材料扩成三类之后，它成了主 Agent 与看板**共用**的东西 ——
         //  主 Agent 那一轮的提示词、看板这一轮的请求、卡片上那排标签，读的都是它）。
@@ -496,6 +578,24 @@ final class DirectionBoardSession: ObservableObject {
         // 三道闸门没过也要留一行（每 3 秒最多一行，且只在"有话说"时才可能重复）——
         // 「看板不动了」到底是闸门没过、还是请求没回来，只有这一行能分辨。
         defer { MainFlowDiagnostics.stage("看板：空闲（等下一拍）") }
+        // **④ 他说完了没有**（用户 2026-09-27：「只有用户 2 秒钟没有说话，才需要提取用户提示词
+        // 发送给 AI，而不是自动根据时间来确定……因为用户若连续说了一分钟，相当于概念没有表达清楚，
+        // 就没有必要发送给 AI」）。
+        //
+        // 判据是"安静了多久"，不是"过了多久"：他连着说的时候**一次都不发**（那几分钟里
+        // 屏幕上停的是他刚开口时的理解），停下来才刷新一次。
+        //
+        // ⚠️ 这里的门槛比"发送"那个（`continuousListeningSilenceSendSeconds`，默认 2.0 秒）**短一半**：
+        // 两处都用 2 秒的话，预览和真答案会在同一刻到达 —— 预览就没有存在的时间了。
+        // 一半留出大约 1 秒的"先看到答案"的窗口（他当初要预览就是为了这个）。
+        if let silence = buddySilenceProvider?() {
+            let boardSilenceThreshold = AppSettingsStore.snapshot()
+                .continuousListeningSilenceSendSeconds / 2
+            guard silence >= boardSilenceThreshold else {
+                MainFlowDiagnostics.stage("看板：他还在说（安静 \(String(format: "%.1f", silence))s）")
+                return
+            }
+        }
         guard Self.shouldRequest(transcript: latestTranscript,
                                  lastRequestedTranscript: lastRequestedTranscript,
                                  isEnabled: isEnabled,
@@ -580,6 +680,9 @@ final class DirectionBoardSession: ObservableObject {
                 if let answer = DirectionBoardPrompt.parseAnswer(paragraphText) {
                     self.previewAnswer = answer
                     self.answerPreviewWriter?(answer)
+                    // **记下"我刚才回过这一条"** —— 下一轮他要对着它追问（「用英文再说一遍」）时，
+                    // 提示词里得带上它（他：「一定要带上刚才的结果」）。
+                    self.noteCornerAnswerShown(answer)
                     print("🧭 方向看板：答案预览 = \(answer.prefix(60))")
                 }
 
@@ -626,7 +729,8 @@ final class DirectionBoardSession: ObservableObject {
             transcript: transcript,
             previousRoundItems: previousRoundItems,
             recentReadings: recentReadings,
-            referenceMaterials: TurnReferenceCollector.shared.promptBlock())
+            referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
+            previousAnswers: previousCornerAnswersPromptBlock())
         do {
             let (text, _) = try await visionChatAPI.analyzeImageStreaming(
                 images: screenshots,

@@ -155,7 +155,8 @@ nonisolated enum DirectionBoardPrompt {
     static func understandingUserPrompt(transcript: String,
                                         previousRoundItems: [DirectionBoardDisplayItem],
                                         recentReadings: [String],
-                                        referenceMaterials: String? = nil) -> String {
+                                        referenceMaterials: String? = nil,
+                                        previousAnswers: String? = nil) -> String {
         var sections: [String] = []
         // **参考材料**（屏幕 / 剪贴板 / 访达选中）—— 与主 Agent 那一轮读的是同一份。
         //
@@ -164,6 +165,12 @@ nonisolated enum DirectionBoardPrompt {
         //（他还在说话的时候就能看到总结），所以这一轮的请求必须也带上材料。
         if let referenceMaterials {
             let trimmed = referenceMaterials.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { sections.append(trimmed) }
+        }
+        // **你刚才在右下角回过的那几条**（用户 2026-09-27：「一定要带上刚才的结果」）——
+        // 他对着这张卡片追问时（「用英文再说一遍」），模型必须知道"刚才那条"是什么。
+        if let previousAnswers {
+            let trimmed = previousAnswers.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { sections.append(trimmed) }
         }
         sections.append("""

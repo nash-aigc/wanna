@@ -60,6 +60,17 @@ class WindowPositionManager {
         return presentationDestination
     }
 
+    /// 打开系统设置里那一页 **自动化**（隐私与安全性 → 自动化）。
+    ///
+    /// 「参考选中文件」要发 Apple events 给访达，而 macOS 第一次会问一次「Wanna 想要控制访达」；
+    /// **后台 App 弹不出那个框时会直接拒绝**（错误号 -1743，而且列表里连条目都不会有 ——
+    /// 用户 2026-09-27 实测：他的自动化列表里 Wanna 下面只有「System Events」和「Safari浏览器」，
+    /// 没有「访达」）。所以失败时把他直接送到这一页，让他手动加一下。
+    static func openAutomationSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// Opens System Settings to the Accessibility pane.
     static func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }

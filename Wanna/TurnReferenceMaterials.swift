@@ -158,6 +158,8 @@ final class TurnReferenceCollector: ObservableObject {
     /// 剪贴板与访达**一轮只取一次**：它们反映的是"当前状态"，不像屏幕有"说几次截几次"的语义。
     private var didReadClipboardThisTurn = false
     private var didReadFinderSelectionThisTurn = false
+    /// 授权那一页**一次启动只替他打开一次**（不然他每说一次「选中文件」，屏幕就弹一次设置）。
+    private var didOpenAutomationSettingsThisRun = false
     private var isCapturingScreenshot = false
 
     // MARK: - 一轮的开始与结束
@@ -357,6 +359,12 @@ final class TurnReferenceCollector: ObservableObject {
                 Task { @MainActor in completion(result.paths) }
             }
             if onMainThread {
+                // **发之前先把自己激活**：macOS 那个「Wanna 想要控制访达」的授权框
+                // 需要一个能上前的 App 才弹得出来 —— Wanna 是 `LSUIElement`（没有 Dock 图标、
+                // 平时从不成为 active），后台直接发的结果就是**静默拒绝**：
+                // 错误号 -1743，而"自动化"列表里连条目都不会多出来。
+                // 用户 2026-09-27 实测正是如此：他那一页里 Wanna 下面只有 System Events 与 Safari。
+                NSApp.activate(ignoringOtherApps: true)
                 DispatchQueue.main.async(execute: work)
             } else {
                 Self.finderSelectionQueue.async(execute: work)
@@ -364,10 +372,22 @@ final class TurnReferenceCollector: ObservableObject {
         }
         send { paths in
             Task { @MainActor in
-                if let failure = Self.lastFinderSelectionFailure, failure.isNotAuthorized, !onMainThread {
-                    MainFlowDiagnostics.log("📎 参考材料：访达事件没被授权（-1743）→ 回主线程再试一次"
-                                            + "（这一次系统才会弹「控制访达」那个框）")
-                    self.readFinderSelection(attempt: attempt, onMainThread: true)
+                if let failure = Self.lastFinderSelectionFailure, failure.isNotAuthorized {
+                    if !onMainThread {
+                        MainFlowDiagnostics.log("📎 参考材料：访达事件没被授权（-1743）→ 激活 App 后重发一次"
+                                                + "（授权框需要一个能上前的 App 才弹得出来）")
+                        self.readFinderSelection(attempt: attempt, onMainThread: true)
+                        return
+                    }
+                    // 主线程上、App 也激活了，还是 -1743 → 说明**这一页里根本没有它**
+                    //（用户那次实测就是：列表里只有 System Events 与 Safari）。
+                    // 把他直接送到那一页，比让他自己在设置里翻要省事。
+                    MainFlowDiagnostics.log("📎 参考材料：访达事件仍未被授权 → 打开「隐私与安全性 → 自动化」")
+                    self.markUnresolved("选中文件")
+                    if !self.didOpenAutomationSettingsThisRun {
+                        self.didOpenAutomationSettingsThisRun = true
+                        WindowPositionManager.openAutomationSettings()
+                    }
                     return
                 }
                 guard !paths.isEmpty else {
