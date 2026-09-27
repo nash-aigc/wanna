@@ -618,7 +618,9 @@ struct DirectionBoardTests {
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("只看最近这一次"))
         // **没关系就一个字都别提之前**（用户点名的那条，还给了一个反例）。
-        #expect(systemPrompt.contains("不要提之前的任何内容"))
+        #expect(systemPrompt.contains("一个字都不要提参考内容"))
+        #expect(systemPrompt.contains("不要提屏幕上的东西"))
+        #expect(systemPrompt.contains("就事论事地答他刚问的那件事"))
         #expect(systemPrompt.contains("有关系的时候才参考，没关系是不参考"))
         #expect(systemPrompt.contains("中国在哪"))
         #expect(systemPrompt.contains("北京欢迎你"))

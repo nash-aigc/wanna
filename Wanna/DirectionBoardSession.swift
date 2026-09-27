@@ -535,7 +535,16 @@ final class DirectionBoardSession: ObservableObject {
         latestTranscript = ""
         lastRequestedTranscript = ""
         paragraph = ""
-        understandingLines = DirectionBoardPrompt.understandingLabels.map { ($0, "") }
+        // ⚠️ **别把卡片上那几行擦掉**（2026-09-27 深夜修，用户：「右上角的卡片，它这个树状图
+        // **怎么突然间消失了呢**？之前还很好的，然后就突然间消失了」）。
+        //
+        // 这里原来把它重置成"全空占位符"，而**下一次梳理要一两秒（现在是两次调用）才回来** ——
+        // 于是每按一次快捷键，那张图都会先**整个消失**、过一会儿再长回来。用户的感受就是
+        // "突然没了"。而他早就定过这条规矩：「只要用户没有按退出键、没有按 ESC，
+        // **这几个卡片都持续显示**」。
+        //
+        // 现在**一律保留上一次的内容**：新一轮的梳理回来时自然会把它们覆盖掉
+        //（`understandingLines` 是整块赋值的，不存在"新旧混在一起"）。
         // 新一轮开始 = 上一轮的答案预览作废（这里是"真的换了一轮"，不是同一轮的提交）。
         previewAnswer = nil
         answerPreviewWriter?(nil)
