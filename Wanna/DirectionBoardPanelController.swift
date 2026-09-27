@@ -108,7 +108,7 @@ final class DirectionBoardPanelController {
         self.panel = panel
         panel.orderFrontRegardless()
         // 先按一个保守的尺寸摆一次；视图量准之后 `handleMeasuredSize` 会把面板改到位。
-        handleMeasuredSize(CGSize(width: DirectionBoardView.cardWidth, height: 220))
+        handleMeasuredSize(CGSize(width: DirectionBoardView.cardWidth(forColumnCount: 1), height: 220))
     }
 
     private func hide() {
@@ -157,7 +157,7 @@ final class DirectionBoardPanelController {
     private func makePanel() -> NSPanel {
         let panel = DirectionBoardPanel(
             contentRect: NSRect(x: 0, y: 0,
-                                width: DirectionBoardView.cardWidth, height: 220),
+                                width: DirectionBoardView.cardWidth(forColumnCount: 1), height: 220),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
@@ -200,7 +200,7 @@ final class DirectionBoardPanelController {
     /// 内容量出来了（或者变了）：把面板调成一样大，**右上角一个像素都不动**。
     private func handleMeasuredSize(_ size: CGSize) {
         guard isVisible, let panel, let anchorPoint else { return }
-        let width = max(size.width, DirectionBoardView.cardWidth)
+        let width = max(size.width, DirectionBoardView.cardWidth(forColumnCount: 1))
         let height = max(size.height, 1)
         guard abs(width - lastLaidOutSize.width) > 0.5 || abs(height - lastLaidOutSize.height) > 0.5 else { return }
         lastLaidOutSize = CGSize(width: width, height: height)

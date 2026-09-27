@@ -1925,6 +1925,17 @@ final class NotchWindowController {
         syncListeningTranscriptPanel()
     }
 
+    /// **自检专用**：把相位钉在 `.listening`，好让刘海那行字幕真的画出来。
+    ///
+    /// 量"字幕卡顿"时必须这样 —— 字幕只在 `phase == .listening` 时画，而自检不走语音管线，
+    /// 相位一直是 idle（第一次量的时候就是这样：采样扑空，一个字幕帧都没抓到）。
+    /// 只由 `WANNA_DIRECTION_BOARD_SELFCHECK=stream` 调用。
+    func beginSelfCheckListeningPhase() {
+        guard DirectionBoardSession.selfCheckMode != nil else { return }
+        panelModel.activityPhase = .listening
+        syncListeningTranscriptPanel()
+    }
+
     /// 松开那个"按在 idle 上"（这一轮收尾了，或者用户又按了一次快捷键开始新一轮）。
     func releaseActivityPhaseIdleHold() {
         guard panelModel.isActivityPhaseHeldAtIdle else { return }

@@ -382,6 +382,21 @@ extension DirectionBoardConfiguration {
         return nil
     }
 
+    /// **用户用嘴取消某一格吗**（「取消第一个方向」「第二个方向取消」「去掉第三个方向」）。
+    ///
+    /// 用户 2026-09-27：「用户说第一个方向正确的时候，它能识别……但是如果用户说**取消第一个方向**，
+    /// 我发现它无法取消……这个是必须要有的。」
+    ///
+    /// 与"选中"共用同一套数字识别，只是要求句子里带一个**取消词**（取消 / 去掉 / 删掉 / 不要 / 不对）。
+    nonisolated static func spokenCancelSelectionNumber(in transcriptText: String,
+                                                        displayedItemCount: Int) -> Int? {
+        let normalized = normalizedForMatching(transcriptText)
+        guard !normalized.isEmpty else { return nil }
+        let cancelWords = ["取消", "去掉", "删掉", "不要", "不对", "不算"]
+        guard cancelWords.contains(where: { normalized.contains($0) }) else { return nil }
+        return spokenSelectionNumber(in: transcriptText, displayedItemCount: displayedItemCount)
+    }
+
     /// 中文数字 → 整数（只认 1…99，够用；认不出来返回 nil）。
     nonisolated static func chineseNumeral(_ text: String) -> Int? {
         let digits: [Character: Int] = ["一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,

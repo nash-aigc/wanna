@@ -117,6 +117,36 @@ final class DirectionBoardSession: ObservableObject {
         Self.selfCheckMode != nil && Self.selfCheckMode != "live"
     }
 
+    /// **按真实速率喂字**：`WANNA_DIRECTION_BOARD_SELFCHECK=stream`。
+    ///
+    /// 用来量"刘海下面那行字幕卡顿"——真人说话的识别结果是**每秒 8~12 次**把整句累积文本重发一遍，
+    /// 而自检原先每 1.4 秒才喂一句，量不出卡顿。这一档按 12 字/秒、每 100ms 一次地长，
+    /// 只喂刘海那行字幕（**不喂看板**），这样 `sample` 抓到的就纯粹是字幕这条渲染链。
+    private var streamSelfCheckTask: Task<Void, Never>?
+
+    func runStreamingSelfCheckIfRequested() {
+        guard Self.selfCheckMode == "stream" else { return }
+        let sentence = "帮我把桌面上的这些文件整理归类然后存到 notion 里面去顺便查一下相关的新闻"
+        var shownCount = 0
+        var rounds = 0
+        streamSelfCheckTask = Task { @MainActor [weak self] in
+            print("🎛️ 字幕流自检：开始喂字（12 字/秒，只喂字幕；一直循环，直到进程被杀）")
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                shownCount += 1
+                if shownCount > sentence.count {
+                    shownCount = 1
+                    rounds += 1
+                    if rounds % 5 == 0 { print("🎛️ 字幕流自检：已循环 \(rounds) 轮") }
+                }
+                let partial = String(sentence.prefix(shownCount))
+                NotchListeningTranscriptModel.shared.setLiveText(partial)
+                self?.latestTranscript = partial
+            }
+        }
+    }
+
     /// 按顺序喂几句假转写（每句都比上一句多一个方向，看板应当**一格一格长出来**）。
     func runSelfCheckSequence() {
         guard Self.selfCheckMode != nil else { return }
@@ -388,6 +418,18 @@ final class DirectionBoardSession: ObservableObject {
     /// 只认屏幕上**正显示着**的那几格（越界的编号直接忽略 —— 他说「第六个」而屏幕上只有三格时，
     /// 猜一个等于替他做决定）。
     private func applySpokenSelectionIfAny(in transcriptText: String) {
+        // **口述取消**先判（用户：「说取消第一个方向……无法取消，这个是必须要有的」）——
+        // 取消 = 把那一格变回"没选"，而不是选中它。
+        if let number = DirectionBoardConfiguration.spokenCancelSelectionNumber(
+            in: transcriptText, displayedItemCount: displayedItems.count),
+           let item = displayedItems.first(where: { $0.number == number }) {
+            if selectionStates[item.rowIndex] != .pending {
+                selectionStates[item.rowIndex] = .pending
+                confirmedTexts[item.rowIndex] = nil
+                print("🎛️ 方向看板：口述「取消第 \(number) 个方向」→ 取消选中「\(item.text)」")
+            }
+            return
+        }
         if let number = DirectionBoardConfiguration.spokenSelectionNumber(
             in: transcriptText, displayedItemCount: displayedItems.count),
            let item = displayedItems.first(where: { $0.number == number }) {

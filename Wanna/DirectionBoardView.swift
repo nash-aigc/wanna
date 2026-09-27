@@ -31,8 +31,23 @@ struct DirectionBoardView: View {
 
     @FocusState private var isInputFocused: Bool
 
-    /// 宽度固定 —— 用户：「与右下角结果看板完全一致，**无论内容多少**」。
-    static let cardWidth: CGFloat = 340
+    /// **宽度不再是固定的 340**（用户 2026-09-27 取消了那条约束）：
+    /// 「我最开始跟你说的是这个卡片的宽度一定要跟正常情况下 AI 生成结果那个卡片的宽度一致，
+    /// **现在取消这个限制，它可以很宽，但是左下角的位置必须固定**」。
+    ///
+    /// 现在宽度**由列数决定**：一列 ~190pt，最多 5 列（「最多不要超过 5 列，正常情况下是 1~5 列」）。
+    /// 左下角固定由面板那一侧保证（`directionBoardPanelFrame` 的原点 = 鼠标 +12pt）。
+    static let columnWidth: CGFloat = 190
+    static let maximumColumnCount = 5
+    static let horizontalPadding: CGFloat = 12
+
+    /// 现在这张卡片该多宽（列数 = 显示的格数，最多 5）。
+    static func cardWidth(forColumnCount columnCount: Int) -> CGFloat {
+        let columns = min(max(columnCount, 1), maximumColumnCount)
+        return CGFloat(columns) * columnWidth + horizontalPadding * 2
+    }
+
+    private var columnCount: Int { min(max(session.displayedItems.count, 1), Self.maximumColumnCount) }
     /// **下面那两块固定高度**（用户点名要求）：说明 4 行 + 输入框一行。
     static let paragraphHeight: CGFloat = 4 * 20
     private static let inputHeight: CGFloat = 30
@@ -55,7 +70,7 @@ struct DirectionBoardView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(width: Self.cardWidth, alignment: .leading)
+        .frame(width: Self.cardWidth(forColumnCount: columnCount), alignment: .leading)
         .background(AnswerCardView.cardBackground(theme: theme))
         .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
         .overlay(
@@ -84,7 +99,13 @@ struct DirectionBoardView: View {
     // MARK: - 方向区（只画说到的那些，每格一个连续编号）
 
     private var directionList: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        // **多列**（用户：「表格上面那几个表格应该是多列的，不是单列，你现在是单列、多行。
+        // 我的意思是多行可以多列，可以到 2 到 3 列」）—— 有几个方向就排几列（最多 5），
+        // 超过 5 个才换行。
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8),
+                                 count: columnCount),
+                  alignment: .leading,
+                  spacing: 6) {
             ForEach(session.displayedItems, id: \.rowIndex) { item in
                 directionRow(item)
             }
@@ -111,11 +132,6 @@ struct DirectionBoardView: View {
                 .background(
                     Circle().fill(textColor.opacity(state == .pending ? 0.12 : 0.20))
                 )
-
-            Text(item.rowTitle)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(theme.textColor.opacity(0.55))
-                .frame(width: 38, alignment: .leading)
 
             Text(text)
                 .font(.system(size: 12, weight: state == .pending ? .regular : .semibold))

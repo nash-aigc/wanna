@@ -337,92 +337,20 @@ struct NotchPillRootView: View {
             // 三段之间有 2pt 重叠，所以带子的实际宽度是「三段之和 − 4」。
             let bandWidth = NotchSupport.wingBandWidth(pillWidth: pillWidth)
 
-            ZStack(alignment: .top) {
-                // Negative spacing: each wing overlaps the middle segment by
-                // 2pt. With flush adjacency (spacing 0) the wing's edge and
-                // the pill's edge antialias independently at the SAME
-                // coordinate, and whenever that coordinate lands on a pixel
-                // boundary the pair leaves a see-through slit — a full-height
-                // hairline showing the desktop through the band on BOTH sides
-                // of the notch (recorded 2026-09-23 from a 30fps screen
-                // recording of the live animation; the user reported it as
-                // 「刘海的左侧和右侧分别有一个空白间隙」). With the overlap,
-                // every one of those four edges lands inside the other view's
-                // solid black — black-on-black — so the slit cannot exist and
-                // the wings read as growing out of the notch's interior.
-                // The layout still resolves to the pill EXACTLY centered at
-                // rest (both wings 0 wide: pill_left = center + 0 − 2 −
-                // (0 + 0 − 4)/2 … = center), and the ±1pt drift mid-animation
-                // is black-on-black and invisible.
-                HStack(spacing: -NotchSupport.bandSegmentOverlap) {
-                    NotchWingView(
-                        phase: panelModel.activityPhase,
-                        audioHistoryProvider: audioHistoryProvider,
-                        isLeading: true,
-                        squaresBottomOuterCorner: squaresBottomOuterCorner
-                    )
-                    .frame(
-                        width: isActive ? Self.leadingWingWidth : 0,
-                        height: notchHeight
-                    )
-                    // The clip lives OUTSIDE the animated width frame: inside
-                    // the wing the natural content size (the fixed 88×40 glow)
-                    // would win, and a width-0 frame does not clip on its own
-                    // — the idle glow would keep leaking past the pill's edge.
-                    .clipped()
-
-                    // The middle segment's bottom corners are rounded ONLY at
-                    // rest, when the pill stands alone and its little radius
-                    // is what makes it read as a pill. The moment the wings
-                    // slide out it must go square (0), because the wings are
-                    // square where they meet it: a rounded corner here cuts
-                    // the shared bottom edge and leaves a notch-shaped blank
-                    // on BOTH sides of the hardware notch — the two gaps the
-                    // user reported as 「刘海左下角有一个空白」. Square on all
-                    // four bottom corners is what keeps the SEAMS straight —
-                    // the band's rounding lives only at its two outer ends,
-                    // each wing's own outline (see NotchWingView).
-                    // **和硬件刘海逐像素一致**（用户 2026-09-24：「如果是重写，
-                    // 为什么不把它跟 Mac 电脑的刘海写得完全一样？」）。之前画得比
-                    // 硬件刘海宽 4pt（两侧各多 2pt，本来是给命中区留的余量）、底角
-                    // 只有 6pt —— 用户看到的就是「刘海被重画了一遍：更宽、圆角更小、
-                    // 两侧像有阴影」。现在：宽度收回到刘海本身（多出来的部分本来
-                    // 就不该画出来），底角 10pt 接近系统圆角。命中区不受影响 ——
-                    // 那是 `pillClickHitMargin` 的事，跟画多大无关。
-                    PillShape(bottomCornerRadius: isActive ? 0 : 10)
-                        .fill(Color.black)
-                        .frame(
-                            width: isActive
-                                ? pillWidth
-                                : pillWidth - NotchSupport.restingPillExtraWidthPerSide * 2,
-                            height: notchHeight
-                        )
-
-                    NotchWingView(
-                        phase: panelModel.activityPhase,
-                        audioHistoryProvider: audioHistoryProvider,
-                        isLeading: false,
-                        squaresBottomOuterCorner: squaresBottomOuterCorner
-                    )
-                    .frame(
-                        width: isActive ? Self.trailingWingWidth : 0,
-                        height: notchHeight
-                    )
-                    .clipped()
-                }
-                // **两翼不再做滑出动画**（2026-09-27，用户：「直接显示…不需要动画」）：
-                // 相位一到就是满宽，相位一走就收掉。原来那行 `.animation(...)` 是
-                // "两块各自动画"的其中一块，删掉它连同那一整类问题一起删掉了。
-
-                // **「Notion 笔记」那几颗按钮**（2026-09-27 之后归主 Agent）：检测到关键词时
-                // 长在刘海左侧。位置由 `NotchSupport` 的屏幕矩形给出 —— 它是这块窗口里
-                // **唯一**一处不随两翼动画伸缩的东西（按钮在带子外面，靠"离刘海中心多远"定位）。
-                NotionNoteButtonAnchor(
-                    notchCenterX: geometry.size.width / 2,
-                    placement: notionNoteButtonPlacement
-                )
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            // **黑带自己一个视图**（2026-09-27）：它的输入全是稳定量（相位、几何、角落开关），
+            // 所以那一行字幕每来一个字时，SwiftUI 会**跳过**整条带子（含两翼的渐变与描边）的重画，
+            // 只重画那一行文字。用户报「字幕卡顿」时，这是除动画时长之外的第二处结构性开销。
+            NotchRestingBand(
+                phase: panelModel.activityPhase,
+                isActive: isActive,
+                notchHeight: notchHeight,
+                pillWidth: pillWidth,
+                squaresBottomOuterCorner: squaresBottomOuterCorner,
+                audioHistoryProvider: audioHistoryProvider,
+                notionNoteButtonPlacement: notionNoteButtonPlacement,
+                containerWidth: geometry.size.width,
+                containerHeight: geometry.size.height
+            )
 
             // **刘海下面那一行实时字幕**（2026-09-27 从另一块面板搬进来）。
             // 它与上面那条黑带**同一个视图、同一个宽度变量** —— 展开时一起从刘海中心向左右长，
@@ -446,6 +374,118 @@ struct NotchPillRootView: View {
             }
         }
         .ignoresSafeArea()
+    }
+}
+
+
+/// **静止态那条黑带（两翼 + 中段 + 刘海左侧那几颗按钮）**（2026-09-27 从 `NotchPillRootView` 摘出来）。
+///
+/// **为什么单独一个类型**：那一行字幕每来一个字都要重画（识别结果每秒约 10 次），而它原先和
+/// 带子挤在同一个 body 里 —— 于是每个字都顺手重画了两翼的渐变、描边与中段的形状。
+/// 摘出来之后这个类型的输入**全是稳定量**（相位、几何、角落开关），SwiftUI 会直接跳过它。
+///
+/// 画出来与从前**逐像素一致**：内容是从原来那段整块搬过来的（`git show HEAD:...`），
+/// 只把 `panelModel.activityPhase` 换成参数 `phase`、`geometry.size` 换成 `container*`、
+/// 两个 `Self.` 转发换成 `NotchSupport.` 上的真身。
+struct NotchRestingBand: View {
+
+    let phase: NotchActivityPhase
+    let isActive: Bool
+    let notchHeight: CGFloat
+    let pillWidth: CGFloat
+    let squaresBottomOuterCorner: Bool
+    let audioHistoryProvider: () -> [CGFloat]
+    let notionNoteButtonPlacement: NotchSupport.NotionNoteButtonPlacement?
+    let containerWidth: CGFloat
+    let containerHeight: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            // Negative spacing: each wing overlaps the middle segment by
+            // 2pt. With flush adjacency (spacing 0) the wing's edge and
+            // the pill's edge antialias independently at the SAME
+            // coordinate, and whenever that coordinate lands on a pixel
+            // boundary the pair leaves a see-through slit — a full-height
+            // hairline showing the desktop through the band on BOTH sides
+            // of the notch (recorded 2026-09-23 from a 30fps screen
+            // recording of the live animation; the user reported it as
+            // 「刘海的左侧和右侧分别有一个空白间隙」). With the overlap,
+            // every one of those four edges lands inside the other view's
+            // solid black — black-on-black — so the slit cannot exist and
+            // the wings read as growing out of the notch's interior.
+            // The layout still resolves to the pill EXACTLY centered at
+            // rest (both wings 0 wide: pill_left = center + 0 − 2 −
+            // (0 + 0 − 4)/2 … = center), and the ±1pt drift mid-animation
+            // is black-on-black and invisible.
+            HStack(spacing: -NotchSupport.bandSegmentOverlap) {
+                NotchWingView(
+                    phase: phase,
+                    audioHistoryProvider: audioHistoryProvider,
+                    isLeading: true,
+                    squaresBottomOuterCorner: squaresBottomOuterCorner
+                )
+                .frame(
+                    width: isActive ? NotchSupport.leadingWingWidth : 0,
+                    height: notchHeight
+                )
+                // The clip lives OUTSIDE the animated width frame: inside
+                // the wing the natural content size (the fixed 88×40 glow)
+                // would win, and a width-0 frame does not clip on its own
+                // — the idle glow would keep leaking past the pill's edge.
+                .clipped()
+
+                // The middle segment's bottom corners are rounded ONLY at
+                // rest, when the pill stands alone and its little radius
+                // is what makes it read as a pill. The moment the wings
+                // slide out it must go square (0), because the wings are
+                // square where they meet it: a rounded corner here cuts
+                // the shared bottom edge and leaves a notch-shaped blank
+                // on BOTH sides of the hardware notch — the two gaps the
+                // user reported as 「刘海左下角有一个空白」. Square on all
+                // four bottom corners is what keeps the SEAMS straight —
+                // the band's rounding lives only at its two outer ends,
+                // each wing's own outline (see NotchWingView).
+                // **和硬件刘海逐像素一致**（用户 2026-09-24：「如果是重写，
+                // 为什么不把它跟 Mac 电脑的刘海写得完全一样？」）。之前画得比
+                // 硬件刘海宽 4pt（两侧各多 2pt，本来是给命中区留的余量）、底角
+                // 只有 6pt —— 用户看到的就是「刘海被重画了一遍：更宽、圆角更小、
+                // 两侧像有阴影」。现在：宽度收回到刘海本身（多出来的部分本来
+                // 就不该画出来），底角 10pt 接近系统圆角。命中区不受影响 ——
+                // 那是 `pillClickHitMargin` 的事，跟画多大无关。
+                PillShape(bottomCornerRadius: isActive ? 0 : 10)
+                    .fill(Color.black)
+                    .frame(
+                        width: isActive
+                            ? pillWidth
+                            : pillWidth - NotchSupport.restingPillExtraWidthPerSide * 2,
+                        height: notchHeight
+                    )
+
+                NotchWingView(
+                    phase: phase,
+                    audioHistoryProvider: audioHistoryProvider,
+                    isLeading: false,
+                    squaresBottomOuterCorner: squaresBottomOuterCorner
+                )
+                .frame(
+                    width: isActive ? NotchSupport.trailingWingWidth : 0,
+                    height: notchHeight
+                )
+                .clipped()
+            }
+            // **两翼不再做滑出动画**（2026-09-27，用户：「直接显示…不需要动画」）：
+            // 相位一到就是满宽，相位一走就收掉。原来那行 `.animation(...)` 是
+            // "两块各自动画"的其中一块，删掉它连同那一整类问题一起删掉了。
+
+            // **「Notion 笔记」那几颗按钮**（2026-09-27 之后归主 Agent）：检测到关键词时
+            // 长在刘海左侧。位置由 `NotchSupport` 的屏幕矩形给出 —— 它是这块窗口里
+            // **唯一**一处不随两翼动画伸缩的东西（按钮在带子外面，靠"离刘海中心多远"定位）。
+            NotionNoteButtonAnchor(
+                notchCenterX: containerWidth / 2,
+                placement: notionNoteButtonPlacement
+            )
+        }
+        .frame(width: containerWidth, height: containerHeight, alignment: .top)
     }
 }
 

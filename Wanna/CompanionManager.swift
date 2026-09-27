@@ -793,7 +793,12 @@ final class CompanionManager: ObservableObject {
         // **方向看板的自检**（`WANNA_DIRECTION_BOARD_SELFCHECK=1`）：没有麦克风也把看板摆出来，
         // 喂几句假转写、不打任何请求。开发期验界面用，不是用户可见的设置 —— 见
         // `DirectionBoardSession.selfCheckMode` 里写的理由（这台机器没有可用的语音输入）。
-        if DirectionBoardSession.selfCheckMode != nil {
+        if DirectionBoardSession.selfCheckMode == "stream" {
+            // 只量字幕那条渲染链（不拉看板、不发请求）—— 但相位要钉在 Listening，
+            // 否则那一行根本不画（第一次量的时候就是这么扑空的）。
+            notchWindowController?.beginSelfCheckListeningPhase()
+            DirectionBoardSession.shared.runStreamingSelfCheckIfRequested()
+        } else if DirectionBoardSession.selfCheckMode != nil {
             DirectionBoardPanelController.shared.startSelfCheckIfRequested()
             DirectionBoardSession.shared.runSelfCheckSequence()
             Task { @MainActor in
