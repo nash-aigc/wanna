@@ -154,9 +154,14 @@ final class DirectionBoardSession: ObservableObject {
     ///    否则每来一段，已经写好的行会先退回占位符再长回来（那就是闪）；
     /// 3. **答案同步流进右下角那张卡**（那张卡的字是流式的，动画由它自己的模糊焦点负责）。
     private func applyStreamingParagraph(_ partial: String) {
-        let now = Date()
-        guard now.timeIntervalSince(lastStreamingUpdateAt) >= Self.streamingUpdateInterval else { return }
-        lastStreamingUpdateAt = now
+        // ⚠️ **不限流**（2026-09-27 深夜改，用户指了参照物：「你可以看一下 **Agent 模式下右下角的
+        // 卡片**是怎么渲染的，**那个比较流畅**」）。
+        //
+        // 加过一版"节流到 8 次/秒"，理由是"每个分片都整块重排是白烧主线程"—— 但那个理由**错了**：
+        // 主 Agent 那条路（`CompanionManager` 的 `onTextChunk`）**就是每个分片都写**
+        //（`streamingAnswerText = displayText`，一次都不落），而它正是用户觉得流畅的那一条。
+        // 模糊焦点那套动画是按"**字刚到的节奏**"设计的（尾巴 = 最近 5 个字、按时间淡出），
+        // 8/秒的批量更新把节奏打乱成一顿一顿 —— 屏幕上就是卡。
         let parsed = DirectionBoardPrompt.parseUnderstandingLines(partial)
         var merged = understandingLines
         var didChange = false
@@ -180,9 +185,6 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    /// 节流间隔（8 次/秒）。
-    private static let streamingUpdateInterval: TimeInterval = 0.12
-    private var lastStreamingUpdateAt = Date.distantPast
     /// 这一轮流式渲染写了几次（只用来核对"它真的在流"）。
     private var streamingUpdateCount = 0
     /// 这一轮流式写到右下角的那段（用于去重）。

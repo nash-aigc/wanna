@@ -140,6 +140,9 @@ struct BlueCursorView: View {
     let isFirstAppearance: Bool
     @ObservedObject var companionManager: CompanionManager
 
+    /// 这张卡片**此刻是不是被高度上限截断了**（`answerCardBubble` 的底部渐隐蒙版据此决定挂不挂）。
+    @State private var isAnswerCardTruncated = false
+
     @State private var cursorPosition: CGPoint
     /// The raw mouse position in this screen's SwiftUI coordinates, with no
     /// follow offset added. The conversation bubble anchors its TOP-LEFT corner
@@ -245,14 +248,36 @@ struct BlueCursorView: View {
         // 而这张卡片是跟着鼠标走的浮层，给它加滚动条既不好点也不好滚。
         .frame(maxHeight: Self.maximumAnswerCardHeight, alignment: .top)
         .clipped()
-        .mask(
-            // 底部收一点渐隐：硬切在深色卡片上看着像被裁坏了，淡出才读得出"下面还有"。
-            LinearGradient(
-                stops: [.init(color: .black, location: 0),
-                        .init(color: .black, location: 0.93),
-                        .init(color: .clear, location: 1.0)],
-                startPoint: .top, endPoint: .bottom)
+        // ⚠️ **底部渐隐只在"真的被截断"时才挂**（2026-09-27 深夜修，用户：
+        // 「应该是圆角，**实际却不是圆角**」）。
+        //
+        // 它原来是无条件挂着的 —— 而这个蒙版是**矩形**的，把卡片最下面 7% 整条淡掉，
+        // 于是**下面的圆角和下边框一起被吃掉**，屏幕上就是一张"上面圆、下面方"的卡片
+        //（一屏七八行的卡片，7% ≈ 14pt，正好是圆角半径那一圈）。
+        // 内容没超高时它本来就不该存在 —— 淡出是为了表达"下面还有"，没被截断就没有"下面"。
+        .mask {
+            if isAnswerCardTruncated {
+                // 硬切在深色卡片上看着像被裁坏了，淡出才读得出"下面还有"。
+                LinearGradient(
+                    stops: [.init(color: .black, location: 0),
+                            .init(color: .black, location: 0.93),
+                            .init(color: .clear, location: 1.0)],
+                    startPoint: .top, endPoint: .bottom)
+            } else {
+                Rectangle()
+            }
+        }
+        .background(
+            // 量一次"这张卡片自然状态下有多高"，用来判断上面那个蒙版该不该挂。
+            GeometryReader { cardGeometry in
+                Color.clear.preference(key: AnswerCardNaturalHeightKey.self,
+                                       value: cardGeometry.size.height)
+            }
         )
+        .onPreferenceChange(AnswerCardNaturalHeightKey.self) { naturalHeight in
+            let isTruncated = naturalHeight > Self.maximumAnswerCardHeight + 0.5
+            if isTruncated != isAnswerCardTruncated { isAnswerCardTruncated = isTruncated }
+        }
         // The card carries its own theme fill and border; the shadow only lifts
         // it off whatever is behind — a card floating over arbitrary windows
         // needs to read as one object, not as text painted on the desktop.
@@ -1197,5 +1222,16 @@ private class AVPlayerNSView: NSView {
     override func layout() {
         super.layout()
         playerLayer.frame = bounds
+    }
+}
+
+/// 那张卡片**自然状态下有多高**（用来判断它有没有被高度上限截断）。
+///
+/// 2026-09-27 加：底部渐隐蒙版原来是无条件挂的，于是没被截断时它也把卡片最下面
+/// 7% 淡掉 —— 圆角和下边框一起被吃掉，屏幕上是一张"上面圆、下面方"的卡片。
+private struct AnswerCardNaturalHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
