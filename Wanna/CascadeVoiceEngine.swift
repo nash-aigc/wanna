@@ -174,7 +174,9 @@ final class CascadeVoiceEngine {
             }()
             if !attachments.isEmpty {
                 let imageCount = attachments.filter { $0.kind == .image }.count
-                print("📎 附件：随这一轮视频对话发给模型（图片 \(imageCount) 张 / 共 \(attachments.count) 条）")
+                let line = "📎 附件：随这一轮视频对话发给模型（图片 \(imageCount) 张 / 共 \(attachments.count) 条）"
+                print(line)
+                MainFlowDiagnostics.log(line)
             }
             if Task.isCancelled { return }
 

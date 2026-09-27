@@ -604,6 +604,11 @@ private final class ComposerNSTextView: NSTextView {
     ///（一张复制的图在 `isRichText = false` 的框里会变成一串没用的东西），
     /// 而那正是这次改动要消灭的现象。
     override func paste(_ sender: Any?) {
+        // **一行诊断**（2026-09-28）：粘贴这条路上"什么都没发生"有两种完全不同的成因 ——
+        // 这个入口压根没被调到（AppKit 把 ⌘V 走了别的路），或者调到了但没认出来。
+        // 两者的屏幕表现一模一样（粘了没反应），只有这一行能分开它们。
+        MainFlowDiagnostics.log("📎 输入框收到粘贴（类型："
+                                + "\((NSPasteboard.general.types ?? []).map(\.rawValue).joined(separator: ", "))）")
         if handlePaste?(NSPasteboard.general) == true { return }
         super.paste(sender)
     }
@@ -676,6 +681,26 @@ private final class ComposerNSTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         if handleSendKeyEvent?(event) == true { return }
+        // **⌘V 必须在这里拦，不能只靠 `paste(_:)`**（2026-09-28 实测）：
+        // 这个输入框是 `isRichText = false` 的，AppKit 因此**不接受图片类的粘贴板** ——
+        // 菜单里的「粘贴」被判为不可用，⌘V 作为快捷键**根本不会走到 `paste(_:)`**。
+        // 装仪器量到的现场（`主Agent诊断.log` 原文）：
+        //
+        //     图片在粘贴板时按 ⌘V → 一行日志都没有（`paste(_:)` 没被调到）
+        //     纯文本在粘贴板时按 ⌘V → 「📎 输入框收到粘贴（类型：public.utf8-plain-text…）」
+        //
+        // 而 `keyDown` 是**没有别人认领时**才拿得到这个事件的 —— 纯文本那一路仍然由
+        // 菜单 → `paste(_:)` 处理（那条路一直是对的），图片这一路才落到这里。
+        // 与回车那条完全同一个形状：`keyDown` 是这个类里唯一能抢在别的解释之前的地方。
+        if event.keyCode == Self.letterVKeyCode,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+           handlePaste?(NSPasteboard.general) == true {
+            return
+        }
         super.keyDown(with: event)
     }
+
+    /// `v` 键的 keyCode。用码而不是字符：字符受键盘布局与输入法影响（中文输入法下
+    /// `charactersIgnoringModifiers` 未必是 "v"），而 ⌘V 是物理位置上的那一颗。
+    private static let letterVKeyCode: UInt16 = 9
 }

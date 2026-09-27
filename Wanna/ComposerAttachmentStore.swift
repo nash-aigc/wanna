@@ -84,7 +84,14 @@ final class ComposerAttachmentStore: ObservableObject {
     @discardableResult
     func consumePasteboard(_ pasteboard: NSPasteboard, forCardID cardID: String) -> Bool {
         let read = ComposerAttachment.attachments(from: pasteboard)
-        guard !read.isEmpty else { return false }
+        guard !read.isEmpty else {
+            // **这一次"没认出来"要留痕**（2026-09-28）：认不出来是**静默**的 ——
+            // 用户看到的是"粘了没反应"，而没有任何一行日志说得出是"这次粘贴根本没走到
+            // 这里"还是"走到了但没认出来"。粘贴板上有哪些类型正是分辨这两者的唯一判据。
+            MainFlowDiagnostics.log("📎 粘贴未被识别为附件（粘贴板类型："
+                                    + "\((pasteboard.types ?? []).map(\.rawValue).joined(separator: ", "))）")
+            return false
+        }
         add(read, forCardID: cardID)
         return true
     }
@@ -124,7 +131,11 @@ final class ComposerAttachmentStore: ObservableObject {
 
         current.append(contentsOf: accepted)
         attachmentsByCardID[cardID] = current
-        print("📎 附件：+\(accepted.count) → \(logLine(forCardID: cardID) ?? "")")
+        let logLine = "📎 附件：+\(accepted.count) → \(self.logLine(forCardID: cardID) ?? "")"
+        print(logLine)
+        // 同一行也进主流程诊断日志 —— 那是"贴了但模型没看到"唯一可核对的判据，
+        // 而 `print` 只在从终端启动时才看得到（双击启动的 App 里它进不了任何地方）。
+        MainFlowDiagnostics.log(logLine)
         if rejectedImages > 0 || rejectedByTotal > 0 {
             print("📎 附件：有 \(rejectedImages + rejectedByTotal) 条被上限挡掉"
                   + "（图片上限 \(Self.maximumImages) 张 / 总数上限 \(Self.maximumTotal) 条）")

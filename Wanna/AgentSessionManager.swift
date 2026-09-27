@@ -457,7 +457,12 @@ final class AgentSessionManager: ObservableObject {
                                                        ofItemAtPath: fileURL.path)
                 writtenPaths.append(fileURL.path)
             }
-            print("📎 Agent 这一轮的附件图落盘 \(writtenPaths.count) 张 → \(directory.path)")
+            let logLine = "📎 Agent 这一轮的附件图落盘 \(writtenPaths.count) 张 → \(directory.path)"
+            print(logLine)
+            // 同一行进主流程诊断日志 —— 双击启动的 App 里 `print` 进不了任何地方，
+            // 而"贴了但 agent 没看到"唯一可核对的判据就是这一行。
+            MainFlowDiagnostics.log(logLine)
+            writtenPaths.forEach { MainFlowDiagnostics.log("📎 └ \($0)") }
         } catch {
             print("⚠️ Agent 这轮的附件图没落盘：\(error)")
         }
@@ -494,7 +499,9 @@ final class AgentSessionManager: ObservableObject {
                 preambleSections.append(attachmentPreamble)
             }
             if let attachmentLogLine = ComposerAttachmentStore.shared.logLine(forCardID: agent.id.uuidString) {
-                print("\(attachmentLogLine)（随这一轮发给 \(agent.name)）")
+                let line = "\(attachmentLogLine)（随这一轮发给 \(agent.name)）"
+                print(line)
+                MainFlowDiagnostics.log(line)
             }
         }
 
