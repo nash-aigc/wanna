@@ -538,22 +538,10 @@ struct DirectionBoardTests {
         #expect(systemPrompt.contains("以当前这一句为准"))
         #expect(systemPrompt.contains("新开一个分支"))
 
-        // 请求里，用户的原话必须被标成「目标以这一段为准」。
-        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: "帮我把下载目录整理一下",
-            previousRoundItems: [],
-            previousTurnsText: """
-            <previous_turns>
-            【最近一次】他说的：北京在哪　你回的：北京在中国北部。
-            </previous_turns>
-            """)
-        // 新问题的标题（这一段是这一轮唯一要做的事）。
-        #expect(userPrompt.contains("<current_question>"))
-        #expect(userPrompt.contains("帮我把下载目录整理一下"))
-        // 前五轮那一段在，而且**排在新问题之前**（模型最后读到的才是这一轮的事）。
-        #expect(userPrompt.contains("previous_turns"))
-        #expect(userPrompt.range(of: "previous_turns")!.lowerBound
-                < userPrompt.range(of: "<current_question>")!.lowerBound)
+        // **用户消息里只有那一句问题**（2026-09-27 深夜改成机械分离：背景全在系统提示词里）——
+        // 模型对"这一轮要答什么"的判断读的就是用户消息，所以那里不能塞参考。
+        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(newQuestion: "帮我把下载目录整理一下")
+        #expect(userPrompt == "帮我把下载目录整理一下")
     }
 
     /// 用户 2026-09-27 的尺寸：**矛盾缩小两次 30%**、**需求再增加一点**、表格 **4 行**、参考 **3 行**。
@@ -631,12 +619,8 @@ struct DirectionBoardTests {
     /// 发给模型的是一段空问题，屏幕上表现为「我问他，他没回复」，而且**不报任何错**。
     /// 现在提示词那一节先是"重点只看这一段"，所以它空掉就等于这一轮没有内容可处理。
     @Test func theNewQuestionSectionIsNeverEmpty() throws {
-        let prompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: "北京在哪",
-            previousRoundItems: [])
-        #expect(prompt.contains("<current_question>\n北京在哪\n</current_question>"))
-        // 顺序：新问题在**最后一段**（模型最后读到的就是这一轮要做的事）。
-        #expect(prompt.contains("<current_question>\n北京在哪\n</current_question>"))
+        let prompt = DirectionBoardPrompt.understandingUserPrompt(newQuestion: "北京在哪")
+        #expect(prompt == "北京在哪")
     }
 
     /// **两张卡片分工不同**（用户 2026-09-27 深夜）：右上角那张图**统筹全部** ——
@@ -660,11 +644,10 @@ struct DirectionBoardTests {
         // 请求里要带上**他问过的每一件事**（整份清单）——
         // 这是这一版的关键：**输入完整，输出才可能完整**（前两版只给"前五轮"，
         // 却要模型写出"所有问题"的图，它手里没有全部信息，只能靠记性，于是每次都丢）。
-        let prompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: "行业 B 的第二个问题",
-            previousRoundItems: [],
-            spokenTranscript: ["行业 A 的第一件事", "行业 A 的第二件事", "行业 B 的第一个问题"])
-        #expect(prompt.contains("他到目前为止说过的**全部内容**"))
+        // 那份**完整转写**现在只在第一次调用（梳理）的用户消息里 —— 它的素材就是它。
+        let prompt = DirectionBoardPrompt.transcriptAnalysisUserPrompt(
+            transcript: "行业 A 的第一件事\n行业 A 的第二件事\n行业 B 的第一个问题")
+        #expect(prompt.contains("他到目前为止说过的全部内容"))
         #expect(prompt.contains("行业 A 的第一件事"))
         #expect(prompt.contains("行业 B 的第一个问题"))
     }
@@ -727,11 +710,9 @@ struct DirectionBoardTests {
         // **用户所有的问题都应该在图里面显示**」）。
         #expect(systemPrompt.contains("不限行数"))
         #expect(!systemPrompt.contains("最多 20 行"))
-        let prompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: "北京跟上海的关系是什么",
-            previousRoundItems: [],
-            spokenTranscript: ["赵今麦的信息", "屏幕里是什么软件", "北京跟上海的关系是什么"])
-        #expect(prompt.contains("他到目前为止说过的**全部内容**"))
+        let prompt = DirectionBoardPrompt.transcriptAnalysisUserPrompt(
+            transcript: "赵今麦的信息\n屏幕里是什么软件\n北京跟上海的关系是什么")
+        #expect(prompt.contains("他到目前为止说过的全部内容"))
         #expect(prompt.contains("北京跟上海的关系是什么"))
     }
 
@@ -741,21 +722,19 @@ struct DirectionBoardTests {
     /// 他追问时说得常常很短（「重新换行列出」），**全部信息都在上一条回复里** ——
     /// 拆两次调用时我把这一段摘掉了，就是那次回归。
     @Test func theAnswerCallCarriesThePreviousAnswers() throws {
-        let prompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: "重新换行列出",
-            previousRoundItems: [],
-            previousTurnsText: "<previous_turns>…</previous_turns>",
-            previousAnswers: """
+        let prompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
+            context: """
             <previous_answers>
             你刚才在右下角那张卡片上回过这几条（最近的在前）：
             【最近一次】杨幂拍过的电影有《…》《…》
             </previous_answers>
-            """)
+            """,
+            looksAtTheScreen: true)
         #expect(prompt.contains("previous_answers"))
         #expect(prompt.contains("杨幂拍过的电影"))
-        // 而且要在**新问题之前**（它是背景，新问题排最后）。
-        #expect(prompt.range(of: "previous_answers")!.lowerBound
-                < prompt.range(of: "<current_question>")!.lowerBound)
+        // 背景那一段明说"这是参考、只回答最后那条用户消息里的东西"。
+        #expect(prompt.contains("只让你回答**最后那条用户消息**里的事"))
         // 提示词里还要明说：追问就基于上一条改，**不许说"我看不到"**。
         let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
@@ -787,18 +766,21 @@ struct DirectionBoardTests {
     /// **请求里每一块都要有 tag**（用户 2026-09-27 深夜点名的做法：「用 tag……标签、书签这个
     /// 符号的形式来给它分开」）—— 模型据此**机械地**分清"哪段要答、哪段只是参考"。
     @Test func everyRequestBlockIsTagged() throws {
-        let prompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: "北京跟上海的关系",
-            previousRoundItems: [],
-            previousTurnsText: "<previous_turns>…</previous_turns>",
-            previousAnswers: "<previous_answers>…</previous_answers>",
-            referenceMaterials: "<reference_materials>…</reference_materials>")
-        for tag in ["<reference_materials>", "<previous_turns>", "<previous_answers>", "<current_question>"] {
-            #expect(prompt.contains(tag))
+        // **用户消息里只有那一句问题**（机械分离），背景全在系统提示词的 context 里、各自带 tag。
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
+            context: """
+            <reference_materials>…</reference_materials>
+            <previous_turns>…</previous_turns>
+            <previous_answers>…</previous_answers>
+            """,
+            looksAtTheScreen: true)
+        for tag in ["<reference_materials>", "<previous_turns>", "<previous_answers>"] {
+            #expect(systemPrompt.contains(tag))
         }
-        // 当前问题仍然是**最后一段**（它后面只有那段说明，没有别的参考块）。
-        #expect(prompt.range(of: "<current_question>")!.lowerBound
-                > prompt.range(of: "<previous_answers>")!.lowerBound)
-        #expect(prompt.contains("<current_question>\n北京跟上海的关系\n</current_question>"))
+        // 背景那一段的标题必须**明说它不是要回答的东西**。
+        #expect(systemPrompt.contains("不是要你回答的东西"))
+        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(newQuestion: "北京跟上海的关系")
+        #expect(userPrompt == "北京跟上海的关系")
     }
 }

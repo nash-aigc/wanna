@@ -84,7 +84,22 @@ nonisolated enum DirectionBoardPrompt {
     /// 写"AI 怎么理解"用的系统提示词 —— **只给方向清单，不给主 Agent 提示词**。
     ///
     /// 它**不执行任何事**：只输出固定四行，说明"这段话看起来要做哪一类事"。
+    /// - Parameter context: **全部背景**（屏幕参考材料 / 最近几轮的问答 / 上一轮那一列方向）。
+    ///
+    /// ⚠️ 2026-09-27 深夜：**背景从"用户消息"挪到了这里**（系统提示词）。
+    //
+    // 用户的判定与理由（这是他第四次说这件事了）：「右下角卡片**过度关注屏幕内容和之前的内容**。
+    // 每次提问都带着屏幕，应该把当前屏幕内容也当作一个**参考**，但**一定要 100% 重点关注用户最近的
+    // 问题**，以此问题为标准，判断跟之前的问题是否有关系，再思考应该回答什么内容。
+    // 如果没关系，就直接回答用户的问题。」
+    //
+    // 原来所有背景都拼在**用户消息**里、只靠一行标题说"这段是参考" ——
+    // 而模型对"用户这一轮说了什么"的判断，读的就是**用户消息**。把参考塞在那里，
+    // 等于每一轮都在用一个巨大的用户消息告诉它"这些都是你要回应的"。
+    // 现在**用户消息里只有那一句问题**，背景全在系统提示词里 —— 这是**机械的**分离，
+    // 不靠模型去读说明。
     static func understandingSystemPrompt(directions: [(id: String, keyword: String, detail: String)],
+                                          context: String? = nil,
                                           looksAtTheScreen: Bool = true) -> String {
         var lines: [String] = []
         for direction in directions {
@@ -186,14 +201,27 @@ nonisolated enum DirectionBoardPrompt {
         2. 只写上面要求的这几行，不要写解释、不要写操作步骤、不要写背景铺垫；
         3. 用中文写（他说英文就用英文）；
         4. 不要加任何别的标题、引号、Markdown 或代码块。
-        """ + (looksAtTheScreen ? """
+        """ + (context.map { contextText -> String in
+            let trimmed = contextText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return "" }
+            return """
+
+            ===== 以下是**背景参考**（不是要你回答的东西）=====
+            他只让你回答**最后那条用户消息**里的事；下面这些只在你判断"**有关系**"时才用，
+            没关系就**一个字都别提**。
+
+            \(trimmed)
+            """
+        } ?? "") + (looksAtTheScreen ? """
 
         \(labelLineInstruction)
 
-        ⚠️ 每一轮都带了**当下的屏幕截图**：请**看图**再回答 ——
-        「需求」「参考」「细节」都要基于你**真的看到的**内容写，
-        「答案」那一行更是必须看图算（比如这道题选哪个、这几个人是哪几个）。
-        **看不到就照实说**，不要编。
+        ⚠️ 每一轮都附带了**当下的屏幕截图**，但它是**参考**，不是问题本身（用户 2026-09-27：
+        「每次提问都带着屏幕，应该把当前屏幕内容也当作一个**参考**，但**一定要 100% 重点关注用户
+        最近的问题**，以此问题为标准」）。
+        · **只有当他在问屏幕上的东西时**（「这道题选哪个」「这个按钮在哪」「屏幕上是什么软件」）
+          才看图答；那种时候「看不到就照实说，不要编」；
+        · **其余问题一律不看图** —— 不要提屏幕上的任何东西（见 1.4 / 1.45）。
         """ : "")
     }
 
@@ -289,12 +317,18 @@ nonisolated enum DirectionBoardPrompt {
         · 只有他自己前后**真的冲突**才算；**信息不全不算** —— 不要问澄清类的问题
           （他明确说过那叫"墨迹"：「我问他北京在哪，他就问什么地方的北京」）。
 
-        **第三件：找出"可能被听错 / 拼错"的词，写进「拼写错误」。**
-        · ⚠️ **他是在用语音输入法说话**，所以这段文本里的英文单词、软件名、人名、专有名词
-          都可能是**识别听错**的产物 —— 想一想：**哪些词听起来像另一个词**？
-        · 尤其注意：**英文单词、代码/命令、软件名、品牌名**（这一类最容易错，而且错了最影响下游）；
-        · 每一条写清「听到的是 X，可能是 Y」，让他自己判断 ——
-          **不是让你去改他说的，也不要指出他"拼错了"**（他没错，是机器听的）。
+        **第三件：找出"**确实听错、而且影响理解**"的词，写进「拼写错误」。**
+        · ⚠️ 他在用**语音输入法**，所以人名、软件名、英文单词会被听错 —— 但**只报"确实错了"的**：
+          **看上下文判断**（用户 2026-09-27 深夜：「**应该根据上下文来判断哪些地方确实有错误**，
+          而不是针对**单个单词**去思考有哪些拼写方式。**如果上下文逻辑正确、没有歧义，就不必纠结**」）。
+        · **重点只有一类：软件名 / 品牌名 / 英文词 / 产品名**（错了会让下游整个跑偏）。
+          例如听到「硅基流动」但上下文在讲模型广场 —— 那要说；听到「赵今麦」而上下文通顺 —— **不要说**。
+        · **下面这些一律不要报**（他点名嫌吵的那几种）：
+          – 口语衔接词（「在这个」「有时」「然后」）听起来像别的口语词；
+          – 普通中文词的同音字（「有哪些」之类）；
+          – 光凭"这个名字也可能写作另一个名字"的猜测（「杨幂可能是杨颖」）—— 没有上下文证据就不算错；
+          – 断句/口误的位置（「屏幕右侧，左侧」这种）—— 那是他的说法，不是听错。
+        · 每一条写清「听到的是 X，上下文看着像 Y」；**没有就写「—」，宁可空着**。
 
         输出格式（**三行都必须写**，没有内容就写一个「—」，不要整行省略）：
 
@@ -315,98 +349,15 @@ nonisolated enum DirectionBoardPrompt {
         """
     }
 
-    static func understandingUserPrompt(newQuestion: String,
-                                        previousRoundItems: [DirectionBoardDisplayItem],
-                                        previousTurnsText: String? = nil,
-                                        previousAnswers: String? = nil,
-                                        spokenTranscript: [String] = [],
-                                        referenceMaterials: String? = nil,
-                                        previousQuestions: String? = nil) -> String {
+    static func understandingUserPrompt(newQuestion: String) -> String {
         var sections: [String] = []
-        // **参考材料**（屏幕 / 剪贴板 / 访达选中）—— 与主 Agent 那一轮读的是同一份。
-        //
-        // 为什么要给看板：用户 2026-09-27 的动机就是"网页太长，让它参考只能看到一部分；
-        // 选中复制之后它就能看到所有内容" —— 那条路的价值有一半在**右下角那张答案卡片**
-        //（他还在说话的时候就能看到总结），所以这一轮的请求必须也带上材料。
-        if let referenceMaterials {
-            let trimmed = referenceMaterials.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { sections.append(trimmed) }
-        }
-        if let previousQuestions {
-            let trimmed = previousQuestions.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { sections.append(trimmed) }
-        }
-        // **前面几轮（用户说的 + 你回的）—— 只是参考**（用户 2026-09-27：「把之前用户说的话
-        // 和 AI 回复的结果，取前五轮发给 AI 当作参考内容，让 AI 重点关注最近这一次」）。
-        //
-        // ⚠️ 它排在**新问题之前**、而且标题里就写明"参考"：这一轮要做的事只有一件 ——
-        // 处理下面那个新问题。之前几轮是用来判断"这件事是不是接着上一件在说"的。
-        if let previousTurnsText {
-            let trimmed = previousTurnsText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { sections.append(trimmed) }
-        }
-        // **你刚才在右下角那张卡片上回过的那几条**（原文，最近的在前）。
-        //
-        // ⚠️ 用户 2026-09-27 深夜：「我追问之前的问题，我发现他**无法知道我上一次回复了什么**，
-        // 这是不可以的。**上一次回复的结果必须追加到全新的调用里面**」。他追问时说的常常很短
-        //（「重新换行列出」「用英文再说一遍」），**全部信息都在上一条回复里** ——
-        // 所以这一段是"改写类追问"唯一的信息源，必须在。
-        if let previousAnswers {
-            let trimmed = previousAnswers.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { sections.append(trimmed) }
-        }
-        // ⚠️ **他说的全部内容，整份发下去**（用户 2026-09-27 深夜定的形状）：
-        // 「用户实时模式下他的录音是**连续的**……所以说你是有一个**完整的**……**都是所有用户问题
-        // 的一个文件的**。那么你**让 AI 根据这个文件来提炼出所有的问题**，然后整理出脑图不就行了吗？」
-        //
-        // 这一版之前错在**给模型的信息不全**：请求里只有"前五轮"，却要它写"到目前为止所有问题"
-        // 的图 —— 它手里没有全部信息，只能靠"记住上一张图"，于是每次都丢几块。
-        // 现在把这份**完整文本**给它，**提炼交给 AI**（代码只负责攒文本与切"最新那一问"）。
-        if !spokenTranscript.isEmpty {
-            sections.append("""
-            【他到目前为止说过的**全部内容**（连续的实时转写，按时间顺序）】
-            \(spokenTranscript.joined(separator: "\n"))
-            """)
-        }
-
-        // ⚠️ **这一段是重点，标签要明说**（用户 2026-09-27：「虽然都是一次性发给 AI，但**在打标签上、
-        // 在关注重点上，要告诉 AI 应该怎么去关注**」）。屏幕 / 剪贴板 / 访达那些材料排在它前面、
-        // 标成"参考"；用户自己的话单独标成"**目标以这一段为准**" —— 因为「**用户的提示词才是目标**，
-        // 屏幕上的内容是参考部分」。
-        if !previousRoundItems.isEmpty {
-            let lines = previousRoundItems.map { item in
-                let mark: String
-                switch item.state {
-                case .confirmed: mark = "（用户已确认是对的）"
-                case .denied: mark = "（用户已否认）"
-                case .pending: mark = ""
-                }
-                return "\(item.number). \(item.keyword)\(mark)"
-            }
-            sections.append("""
-            上一轮你在看板上显示的是这几条（**编号是上一轮的**）：
-            \(lines.joined(separator: "\n"))
-
-            如果用户这一轮在评论这些方向（「第几个对 / 第几个不对 / 取消第几个」），
-            请按**上面这套编号**理解，并写在「选择：」那一行里。
-            """)
-        }
-
+        // ⚠️ **这里刻意什么都没有**（2026-09-27 深夜）。
+        // 参考材料 / 前面几轮 / 上一轮那一列方向 —— 全部搬去了**系统提示词**（`context:`），
+        // 用户消息里只剩下面那一句问题。理由见 `understandingSystemPrompt` 的注释。
         // **新问题排在整段请求的最后**（用户 2026-09-27：「让 AI **重点关注最近这一次**」）——
         // 模型最后读到的就是这一轮要做的那件事，上面全是背景。
-        // **打上标签**（用户 2026-09-27 深夜点名的做法：「你提的词是用**提示**写的吗？
-        // ……用 **tag**，标签、书签这个符号的形式来给它分开」）——
-        // 上面每一块都是 `<xxx>` 包着的，当前问题也包一个：模型于是能**机械地**分清
-        // "哪一段是这一轮要做的事、哪几段是参考"，不必靠读说明去猜。
-        sections.append("""
-        <current_question>
-        \(newQuestion)
-        </current_question>
-
-        ⚠️ **只有 `<current_question>` 里的是要你回答的**；其余各段（`<reference_materials>` /
-        `<previous_turns>` / `<previous_answers>`）**全是参考**。
-        如果当前问题跟那些参考**没有关系**，就**按 1.4/1.45 只答它、一个字都不提参考内容**。
-        """)
+        // **用户消息里只有这一句问题** —— 模型对这一轮的判断读的就是它。
+        sections.append(newQuestion)
 
         return sections.joined(separator: "\n\n")
     }

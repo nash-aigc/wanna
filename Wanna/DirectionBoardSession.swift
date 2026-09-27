@@ -1059,7 +1059,37 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    /// 第二次调用的流式：**只往右下角那张卡片写**（那三行归第一次调用，别混）。
+    /// **第二次调用的背景**（全部进系统提示词）：参考材料 + 最近几轮 + 上一轮那一列方向。
+    ///
+    /// 顺序按"离得越近越靠后"排：参考材料 → 之前几轮的问答 → 上一轮王看板上那一列（它最具体，
+    /// 用户可能正在评论它）。
+    private func answerContextBlocks() -> String {
+        var blocks: [String] = []
+        if let materials = TurnReferenceCollector.shared.promptBlock() { blocks.append(materials) }
+        if let turns = previousTurnsPromptBlock() { blocks.append(turns) }
+        if let answers = previousCornerAnswersPromptBlock() { blocks.append(answers) }
+        if !previousRoundItems.isEmpty {
+            let lines = previousRoundItems.map { item -> String in
+                let mark: String
+                switch item.state {
+                case .confirmed: mark = "（用户已确认是对的）"
+                case .denied: mark = "（用户已否认）"
+                case .pending: mark = ""
+                }
+                return "\(item.number). \(item.keyword)\(mark)"
+            }
+            blocks.append("""
+            【上一轮你在看板上显示的是这几条（编号是上一轮的）】
+            \(lines.joined(separator: "\n"))
+
+            如果他这一轮在评论这些方向（「第几个对 / 第几个不对 / 取消第几个」），
+            按上面这套编号理解，写在「选择：」那一行里。
+            """)
+        }
+        return blocks.joined(separator: "\n\n")
+    }
+
+    /// 第二次调用的流式：**只往右下角那张卡片写**    /// 第二次调用的流式：**只往右下角那张卡片写**（那三行归第一次调用，别混）。
     private func applyStreamingAnswer(_ partial: String) {
         guard let answer = DirectionBoardPrompt.parseAnswer(partial), answer != streamingAnswerText else { return }
         streamingAnswerText = answer
@@ -1075,18 +1105,11 @@ final class DirectionBoardSession: ObservableObject {
     private func answerWithModel(newQuestion: String,
                                  directions: [(id: String, keyword: String, detail: String)],
                                  screenshots: [(data: Data, label: String)]) async -> String? {
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions)
-        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: newQuestion,
-            previousRoundItems: previousRoundItems,
-            previousTurnsText: previousTurnsPromptBlock(),
-            // ⚠️ **「你刚才回过的那几条」必须带上**（用户 2026-09-27 深夜报的：
-            // 「我追问之前的问题，我发现他**无法知道我上一次回复了什么**，这是不可以的。
-            // **上一次回复的结果必须追加到全新的调用里面**。我说的是**右下角这部分**」）。
-            // 拆两次调用的时候我把这一段从请求里摘掉了 —— 而它正是"追问/让它改写"唯一的信息源。
-            previousAnswers: previousCornerAnswersPromptBlock(),
-            referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
-            previousQuestions: nil)
+        // **背景全部进系统提示词**，用户消息里只留那一句问题（见 `understandingSystemPrompt`）。
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: directions,
+            context: answerContextBlocks())
+        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(newQuestion: newQuestion)
         do {
             let (text, _) = try await visionChatAPI.analyzeImageStreaming(
                 images: screenshots,
