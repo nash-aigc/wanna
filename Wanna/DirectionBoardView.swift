@@ -94,7 +94,7 @@ struct DirectionBoardView: View {
         // **折叠之后整张卡片就只剩那个按钮**（用户：「折叠后……变成一个折叠按钮」）——
         // 所以宽度也跟着收，不然屏幕上会留一条 680 宽的空条。
         .frame(width: session.isCollapsed
-               ? Self.collapseBarWidth + Self.horizontalPadding * 2
+               ? Self.collapseHalfWidth * 2 + Self.horizontalPadding * 2
                : Self.cardWidth(forMultiplier: widthMultiplier),
                alignment: .leading)
         .background(AnswerCardView.cardBackground(theme: theme))
@@ -124,50 +124,52 @@ struct DirectionBoardView: View {
         return AnswerCardView.cardBorderWidth
     }
 
-    /// **折叠态**：整张卡片只剩那条折叠条（高度＝输入框高度）。
+    /// **折叠态**：整张卡片只剩那个折叠钮。
     private var collapsedCard: some View {
-        collapseBar
+        collapseToggle
     }
 
-    /// **折叠条**：竖着一条，**上方 60% 是折叠/展开按钮**，下方 40% 是空白（没功能，留给拖动）。
+    /// **折叠钮**（横向）：在「复制」左边，**左半是折叠/展开按钮，右半是空白**。
     ///
-    /// 用户 2026-09-27 的原话：「将折叠钮放在输入框左侧，上下显示，按钮为长条。上方占 60% 的部分是
-    /// 折叠按钮，点击即折叠；折叠后下方 40% 区域为空白区域，点击无效果。目的是折叠后整体高度等于
-    /// 输入框高度，变成一个折叠按钮，上方可点击折叠/展开，下方无功能，可供鼠标拖动。」
-    private var collapseBar: some View {
-        VStack(spacing: 0) {
+    /// 用户 2026-09-27：「输入框左侧这个折叠的东西，你就把它显示到**复制的按钮左侧**吧，
+    /// 然后把它**横向**显示。横向显示就是说这个按钮的**左边左半部分点击一下折叠，右半部分不会被点击**，
+    /// 然后可以**按住它的时候拖动**。你把这个区域给我**用颜色区分开**。」
+    ///
+    /// 所以两半的底色**刻意不一样**（左半亮一点、右半几乎透明）—— 他要一眼看出"哪半边能点"。
+    /// 右半不留任何手势，于是按住它就是按住这张卡片（拖动的监听在面板那一侧）。
+    private var collapseToggle: some View {
+        HStack(spacing: 0) {
             Button {
                 session.isCollapsed.toggle()
             } label: {
-                Image(systemName: session.isCollapsed ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(session.isCollapsed ? DS.Colors.success : theme.textColor.opacity(0.6))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Image(systemName: session.isCollapsed ? "chevron.right" : "chevron.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(session.isCollapsed ? DS.Colors.success : theme.textColor.opacity(0.75))
+                    .frame(width: Self.collapseHalfWidth, height: Self.cancelRowHeight)
+                    .background(Self.collapseClickableColor)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .frame(height: Self.collapseBarHeight * 0.6)
-            .help(session.isCollapsed ? "展开看板" : "把看板折叠成这一条")
+            .help(session.isCollapsed ? "展开看板" : "把看板折叠起来")
 
-            // 下方 40%：**故意不给功能**（点了什么都不发生）—— 它是留给鼠标拖动的地方。
-            Color.clear.frame(height: Self.collapseBarHeight * 0.4)
+            // 右半：**故意不给功能** —— 它是留给鼠标按住拖动的地方（底色也刻意不同）。
+            Color.clear
+                .frame(width: Self.collapseHalfWidth, height: Self.cancelRowHeight)
+                .background(Self.collapseDragColor)
         }
-        .frame(width: Self.collapseBarWidth, height: Self.collapseBarHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(theme.textColor.opacity(0.06))
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(session.isCollapsed ? DS.Colors.success.opacity(0.6)
-                                                  : theme.textColor.opacity(0.14),
+                                                  : theme.textColor.opacity(0.16),
                               lineWidth: 1)
         )
     }
 
-    /// 折叠条的宽度与高度（高度原来借的是输入框那三行的高度；输入框删掉之后它自己带）。
-    private static let collapseBarWidth: CGFloat = 20
-    private static let collapseBarHeight: CGFloat = 66
+    private static let collapseHalfWidth: CGFloat = 26
+    /// 左半（能点）与右半（只能拖）的底色 —— 他要"用颜色区分开"。
+    private static let collapseClickableColor = Color.white.opacity(0.13)
+    private static let collapseDragColor = Color.white.opacity(0.03)
 
     private var expandedCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -187,8 +189,9 @@ struct DirectionBoardView: View {
             }
             // 第三段：理解（**固定四行**，见 `understoodRow`）。
             understandingArea
-            // 第四段：只剩左边那条**折叠条**（输入框按用户要求删掉了）。
-            collapseBar
+            // （第四段原来在这里：那个"补充说明"输入框，已按用户要求删掉。
+            //   左侧那条竖折叠条也一起挪走了 —— 用户 2026-09-27：「这个输入框左侧这个折叠的东西，
+            //   你就把它显示到复制的按钮左侧吧，然后把它横向显示」。见 `collapseToggle`。）
             // 最下面一行：**取消看板**的三档（用户 2026-09-27：「把最下面这一行分成三列：
             // 第一列叫「取消本次」……第二列叫「取消十分钟」……第三列叫「取消今日」」）。
             cancelRow
@@ -402,18 +405,32 @@ struct DirectionBoardView: View {
             // 叫复制按钮……它的右侧还有一个按钮，叫复制并退出」）——
             // 刻意用中性色并与那三档之间隔一条线：它们是"把结果拿走"，不是"把这一轮丢掉"，
             // 混成暗红会让人以为按了会丢东西。
-            actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
-                         help: "把右下角那张卡片里 AI 回复的内容复制下来") {
-                session.copyReplyAction?()
+            // **折叠钮在「复制」左边**（用户 2026-09-27 指定的位置）。
+            collapseToggle
+            Spacer().frame(width: 6)
+
+            // **两个复制按钮是"一整块"**（用户 2026-09-27：「你让他们的两个按钮合并成一个，
+            // 就是**样式上合并成一个**，然后**中间有条细线**，就跟右侧是一样的」）——
+            // 与右边那三档完全同一种做法：一个圆角底 + 里面一条**纯白细线**，
+            // 而不是两个各自带底色的圆角块中间夹一条线（那是上一版，他说没改对）。
+            HStack(spacing: 0) {
+                actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
+                             help: "把右下角那张卡片里 AI 回复的内容复制下来") {
+                    session.copyReplyAction?()
+                }
+                Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1.5, height: 20)
+                actionButton(title: "复制并退出", icon: "doc.on.doc.fill", width: Self.copyAndExitButtonWidth,
+                             help: "复制这段回复，然后退出这一轮（与按 ESC 同效）") {
+                    session.copyReplyAndExitAction?()
+                }
             }
-            // **两个按钮之间是一条纯白分割线**（用户 2026-09-27：「"复制"与"复制并退出"按钮中间
-            // 应为一条白线，与右侧完全一致，目前中间不是非常白的实线」）——用的是右边那三档
-            // 同一条 `cancelRowDividerColor`（纯白），宽度与它一样。
-            Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1.5, height: 20)
-            actionButton(title: "复制并退出", icon: "doc.on.doc.fill", width: Self.copyAndExitButtonWidth,
-                         help: "复制这段回复，然后退出这一轮（与按 ESC 同效）") {
-                session.copyReplyAndExitAction?()
-            }
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Self.actionButtonColor)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .opacity(session.hasCopyableReply ? 1 : 0.45)
+
             // 中性按钮与三档取消之间隔一条**空白**（不是分割线）：底色的分界本身就把它们分开了。
             Spacer().frame(width: 8)
 
@@ -470,10 +487,6 @@ struct DirectionBoardView: View {
             // **绿色**（用户 2026-09-27：「它的字体、背景颜色是绿色」，与右侧那套极简风格一致）。
             .foregroundStyle(DS.Colors.success)
             .frame(width: width, height: Self.cancelRowHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Self.actionButtonColor)
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
