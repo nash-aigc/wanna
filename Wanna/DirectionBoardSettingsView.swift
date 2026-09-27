@@ -163,6 +163,24 @@ struct DirectionBoardSettingsSection: View {
             }
         }
 
+        SettingsGroupLabel("回车那套")
+        SettingsCard {
+            SettingsRow(
+                label: "粘贴的快捷键",
+                description: "看板显示着的时候：按这个键 = 把**右下角那段回复粘到你光标的位置**（覆盖掉选中的东西），然后这一轮结束；另一个键 = **把当前任务发给主 Agent 去执行**。默认是 Enter 粘贴。"
+            ) {
+                SettingsSegmentedPicker(
+                    selection: generalSettingsViewModel.binding(\.boardPasteShortcut),
+                    options: [
+                        SettingsPickerOption(label: "Enter", value: ComposerSendShortcut.returnKey),
+                        SettingsPickerOption(label: "Command + Enter", value: ComposerSendShortcut.commandReturn),
+                    ])
+            }
+        }
+        SettingsNote(
+            text: "看板一显示，这两个键**不用点卡片**就生效 —— 它显示的那几秒里回车被它接走，这正是你要的「直接显示之后就自动识别」。"
+        )
+
         SettingsGroupLabel("参考材料（说这些词就带上）")
         SettingsCard {
             SettingsTextEditorRow(

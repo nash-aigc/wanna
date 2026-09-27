@@ -687,6 +687,19 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 （那条链上唯一没有记录的环节）。**未复现**（本机没有可用语音输入），所以这是"符合证据的候选"
 而不是已证的根因。
 
+**第八版七补（2026-09-27 深夜）：回车那套 = Enter 粘贴 / Cmd+Enter 执行，且不用点卡片。**
+用户：「在设置页面让用户可以自己设置 Enter 或者是 Command + Enter，**现在默认顺序为 Enter**，
+自动将右下角回复的结果**粘贴进光标的位置上**。如果用户输入 Command + Enter，就自动**执行当前任务**。
+然后把跟右上角卡片的交互去掉，**直接显示之后就自动识别这两个快捷键**」。设置项复用
+`ComposerSendShortcut`（新字段 `boardPasteShortcut`，默认 `.returnKey` = Enter 粘贴）。**"不用点卡片"
+这一条花了三次才落地，每次都是量出来的**：① 本地键盘监听收不到 —— 卡片是 `.nonactivatingPanel`，
+`isKeyWindow` 可以是 true，**但系统只把键盘事件送给"当前激活的 App"**，而 Wanna 从不激活；
+② `becomesKeyOnlyIfNeeded = true` 让没有输入框的卡片**永远成不了 key**（改成 false 之后日志才显示
+`isKeyWindow=true`）；③ 真正打通的是**一条会吞事件的 CGEvent tap**（`.cgSessionEventTap` + `.defaultTap`），
+只在卡片显示时装上、收起拆掉 —— 它**吞掉回车**，所以**卡片显示期间回车不进别的 App**（他明确要这个：
+「即便覆盖就覆盖」），代价已写明；`tapDisabledByTimeout` 必须自己重开 tap，否则静默失效。
+本地监听保留作兜底，与全局拦截共用同一个 `performReturnKeyAction`。
+
 **第七版三补（2026-09-27 深夜）：ESC 之后右下角那张卡片不退（我引入的回归，已修）。**
 他按住快捷键提问（右下角出现答案预览）→ 按 ESC 退出 → **卡片没退、一直跟着鼠标**。根因是上一版把"收预览"
 从提交那一刻挪走（挪到"真答案的第一个字"）却没给其余出口补上，而 ESC 打断走的

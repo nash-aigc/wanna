@@ -124,6 +124,86 @@ final class DirectionBoardPanelController {
 
     // MARK: - 拖动（用户 2026-09-27：「看板可以通过拖动上面的文字部分或其他部分来移动位置」）
 
+    // MARK: - 全局按键拦截（回车 / Command + 回车）
+
+    /// **为什么必须"拦截"而不是"监听"**（2026-09-27 实测）：卡片是 `.nonactivatingPanel`，
+    /// 它可以是 key（`isKeyWindow=true` 量到了），**但系统只把键盘事件送给"当前激活的那个 App"** ——
+    /// Wanna 从不成为激活 App，所以回车根本到不了我们手里（本地监听一个事件都收不到）。
+    ///
+    /// 所以要用一条**会吞事件的** CGEvent tap（`options: .defaultTap`），只在卡片显示的那几秒装上、
+    /// 收起就拆。代价说清楚：**卡片显示期间，回车不进别的 App**（用户 2026-09-27 明确要这个：
+    /// 「把跟右上角卡片的交互去掉，直接显示之后就自动识别这两个快捷键」「即便覆盖就覆盖」）。
+    private var boardKeyTap: CFMachPort?
+    private var boardKeyTapSource: CFRunLoopSource?
+
+    private func installConsumingKeyTap() {
+        guard boardKeyTap == nil else { return }
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let controller = Unmanaged<DirectionBoardPanelController>.fromOpaque(refcon)
+                .takeUnretainedValue()
+            return controller.handleBoardKeyTap(type: type, event: event)
+        }
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap,
+                                          place: .headInsertEventTap,
+                                          options: .defaultTap,
+                                          eventsOfInterest: mask,
+                                          callback: callback,
+                                          userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
+            MainFlowDiagnostics.log("⌨️ 看板：全局按键拦截装不上（辅助功能权限？）—— 回车那套只能靠点了卡片那条路")
+            return
+        }
+        boardKeyTap = tap
+        MainFlowDiagnostics.log("⌨️ 看板：全局按键拦截已装上（回车归它；收起时拆掉）")
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        boardKeyTapSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    private func removeConsumingKeyTap() {
+        if let boardKeyTap {
+            CGEvent.tapEnable(tap: boardKeyTap, enable: false)
+            CFMachPortInvalidate(boardKeyTap)
+        }
+        if let boardKeyTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), boardKeyTapSource, .commonModes)
+        }
+        boardKeyTap = nil
+        boardKeyTapSource = nil
+    }
+
+    private nonisolated func handleBoardKeyTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // 看门狗：系统会因为回调太慢把 tap 关掉 —— 不重新打开，它就**静默失效**了。
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            MainActor.assumeIsolated {
+                if let boardKeyTap { CGEvent.tapEnable(tap: boardKeyTap, enable: true) }
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        guard keyCode == 36 else { return Unmanaged.passUnretained(event) }   // 36 = Return
+        let isCommand = event.flags.contains(.maskCommand)
+        MainActor.assumeIsolated {
+            MainFlowDiagnostics.log("⌨️ 看板：拦截到回车（command=\(isCommand)，卡片可见=\(isVisible)）")
+            guard isVisible else { return }
+            performReturnKeyAction(isCommand: isCommand)
+        }
+        return nil   // **吞掉**：卡片显示期间回车归它
+    }
+
+    /// 回车到底做哪件事（粘贴 / 执行）—— 本地监听与全局拦截**共用这一处判断**。
+    private func performReturnKeyAction(isCommand: Bool) {
+        let pasteShortcut = AppSettingsStore.snapshot().boardPasteShortcut
+        let wantsPaste = (pasteShortcut == .returnKey) ? !isCommand : isCommand
+        if wantsPaste {
+            directionBoardPasteAndExit?()
+        } else {
+            directionBoardCopyAndSend?()
+        }
+    }
+
     private var dragMonitors: [Any] = []
     private var keyMonitors: [Any] = []
     /// 回车 = 执行（由 `CompanionManager` 注入）。
@@ -154,21 +234,13 @@ final class DirectionBoardPanelController {
     private func installKeyMonitors() {
         guard keyMonitors.isEmpty else { return }
         let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self, let panel = self.panel, panel.isKeyWindow else { return event }
+            guard let self, let panel = self.panel, panel.isVisible else { return event }
             guard event.keyCode == 36 else { return event }   // 36 = Return
+            _ = panel.isKeyWindow
             // 换行留给输入框自己（用户：「可以让用户通过 Shift + Enter 换行」）。
             if event.modifierFlags.contains(.shift) { return event }
-            let isEditingText = panel.firstResponder is NSTextView
-            if event.modifierFlags.contains(.command) {
-                if isEditingText {
-                    self.directionBoardCopyAndSend?()   // 输入框里 Cmd+Enter = 执行
-                } else {
-                    self.directionBoardPasteAndExit?()  // 光标不在输入框 = 粘贴
-                }
-            } else {
-                self.directionBoardCopyAndSend?()       // 光按回车 = 执行
-            }
-            // **吞掉**：回车在这张卡片上是"执行/粘贴"，不是换行。
+            // 与全局拦截**共用同一处判断**（见 `performReturnKeyAction`）。
+            self.performReturnKeyAction(isCommand: event.modifierFlags.contains(.command))
             return nil
         }
         keyMonitors = [monitor].compactMap { $0 }
@@ -254,14 +326,27 @@ final class DirectionBoardPanelController {
         panel.orderFrontRegardless()
         installDragMonitors()
         installKeyMonitors()
+        installConsumingKeyTap()
+        // **不用点卡片**（用户 2026-09-27：「把跟右上角卡片的交互去掉，**直接显示之后就自动识别
+        // 这两个快捷键**」）。两道一起上：
+        // ① 让它成为 key（`becomesKeyOnlyIfNeeded` 必须是 false，否则它永远成不了 key）；
+        // ② **真正的通路是那条会吞事件的全局 tap**（见 `installConsumingKeyTap`）——
+        //    因为系统只把键盘事件送给"当前激活的 App"，而 Wanna 从不激活。
+        panel.makeKey()
+        // 诊断：`makeKey()` 到底成没成（一次实测：卡片在屏幕上、回车却没人接 —— 就是这一下没成）。
+        MainFlowDiagnostics.log("⌨️ 看板：显示时尝试成为 key → isKeyWindow=\(panel.isKeyWindow)"
+                                + "（becomesKeyOnlyIfNeeded=\(panel.becomesKeyOnlyIfNeeded)）")
         repositionForCurrentSize()
     }
 
     private func hide() {
         guard isVisible else { return }
         isVisible = false
+        // 收起时把键盘还回去（不然他之后在别的 App 里打字会先被这张已经不显示的卡片接走）。
+        panel?.resignKey()
         removeDragMonitors()
         removeKeyMonitors()
+        removeConsumingKeyTap()
         sizeObserver = nil
         panel?.orderOut(nil)
         panel = nil
@@ -323,7 +408,11 @@ final class DirectionBoardPanelController {
         panel.level = NotchSupport.notchPanelWindowLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         // 只有真需要键盘（点输入框）时才成为 key —— 平时绝不抢用户正在用的那个 App。
-        panel.becomesKeyOnlyIfNeeded = true
+        // ⚠️ **必须 false**（用户 2026-09-27 那条"不用点卡片就认回车"）：`true` 的意思是
+        // "只有某个子视图真的需要键盘输入时才成为 key"，而这张卡片上的输入框已经删掉了 ——
+        // 于是 AppKit **永远不让它成为 key**，`makeKey()` 静默失败、本地键盘监听一个事件都收不到
+        //（实测：卡片在屏幕上，按回车毫无反应）。
+        panel.becomesKeyOnlyIfNeeded = false
         // 他点了输入框（面板成为 key）也算"正在跟他打交道"。
         panel.onBecameKey = { [weak self] in self?.noteUserInteraction() }
 

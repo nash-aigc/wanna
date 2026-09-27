@@ -1350,6 +1350,14 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 而"屏幕词 / 剪贴板词"本来就是同一件事 —— 两份清单必然漂。
     var notionScreenKeywords: String = AppSettings.defaultNotionScreenKeywords
 
+    /// **看板上哪个键用来"粘贴"**（另一个键就是"执行"）。用户 2026-09-27：
+    /// 「在设置页面让用户可以自己设置 Enter 或者是 Command + Enter，**现在默认顺序为 Enter**，
+    /// 自动将右下角回复的结果粘贴进光标的位置上。如果用户输入 Command + Enter，就自动执行当前任务」。
+    ///
+    /// 复用的是对话输入框那个同形状的选择（`ComposerSendShortcut`：按 Enter / 按 Command + Enter）——
+    /// 概念就是同一个"哪个键做什么"，没有理由再造一个。默认 `.returnKey` = **Enter 粘贴**。
+    var boardPasteShortcut: ComposerSendShortcut = .returnKey
+
     /// **「选中文件 / 选中文件夹」那一组**（只看主 Agent 那条路用）。
     ///
     /// 说到这些词 → 去访达取当前选中的**绝对路径**（只给路径、不给内容）。用户 2026-09-27 拍板
@@ -1737,6 +1745,7 @@ nonisolated extension AppSettings {
         case notionClipboardKeywords
         case notionScreenKeywords
         case selectedItemKeywords
+        case boardPasteShortcut
         case recordingAutoReconnects
         case recordingRotationMinutes
         case recordingCopiesToClipboard
@@ -1929,6 +1938,9 @@ nonisolated extension AppSettings {
         }
         notionScreenKeywords = try container.decodeIfPresent(String.self, forKey: .notionScreenKeywords) ?? defaults.notionScreenKeywords
         selectedItemKeywords = try container.decodeIfPresent(String.self, forKey: .selectedItemKeywords) ?? defaults.selectedItemKeywords
+        boardPasteShortcut = try container.decodeIfPresent(ComposerSendShortcut.self,
+                                                          forKey: .boardPasteShortcut)
+            ?? defaults.boardPasteShortcut
         recordingAutoReconnects = try container.decodeIfPresent(Bool.self, forKey: .recordingAutoReconnects) ?? defaults.recordingAutoReconnects
         recordingRotationMinutes = try container.decodeIfPresent(Int.self, forKey: .recordingRotationMinutes) ?? defaults.recordingRotationMinutes
         recordingCopiesToClipboard = try container.decodeIfPresent(Bool.self, forKey: .recordingCopiesToClipboard) ?? defaults.recordingCopiesToClipboard

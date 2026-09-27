@@ -621,7 +621,11 @@ final class CompanionManager: ObservableObject {
     /// 所以"最前面的 App"仍然是他原来那个 —— 这一下正好粘在他的光标处，不会粘回我们自己。
     private func pasteLiveReplyAtCursorThenExit() {
         let text = conversationBubbleTextForCopying().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else {
+            // 静默的早退还是一次"按了没反应" —— 留一行，否则下次又要靠猜。
+            MainFlowDiagnostics.log("⌨️ 看板：按了粘贴键，但右下角那张卡片此刻是空的（没有可粘贴的内容）")
+            return
+        }
         let didPaste = MacosUseController.pasteKeepingClipboard(text)
         print("⏎ 看板：Cmd+Enter → 把那段回复粘到光标处（\(text.count) 字，粘贴\(didPaste ? "已发出" : "失败")）")
         handleEscapeKeyPressed()
