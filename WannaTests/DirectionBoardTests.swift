@@ -601,7 +601,7 @@ struct DirectionBoardTests {
         let anchor = CGPoint(x: 900, y: 500)
         let size = CGSize(width: NotchSupport.directionBoardBarWidth + NotchSupport.directionBoardMapWidth,
                           height: NotchSupport.directionBoardBarHeight)
-        let frame = NotchSupport.directionBoardPanelFrame(anchor: anchor, size: size, on: screen,
+        let frame = NotchSupport.directionBoardPanelFrame(anchor: anchor, size: size,
                                                           topEdgeOffsetAboveAnchor:
                                                             NotchSupport.directionBoardExpandedTopOffset)
         // 横杠的下沿正好在鼠标上方 30pt（AppKit：+y 向上），于是它**整个在鼠标上方**。
@@ -614,6 +614,19 @@ struct DirectionBoardTests {
         #expect(mapLeft > answerCardRightEdge)
         // 横向：顶边那个偏移不动 x，只动 y。
         #expect(abs(frame.minX - (anchor.x + 12)) < 0.5)
+        // **贴到屏幕边也不许夹**（用户 2026-09-28：「右上角那个卡片……撞到边缘之后就不移动了，
+        // 我希望它是一个**能够到屏幕外边**的」）—— 右下角那张回复卡从来不夹（它就是 鼠标 + 偏移），
+        // 所以看板这边也必须只做算术，否则鼠标到边之后**只有一张卡还在动**，相对位置就散了。
+        for edgeAnchor in [CGPoint(x: 5, y: 5),
+                           CGPoint(x: screen.frame.maxX - 5, y: screen.frame.maxY - 5),
+                           CGPoint(x: screen.frame.maxX - 5, y: 5)] {
+            let edgeFrame = NotchSupport.directionBoardPanelFrame(
+                anchor: edgeAnchor, size: size,
+                topEdgeOffsetAboveAnchor: NotchSupport.directionBoardExpandedTopOffset)
+            #expect(abs(edgeFrame.minX - (edgeAnchor.x + 12)) < 0.5)
+            #expect(abs(edgeFrame.maxY - (edgeAnchor.y + NotchSupport.directionBoardExpandedTopOffset)) < 0.5)
+        }
+
         // 高度上限 = 菜单栏以下那块高度的 70%（与右下角回复卡同一条规矩）。
         let expectedCap = (screen.frame.height - NotchSupport.menuBarHeight(on: screen)) * 0.7
         #expect(abs(NotchSupport.directionBoardMapMaximumHeight(on: screen) - expectedCap) < 0.5)

@@ -465,17 +465,17 @@ final class DirectionBoardPanelController {
         // 2026-09-28 用户改的口径：「它是跟随鼠标移动的效果才对……就跟右下角的卡片是一样」。
         //（9-27 那版是"显示那一刻锚一次"，为的是点折叠钮时别漂；而按钮行现在已经整行注释掉了，
         //  那个顾虑随之消失。）
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) })
-                ?? NSScreen.main else { return }
         // **7 字形**：顶边钉在鼠标上方（横杠高 + 30），整块向下长 —— 横杠在鼠标上方、
         // 那条竖条一直往下超过鼠标；折叠态只剩一颗小按钮，顶边离鼠标 12pt 就够。
         //（判据读会话当前状态，所以折叠/展开各摆各的，切换时自动跟着变。）
+        //
+        // ⚠️ 这里**不再需要屏幕**：位置就是"鼠标 + 固定偏移"，不夹、不避让（见 `NotchSupport`
+        // 那个函数的注释）—— 那是"和右下角那张卡永远保持同一个相对位置"的前提。
         let topOffset = DirectionBoardSession.shared.isCollapsed
             ? NotchSupport.directionBoardCollapsedTopOffset
             : NotchSupport.directionBoardExpandedTopOffset
         let frame = NotchSupport.directionBoardPanelFrame(anchor: anchorPoint,
                                                           size: panel.frame.size,
-                                                          on: screen,
                                                           topEdgeOffsetAboveAnchor: topOffset)
         guard frame != lastPlacedFrame else { return }
         lastPlacedFrame = frame

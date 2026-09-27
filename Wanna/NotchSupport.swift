@@ -789,28 +789,28 @@ nonisolated enum NotchSupport {
     /// - Parameters:
     ///   - anchor: 鼠标位置（AppKit 全局坐标，与 `NSPanel.setFrame` 同一个空间）。
     ///   - size: 内容量出来的尺寸（面板紧贴内容 —— 不能留透明边，否则点击会落在空处）。
+    /// 看板面板的位置：**鼠标 + 一个固定偏移**（横向 +12、纵向"横杠下沿在鼠标上方 30"）。
+    ///
+    /// ⚠️ **这里刻意什么都不夹**（用户 2026-09-28：「你当前右上角那个卡片，它是**不能显示到屏幕外边**的，
+    /// 它撞到边缘之后就不移动了，我希望它是一个能够到屏幕外边的」）。
+    ///
+    /// 理由是他要的"两张卡同步"：右下角那张回复卡画在覆盖层里，偏移就是 `鼠标 + (12, 32)`，
+    /// **从来没有夹过** —— 所以它能跟着鼠标出屏。看板这边原来有两处会**改变相对位置**的修正：
+    /// ① `min/max` 把整块夹进 `visibleFrame`；② 撞到刘海那条带子时整体下移。两处都会让"鼠标到边"
+    /// 之后**只有一张卡还在动**，相对位置就散了 —— 而他明确要的是「任何时候它们的相对位置都是固定的，
+    /// 用户看起来就会非常舒服，因为它们是同步移动的」。
+    ///
+    /// 于是这个函数现在**只有算术，没有屏幕** —— 出屏是允许的（AppKit 也不拦窗口停在屏幕外）。
     nonisolated static func directionBoardPanelFrame(anchor: CGPoint,
                                                      size: CGSize,
-                                                     on screen: NSScreen,
                                                      topEdgeOffsetAboveAnchor: CGFloat,
-                                                     gap: CGFloat = 12,
-                                                     margin: CGFloat = 8) -> CGRect {
-        let visible = screen.visibleFrame
-        var originX = anchor.x + gap
-        // **顶边**（AppKit：+y 向上）钉在鼠标上方 `topEdgeOffsetAboveAnchor`，整块向下长 ——
-        // 7 字形的横杠在鼠标上方、那条竖条要一直往下超过鼠标，所以钉的只能是顶边。
+                                                     gap: CGFloat = 12) -> CGRect {
+        // 横杠的下沿在鼠标上方 `topEdgeOffsetAboveAnchor`，整块从那里往下长。
         let topEdgeY = anchor.y + topEdgeOffsetAboveAnchor
-        var originY = topEdgeY - size.height
-        originX = min(max(originX, visible.minX + margin), visible.maxX - size.width - margin)
-        originY = min(max(originY, visible.minY + margin), visible.maxY - size.height - margin)
-        var frame = CGRect(x: originX, y: originY, width: size.width, height: size.height)
-
-        if let bandRect = restingBandRectInAppKitCoordinates(on: screen),
-           frame.intersects(bandRect) {
-            // 带子在屏幕顶边下方；把看板整体挪到它下面（仍然夹在屏幕里）。
-            frame.origin.y = max(visible.minY + margin, bandRect.minY - frame.height - margin)
-        }
-        return frame
+        return CGRect(x: anchor.x + gap,
+                      y: topEdgeY - size.height,
+                      width: size.width,
+                      height: size.height)
     }
 
     // MARK: - 「7 字形」看板的几何（2026-09-28）
@@ -852,19 +852,6 @@ nonisolated enum NotchSupport {
         return max(280, heightBelowMenuBar * 0.7)
     }
 
-    /// 刘海那条带子（两翼 + 中段）在 **AppKit 坐标**里的矩形 —— 看板不许压住它。
-    ///
-    /// `notchRect(on:)` 给的是"显示坐标"（屏幕顶边向下），这里换一次：屏幕顶边是 `frame.maxY`。
-    nonisolated static func restingBandRectInAppKitCoordinates(on screen: NSScreen) -> CGRect? {
-        guard let notch = notchRect(on: screen) else { return nil }
-        let bandWidth = wingBandWidth(pillWidth: restingPillWidth(on: screen))
-        let bandTopY = screen.frame.maxY - notch.minY
-        let bandBottomY = screen.frame.maxY - notch.maxY
-        return CGRect(x: screen.frame.minX + notch.midX - bandWidth / 2,
-                      y: screen.frame.minY + bandBottomY,
-                      width: bandWidth,
-                      height: bandTopY - bandBottomY)
-    }
 
     // MARK: - 临时 agent 的那一排（屏幕右上角，菜单栏下面一行）
     //
