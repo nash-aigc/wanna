@@ -107,6 +107,25 @@ final class NotchPanelModel: ObservableObject {
     /// 它同时解决「以后几十上百个会话会越来越慢」：慢的那部分不再挡在
     /// 面板出现之前。
     @Published var isSheetContentReady: Bool = false
+
+    /// **刘海下面那一行字幕正显示着吗** —— 也就是「上面那条黑带下面紧贴着一块方头的
+    /// 东西吗」。
+    ///
+    /// 用户 2026-09-27 的附图与要求：「在使用主 AI 的快捷键时，下方显示录音，你会发现刘海
+    /// 左下角和右下角有圆角，而下面显示的文字是直角，所以中间边缘会出现空白空隙……在 listening
+    /// 时……它应该和录音按钮一样，类似于上面是长方形效果，下面拼接出文字，应该能一眼看出左右
+    /// 两边是空白区域……**但在其他情况下，即非录音状态下，保持之前的状态最好**」。
+    ///
+    /// 所以这条黑带的下边缘要按它变：**为真时整条带子的底边收成一条直线**（两翼外端那 14pt
+    /// 圆角归零，见 `NotchWingView.squaresBottomOuterCorner`），为假时保持原来的圆角外观。
+    ///
+    /// **它和「那行字幕显不显示」必须是同一个判据。** 字幕由
+    /// `NotchListeningTranscriptPanelController` 按 `syncListeningTranscriptPanel()`
+    /// 显示，那一个读的就是这里 —— 两处共用一个属性，所以不会出现「字幕在、角还是圆的」
+    /// 或者反过来（那两种都会让接缝重新露出空隙）。
+    var notchBandSitsAboveTranscriptLine: Bool {
+        activityPhase == .listening && !isFullscreenSuppressed
+    }
 }
 
 @MainActor
@@ -1816,7 +1835,10 @@ final class NotchWindowController {
     }
 
     private func syncListeningTranscriptPanel() {
-        if panelModel.activityPhase == .listening, !panelModel.isFullscreenSuppressed {
+        // 判据是 `NotchPanelModel.notchBandSitsAboveTranscriptLine` —— **不是**在这里
+        // 重写一遍 `== .listening && !isFullscreenSuppressed`：刘海那条黑带的下边缘
+        // （两翼外端的圆角）读的是同一个属性，两处必须是同一个条件。
+        if panelModel.notchBandSitsAboveTranscriptLine {
             NotchListeningTranscriptPanelController.shared.show()
         } else {
             NotchListeningTranscriptPanelController.shared.hide()

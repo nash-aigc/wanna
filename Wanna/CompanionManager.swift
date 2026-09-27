@@ -821,6 +821,21 @@ final class CompanionManager: ObservableObject {
             self?.bailianTTSClient.voicePlaybackEngine
         }
 
+        // **主 Agent 的「一轮一条录音」（接线图第 4 条，2026-09-27）。**
+        //
+        // 两处都是**只读观察者**，音频管线、VAD、连续监听、打断一行没改：
+        //
+        // · 音频 —— 挂在 `BuddyDictationManager` 的三条 tap 上（按住说话、连续追问、
+        //   以及各自的 own-engine 兜底），没有一轮在进行时第一行就返回；
+        // · 分句 —— 连续追问的窗口整场开着麦克风，只有"用户开口"那一下才知道这一轮的
+        //   音频从哪一秒算起，所以它挂在 `markContinuousListeningUtteranceActive` 上。
+        buddyDictationManager.capturedAudioBufferObserver = { audioBuffer in
+            AgentTurnAudioSink.shared.append(audioBuffer)
+        }
+        buddyDictationManager.onContinuousListeningUtteranceBegan = { [weak self] in
+            self?.armAgentTurnRecordingForFollowUp()
+        }
+
         // **长录音起采之前，把共享语音引擎放掉。**
         //
         // 开着语音处理（回声消除）的那个引擎会把整个硬件 IO 重新配置成语音处理格式，
@@ -1114,6 +1129,9 @@ final class CompanionManager: ObservableObject {
                 // 恢复被录制静音挡住的扬声器 —— 退出时轮询循环不能保证再跑一次。
                 self?.systemSpeakerMuteCoordinator?.restoreAllMutesNow()
                 self?.voiceChatController.disconnectOnTermination()
+                // 主 Agent 那一轮录音（接线图第 4 条）如果还开着，把文件收干净 ——
+                // 不收的话头还停在那 44 字节的占位值上，那个 `.wav` 是打不开的。
+                AgentTurnRecorder.shared.finishOpenTurnForTermination()
             }
         }
 
@@ -1909,6 +1927,12 @@ final class CompanionManager: ObservableObject {
                 // 它放在起录音之前 —— 说话期间每一句实时转写都会被喂进去（见下面那个回调）。
                 NotionNoteSession.shared.beginListening()
 
+                // **这一轮的录音也从这里开始**（接线图第 4 条，2026-09-27）：用户要
+                //「把用户的每一条指令都保存为录音」。这一刻只是声明"接下来的麦克风音频
+                // 属于这一轮"—— 真的建文件是第一块音频到达时的事（按住说话模式下快速
+                // 松手会取消整个启动任务，那种情况下不该在历史里留一条 0 秒的空录音）。
+                AgentTurnRecorder.shared.armTurn()
+
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
                     updateDraftText: { [weak self] partialTranscript in
@@ -2025,8 +2049,26 @@ final class CompanionManager: ObservableObject {
             // 只 `endListening()` 的话，这一轮检测到的按钮会**一直留在刘海上**（下一次
             // 按键才被重置），而这一轮根本没有东西可以存。判出来的结果直接丢掉。
             _ = NotionNoteSession.shared.consumeTurnDecision()
+            // 这一轮**根本没听到话**，所以那条录音不算数 —— 见 `discardTurn`，
+            // 它和下面那条「用户点了取消、录音照留」是两件事，别合并。
+            AgentTurnRecorder.shared.discardTurn()
             return
         }
+
+        // **这一轮的录音在这里收尾，而且必须排在下面那道 Notion 的岔之前。**
+        //
+        // 用户 2026-09-27 拍板的两条：
+        //   1. 「主 Agent 每一轮都要保留音频」—— 所以这一轮落 `.wav`，历史里
+        //      「播放 / 重新转写 / 在访达中显示」三个按钮全部可用；
+        //   2. **「主 Agent 上点取消 = 不发出去，只保留本地一条录音」** ——
+        //      这一轮不进对话管线（不截图、不问模型、也不写 Notion），但本地那条录音照留。
+        //
+        // ⚠️ **取消语义是两条路唯一一处不同，别再改成一样。** 长录音那条点「取消」是
+        // 「按普通录音走」（照常存一场录音，只是不写 Notion），退回去还有东西留下；
+        // 而主 Agent 这条退回去就是**拿用户已经否掉的东西去问模型、去写一页云端笔记**。
+        // 两处都要留下东西（同一条原则），所以这里把录音先收干净，再让 Notion 去决定
+        // 这一轮发不发 —— 三个去向（发出 / 存成笔记 / 取消）都留下这同一条录音。
+        AgentTurnRecorder.shared.finishTurn(transcript: trimmedTranscript)
 
         // **「存成一条 Notion 笔记」那条路在这里分岔**（2026-09-27 从录音搬过来）。
         // 说话期间命中过关键词，这一轮就到此为止 —— 不再往下走（不截图、不问模型），
@@ -2514,6 +2556,22 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - 回答时持续监听（连续追问）
 
+    /// 连续追问窗口里用户开口说了一句新的 —— **这一轮的录音从这里开始**（接线图第 4 条）。
+    ///
+    /// 窗口的麦克风是整场开着的（从回答开始播那一刻到窗口过期，默认 30 秒），所以
+    /// "这一轮的音频从哪一秒算起"只能由"用户开口"那一下给 ——
+    /// `BuddyDictationManager.onContinuousListeningUtteranceBegan` 就是那一刻，
+    /// 它是一个纯观察者，不改 VAD 的任何状态。
+    ///
+    /// 两道闸与 `armContinuousListeningWindow` 完全相同，理由也一样：那块麦克风可能是
+    /// **别人的**（语音聊天的会话、卡片通话的通话），那两种窗口的每一句都归它们自己，
+    /// 不由主 Agent 这条给它们记一份录音。
+    private func armAgentTurnRecordingForFollowUp() {
+        guard voiceChatController.connectionPhase == .idle else { return }
+        guard !textCallController.isActive else { return }
+        AgentTurnRecorder.shared.armTurn()
+    }
+
     /// Arms the continuous-listening window the moment an answer's playback
     /// starts — the configured 计时起点. Called from both 播报方式 paths. When
     /// the window is already open (a follow-up's own answer just started
@@ -2795,7 +2853,16 @@ final class CompanionManager: ObservableObject {
         // 与按住说话那条同一个口子：编辑窗里改过的字顶替识别结果（见 `handleFinalTranscript`）。
         let trimmedTranscriptText = NotchListeningTranscriptModel.shared.consumeEditedTranscript()
             ?? finalTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTranscriptText.isEmpty else { return }
+        guard !trimmedTranscriptText.isEmpty else {
+            // 同上：这一轮没听到话，那条录音不算数。
+            AgentTurnRecorder.shared.discardTurn()
+            return
+        }
+
+        // 与按住说话那条**完全同一条收尾**：先把这一轮的录音收干净（发了 / 存成笔记 /
+        // 被取消三种去向都留下它），再走 Notion 那道岔。理由与那一条的注释相同 ——
+        // 「主 Agent 上点取消 = 不发出去，只保留本地一条录音」。
+        AgentTurnRecorder.shared.finishTurn(transcript: trimmedTranscriptText)
 
         // 与按住说话那条完全相同的一道岔：命中关键词就存成笔记（或按取消作废），
         // 不进对话管线。见 `NotionNoteSession`。

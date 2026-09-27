@@ -2454,7 +2454,10 @@ final class LongFormRecorderController: ObservableObject {
     }
 
     /// `2026-09-25-190412-A3F2`。时间在前，用户在访达里按名字排序就是按时间排序。
-    private static func makeSessionID() -> String {
+    ///
+    /// internal（不是 private）：主 Agent 的「一轮一条录音」（`AgentTurnRecorder`）也用
+    /// 它 —— 两处各写一遍格式，历史列表的排序就会各按各的规则漂。
+    static func makeSessionID() -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"

@@ -581,6 +581,15 @@ extension GeneralSettingsView {
 
     @ViewBuilder
     private var recordingHistorySection: some View {
+        // **中间这一层是 2026-09-27 加的**：主 Agent 的「每一条指令都存成一条录音」
+        // 落地之后，历史会在用户**开着设置页的时候**变长（每问一句多一条）。
+        // `RecordingLibraryStore` 只发通知、不发 `@Published`，而这一页的 `@State`
+        // 是 ViewModel 的 —— 中间缺一层，列表就要等下一次别的原因重绘才更新。
+        RecordingLibraryChangeObserver { recordingHistoryContent }
+    }
+
+    @ViewBuilder
+    private var recordingHistoryContent: some View {
         SettingsGroupLabel("录音历史")
         SettingsCard {
             let sessions = Array(RecordingLibraryStore.shared.allSessions().prefix(50))
@@ -616,6 +625,30 @@ extension GeneralSettingsView {
 
     /// 五条卡片出头的高度。卡片两行、加上内边距，单条约 78pt。
     private static let historyViewportHeight: CGFloat = 400
+
+    /// 只做一件事：订阅 `RecordingLibraryStore` 的变更通知，并在变化时把内容重画一遍。
+    ///
+    /// 做成一个独立的 `View` 而不是给 `GeneralSettingsView` 加一个 `@State` ——
+    /// **extension 里不能声明存储属性**（这条规矩 `RecordingHistoryCard` 上面也写了一遍，
+    /// 那里是为了展开状态，这里是为了订阅令牌）。
+    ///
+    /// 用 `.id(reloadToken)` 而不是别的办法：`reloadToken` 被读到了，SwiftUI 才会把
+    /// 这一次变化当成一次真的内容更新；而 `.id` 的变化会重建整棵子树，列表里的
+    /// `allSessions()` 因此被重新读一遍 —— 这正是我们要的（磁盘上的索引是唯一真相，
+    /// 这一层不该自己缓存一份）。
+    private struct RecordingLibraryChangeObserver<Content: View>: View {
+        @State private var reloadToken = 0
+        @ViewBuilder var content: () -> Content
+
+        var body: some View {
+            content()
+                .onReceive(NotificationCenter.default.publisher(
+                    for: RecordingLibraryStore.didChangeNotification)) { _ in
+                    reloadToken &+= 1
+                }
+                .id(reloadToken)
+        }
+    }
 
     /// 展开区十行出头的高度。行高（12.5pt 字 + 4pt 行距）约 21pt。
     private static let expandedTranscriptHeight: CGFloat = 210

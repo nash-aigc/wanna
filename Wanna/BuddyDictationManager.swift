@@ -642,6 +642,30 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     /// rule; see VoicePlaybackEngine's header). nil → the own-engine fallback
     /// below runs instead.
     var sharedVoicePlaybackEngineProvider: (() -> VoicePlaybackEngine?)?
+
+    /// **每一块麦克风音频的只读观察者**（接线图第 4 条，2026-09-27）。
+    ///
+    /// 主 Agent 的「一轮一条录音」靠它拿到音频：用户按下说话键那一条、以及连续追问
+    /// 窗口里那一条，音频本来就经过这里。观察者拿到的 `buffer` 和送进识别器的
+    /// 是**同一块**，所以谁都不许改它。
+    ///
+    /// 它在**采集线程**上被调用（和 `appendAudioBuffer` 同一个线程），所以实现方
+    /// （`AgentTurnAudioSink`）必须是 `nonisolated` —— 这一条不能省。
+    ///
+    /// **它挂在 tap 上，而不是挂在"哪一轮在录"上**：没有一轮在进行时
+    /// `AgentTurnAudioSink.append` 第一行就返回，所以这个观察者可以一直装着。挂在
+    /// "开始/停止"上反而要在三条 tap 路径（按住说话 / 连续追问 / 各自的 own-engine
+    /// 兜底）上各装卸一次 —— 那才是会漏的地方。
+    var capturedAudioBufferObserver: ((AVAudioPCMBuffer) -> Void)?
+
+    /// **连续追问窗口里，用户开口说了一句新的**（`markContinuousListeningUtteranceActive`
+    /// 的那一下）。主 Agent 用它把一轮录音切开：窗口的麦克风是整场开着的，只有"开口"
+    /// 才知道这一轮的音频从哪一秒算起。
+    ///
+    /// **纯观察者**：它不参与 VAD 的任何判断，也不改 utterance 的任何一个状态 ——
+    /// 挂在这里只是因为它就是"用户开始说这一句"的准确时刻。
+    var onContinuousListeningUtteranceBegan: (() -> Void)?
+
     /// Whether the app is reading an answer aloud right now (injected by
     /// CompanionManager, which owns the lazy TTS client). `isPlaying` is true
     /// for a whole spoken reply, segment gaps included, so it is the faithful
@@ -963,6 +987,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 try await sharedEngine.installInputTap(bufferSize: 1024) { [weak self] buffer, _ in
                     self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
                     self?.updateAudioPowerLevel(from: buffer)
+                    // 只读观察者：主 Agent 那一轮录音从这里拿音频（接线图第 4 条）。
+                    self?.capturedAudioBufferObserver?(buffer)
                 }
                 isContinuousListeningOnSharedEngine = true
                 print("🎙️ BuddyDictationManager: listening tap installed on the shared TTS engine")
@@ -988,6 +1014,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
             self?.updateAudioPowerLevel(from: buffer)
+            // 同上：own-engine 兜底这一条也要喂观察者，否则共享引擎不可用时
+            // 主 Agent 那一轮就没有音频了。
+            self?.capturedAudioBufferObserver?(buffer)
         }
 
         audioEngine.prepare()
@@ -1233,6 +1262,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         continuousListeningSpeechAccumulatorSeconds = 0
         continuousListeningUtteranceStartedAt = Date()
         continuousListeningSilenceStartedAt = nil
+        // **纯观察者**：用户的这一句开始了。主 Agent 用它把「一轮一条录音」切开
+        //（窗口的麦克风整场开着，只有这一下才知道这一轮的音频从哪一秒算起）。
+        // 它不改这里的任何一个状态，也不参与任何判断。
+        onContinuousListeningUtteranceBegan?()
     }
 
     /// Tells the caller to stop the answer and take the follow-up screenshot,
@@ -1802,6 +1835,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         let tapHandler: AVAudioNodeTapBlock = { [weak self] buffer, _ in
             self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
             self?.updateAudioPowerLevel(from: buffer)
+            // 只读观察者：主 Agent 的「一轮一条录音」从这里拿音频（接线图第 4 条）。
+            self?.capturedAudioBufferObserver?(buffer)
         }
         if let sharedEngine = sharedVoicePlaybackEngineProvider?() {
             do {

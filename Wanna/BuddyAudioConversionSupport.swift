@@ -8,7 +8,13 @@
 import AVFoundation
 import Foundation
 
-final class BuddyPCM16AudioConverter {
+/// 把 tap 缓冲转成 PCM16 单声道。
+///
+/// `nonisolated` 是必须的，而且是在陈述事实：它唯一的调用点在 **AVAudioEngine 的渲染
+/// 线程**上（每个 provider 的 `appendAudioBuffer`，以及主 Agent 那一轮录音的
+/// `AgentTurnAudioSink`），而项目的默认隔离是 MainActor —— 不写这一行，每次转换都是
+/// 一次跨 actor 的调用。
+nonisolated final class BuddyPCM16AudioConverter {
     private let targetAudioFormat: AVAudioFormat
 
     /// Converter for the incoming tap format, cached across callbacks.

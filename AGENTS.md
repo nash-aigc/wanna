@@ -490,6 +490,12 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 
 **「录音 → Notion 笔记」那一整套 2026-09-27 整块搬去了主 Agent 的快捷键 —— 录音这边一段都不剩。** 用户的原话：「你把这个相关的代码照搬过来，从录音这块剥离出来。就让录音的工程……录完音，然后润色就完事了，把它功能简单一点。但是把这个关键词识别，包括后端的代码的监听，完整这套功能转换到这个主 agent 的快捷键」。所以录音这条路的收尾**只有一条**：原文进剪贴板 → 按设置决定粘不粘 → 收带子；没有关键词、没有参考材料、没有那几颗按钮、没有「保存中」那个第三态（`NotchRecordingBandView` 现在只有两态：在录 / 展开看转写）。搬走的东西落在三个新文件里（`NotionNoteDetector` / `NotionNoteSession` / `NotionNoteButtonRow`），设置页那一节（`RecordingSettingsView` 的「Notion 笔记」）**没搬** —— 它现在配的是主 Agent 的行为，位置还是设置 → 录音，这一点是这次搬迁留下的别扭，见 `开发经验/17-大调整-主Agent接管执行.md`。
 
+**这一条路不是这个目录唯一的来源**（2026-09-27 起）：主 Agent 的**每一条指令**也落成同样形状的
+一份（`AgentTurnRecorder`，见下面《主 Agent 的每一条指令都存成一条录音》）。两边**共用**的是
+`RecordingAudioWriter` / `LongFormTranscriptWriter` / `RecordingLibraryStore` 这三个组件、
+16 kHz 单声道 PCM16 这套格式、以及 `makeSessionID()` 这个 id 形状 —— 所以设置 → 录音 的历史、
+播放、重新转写、在访达中显示对两个来源一视同仁，而**长录音这条路的代码一行都没改**。
+
 ### 主 Agent 说话时刘海下面那一行字幕（2026-09-27，接线图第 2、3 条）
 
 **录音带那条字幕 + 那个转写编辑窗，整块搬到主 Agent 的 `Listening` 上** —— 用户的原话是
@@ -540,6 +546,59 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 ⚠️ **取消语义是两条路唯一一处不同，别再改成一样。** 录音那条点「取消」= **按普通录音走**（照常存一场录音，只是不写 Notion）；主 Agent 这条点「取消」= **这一轮什么都不发**（不截图、不问模型、也不写 Notion）—— 这里没有"照常"可退，退回去就是拿用户已经否掉的东西去问模型、去写一页云端笔记。两条路**都要留下东西**（同一条原则）：录音那条留下录音，主 Agent 这条本该留下本地那条录音 —— 但「每一轮都保留音频」是接线图的第 4 条、**还没接**，所以今天这条只做到"不发出去"。
 
 **按钮那三颗的几何没动**：点仍然是 `NotchWindowController.handleGlobalClick` 里那三个 slot，读的仍然是 `NotchSupport.notionNoteButtonFrame`；改的只是"画"从录音带那块面板搬进了刘海面板（静止 pill 与展开态那条状态带各有一处 `NotionNoteButtonAnchor`）。两者靠**相减**发生关系：`NotchSupport.notionNoteButtonPlacement(on:)` 由 `notionNoteButtonFrame` 与 `restingWindowFrame` 直接相减得出三个偏移，不是另写一份几何 —— 实测屏幕上的 AX frame `(622,1,52×30)` 与算出来的命中矩形 `(622.5,1086,52×30)`（AppKit y 向上）**逐点重合**。那一行 `.allowsHitTesting(false)` 是刻意的：面板展开时它是收事件的，若这里也吃点击，同一个动作会被 SwiftUI 按钮和全局监听各触发一次（"打开那一页"会开出两个标签页）。
+
+### 主 Agent 的每一条指令都存成一条录音（2026-09-27，接线图第 4 条）
+
+**用户的原话**：「把用户的每一条指令都保存为录音，也就是说在录音这个设置页面里面包含的不只是录音
+这个快捷触发的用户的提示词和说的话的内容，包括每一条平时的每一条指令也都去以录音的形式保存下来，
+包括这个原文啊、转写啊、重新撰写啊这些功能所有的功能」。他拍板的两条：**主 Agent 每一轮都要保留
+音频**（所以这一轮也落 `.wav`，历史里「播放 / 重新转写 / 在访达中显示」三颗按钮全部可用）；
+**主 Agent 上点取消 = 不发出去，只保留本地一条录音**。
+
+**它是接线，不是合并。** 长录音那条路（上一节）**一个字都没动** —— 用户对那个功能的要求是
+「独立接线，跟当前整个面板里任何功能都没有关系」。两边共用的是三样已经跑通的组件：
+`RecordingAudioWriter`（边录边写、停止时回填 WAV 头）、`LongFormTranscriptWriter`（`.txt` + `.jsonl`）、
+`RecordingLibraryStore`（每场一个 `<id>.json` + 历史索引 + 变更通知），加上同一套 **16 kHz 单声道
+PCM16** 与同一个 `makeSessionID()`。所以**设置 → 录音 的历史、复制全文、播放、重新转写、
+在访达中显示，一行代码都没有为新来源改** —— 它们只认那几个文件名。
+
+**音频是寄生来的，一个字节都不多采。** `BuddyDictationManager` 本来就在往识别器送音频（按住说话那条、
+连续追问那条），这一条只是在**同一个 tap 回调里**多调一次 `capturedAudioBufferObserver` ——
+**VAD、连续监听、打断判定一个字节都没动**，观察者是纯读的。连续追问的窗口整场开着麦克风，
+所以「这一轮从哪一秒算起」由「用户开口」那一下给：`onContinuousListeningUtteranceBegan`，
+挂在 `markContinuousListeningUtteranceActive` 里，同样只是观察，不参与任何判断。
+
+**一轮 = 一条录音，边界是三段**：
+
+```
+armTurn()                      按下说话键 / 连续追问里用户开口
+  → 第一块音频到达            真的开始录了（**这一刻才建文件**）
+  → finishTurn(transcript:)   这一轮结束了（发了 / 存成笔记 / 被取消，三种都算）
+```
+
+「第一块音频到达才建文件」是刻意的：`armTurn` 与"真的开始录"之间隔着权限检查、开 ASR 会话、
+装 tap 几步，任何一步都可能中断（按住说话模式下快速松手就会取消整个启动任务），一 arm 就建文件
+会在历史里留下一串 0 秒的空录音。所以 `AgentTurnRecorder` 分成两半：`AgentTurnAudioSink`
+（`nonisolated`，活在采集线程上，三个状态 idle / armed / recording）与 `AgentTurnRecorder`
+（`@MainActor`）。`BuddyPCM16AudioConverter` 因此标了 `nonisolated` —— 它本来就在渲染线程上被调用。
+
+⚠️ **取消语义是两条路唯一一处不同，别再改成一样。** 长录音那条点「取消」= 按普通录音走
+（照常存一场录音，只是不写 Notion）；主 Agent 这条点「取消」= **这一轮什么都不发**（不截图、
+不问模型、也不写 Notion），但**本地那条录音照留**。两处都要留下东西（同一条原则），而"照常退回去"
+在主 Agent 这条路上是**拿用户已经否掉的东西去问模型、去写一页云端笔记**，所以退不得。
+**实现上靠的是顺序**：`finishTurn(transcript:)` 排在 `consumeNotionNoteTurnIfNeeded` **之前** ——
+三个去向都经过它，不可能漏。另有一件**不是取消**的事：**没听到话**（转写为空）走 `discardTurn()`，
+文件直接删掉 —— 取消是用户对已经听清的一句话说不发，那一条要留；这里根本没有一句话。
+
+**顺带修的接缝**（用户附图，同一屏上的另一件事）：Listening 时刘海那条黑带的**下边缘**要收成直角，
+因为下面那行字幕的上边是方的，而两翼外端 14pt 的圆角会在接缝两端各让出一块 14×14 的三角、
+桌面从那里透出来。判据是 `NotchPanelModel.notchBandSitsAboveTranscriptLine`
+（`== .listening && !isFullscreenSuppressed`）—— **和「那行字幕显不显示」是同一个属性**
+（`syncListeningTranscriptPanel` 也读它），两处不可能分家；实现是 `NotchWingView.squaresBottomOuterCorner`
+把外端下圆角归零，中段本来就是方的。**非 Listening 时一切照旧**（用户：「但在其他情况下，
+即非录音状态下，保持之前的状态最好」）。量到的：带子最下面一行最左黑像素 **100**（Listening）
+对 **132**（Speaking，退掉 32px = 16pt 就是那个圆角），而紧接着的字幕条上边是 101 ——
+两条边差 1px，接缝是通的。
 
 ### Acting on the computer
 
@@ -642,9 +701,10 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `NotchRecordingOverlay.swift` | ~1540 | 刘海上的录音 UI：左右两翼 + 刘海下方那一行滚动转录。**是一块独立面板，不是刘海窗口的子视图** —— 刘海窗口的高度只有刘海加一点余量，而转写那一行挂在刘海**下面**，画进去根本看不见。**窗口尺寸建好一次、永不改变**：它是透明窗口、黑色靠 SwiftUI 画，而几何在 CA 提交**之前**就改了，中间那一瞬新露出来的区域是空的、桌面会透出来（用户报的「背景穿透」）。收起时多出来的透明区靠 `ignoresMouseEvents` 让开，两翼的点击走全局监听（刘海 pill 用的就是这套）。`SmoothRevealedTranscriptText` 的位置是 `可用宽度 − 文字宽度`，所以**文字变短就会向右跳** —— 这是它反复出问题的唯一原因，改动的每一次都要先问「这个改动会不会让宽度变小」。窗口上限必须带**迟滞**（160↔220 先长后裁），否则上限本身就把窗口变回了定长窗口、宽度恒定、动画再也不被调度。 **摄像头小窗不在这块面板里 —— 它有自己的全屏面板**（2026-09-26）。用户要求把小窗挪到屏幕左侧中间／底部中央／右侧中间，理由是「当用户的纸上文字很小、需要把纸拿得很近时，由于小窗位于上方附近，会导致用户看不到小窗里的内容」—— 而这三个位置**全在带面板之外**，带面板的帧又不能改（见 `panelFrame` 那段「背景穿透」）。所以小窗搬进 `CameraStripPanelView` 那块**全屏、永远 `ignoresMouseEvents = true`、永不移动也不改尺寸**的面板（层级 `NotchSupport.cameraStripWindowLevel` = statusWindow+1，**不是** `OverlayWindow` 生来的 `.screenSaver` —— 那会盖住右键菜单，而左中/右中正好在菜单弹出区），位置变成纯对齐与边距，窗口几何一次都不碰。四个位置 `CameraStripPlacement`：`belowNotch`（与旧矩形**逐点一致**，离屏探针断言过）／`left`／`bottom`／`right`，对齐分别是 topLeading（水平靠 `notchCenteredLeadingInset` 对准**刘海中心**，不是面板中心——面板是全屏的，两者今天相等是巧合）／leading／bottom／trailing；用对齐而不是绝对坐标是因为小窗高度随画面宽高比变（`previewHeight`），AppKit 侧根本算不出来。标题栏中间四颗按钮：还原／左／下／右，**当前所在位置那颗标绿**。**命中矩形由视图用 `GeometryReader` + `PreferenceKey` 发布上来，不在 AppKit 里镜像一份**（`NotchSupport.trailingWingOriginX` 那次画的和点的差 71pt 的教训），控制器只做 `NotchSupport.appKitGlobalRect` 那个 y 翻转换算——**那个符号是整个改动里风险最高的一处，写反是静默的**，所以它住在 `NotchSupport` 里能被探针直接测。小窗面板**单独一个 `cameraStripPanels` 数组，绝不能进 `panels`**：`reframePanels()` 会翻转那里的 `ignoresMouseEvents`，而 `installDismissMonitors()` 的「点外面」判定是全屏成员会让每一次点击都算「里面」。**⌘Enter 是切换**（刘海下 ⇄ 底部），按 `isCameraCapturing` 装卸监听所以摄像头没开时它在系统里根本不存在，另加 `isARepeat` 去重——这个动作不是幂等的，ESC 那两个是。⚠️ 它和 ESC 一样只读不吞，所以也会传给前台 App（Slack 里就是「发送」）；本仓库没有任何能拦截全局按键的机制，别为此去接一个会吞的 tap。顺带钉死一条不变量：`NotchRecordingBandView` 的根加了 `.frame(maxHeight: .infinity, alignment: .top)`——宿主视图是铺满整块面板的，而内容只有 64pt 高，不写这一行带子的位置就由 SwiftUI 默认对齐说了算，而 `collapsedWingHitRects` 等三处矩形都硬假定它贴着顶边。**2026-09-27：那条带子只剩两态（在录 / 展开看转写）—— 「Notion 笔记」那三颗按钮的画连同「保存中」第三态一起删了**（按钮搬去 `NotionNoteButtonRow`，画在刘海面板里）。**同一天稍晚：展开的转写编辑窗抽成了共用视图**（`NotchExpandedTranscriptPanel`，住在 `NotchTranscriptMarquee.swift`）—— 主 Agent 说话时的 `Listening` 要一模一样的那一个窗口，这边只剩「哪几个字段接到哪几个参数上」；`ribbonHeight` / `expandedPanelBodyHeight` 也改成`NotchSupport` 的转发，`EmbossMaterial` 从 `private` 放开（两处共用同一份材质）。实测抽完之后录音这条编辑窗的 `AXTextArea` 是 `(523,90,682×474)`，与新面板逐点相同。 |
 | `NotchTranscriptMarquee.swift` | ~250 | **刘海下面那一行滚动字幕**，两个入口共用（2026-09-27）。`SmoothRevealedTranscriptText`（平滑左移的那一个：位移 = `可用宽度 − 文字宽度`，所以文字一变短就往右跳；显示源只增不减、窗口上限 160 带 60 字迟滞、窗口必须能长 —— 这三条是十次失败换来的，注释里全写着）与 `NotchTranscriptLine`（那一行的外壳：黑底、两端 13% 渐隐、上直下圆）。**同一天又把展开的转写编辑窗也抽到这里**（`NotchExpandedTranscriptPanel`）：录音带与主 Agent 的 `Listening` 用的是**同一份**排版、材质、圆角与三个快捷键，用户要的「完全照搬」由同一份实现保证 —— 实测两处的 `AXTextArea` 都是 `(523, 90, 682×474)`，逐点相同。 |
 | `NotchListeningTranscript.swift` | ~330 | **主 Agent 说话时刘海下面那一行字幕，和点开之后的转写编辑窗**（2026-09-27，接线图第 2、3 条）。三块：`NotchListeningTranscriptModel`（这一轮的文本 + 编辑草稿，单例）、`NotchListeningTranscriptView`（收起=那一行 `NotchTranscriptLine`，展开=`NotchExpandedTranscriptPanel`）、`NotchListeningTranscriptPanelController`（它那块透明、点击穿透、永不改尺寸的面板，层级 `.popUpMenu` —— 在刘海面板之上，所以展开面板时那一行照样看得见）。**只由相位驱动**：`== .listening` 就出现、其余收起（用户：「如果用户说完了，然后进入 thinking，那么这个录音的内容就消失掉了」），**不碰状态机**。`CompanionManager` 在两条实时转写回调里喂它（按住说话 + 连续追问，且**刻意不看**「说话时实时显示识别文字」那个开关）；刘海左侧那颗「Listening」的点击归 `handleGlobalClick`，读的是录音两翼那一份矩形（`recordingWingFrames`）。**编辑窗里改过的字会顶替这一句发出去的话**（`consumeEditedTranscript()`，取走即清、一轮一次）—— 这是它与录音那条唯一的语义差别，也是「可以让用户编辑录音里面的内容」唯一有意义的落点。 |
-| `RecordingSettingsView.swift` | ~597 | 设置页「录音」。历史在最顶、其余参数在下；每条历史两行（标题 + 复制/播放/在访达中显示/展开，第二行预览或十行全文）。「自定义风格」那一节含总开关、屏幕截图开关、模型 URL/Key/模型 ID，以及**从「模型」页导入**的选择器 —— 模型 ID 跟着服务商一起换，因为一个地址配别家的模型名必然 404。 |
+| `RecordingSettingsView.swift` | ~597 | 设置页「录音」。历史在最顶、其余参数在下；每条历史两行（标题 + 复制/播放/在访达中显示/展开，第二行预览或十行全文）。「自定义风格」那一节含总开关、屏幕截图开关、模型 URL/Key/模型 ID，以及**从「模型」页导入**的选择器 —— 模型 ID 跟着服务商一起换，因为一个地址配别家的模型名必然 404。 **2026-09-27 起这一页的历史有两个来源**：长录音（`LongFormRecorderController`）与主 Agent 的每一轮（`AgentTurnRecorder`）—— 两者落的是同一套 `<id>.wav` / `.txt` / `.json`，所以这一页一行都不用改。同一处加了一层 `RecordingLibraryChangeObserver`（一个只订阅 `RecordingLibraryStore.didChangeNotification` 的小 `View`）：主 Agent 每问一句就多一条，而这一页的 `@State` 是 ViewModel 的，中间缺一层的话列表要等下一次别的原因重绘才更新；做成独立 `View` 而不是 `@State` 是因为 **extension 里不能声明存储属性**。 |
 | `RecordingPolishStyle.swift` | ~280 | 「自定义风格」的数据与存储。多条风格各自一个开关 + 可改名的名称 + 提示词，出厂那条是用户给的 3556 字「文本后处理引擎」提示词，**逐字照抄**（那是他写好的规则，改一个字都可能改变行为），**可以关但不给删** —— 恢复它意味着让用户重新贴一遍三千多字。 |
 | `RecordingPolishClient.swift` | ~206 | 转写结束后的模型调用。**必须发 `thinking: {"type": "disabled"}`** —— `deepseek-flash` 是推理模型，会在给出答案前先吐几百上千个推理 token，而这个仓库自己量过那笔账（视觉那条路上 4.5 秒的请求里 3.4 秒是思考）。润色是改写任务，那段思考用户一个字都看不到，全是白等；实测一次 23 秒、一次 8 秒，关掉之后是 1 秒量级。地址留空时回落到「模型」页里 🧠 那个服务商。**失败就用原文** —— 用户要的是「整理一下再给我」，整理失败时他最需要的仍然是他说过的话。 |
+| `AgentTurnRecorder.swift` | ~330 | **主 Agent 的每一条指令都存成一条录音**（接线图第 4 条，2026-09-27）。两半：`AgentTurnAudioSink`（`nonisolated`，活在采集线程上 —— 把 tap 缓冲转 16 kHz 单声道 PCM16、排在一条串行队列上落盘；三个状态 idle / armed / recording）与 `AgentTurnRecorder`（`@MainActor` —— 元数据、转写、写库）。**没有新增任何采集**：音频寄生在 `BuddyDictationManager` 已有的输入 tap 上（`capturedAudioBufferObserver`，三处 tap 各一行），VAD / 连续监听 / 打断一个字节没改；「这一句从哪一秒算起」由 `onContinuousListeningUtteranceBegan`（挂在 `markContinuousListeningUtteranceActive` 里的纯观察者）给。落盘用的是长录音那三个**已经跑通**的组件（`RecordingAudioWriter` / `LongFormTranscriptWriter` / `RecordingLibraryStore`）+ 同一套 16 kHz 格式 + 同一个 `makeSessionID()`，所以设置 → 录音 的历史、播放、重新转写、在访达中显示**一行都没为新来源改**。「第一块音频到达才建文件」是刻意的：`armTurn` 与「真的开始录」之间隔着权限检查、开 ASR 会话、装 tap，任何一步中断都不该在历史里留下 0 秒的空条目。⚠️ **取消语义是它与长录音唯一一处不同**：主 Agent 上点取消 = 什么都不发但**本地那条录音照留**，靠 `finishTurn` 排在 `consumeNotionNoteTurnIfNeeded` **之前**保证（发出 / 存成笔记 / 取消三个去向都过它）；而「没听到话」走 `discardTurn()`（文件删掉），那不是取消。 |
 | `NotionNoteDetector.swift` | ~241 | 「这一轮要不要存成一条 Notion 笔记」的**纯逻辑**（2026-09-27 从 `LongFormRecorderController` 一行不改地搬出来）：模糊匹配（滑动窗口 + 编辑距离 + 按关键词长度定档的容错）、命中计数、模型回复的三段切分、Markdown → Notion 块、行内样式。整个类型 `nonisolated`、不碰网络与 UI，所以能脱离整个 App 单独编译跑（15 条断言在真源码上全过，含用户给的那四句真实转写）。 |
 | `NotionNoteSession.swift` | ~406 | 那件事的**状态机与执行**：`@MainActor ObservableObject` 单例（形状照 `AgentActivityBoard.shared`），持有 `showsNotionNoteButtons` / 参考材料 / 三态（取消 / 保存中 / 已保存）与那把 2 秒一次、之后每 3 秒的检测表，`saveNote` 走「模型整理 → `NotionNoteClient` 按形状写进那一页」。**它现在只被主 Agent 的语音路径驱动**（录音那条一段都不剩）。三种去向见 `consumeTurnDecision()`，而**取消语义是两条路唯一一处不同**，类型注释里写死了那条理由。日志是**注入的 `log`**（原来是录音页的 `publishDiagnostic`）。 |
 | `NotionNoteButtonRow.swift` | ~90 | 刘海左侧那三颗按钮的"画"（从 `NotchRecordingOverlay.notionNoteButtons` 原样搬来）。⚠️ 它**不吃点击**（`.allowsHitTesting(false)`）：面板是点击穿透的，点击归 `handleGlobalClick` 里那三个 slot —— 少了这一行，面板展开时同一个动作会被触发两次。 |

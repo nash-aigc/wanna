@@ -272,6 +272,18 @@ struct NotchPillRootView: View {
     /// `NotchSupport.notionNoteButtonPlacement`。nil = 这块屏没有刘海，什么都不画。
     var notionNoteButtonPlacement: NotchSupport.NotionNoteButtonPlacement?
 
+    /// **刘海下面那一行字幕正显示着吗。**
+    ///
+    /// 用户 2026-09-27（附图）：「在使用主 AI 的快捷键时，下方显示录音，你会发现刘海左下角
+    /// 和右下角有圆角，而下面显示的文字是直角，所以中间边缘会出现空白空隙……我觉得在 listening
+    /// 时……它应该和录音按钮一样，类似于上面是长方形效果，下面拼接出文字，应该能一眼看出
+    /// 左右两边是空白区域……**但在其他情况下，即非录音状态下，保持之前的状态最好**」。
+    ///
+    /// 判据由 `NotchPanelModel.notchBandSitsAboveTranscriptLine` 给 —— **和"那行字幕
+    /// 显示与否"是同一个条件**（字幕由 `NotchListeningTranscriptPanelController` 按
+    /// 相位驱动），两处共用一个判据，所以不可能出现「字幕在、角还是圆的」。
+    var squaresBottomOuterCorner: Bool = false
+
     /// Wing widths measured 2026-09-22: the full band spans ~355pt — left
     /// wing ~78, right wing ~87. The word
     /// is right-aligned against the notch, so the left wing only needs to
@@ -321,7 +333,8 @@ struct NotchPillRootView: View {
                     NotchWingView(
                         phase: panelModel.activityPhase,
                         audioHistoryProvider: audioHistoryProvider,
-                        isLeading: true
+                        isLeading: true,
+                        squaresBottomOuterCorner: squaresBottomOuterCorner
                     )
                     .frame(
                         width: isActive ? Self.leadingWingWidth : 0,
@@ -363,7 +376,8 @@ struct NotchPillRootView: View {
                     NotchWingView(
                         phase: panelModel.activityPhase,
                         audioHistoryProvider: audioHistoryProvider,
-                        isLeading: false
+                        isLeading: false,
+                        squaresBottomOuterCorner: squaresBottomOuterCorner
                     )
                     .frame(
                         width: isActive ? Self.trailingWingWidth : 0,
@@ -434,6 +448,18 @@ struct NotchWingView: View {
     var audioHistoryProvider: () -> [CGFloat]
     let isLeading: Bool
 
+    /// **把这条翼外端的下圆角收成直角。**
+    ///
+    /// 只有一件事会让它变成 true：**刘海下面那一行字幕正显示着**。那一行（以及它下面
+    /// 那个转写编辑窗）的上边是方的（`NotchTranscriptLine` 的 `isAttachedToNotch: false`
+    /// → `RecordingRibbonShape` 的 `roundsTopCorners: false`），而两翼外端的 14pt 圆角
+    /// 会在接缝的两端各让出一块 14×14 的三角 —— 桌面从那里透出来，用户看到的就是
+    /// 「中间边缘会出现空白空隙」「应该能一眼看出左右两边是空白区域」。
+    ///
+    /// 语音聊天也有一条类似的取舍（`NotchHangUpGlyph` 的光晕被带子切掉），但那条是
+    /// **画的内容溢出被裁**，和这一条（形状本身的圆角）不是同一回事。
+    var squaresBottomOuterCorner: Bool = false
+
     @Environment(\.accessibilityReduceMotion) private var shouldReduceMotion
 
     /// 连接成功那一下的弹入倍数。1 是常态；`.externalChatting` 到达时先落到
@@ -459,11 +485,15 @@ struct NotchWingView: View {
     /// on the edge that meets the middle segment, rounded only at the outer
     /// bottom corner. Both the black fill and the content clipped into it use
     /// this one shape.
+    ///
+    /// `squaresBottomOuterCorner` overrides that last one to 0 — 见那个属性自己的注释
+    ///（刘海下面那行字幕在的时候，整条带子的下边缘必须是一条直线）。
     private var outline: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
+        let outerBottomRadius = squaresBottomOuterCorner ? 0 : Self.outerBottomCornerRadius
+        return UnevenRoundedRectangle(
             topLeadingRadius: 0,
-            bottomLeadingRadius: isLeading ? Self.outerBottomCornerRadius : 0,
-            bottomTrailingRadius: isLeading ? 0 : Self.outerBottomCornerRadius,
+            bottomLeadingRadius: isLeading ? outerBottomRadius : 0,
+            bottomTrailingRadius: isLeading ? 0 : outerBottomRadius,
             topTrailingRadius: 0
         )
     }
@@ -959,7 +989,8 @@ struct NotchPanelRootSwitchingView: View {
                             // 走"任何一通语音会话"的漏斗：Ask 页那通电话不在
                             // `voiceChatController` 里（它是独立管线）。
                             companionManager.hangUpAnyActiveCall()
-                        }
+                        },
+                        squaresBottomOuterCorner: panelModel.notchBandSitsAboveTranscriptLine
                     )
                 }
             }
@@ -1020,6 +1051,12 @@ struct NotchExpandedWingBand: View {
     var notionNoteButtonPlacement: NotchSupport.NotionNoteButtonPlacement?
     /// 语音聊天进行中，右翼是一颗真的挂断按钮。
     var hangUpAction: (() -> Void)?
+    /// 刘海下面那行字幕正显示着 —— 整条带子的下边缘收成直角，见
+    /// `NotchWingView.squaresBottomOuterCorner`。
+    ///
+    /// 声明在 `hangUpAction` **后面**，调用点也按这个顺序传（SwiftUI 的隐式
+    /// memberwise init 要求实参顺序与声明一致）。
+    var squaresBottomOuterCorner: Bool = false
 
     /// 右翼左边界在**展开窗口**里的 x。
     ///
@@ -1038,7 +1075,8 @@ struct NotchExpandedWingBand: View {
                 NotchWingView(
                     phase: phase,
                     audioHistoryProvider: audioHistoryProvider,
-                    isLeading: true
+                    isLeading: true,
+                    squaresBottomOuterCorner: squaresBottomOuterCorner
                 )
                 .frame(width: NotchSupport.leadingWingWidth, height: notchBandHeight)
                 .clipped()
@@ -1053,7 +1091,8 @@ struct NotchExpandedWingBand: View {
                 NotchWingView(
                     phase: phase,
                     audioHistoryProvider: audioHistoryProvider,
-                    isLeading: false
+                    isLeading: false,
+                    squaresBottomOuterCorner: squaresBottomOuterCorner
                 )
                 .frame(width: NotchSupport.trailingWingWidth, height: notchBandHeight)
                 .clipped()
