@@ -155,6 +155,72 @@ struct DirectionBoardTests {
             """)
     }
 
+    // MARK: - 四段卡片里的解析（理解那几行 + 任务结果）
+
+    /// **「任务结果」不能被「细节」吞掉** —— 这是四段卡片的核心那条边界。
+    ///
+    /// 2026-09-27 实测截图：模型把 `任务结果：选 A（…）` 写在「细节」那行的**尾巴上**，
+    /// 而解析器只把五个理解标签当边界，于是同一句话在看板上出现两遍 —— 绿框里一次、
+    /// 「细节」那行末尾又一次。这一段就是那次的回归断言。
+    @Test func taskResultIsNotSwallowedByDetails() throws {
+        let raw = """
+        软件：预览（PDF 文件看图）
+        文件：初中数学 浙江中考数学真题.pdf
+        目标：把选这道题答案的判断记下来
+        类型：做题
+        细节：屏幕上是几何展开图折叠成正方体的题，按「相对面隔一格」推断。 任务结果：选 A（左侧那个带轮廓的图）
+        """
+        let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
+        #expect(lines.map(\.label) == ["软件", "文件", "目标", "类型", "细节"])
+        let details = lines.first { $0.label == "细节" }?.value ?? ""
+        #expect(!details.contains("任务结果"))
+        #expect(details.hasSuffix("推断。"))
+        #expect(DirectionBoardPrompt.parseTaskResult(raw) == "选 A（左侧那个带轮廓的图）")
+        // 正文里只剩下真正的"标签之外的话"，没有孤零零的「:选 A（…）」。
+        let leftover = DirectionBoardPrompt.leftoverParagraphText(raw, structuredLines: lines)
+        #expect(!leftover.contains("选 A"))
+    }
+
+    /// 五行写在**同一行**里（模型常这么干）也要切得开。
+    @Test func understandingLinesSplitInsideOneLine() throws {
+        let lines = DirectionBoardPrompt.parseUnderstandingLines(
+            "软件:预览 文件:a.pdf 目标:整理 类型:做题 细节:题图在左侧")
+        #expect(lines.map(\.label) == ["软件", "文件", "目标", "类型", "细节"])
+        #expect(lines.first { $0.label == "细节" }?.value == "题图在左侧")
+    }
+
+    /// **「任务类型」嵌着「类型」**：边界标签在里面匹配上时，值不能带上那个「任务」前缀，
+    /// 也不能因为下一个位置落在 valueStart 之前而算出一个无效区间（那会直接崩溃）。
+    @Test func nestedLabelDoesNotBreakTheValue() throws {
+        let lines = DirectionBoardPrompt.parseUnderstandingLines("任务类型：做题")
+        #expect(lines.map(\.label) == ["类型"])
+        #expect(lines.first?.value == "做题")
+    }
+
+    /// 任务结果续到下一行（实测模型写成「任务结果：选」+ 换行 +「A」）。
+    @Test func taskResultSpansTwoLines() throws {
+        #expect(DirectionBoardPrompt.parseTaskResult("目标:做题\n任务结果：选\nA") == "选 A")
+        // 没有这一行时不给结果（不许拿正文当结果）。
+        #expect(DirectionBoardPrompt.parseTaskResult("目标:做题\n细节:题在左边") == nil)
+    }
+
+    /// **解析读的是原文，不是被截过的显示文本**。
+    ///
+    /// 2026-09-27 实测：`cleanParagraph` 的 200 字上限被用在了**原文**上，五行加起来轻松超过
+    /// 200 字，于是「细节」那行在屏幕上写到一半就断了（断在「题目在屏幕右」）。
+    @Test func longRepliesSurviveParsing() throws {
+        let longDetails = String(repeating: "这是一段很长的细节说明。", count: 20)
+        let raw = "软件:预览\n文件:a.pdf\n目标:整理\n类型:做题\n细节:\(longDetails)"
+        let cleaned = DirectionBoardPrompt.cleanRawResponse(raw)
+        let lines = DirectionBoardPrompt.parseUnderstandingLines(cleaned)
+        let details = lines.first { $0.label == "细节" }?.value ?? ""
+        #expect(details.count > 200)
+        #expect(details.hasSuffix("。"))
+        // 显示那一步仍然限长（看板上那块地方就这么大）。
+        #expect(DirectionBoardPrompt.cleanParagraph(cleaned).count
+            <= DirectionBoardPrompt.maximumParagraphCharacters)
+    }
+
     // MARK: - 复盘（每天中午 12 点）
 
     @Test func reviewParsesTheModelsJSON() throws {

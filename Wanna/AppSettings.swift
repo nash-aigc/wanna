@@ -532,10 +532,10 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 以便显示更多内容。」夹在 1…2（`clamped()` 兜住手改的 JSON）。
     var directionBoardWidthMultiplier: Double = 2.0
 
-    /// 看板的六个方向短语与它们的关键词（`DirectionBoardConfiguration`）。
-    ///
-    /// 用户 2026-09-27：「做成设置页可改」。默认那六个短语是他点名的那一套；
-    /// 关键词按**按钮**存（不是按行）—— 一行两个短语，一份关键词没法回答"该点亮哪一个"。
+    /// ⚠️ **第一版留下的字段，今天没有任何界面读它**（方向早已改成 `TaskDirectionStore` 那份清单：
+    /// 出厂 12 条 + 口述 + 每天中午复盘追加，见 `开发经验/19`）。保留只是为了老文件仍能解
+    /// （`decodeIfPresent` 那条规矩）—— 它不再是"设了不生效"，而是**没有任何地方设它**。
+    /// 真要清掉得连同 `AppSettings` 的 `CodingKeys` 与 `init(from:)` 一起动，属于另一件事。
     var directionBoard: DirectionBoardConfiguration = .default
 
     /// How long the answer bubble stays up *after* the spoken answer finishes

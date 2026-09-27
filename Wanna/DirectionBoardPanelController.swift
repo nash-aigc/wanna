@@ -21,6 +21,26 @@
 //
 //  刘海面板展开时它整个不出现（与右下角那张结果卡片同一条规矩，见 `sync(isVisible:)` 的调用方）。
 //
+//  ### 尺寸归 SwiftUI、位置归我们（2026-09-27 量出来的根因，别改回去）
+//
+//  原来这里和 `NotchListeningTranscriptPanel` 一样：`sizingOptions = []` 挡住 SwiftUI 改窗口尺寸，
+//  由 SwiftUI 那个 `GeometryReader` 偏好量出内容高度、我们 `setFrame` 摆位。**在这块面板上不成立**：
+//  `sample`/栈探针量到窗口在 `setFrame` 之后**被 SwiftUI 自己改掉**，调用方是
+//
+//      SwiftUI.NSHostingView.updateAnimatedWindowSize(_:)  ←  NSHostingView.windowDidLayout()
+//
+//  它按内容的固有尺寸 `setFrame`，而且**保持顶边** —— 于是内容一长高，窗口就往下长：
+//  实测 672,330,680×220（我们放的）→ 672,135,680×196 → 672,32,680×299 → **672,-7,680×338**
+//  （y 是 AppKit，-7 就是底边掉到屏幕外面 15pt），屏幕上卡片最下面那行「取消本次/十分钟/今日」
+//  被屏幕下沿切掉一半。
+//
+//  同一个配方在别处没这个问题，所以是这块面板独有的：探针（`scripts/panel-sizing-probe.swift`）
+//  里 `sizingOptions = []` **确实**能让窗口一动不动 —— 差别在这块卡片的根视图带一个
+//  `GeometryReader` 偏好（View 用它把自然尺寸报上来），SwiftUI 于是照固有尺寸改窗口。
+//  **结论：不要跟 SwiftUI 抢尺寸。** 让它按内容把窗口撑到该有的大小，我们只在**尺寸变化之后
+//  重新摆位**（`repositionForCurrentSize()`），位置永远是"锚点 + 夹进屏幕"算出来的那一个。
+//  顶边被 SwiftUI 往下带、我们再把它挪回去的净效果就是用户要的「左下角固定、内容往上长」。
+//
 
 import AppKit
 import Combine
@@ -49,10 +69,12 @@ final class DirectionBoardPanelController {
     /// 相位（+ 面板没铺开）是否允许看板出现 —— **这只是必要条件，不是充分条件**。
     private var phaseAllowsBoard = false
     private var transcriptObserver: AnyCancellable?
+    /// 内容改尺寸时重新摆位（SwiftUI 自己会改窗口大小，见文件头那段根因）。
+    private var sizeObserver: AnyCancellable?
     /// 显示那一刻的鼠标位置：**只看这一次**（用户：「位置固定，不随鼠标移动」）。
     private var anchorPoint: CGPoint?
-    /// 已经摆好的内容尺寸 —— 用来给 `onPreferenceChange` 去重，避免"改尺寸 → 重新布局 → 再改尺寸"。
-    private var lastLaidOutSize: CGSize = .zero
+    /// 上一次摆出去的矩形 —— 用来给重复通知去重（也用来打那行诊断）。
+    private var lastPlacedFrame: CGRect = .zero
     private var isVisible = false
 
     // MARK: - 显示 / 收起
@@ -100,24 +122,29 @@ final class DirectionBoardPanelController {
         guard !isVisible else { return }
         isVisible = true
         // 锚点取一次。没有鼠标事件过（比如自检注入）时退回鼠标当前位置。
-        let mouse = NSEvent.mouseLocation
-        anchorPoint = mouse
-        lastLaidOutSize = .zero
+        anchorPoint = NSEvent.mouseLocation
+        lastPlacedFrame = .zero
 
         let panel = makePanel()
         self.panel = panel
+        // 监听内容改尺寸 —— SwiftUI 会按内容把窗口撑大（见文件头），我们跟着重新摆位。
+        sizeObserver = NotificationCenter.default
+            .publisher(for: NSWindow.didResizeNotification, object: panel)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.repositionForCurrentSize() }
         panel.orderFrontRegardless()
-        // 先按一个保守的尺寸摆一次；视图量准之后 `handleMeasuredSize` 会把面板改到位。
-        handleMeasuredSize(CGSize(width: DirectionBoardView.cardWidth(forMultiplier: AppSettingsStore.snapshot().directionBoardWidthMultiplier), height: 220))
+        repositionForCurrentSize()
     }
 
     private func hide() {
         guard isVisible else { return }
         isVisible = false
+        sizeObserver = nil
         panel?.orderOut(nil)
         panel = nil
         hostingView = nil
         anchorPoint = nil
+        lastPlacedFrame = .zero
     }
 
     // MARK: - 「用户正在看板上操作吗」（自动发送那一下要问的）
@@ -184,31 +211,31 @@ final class DirectionBoardPanelController {
             onInputFocused: { [weak panel] in
                 // 用户点了输入框：这时候要键盘，成为 key 是**他的**意思。
                 panel?.makeKey()
-            },
-            onMeasuredSize: { [weak self] size in
-                self?.handleMeasuredSize(size)
             }))
-        // **必须置空**：默认的 `.standardBounds` 会绕开我们算好的 frame 按内容改窗口尺寸
-        //（录音那条带踩过：设好帧 82ms 后被改掉，屏幕上是"右上角甩一下"）。
-        hostingView.sizingOptions = []
+        // ⚠️ **这里刻意不设 `sizingOptions = []`** —— 这块面板上它挡不住 SwiftUI 按内容改窗口
+        //（调用方是 `NSHostingView.updateAnimatedWindowSize`，见文件头那段根因：设了也照样
+        // 672,-7,680×338，底边掉出屏幕）。尺寸交给 SwiftUI，位置由 `repositionForCurrentSize()`
+        // 在每次改尺寸之后重新算 —— "谁改的尺寸"于是不再重要。
         panel.contentView = hostingView
         self.hostingView = hostingView
 
         return panel
     }
 
-    /// 内容量出来了（或者变了）：把面板调成一样大，**右上角一个像素都不动**。
-    private func handleMeasuredSize(_ size: CGSize) {
+    /// **把面板摆到"锚点 + 夹进屏幕"算出来的那个位置**（尺寸用窗口当前的尺寸）。
+    ///
+    /// 每次显示、以及每次内容改尺寸（`NSWindow.didResizeNotification`）之后都调一次：
+    /// SwiftUI 撑大窗口时**保持顶边**，底边于是往下跑；这一下把它挪回去，净效果就是用户要的
+    /// 「左下角固定、内容往上长」。只改原点不改尺寸，所以不会再触发一次 resize 通知（不成环）。
+    private func repositionForCurrentSize() {
         guard isVisible, let panel, let anchorPoint else { return }
-        let width = max(size.width, DirectionBoardView.cardWidth(forMultiplier: AppSettingsStore.snapshot().directionBoardWidthMultiplier))
-        let height = max(size.height, 1)
-        guard abs(width - lastLaidOutSize.width) > 0.5 || abs(height - lastLaidOutSize.height) > 0.5 else { return }
-        lastLaidOutSize = CGSize(width: width, height: height)
-
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) })
                 ?? NSScreen.main else { return }
-        let frame = NotchSupport.directionBoardPanelFrame(
-            anchor: anchorPoint, size: CGSize(width: width, height: height), on: screen)
+        let frame = NotchSupport.directionBoardPanelFrame(anchor: anchorPoint,
+                                                          size: panel.frame.size,
+                                                          on: screen)
+        guard frame != lastPlacedFrame else { return }
+        lastPlacedFrame = frame
         panel.setFrame(frame, display: true)
     }
 }

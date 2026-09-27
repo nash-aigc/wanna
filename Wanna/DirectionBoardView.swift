@@ -26,8 +26,6 @@ struct DirectionBoardView: View {
     let theme: AnswerCardTheme
     /// 输入框被点了一下：宿主面板据此把窗口变成 key（否则打字进不来）。
     var onInputFocused: () -> Void = {}
-    /// 量到的自然尺寸报给宿主面板（面板据此把自己调成一样大）。
-    var onMeasuredSize: (CGSize) -> Void = { _ in }
 
     @FocusState private var isInputFocused: Bool
 
@@ -65,8 +63,8 @@ struct DirectionBoardView: View {
         Self.columnCount(forMultiplier: widthMultiplier, itemCount: session.displayedItems.count)
     }
     /// **下面那两块固定高度**（用户点名要求）：说明 4 行 + 输入框一行。
-    static let paragraphHeight: CGFloat = 4 * 20
-    private static let inputHeight: CGFloat = 30
+    /// **输入框默认留三行的高度**（用户 2026-09-27：「用户输入默认让用户可以输入三行内容，预留好高度空间」）。
+    private static let inputHeight: CGFloat = 3 * 18 + 12
     /// 编号那一列有多宽（「第三个方向」里的 3）。
     private static let numberColumnWidth: CGFloat = 18
 
@@ -77,8 +75,14 @@ struct DirectionBoardView: View {
                 directionList
                 sectionDivider
             }
-            // 下半：固定高度的两块（说明 + 输入框）。
+            // **任务结果**（用户：「整个卡片分成四段：上面那段是选项，中间那段是任务结果，
+            // 下面那段是 AI 对任务的理解，最下面是用户的输入」）—— 只有算得出结果时才出现。
+            if let taskResult = session.taskResult {
+                taskResultRow(taskResult)
+            }
+            // 第三段：理解（结构化几行，多行显示）。
             paragraphArea
+            // 第四段：输入（默认留三行的高度）。
             inputArea
             // 最下面一行：**取消看板**的三档（用户 2026-09-27：「把最下面这一行分成三列：
             // 第一列叫「取消本次」……第二列叫「取消十分钟」……第三列叫「取消今日」」）。
@@ -102,14 +106,6 @@ struct DirectionBoardView: View {
                 .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
         )
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
-        .background(
-            GeometryReader { geometryProxy in
-                Color.clear.preference(key: SizePreferenceKey.self, value: geometryProxy.size)
-            }
-        )
-        .onPreferenceChange(SizePreferenceKey.self) { measuredSize in
-            onMeasuredSize(measuredSize)
-        }
     }
 
     // MARK: - 方向区（只画说到的那些，每格一个连续编号）
@@ -223,8 +219,8 @@ struct DirectionBoardView: View {
                 .help("点一下 = 这个理解不对")
             }
         }
-        .frame(height: Self.paragraphHeight, alignment: .topLeading)
-        .clipped()
+        // **跟着内容长**（用户：「AI 对任务的理解是有格式的……换行显示，**可以显示为多行**」）。
+        // ⚠️ 这里原来是个固定高度（4 行）+ `.clipped()`，实测把「细节」那行直接切掉了 ✗。只有输入框保持固定三行高。
         // 点总结正文 = 确认"这个理解对"。
         .contentShape(Rectangle())
         .onTapGesture {
@@ -243,7 +239,24 @@ struct DirectionBoardView: View {
 
     private var paragraphText: some View {
         Group {
-            if session.paragraph.isEmpty {
+            if !session.understandingLines.isEmpty {
+                // 结构化的那几行（软件/文件/目标/类型/细节）—— 用户要的"换行显示，可以多行"。
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(session.understandingLines, id: \.label) { line in
+                        HStack(alignment: .top, spacing: 6) {
+                            Text(line.label)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.textColor.opacity(0.55))
+                                .frame(width: 26, alignment: .leading)
+                            Text(line.value)
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            } else if session.paragraph.isEmpty {
                 // 还没有结果时**不写占位话**（"正在理解…"这种字只会让人以为出错了）。
                 Text(session.isRequesting ? "正在理解你这次要做的事…" : "说说你要做什么。")
                     .font(.system(size: 12))
@@ -282,6 +295,35 @@ struct DirectionBoardView: View {
                 isInputFocused = true
                 onInputFocused()
             }
+    }
+
+    /// **任务结果**那一行 —— 用户要的"直接显示出来任务结果"（例：这道题选 A）。
+    ///
+    /// 它是四段里的第二段，夹在选项与理解之间；没有结果时整行不出现。
+    private func taskResultRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("结果")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DS.Colors.success)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(DS.Colors.success.opacity(0.18)))
+            Text(text)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(theme.textColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.Colors.success.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(DS.Colors.success.opacity(0.45), lineWidth: 1)
+        )
     }
 
     /// **取消看板那一行**：暗红色、三列、有高度（用户：「这一行要有一定的高度，颜色是暗红色」）。

@@ -34,16 +34,28 @@ nonisolated enum DirectionBoardPrompt {
             lines.append("- \(direction.keyword)：\(direction.detail)")
         }
         return """
-        你是一个任务方向识别器。用户正在对着一台 Mac 说话，你的唯一任务是：**用一两句话说明你理解他这次想做什么**。
+        你是一个任务方向识别器。用户正在对着一台 Mac 说话，你的任务是两件事：
+        **① 用固定的几行说清你理解他这次要做什么；② 如果能立刻算出结果，就把结果直接给出来。**
 
         可能的方向（你可以从中挑，也可以都不挑）：
         \(lines.joined(separator: "\n"))
 
+        严格按这几行回答（没有内容的行就整行不写，**不要写"无"**）：
+
+        软件：<涉及哪个应用/网站/工具；没有就不写这一行>
+        文件：<涉及哪个文件/文件夹/页面；没有就不写这一行>
+        目标：<这次要达成什么，一句话>
+        类型：<3~7 个字，这次是什么类型的任务，例如「做题」「整理文件」>
+        细节：<任何需要知道的前提、约束、你注意到的东西；可以多句>
+
+        任务结果：<如果你**已经能从屏幕/文字直接算出答案**（例如题目选哪个选项、哪几个人最像），
+                  就把结果直接写在这一行；算不出来就整行不写>
+
         规则：
-        1. **只写理解**，不要执行任何事、不要回答问题、不要给步骤、不要写代码；
-        2. **一两句话，不超过 \(maximumParagraphCharacters) 字**，说清"他要做什么"，不要复述他的原话；
+        1. **只写理解与结果**，不要执行任何事、不要给操作步骤、不要写代码；
+        2. 「目标」一句话说不完就写「细节」那几行，**不要写成长篇**；
         3. 用中文写（他说英文就用英文）；
-        4. 直接给那句话，不要加任何前缀、标题、引号或 Markdown。
+        4. 不要加任何别的标题、引号、Markdown 或代码块。
         """ + (asksForLabel ? """
 
         \(labelLineInstruction)
@@ -62,20 +74,38 @@ nonisolated enum DirectionBoardPrompt {
     static let labelLineInstruction = "类型：<不超过 7 个字，这次是什么类型的任务；例如「选 A」「挑三个人」>"
 
     /// 从带屏幕参考的那次回复里把类型标签抽出来（没有就返回 nil）。
+    ///
+    /// ⚠️ **不能只认行首**：实测模型会把标签写在**同一行**上（
+    /// `……并把结论记下来。 类型：做题`）—— 按行首判就永远抽不出来（第一版就是这样，
+    /// 临时类型一直是空的）。所以全串搜 `类型：` / `任务类型：`，取**最后一个**（后面那个才是标签）。
     static func parseLabelLine(_ raw: String) -> String? {
-        for rawLine in raw.split(separator: "\n", omittingEmptySubsequences: false) {
-            var line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
-            line = line.replacingOccurrences(of: "：", with: ":")
-            let prefixes = ["类型:", "任务类型:"]
-            for prefix in prefixes where line.hasPrefix(prefix) {
-                var value = String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                while let first = value.first, "#*`\"「」 ".contains(first) { value.removeFirst() }
-                while let last = value.last, "#*`\"「」 ".contains(last) { value.removeLast() }
-                guard !value.isEmpty else { return nil }
-                return value.count > 12 ? String(value.prefix(12)) : value
+        let normalized = raw.replacingOccurrences(of: "：", with: ":")
+        for prefix in ["任务类型:", "类型:"] {
+            guard let range = normalized.range(of: prefix, options: .backwards) else { continue }
+            var value = String(normalized[range.upperBound...])
+            // 取到行尾或句号为止（标签后面常常还有别的字）。
+            for terminator in ["\n", "。", "，", "；", ";"] {
+                if let end = value.range(of: terminator) { value = String(value[..<end.lowerBound]) }
             }
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            while let first = value.first, "#*`\"「」 ".contains(first) { value.removeFirst() }
+            while let last = value.last, "#*`\"「」 ".contains(last) { value.removeLast() }
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, value.count <= 12 else { continue }
+            return value
         }
         return nil
+    }
+
+    /// 把标签那一截从**显示用的那段话**里去掉（它能读懂题目，但「类型：做题」不该出现在看板上）。
+    static func paragraphWithoutLabelLine(_ raw: String) -> String {
+        var text = raw
+        for prefix in ["任务类型：", "类型：", "任务类型:", "类型:"] {
+            if let range = text.range(of: prefix, options: .backwards) {
+                text = String(text[..<range.lowerBound])
+            }
+        }
+        return text
     }
 
     /// 用户消息：**用户说的话 +（上一次的理解，供保持连续）**。
@@ -95,7 +125,130 @@ nonisolated enum DirectionBoardPrompt {
         return sections.joined(separator: "\n\n")
     }
 
-    /// 把模型回的那段收拾干净（去空白、去引号、限长）。
+    /// 结构化理解的**那几行**（软件/文件/目标/类型/细节）—— 按用户要的顺序、多行显示。
+    ///
+    /// 用户 2026-09-27：「AI 对任务的理解是有格式的，比如**软件是什么、文件是什么、目标是什么、
+    /// 类型是什么、细节是什么**，换行显示，可以显示为多行。」
+    static func parseUnderstandingLines(_ raw: String) -> [(label: String, value: String)] {
+        let labels = ["软件", "文件", "目标", "类型", "细节"]
+        // **「任务结果」也是一条边界**：它有一套自己的显示位置（四段里的第二段），不属于"理解"。
+        // 少了这一步，「细节」会把「任务结果:选 A（…）」整段吞进去，于是同一句话在看板上出现两遍
+        // —— 绿框里一次、「细节」那行末尾又一次（2026-09-27 实测截图，用户要的是四段分明）。
+        // 注意「任务类型」也要算边界，否则「类型」会在它中间匹配上（`任务类型:做题` → 值里留个「任务」）。
+        let boundaryLabels = labels + ["任务结果", "任务类型"]
+        let normalized = raw.replacingOccurrences(of: "：", with: ":")
+        // ⚠️ **不能只按换行切**：实测模型会把五行**写在同一行**里
+        //（「软件:X 文件:Y 目标:Z 类型:做题 细节:…」）—— 只认行首的话，除了第一行全都留在正文里，
+        // 屏幕上就是"一整段没排版"（第一次实测就是这样）。
+        // 所以先按换行切，再在每一行里**按标签位置切**。
+        var results: [(String, String)] = []
+        for rawLine in normalized.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            // 找出这一行里所有 "标签:" 的位置（含那些只用来**截断**、自己不出现在结果里的边界标签）。
+            var positions: [(label: String, start: String.Index)] = []
+            for label in boundaryLabels {
+                var searchStart = line.startIndex
+                while let range = line.range(of: label + ":", range: searchStart..<line.endIndex) {
+                    positions.append((label, range.lowerBound))
+                    searchStart = range.upperBound
+                }
+            }
+            positions.sort { $0.start < $1.start }
+            for (index, position) in positions.enumerated() {
+                // 边界标签只负责把前一个值截断，自己不产出理解行。
+                guard labels.contains(position.label) else { continue }
+                let valueStart = line.index(position.start, offsetBy: position.label.count + 1)
+                // `max(valueStart, …)`：边界标签可能**嵌在**另一个标签里（`任务类型:` 里的 `类型:`），
+                // 这时下一个位置会落在 valueStart 之前 —— 直接用会得到一个无效区间（崩溃）。
+                let valueEnd = index + 1 < positions.count
+                    ? max(positions[index + 1].start, valueStart)
+                    : line.endIndex
+                let value = String(line[valueStart..<valueEnd])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty, !results.contains(where: { $0.0 == position.label }) else { continue }
+                results.append((position.label, value))
+            }
+        }
+        // 按固定顺序返回（模型写乱了也照用户的顺序显示）。
+        return labels.compactMap { label in results.first { $0.0 == label } }
+    }
+
+    /// 结构化那几行**之外**的正文（模型在标签前后还写了别的话时，留在「细节」里展示）。
+    static func leftoverParagraphText(_ raw: String,
+                                      structuredLines: [(label: String, value: String)]) -> String {
+        var text = raw
+        for line in structuredLines {
+            for colon in ["：", ":"] {
+                if let range = text.range(of: line.label + colon) {
+                    // 把「标签:值」整段去掉（值可能是它到行尾/下一个标签之前的那一段）。
+                    let valueEnd = text.index(range.lowerBound, offsetBy: line.label.count + 1 + line.value.count)
+                    text.removeSubrange(range.lowerBound..<min(valueEnd, text.endIndex))
+                }
+            }
+        }
+        // **「任务结果」那一段整段挖掉**（它是四段里的第二段，已经有自己的绿框了）。
+        // 原来这里是 `replacingOccurrences(of: "任务结果", with: "")` —— 只把那四个字换成空串，
+        // 正文里于是留下一个孤零零的「:选 A（…）」（2026-09-27 实测截图）。
+        for prefix in ["任务结果：", "任务结果:", "任务类型：", "任务类型:"] {
+            if let range = text.range(of: prefix) {
+                let lineEnd = text[range.upperBound...].firstIndex(of: "\n") ?? text.endIndex
+                text.removeSubrange(range.lowerBound..<lineEnd)
+            }
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// **任务结果**那一行（模型能直接算出来才有）。
+    ///
+    /// 用户 2026-09-27：「如果用户的问题很明确，让他去判断哪一个选项，他不仅理解，不仅有任务方向，
+    /// 还要补充一个**任务结果**……如果他马上就能通过 AI 算出任务结果，就直接把任务结果发给用户。」
+    static func parseTaskResult(_ raw: String) -> String? {
+        let normalized = raw.replacingOccurrences(of: "：", with: ":")
+        guard let range = normalized.range(of: "任务结果:", options: .backwards) else { return nil }
+        // **结果可能续到下一行**（实测模型写成「任务结果：选」+ 换行 +「A」）—— 所以取到
+        // 空行、或下一个"标签行"为止，最多两行。
+        var collected: [String] = []
+        for rawLine in String(normalized[range.upperBound...]).split(separator: "\n",
+                                                                    omittingEmptySubsequences: false) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty { break }
+            let knownLabels = ["软件:", "文件:", "目标:", "类型:", "细节:", "任务结果:"]
+            if !collected.isEmpty, knownLabels.contains(where: { line.hasPrefix($0) }) { break }
+            collected.append(line)
+            if collected.count >= 2 { break }
+        }
+        var value = collected.joined(separator: " ")
+        value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let first = value.first, "#*`\"「」 ".contains(first) { value.removeFirst() }
+        while let last = value.last, "#*`\"".contains(last) { value.removeLast() }
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, cleaned.count <= 60 else { return nil }
+        return cleaned
+    }
+
+    /// 模型回的那段**原文**：只做必要的收拾，**不截断**。
+    ///
+    /// ⚠️ 这里原来是直接把 `cleanParagraph`（**200 字上限**）用在原文上，而那段"上限"是给
+    /// **显示**用的 —— 于是解析（`parseUnderstandingLines` / `parseTaskResult`）拿到的是一段
+    /// **已经被砍掉尾巴**的文本：五行加起来很容易超过 200 字，屏幕上就是「细节」那行写到一半
+    /// 突然断在「题目在屏幕右」（2026-09-27 实测截图，用户要的是完整的多行理解）。
+    /// 所以截断只能发生在**显示那一步**（`self.paragraph`），原文一律留着 —— 四个上限
+    /// （五个标签 + 任务结果）都得从完整文本里切。
+    static func cleanRawResponse(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let first = text.first, "#*`\"' ".contains(first) { text.removeFirst() }
+        while let last = text.last, "#*`\"'".contains(last) { text.removeLast() }
+        // 只防病态长度（模型偶尔会绕圈子写上一大篇），不是显示上限。
+        if text.count > maximumRawResponseCharacters {
+            text = String(text.prefix(maximumRawResponseCharacters))
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 原文的兜底上限（远大于任何正常的五行理解）。
+    static let maximumRawResponseCharacters = 4000
+
+    /// 把模型回的那段收拾干净（去空白、去引号、限长）—— **只用于显示**。
     static func cleanParagraph(_ raw: String) -> String {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while let first = text.first, "#*`\"'「」 ".contains(first) { text.removeFirst() }

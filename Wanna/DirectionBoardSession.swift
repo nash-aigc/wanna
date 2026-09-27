@@ -36,6 +36,10 @@ final class DirectionBoardSession: ObservableObject {
 
     @Published private(set) var isListening = false
     @Published private(set) var paragraph = ""
+    /// **结构化理解的那几行**（软件 / 文件 / 目标 / 类型 / 细节）—— 用户要的"换行显示，可以显示为多行"。
+    @Published private(set) var understandingLines: [(label: String, value: String)] = []
+    /// **任务结果**（模型能直接算出来才有）—— 用户要的那一行「选 A」。
+    @Published private(set) var taskResult: String?
     @Published private(set) var displayedItems: [DirectionBoardDisplayItem] = []
     @Published private(set) var selectionStates: [String: DirectionBoardSelectionState] = [:]
     @Published private(set) var confirmedTexts: [String: String] = [:]
@@ -94,26 +98,35 @@ final class DirectionBoardSession: ObservableObject {
         beginListening(cycleID: "self-check-cycle")
         let lines = [
             "帮我把这段记下来",
-            "帮我把这段记下来，再指给我看是哪个",
-            "帮我把这段记下来，再指给我看是哪个，然后照着它写一段新的",
-            "帮我把这段记下来，再指给我看是哪个，照着它写一段新的，选第二个方向",
+            // 用户的那个场景（屏幕上有数学题）：说了「参考屏幕」就要当场截屏 + 看图给答案。
+            "参考屏幕内容，分析一下这道题可能选哪一个",
         ]
+        var accumulated = ""
         for (index, line) in lines.enumerated() {
+            // **累积**：识别器给的是"到目前为止整句"的累积文本，不是每句替换上一句。
+            // 自检如果按"替换"喂，第二句就把第一句的命中冲掉了（实测过一次：屏幕上只剩空板）。
+            accumulated += line
+            let partial = accumulated
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 1.4) { [weak self] in
-                NotchListeningTranscriptModel.shared.setLiveText(line)
-                self?.noteLiveTranscript(line)
+                NotchListeningTranscriptModel.shared.setLiveText(partial)
+                self?.noteLiveTranscript(partial)
                 let shown = self?.displayedItems.map { "\($0.number).\($0.keyword)" } ?? []
                 print("🎛️ 方向看板自检：第 \(index + 1) 句 → 显示 \(shown.joined(separator: " ｜ "))")
             }
         }
     }
 
+    /// ⚠️ **只读，绝不取走** —— 取走即清，会把看板上的格子一起清掉（2026-09-27 被这个骗过一次：
+    /// 屏幕上看着是"空板"，其实是自检自己把它清空了）。
     func logTurnDecisionForSelfCheck() {
         guard Self.selfCheckMode != nil else { return }
-        let decision = consumeTurnDecision()
-        print("🎛️ 方向看板自检：提交时会加在提示词前面的是 —— "
-              + (DirectionBoardPrompt.decoration(confirmedDirectionTexts: decision.directionTexts,
-                                                 typedInput: decision.typedInput) ?? "（什么都没点，不加）"))
+        let directionTexts = displayedItems.compactMap { item -> String? in
+            guard selectionStates[item.directionID] == .confirmed else { return nil }
+            return confirmedTexts[item.directionID] ?? item.keyword
+        }
+        print("🎛️ 方向看板自检：显示 \(displayedItems.count) 格；提交时会加在提示词前面的是 —— "
+              + (DirectionBoardPrompt.decoration(confirmedDirectionTexts: directionTexts,
+                                                 typedInput: typedInput) ?? "（什么都没点，不加）"))
     }
 
     private var streamSelfCheckTask: Task<Void, Never>?
@@ -159,6 +172,8 @@ final class DirectionBoardSession: ObservableObject {
         latestTranscript = ""
         lastRequestedTranscript = ""
         paragraph = ""
+        understandingLines = []
+        taskResult = nil
         previousReading = ""
         jevProbabilities = [:]
         forcedDirectionIDs = []
@@ -494,7 +509,23 @@ final class DirectionBoardSession: ObservableObject {
                 print("🧭 方向看板：Jev 判断 \(top.joined(separator: " "))")
             }
             if let paragraphText, !paragraphText.isEmpty {
-                self.paragraph = paragraphText
+                print("🧭 方向看板：理解 = \(paragraphText.prefix(80))")
+                // 显示用的那段话去掉「类型：X」那一截（模型读懂了题目，但那截是给看板用的）。
+                let displayText = DirectionBoardPrompt.paragraphWithoutLabelLine(paragraphText)
+                self.paragraph = DirectionBoardPrompt.cleanParagraph(
+                    displayText.isEmpty ? paragraphText : displayText)
+                let structured = DirectionBoardPrompt.parseUnderstandingLines(paragraphText)
+                self.understandingLines = structured
+                if !structured.isEmpty {
+                    // 有结构化那几行时，正文只留"标签之外的话"（模型爱在标签前后再写一句）。
+                    let leftover = DirectionBoardPrompt.leftoverParagraphText(paragraphText,
+                                                                              structuredLines: structured)
+                    self.paragraph = DirectionBoardPrompt.cleanParagraph(leftover)
+                }
+                if let result = DirectionBoardPrompt.parseTaskResult(paragraphText) {
+                    self.taskResult = result
+                    print("🧭 方向看板：任务结果 = \(result)")
+                }
                 self.previousReading = String(paragraphText.prefix(Self.maximumPreviousReadingCharacters))
                 // **带屏幕参考时，模型给的"这次是什么类型"也变成一个可点的类型**（进临时文件）。
                 // 用户那个数学题的例子：「这道题应该选 A，那结果就是固定的」—— 那个答案本身就是选项。
@@ -546,7 +577,8 @@ final class DirectionBoardSession: ObservableObject {
                 roleOverride: CompanionManager.visionRoleOverride(
                     forCardID: ConversationSessionsStore.activeSession().id.uuidString),
                 onTextChunk: { _ in })
-            return DirectionBoardPrompt.cleanParagraph(text)
+            // ⚠️ **不截断**：解析（五行 + 任务结果）必须从完整原文里切 —— 显示那一步才限长。
+            return DirectionBoardPrompt.cleanRawResponse(text)
         } catch {
             print("🧭 方向看板：这次理解请求失败（保留上一次）—— \(error.localizedDescription)")
             return nil

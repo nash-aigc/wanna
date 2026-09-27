@@ -86,7 +86,10 @@ nonisolated final class TaskDirectionStore {
         lock.lock()
         defer { lock.unlock() }
         if let cached { return cached }
-        let loaded = loadFromDisk(at: Self.fileURL) + loadFromDisk(at: Self.temporaryFileURL)
+        // ⚠️ **只在这里锁一次**，下面两个都是 `…Locked`（假定已持锁）。
+        // 2026-09-27：这里原来是 `loadFromDisk` + 里面的 `write`，两个都自己 `lock()` ——
+        // `NSLock` 不可重入，于是**第一次读清单就死锁**，App 卡死在 Listening（用户当场报「卡死」）。
+        let loaded = loadFromDiskLocked(at: Self.fileURL) + loadFromDiskLocked(at: Self.temporaryFileURL)
         cached = loaded
         return loaded
     }
@@ -95,14 +98,14 @@ nonisolated final class TaskDirectionStore {
     func fixedDirections() -> [TaskDirection] {
         lock.lock()
         defer { lock.unlock() }
-        return loadFromDisk(at: Self.fileURL)
+        return loadFromDiskLocked(at: Self.fileURL)
     }
 
     /// **临时那份**（这一轮口述出来的）。
     func temporaryDirections() -> [TaskDirection] {
         lock.lock()
         defer { lock.unlock() }
-        return loadFromDisk(at: Self.temporaryFileURL)
+        return loadFromDiskLocked(at: Self.temporaryFileURL)
     }
 
     /// 只读关键词与描述（给判断用）。
@@ -115,6 +118,11 @@ nonisolated final class TaskDirectionStore {
         return allDirections().contains { Self.normalizedKeyword($0.keyword) == needle }
     }
 
+    // MARK: - 内部（**都假定调用方已经持锁**）
+    //
+    // 命名带 `Locked` 是硬规矩：这个类型的每一处加锁都只发生在**公开入口的第一行**，
+    // 内部函数一个都不许再 `lock()` —— `NSLock` 不可重入，重复加锁就是死锁（已经踩过一次）。
+
     // MARK: - 写（只允许追加与删除单条；没有"整份替换"之外的第三种）
 
     /// **追加一条**（去重：关键词归一化之后相同就不加）。返回是否真的加进去了。
@@ -126,14 +134,16 @@ nonisolated final class TaskDirectionStore {
         guard !trimmedKeyword.isEmpty else { return false }
         guard !contains(keyword: trimmedKeyword) else { return false }
 
+        lock.lock()
+        defer { lock.unlock() }
         let target = source == .user ? Self.temporaryFileURL : Self.fileURL
-        var directions = loadFromDisk(at: target)
+        var directions = loadFromDiskLocked(at: target)
         directions.append(TaskDirection(id: Self.slug(for: trimmedKeyword),
                                         keyword: trimmedKeyword,
                                         detail: trimmedDetail.isEmpty ? trimmedKeyword : trimmedDetail,
                                         source: source.rawValue,
                                         addedAt: Date()))
-        write(directions, to: target)
+        writeLocked(directions, to: target)
         print("🧭 任务方向：追加了一条（\(source.rawValue)\(source == .user ? "，临时文件" : "")）—— \(trimmedKeyword)")
         return true
     }
@@ -143,31 +153,35 @@ nonisolated final class TaskDirectionStore {
     /// 用户 2026-09-27：「临时文件在每一轮对话结束时清掉。是每一**大**轮，就是一整个大轮，
     /// 中间可能有打断、有些东西，这算一个轮，不算两轮，算一轮，然后自动清掉。」
     func clearTemporaryDirections() {
-        let existing = loadFromDisk(at: Self.temporaryFileURL)
+        lock.lock()
+        defer { lock.unlock() }
+        let existing = loadFromDiskLocked(at: Self.temporaryFileURL)
         guard !existing.isEmpty else { return }
-        write([], to: Self.temporaryFileURL)
+        writeLocked([], to: Self.temporaryFileURL)
         print("🧭 任务方向：临时文件已清（\(existing.count) 条）")
     }
 
     func remove(id: String) {
+        lock.lock()
+        defer { lock.unlock() }
         // 两处都找一遍：它可能在固定那份，也可能在临时那份。
         for url in [Self.fileURL, Self.temporaryFileURL] {
-            let remaining = loadFromDisk(at: url).filter { $0.id != id }
-            write(remaining, to: url)
+            let remaining = loadFromDiskLocked(at: url).filter { $0.id != id }
+            writeLocked(remaining, to: url)
         }
     }
 
     /// 把用户改过的清单**恢复成出厂那份**（设置页那颗按钮；只动固定那份）。
     func restoreBuiltinDefaults() {
-        write(Self.builtinDirections, to: Self.fileURL)
+        lock.lock()
+        defer { lock.unlock() }
+        writeLocked(Self.builtinDirections, to: Self.fileURL)
     }
 
     // MARK: - 内部
 
-    private func write(_ directions: [TaskDirection], to url: URL) {
-        lock.lock()
+    private func writeLocked(_ directions: [TaskDirection], to url: URL) {
         cached = nil   // 两份拼在一起的结果变了，缓存作废
-        lock.unlock()
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -181,12 +195,12 @@ nonisolated final class TaskDirectionStore {
         NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
     }
 
-    private func loadFromDisk(at url: URL) -> [TaskDirection] {
+    private func loadFromDiskLocked(at url: URL) -> [TaskDirection] {
         guard let data = try? Data(contentsOf: url) else {
             // 固定那份第一次跑：把出厂那份写下去（**从此这个文件就是真相**，代码里那份只是种子）。
             // 临时那份**不种子** —— 空的就该是空的。
             guard url == Self.fileURL else { return [] }
-            write(Self.builtinDirections, to: url)
+            writeLocked(Self.builtinDirections, to: url)
             return Self.builtinDirections
         }
         let decoder = JSONDecoder()
