@@ -512,6 +512,13 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 关掉之后：面板不出现、3 秒一次那次请求也不发 —— 一行都不做（不是"只是不显示"）。
     var directionBoardEnabled: Bool = true
 
+    /// **看板每隔 3 秒问一次模型的门槛：新增多少个字才值得问**（标点不算）。
+    ///
+    /// 用户 2026-09-27：「如果 3 秒之内用户新增的内容少于 10 个字，也不发送，因为相当于这句话
+    /// 还没说完。标点符号不算字数」，随后在我问"要不要做成可调"时回「**需要在设置中可以调整**」。
+    /// 范围 5…20（`clamped()` 兜住手改的 JSON）。
+    var directionBoardMinimumAddedCharacters: Int = 10
+
     /// 看板的六个方向短语与它们的关键词（`DirectionBoardConfiguration`）。
     ///
     /// 用户 2026-09-27：「做成设置页可改」。默认那六个短语是他点名的那一套；
@@ -1535,6 +1542,10 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     func clamped() -> AppSettings {
         var settings = self
         settings.transientCursorHideDelaySeconds = min(max(settings.transientCursorHideDelaySeconds, 0.5), 5)
+        // 看板门槛：5…20 字（用户要求可在设置里调，范围是我们替他定的 —— 太小等于没门槛，
+        // 太大他要等很久才看到一次理解）。
+        settings.directionBoardMinimumAddedCharacters =
+            min(max(settings.directionBoardMinimumAddedCharacters, 5), 20)
         settings.answerBubbleLingerSeconds = min(max(settings.answerBubbleLingerSeconds, 0), 15)
         settings.rememberedConversationRounds = min(max(settings.rememberedConversationRounds, 0), 30)
         settings.finalTranscriptGracePeriodSeconds = min(max(settings.finalTranscriptGracePeriodSeconds, 0.5), 3)
@@ -1571,6 +1582,7 @@ nonisolated extension AppSettings {
         case showsResponseText
         case directionBoardEnabled
         case directionBoard
+        case directionBoardMinimumAddedCharacters
         case answerBubbleLingerSeconds
         case cursorPresenceMode
         case cursorShapeStyle
@@ -1701,6 +1713,8 @@ nonisolated extension AppSettings {
         opensPanelOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .opensPanelOnLaunch) ?? defaults.opensPanelOnLaunch
         showsResponseText = try container.decodeIfPresent(Bool.self, forKey: .showsResponseText) ?? defaults.showsResponseText
         directionBoardEnabled = try container.decodeIfPresent(Bool.self, forKey: .directionBoardEnabled) ?? defaults.directionBoardEnabled
+        directionBoardMinimumAddedCharacters = try container.decodeIfPresent(
+            Int.self, forKey: .directionBoardMinimumAddedCharacters) ?? defaults.directionBoardMinimumAddedCharacters
         directionBoard = DirectionBoardConfiguration.validated(
             try container.decodeIfPresent(DirectionBoardConfiguration.self, forKey: .directionBoard)
                 ?? defaults.directionBoard)

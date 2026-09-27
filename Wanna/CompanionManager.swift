@@ -2102,7 +2102,8 @@ final class CompanionManager: ObservableObject {
                 NotionNoteSession.shared.beginListening()
                 // **方向看板也从这一刻起表**（用户：「触发时机：用户按下主 Agent 快捷键、
                 // 开始说话的那一秒即启动」）。它只起一块表，不发请求 —— 要等识别文本出来。
-                DirectionBoardSession.shared.beginListening()
+                // 带上这一次大循环的 id：「取消本次」只在同一个 id 内有效，新循环自动恢复显示。
+                DirectionBoardSession.shared.beginListening(cycleID: currentVoiceCycleID)
 
                 // **这一轮的录音也从这里开始**（接线图第 4 条，2026-09-27）：用户要
                 //「把用户的每一条指令都保存为录音」。这一刻只是声明"接下来的麦克风音频
@@ -2865,7 +2866,8 @@ final class CompanionManager: ObservableObject {
         // 窗口里每一句的实时转写从 `onTranscriptUpdate` 喂进来。
         NotionNoteSession.shared.beginListening()
         // 追问窗口里用户一开口也是「说话期间」—— 同一块看板、同一条判据。
-        DirectionBoardSession.shared.beginListening()
+        // **同一个 cycleID 传下去**：追问仍然属于这一次大循环，所以"取消本次"在这里不会被清掉。
+        DirectionBoardSession.shared.beginListening(cycleID: currentVoiceCycleID)
         Task { [weak self] in
             guard let self else { return }
             await self.buddyDictationManager.startContinuousListening(

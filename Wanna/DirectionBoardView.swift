@@ -49,6 +49,9 @@ struct DirectionBoardView: View {
             // 下半：固定高度的两块（说明 + 输入框）。
             paragraphArea
             inputArea
+            // 最下面一行：**取消看板**的三档（用户 2026-09-27：「把最下面这一行分成三列：
+            // 第一列叫「取消本次」……第二列叫「取消十分钟」……第三列叫「取消今日」」）。
+            cancelRow
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -248,6 +251,49 @@ struct DirectionBoardView: View {
                 onInputFocused()
             }
     }
+
+    /// **取消看板那一行**：暗红色、三列、有高度（用户：「这一行要有一定的高度，颜色是暗红色」）。
+    ///
+    /// 三档的语义（用户）：取消本次 = 这一次大循环；取消十分钟 = 十分钟内（本循环或新循环）都不显示；
+    /// 取消今日 = 到**明天凌晨 0 点**为止（不是"24 小时之后"）。
+    private var cancelRow: some View {
+        HStack(spacing: 0) {
+            cancelButton(title: "取消本次", help: "这一次循环不再显示看板（录音照旧）") {
+                session.cancelForThisCycle()
+            }
+            Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1, height: 16)
+            cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
+                session.cancelForTenMinutes()
+            }
+            Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1, height: 16)
+            cancelButton(title: "取消今日", help: "到明天凌晨 0 点为止都不显示") {
+                session.cancelUntilNextMidnight()
+            }
+        }
+        .frame(height: Self.cancelRowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Self.cancelRowColor)
+        )
+    }
+
+    private func cancelButton(title: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Self.cancelRowTextColor)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private static let cancelRowHeight: CGFloat = 26
+    /// 暗红：比正文暗、比背景亮，一眼看出是"关掉它"这一类的动作，但不至于抢走注意。
+    private static let cancelRowColor = Color(red: 0.35, green: 0.09, blue: 0.10)
+    private static let cancelRowTextColor = Color(red: 0.98, green: 0.72, blue: 0.72)
+    private static let cancelRowDividerColor = Color.white.opacity(0.12)
 
     private var sectionDivider: some View {
         Rectangle()

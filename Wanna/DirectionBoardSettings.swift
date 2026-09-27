@@ -403,3 +403,22 @@ extension DirectionBoardConfiguration {
         return total > 0 ? total : nil
     }
 }
+
+
+// MARK: - 口述取消看板（2026-09-27 用户要的"总闸门"）
+
+extension DirectionBoardConfiguration {
+
+    /// **用户口述要取消看板吗** —— 只认那两个精准短语。
+    ///
+    /// 用户 2026-09-27：「判断里面有没有准确的「**取消任务看板**」或「**取消任务方向**」这几个字。
+    /// 「取消任务」这四个字必须是关联的，后面接「看板」或「方向」，必须是精准的词。」
+    ///
+    /// 所以是**连续子串**匹配（比较前去掉标点与空格 —— 识别器会在中间加逗号），不是模糊匹配：
+    /// 把「取消任务」和后面的词拆开认、或者容忍错字，都会变成"他随口说个取消就把看板关了」。
+    nonisolated static func spokenCancelRequested(in transcriptText: String) -> Bool {
+        let normalized = normalizedForMatching(transcriptText)
+        guard !normalized.isEmpty else { return false }
+        return normalized.contains("取消任务看板") || normalized.contains("取消任务方向")
+    }
+}

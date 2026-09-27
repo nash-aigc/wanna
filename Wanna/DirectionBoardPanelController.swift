@@ -77,7 +77,10 @@ final class DirectionBoardPanelController {
         // 自检不走相位（它直接喂假转写），所以那道闸门在自检模式下恒开 —— 否则相位机
         // 每次 `refreshActivityPhase` 都会把它关回去（实测过一次：面板建好又被收掉）。
         let phaseAllows = phaseAllowsBoard || DirectionBoardSession.selfCheckMode != nil
-        if phaseAllows && !spokenText.isEmpty {
+        // **用户取消了看板就不显示**（本次 / 十分钟 / 今日 —— 状态在 `DirectionBoardSession` 里，
+        // 每次显隐判断只是一次布尔 + 一次日期比较，不轮询）。
+        let notCancelled = !DirectionBoardSession.shared.isCancelled
+        if phaseAllows && notCancelled && !spokenText.isEmpty {
             show()
         } else {
             hide()

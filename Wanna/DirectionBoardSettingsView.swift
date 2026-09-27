@@ -59,6 +59,27 @@ struct DirectionBoardSettingsSection: View {
 
             SettingsCardRowDivider()
             SettingsRow(
+                label: "每隔 3 秒问一次的门槛",
+                description: "新增多少个字才值得问模型一次（标点不算）。太小等于没门槛，太大你要等很久才看到一次理解。"
+            ) {
+                SettingsStepper(
+                    value: generalSettingsViewModel.binding(\.directionBoardMinimumAddedCharacters),
+                    range: 5...20)
+            }
+
+            SettingsCardRowDivider()
+            SettingsRow(
+                label: "看板被取消到什么时候",
+                description: cancelledDescription
+            ) {
+                Button("恢复显示") {
+                    DirectionBoardSession.shared.resumeImmediately()
+                }
+                .buttonStyle(DSPillButtonStyle())
+            }
+
+            SettingsCardRowDivider()
+            SettingsRow(
                 label: "类别名",
                 description: "每一行左边显示的名字（笔记类 / 显示类 / …），用逗号分隔。最多 5 类。"
             ) {
@@ -82,6 +103,16 @@ struct DirectionBoardSettingsSection: View {
         SettingsNote(
             text: "关键词是本地匹配：你说话时只要有哪一格的关键词出现在识别结果里，那一格就会自己亮起来（并显示它的预设短语），不用等 AI。关键词没命中时，第 1 格才交给 AI 去写 —— 所以预设写得越准，看板越稳。空着不写就是「这一格永远交给 AI 判断」。"
         )
+    }
+
+    /// 当前取消状态（「取消十分钟 / 取消今日」到什么时候）—— 用户要的「这些取消的时间可以在设置里面显示」。
+    private var cancelledDescription: String {
+        guard let until = DirectionBoardSession.shared.cancelledUntilDate else {
+            return "现在没有取消（看板在说话时正常显示）。「取消本次 / 取消十分钟 / 取消今日」在说话时可以点，也可以直接说「取消任务看板」。"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日 HH:mm"
+        return "看板被取消到 \(formatter.string(from: until))。到时间会自动恢复；也可以按右边这颗立刻恢复。"
     }
 
     // MARK: - 绑定（草稿，按「保存」才落盘）

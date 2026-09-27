@@ -64,9 +64,13 @@ final class DirectionBoardSession: ObservableObject {
     @Published var typedInput = ""
     /// 有一次请求正在飞（看板上显示一个很轻的"在想"）。
     @Published private(set) var isRequesting = false
+    /// **看板被用户取消了**（本次循环 / 十分钟 / 今日）—— 取消了就不显示、也不发请求。
+    @Published private(set) var isCancelled = false
 
     // MARK: - 内部状态
 
+    /// 「取消本次」—— 只在这一次大循环里有效。
+    private var cancelledForThisCycle = false
     private var latestTranscript = ""
     private var lastRequestedTranscript = ""
     private var modelRowLabels: [Int: String] = [:]
@@ -77,6 +81,12 @@ final class DirectionBoardSession: ObservableObject {
     private var requestTask: Task<Void, Never>?
     private var roundGeneration = 0
     private let visionChatAPI = BailianVisionChatAPI()
+    /// 这一次大循环的 id（由调用方传进来）—— 「取消本次」就是"这个 id 之内不再显示"。
+    private var currentCycleID: String?
+    /// 「取消十分钟 / 取消今日」取消到什么时候（`nil` = 没有定时取消）。
+    private var cancelledUntil: Date?
+    private static let cancelledUntilDefaultsKey = "wannaDirectionBoardCancelledUntil"
+    private static let tenMinutes: TimeInterval = 10 * 60
 
     /// 每 3 秒看一次（用户定的节奏）。
     static let cadenceSeconds: TimeInterval = 3
@@ -110,7 +120,7 @@ final class DirectionBoardSession: ObservableObject {
     /// 按顺序喂几句假转写（每句都比上一句多一个方向，看板应当**一格一格长出来**）。
     func runSelfCheckSequence() {
         guard Self.selfCheckMode != nil else { return }
-        beginListening()
+        beginListening(cycleID: "self-check-cycle")
         let lines = [
             "帮我把这段记下来",
             "帮我把这段记下来，再指给我看是哪个",
@@ -145,8 +155,19 @@ final class DirectionBoardSession: ObservableObject {
     // MARK: - 生命周期（调用方各加一行的四个口子）
 
     /// 用户按下快捷键开始说话了（或连续追问窗口里又开口了）。
-    func beginListening() {
+    func beginListening(cycleID: String?) {
         guard isEnabled else { return }
+        // **一次全新的大循环 = 「取消本次」失效**（用户：「在整个这一个循环里面，无论用户进行了几轮，
+        // 只要在某一轮点击了取消看板……看板就取消了」—— 反过来，新循环就该重新显示）。
+        // 同一条循环里再开口（追问窗口）会带着同一个 id 进来，所以不会被清掉 ✓。
+        if let cycleID, cycleID != currentCycleID {
+            cancelledForThisCycle = false
+        }
+        currentCycleID = cycleID
+        // **「取消十分钟 / 取消今日」在这里比一次时间戳就够了，不做轮询**
+        //（用户：「这个检测机制一定要注意，不要让它轮询，因为没有必要轮询，轮询太费电脑成本。
+        // 可以先比对一下上次取消是什么时间……每一个大的循环看一次就行了」）。
+        refreshCancellationState()
         roundGeneration += 1
         requestTask?.cancel()
         requestTask = nil
@@ -178,6 +199,12 @@ final class DirectionBoardSession: ObservableObject {
     func noteLiveTranscript(_ transcriptText: String) {
         guard isListening else { return }
         latestTranscript = transcriptText
+        // **口述取消**先判（用户：「判断里面有没有准确的「取消任务看板」或「取消任务方向」这几个字」）——
+        // 命中之后这一轮就不再检测了，所以后面那两步也没必要走。
+        if DirectionBoardConfiguration.spokenCancelRequested(in: transcriptText) {
+            cancelForThisCycle()
+            return
+        }
         refreshDisplayedItems()
         applySpokenSelectionIfAny(in: transcriptText)
     }
@@ -220,6 +247,84 @@ final class DirectionBoardSession: ObservableObject {
         modelRowLabels = [:]
         displayedItems = []
         return (directionTexts + summaryTexts, typed)
+    }
+
+    // MARK: - 总闸门：取消看板（用户 2026-09-27）
+
+    /// **取消本次**（本次大循环）—— 面板收掉、定时检测停掉、请求不发、**录音照旧**。
+    ///
+    /// 用户：「取消后会怎么做？后台的定时检测机制就直接停掉，在当前这个循环里面停掉，
+    /// 不需要再去检测用户的输入内容到底有多少个，也不需要发送给 AI。用户的提示词录音这部分继续，
+    /// 只是看板这部分的功能取消掉了。」
+    func cancelForThisCycle() {
+        cancelledForThisCycle = true
+        stopDetection()
+        print("🎛️ 方向看板：用户取消了本次看板（这一轮循环内不再显示、也不再检测）")
+    }
+
+    /// **取消十分钟**（这一个循环或下一个循环都不显示）。
+    func cancelForTenMinutes() {
+        cancelledUntil = Date().addingTimeInterval(Self.tenMinutes)
+        persistCancelledUntil()
+        stopDetection()
+        print("🎛️ 方向看板：用户取消了十分钟（到 \(cancelledUntil!) 为止）")
+    }
+
+    /// **取消今日** —— 到**明天凌晨 12 点**（本地的日历日边界，不是"24 小时之后"）。
+    func cancelUntilNextMidnight() {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        cancelledUntil = Calendar.current.date(byAdding: .day, value: 1, to: startOfToday)
+        persistCancelledUntil()
+        stopDetection()
+        if let cancelledUntil {
+            print("🎛️ 方向看板：用户取消了今日（到 \(cancelledUntil) 为止，即明天凌晨 0 点）")
+        }
+    }
+
+    /// 手动恢复（设置页那颗按钮）—— 也用于自检。
+    func resumeImmediately() {
+        cancelledForThisCycle = false
+        cancelledUntil = nil
+        persistCancelledUntil()
+        refreshCancellationState()
+        print("🎛️ 方向看板：已恢复显示")
+    }
+
+    /// **这一轮不再检测、也不发请求**（面板的显隐由 `isCancelled` 决定）。
+    private func stopDetection() {
+        roundGeneration += 1
+        cadenceTimer?.invalidate()
+        cadenceTimer = nil
+        requestTask?.cancel()
+        requestTask = nil
+        isRequesting = false
+        refreshCancellationState()
+    }
+
+    /// 重新算一次"现在是不是被取消了"：一个布尔量 + 一次日期比较，**没有任何轮询**。
+    private func refreshCancellationState() {
+        // 落盘的"取消到什么时候"只在内存里没有时读一次（App 重启之后仍然有效）。
+        if cancelledUntil == nil,
+           let stored = UserDefaults.standard.object(forKey: Self.cancelledUntilDefaultsKey) as? Date {
+            cancelledUntil = stored
+        }
+        if let cancelledUntil, cancelledUntil <= Date() {
+            // 到点了 —— 自动恢复。
+            self.cancelledUntil = nil
+            persistCancelledUntil()
+        }
+        isCancelled = cancelledForThisCycle || (cancelledUntil.map { $0 > Date() } ?? false)
+    }
+
+    /// 「取消到什么时候」这一刻的事实（设置页显示用）。
+    var cancelledUntilDate: Date? { cancelledUntil }
+
+    private func persistCancelledUntil() {
+        if let cancelledUntil {
+            UserDefaults.standard.set(cancelledUntil, forKey: Self.cancelledUntilDefaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.cancelledUntilDefaultsKey)
+        }
     }
 
     // MARK: - 用户点格子 / 口述选方向
@@ -315,14 +420,17 @@ final class DirectionBoardSession: ObservableObject {
                                           lastRequestedTranscript: String,
                                           isEnabled: Bool,
                                           isListening: Bool,
-                                          isRequesting: Bool) -> Bool {
-        guard isEnabled, isListening, !isRequesting else { return false }
+                                          isRequesting: Bool,
+                                          isCancelled: Bool = false,
+                                          minimumAddedCharacters: Int = 10) -> Bool {
+        guard isEnabled, isListening, !isRequesting, !isCancelled else { return false }
         return addedCharacterCount(transcript: transcript, since: lastRequestedTranscript)
             >= minimumAddedCharacters
     }
 
-    /// **新增了这么多字才值得问一次**（用户点名要的 10）。
-    static let minimumAddedCharacters = 10
+    /// **新增了这么多字才值得问一次** —— 默认 10（用户点名要的），
+    /// 实际值由设置页那个 5…20 的滑杆给（`AppSettings.directionBoardMinimumAddedCharacters`）。
+    static let defaultMinimumAddedCharacters = 10
 
     /// 这次比上次**多说了几个字**（标点、空格、表情都不算 —— 用户：「标点符号不算字数」）。
     ///
@@ -358,11 +466,15 @@ final class DirectionBoardSession: ObservableObject {
     private func requestIfTheTranscriptChanged() {
         // 自检时默认不发请求（除非 WANNA_DIRECTION_BOARD_SELFCHECK=live）—— 看界面不该花钱。
         guard !suppressesRequestsForSelfCheck else { return }
+        refreshCancellationState()
         guard Self.shouldRequest(transcript: latestTranscript,
                                  lastRequestedTranscript: lastRequestedTranscript,
                                  isEnabled: isEnabled,
                                  isListening: isListening,
-                                 isRequesting: isRequesting) else { return }
+                                 isRequesting: isRequesting,
+                                 isCancelled: isCancelled,
+                                 minimumAddedCharacters: AppSettingsStore
+                                     .snapshot().directionBoardMinimumAddedCharacters) else { return }
         let transcript = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         lastRequestedTranscript = transcript
 
