@@ -637,8 +637,19 @@ struct DirectionBoardTests {
         // **用户所有的问题都应该在图里面显示**」）。
         #expect(systemPrompt.contains("不限行数"))
         #expect(!systemPrompt.contains("最多 20 行"))
-        // 他给的那个反例：先 A 后一串 B，不许拿 A 当标准套后面所有的问题。
-        #expect(systemPrompt.contains("新开一个顶层分支"))
+        // **分类这一层是这一版新加的**（用户 2026-09-27：「右上角的脑图应该按照内容的类型来进行分类……
+        // **实时地、主动地去分类**，而不是定性地强制让他去分什么类」）——
+        // ⚠️ 它住在**第一次调用**（梳理那条，画图的就是它），不是第二次。
+        let analysisPrompt = DirectionBoardPrompt.transcriptAnalysisSystemPrompt()
+        #expect(analysisPrompt.contains("按大类分组画成一张树"))
+        #expect(analysisPrompt.contains("分类行"))
+        #expect(analysisPrompt.contains("问题行"))
+        #expect(analysisPrompt.contains("不是从固定清单里挑"))
+        #expect(analysisPrompt.contains("哪怕只有两件事也要分类"))
+        #expect(analysisPrompt.contains("不许有\"没爹\"的问题"))
+        #expect(analysisPrompt.contains("分类名里不要用冒号"))
+        #expect(analysisPrompt.contains("只是例子，不是清单"))
+        // 而「两张卡片分工不同」那条属于第二次调用（回答那条）。
         #expect(systemPrompt.contains("两张卡片分工不同"))
 
         // 请求里要带上**他问过的每一件事**（整份清单）——
@@ -668,9 +679,13 @@ struct DirectionBoardTests {
         #expect(map.hasPrefix("├─"))
         #expect(map.contains("屏幕里是什么软件"))
 
-        // 判据很窄：**不含树枝符号**且**以冒号结尾**才算标题 —— 别误删真正的内容行。
+        // ⚠️ 判据**收窄了**（2026-09-27 深夜）：那张图的**第一行现在就是分类名**，
+        // 而分类名正是"顶格、没有树枝符号"的行 —— 原来"以冒号结尾就删"会把一个写成
+        // 「关于明星：」的分类名连它的层级一起吃掉。现在只有"以冒号结尾**而且**说了我提示词里
+        // 那件事（整合/关系图/…）"才算回显。
         #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("├─ 甲\n└─ 乙") == "├─ 甲\n└─ 乙")
-        #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("他说的是：") == "")
+        #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("他说的是：") == "他说的是：")
+        #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("关于明星：\n├─ 甲") == "关于明星：\n├─ 甲")
         #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("├─ 甲：乙") == "├─ 甲：乙")
     }
 
@@ -829,5 +844,29 @@ struct DirectionBoardTests {
         // 这里钉住的是"解析能区分出这一行是空的" —— 保留逻辑在 session 里（见那段注释）。
         let withMap = DirectionBoardPrompt.parseUnderstandingLines("细节：├─ 甲\n矛盾：—")
         #expect(withMap.first { $0.label == "细节" }?.value == "├─ 甲")
+    }
+
+    /// **分类这一层是"顶格、不带树枝符号"的一行**（用户 2026-09-27：
+    /// 「它应该有一个**大的分类在外面**，而不应该直接地去罗列出来」）——
+    /// 判据就一条：**问题行有 `├─` / `└─`，分类行没有**。
+    /// 所以它**纯靠提示词**就能实现：解析、渲染、卡片高度全都不用改。
+    @Test func categoriesAreTheLinesWithoutABranchGlyph() throws {
+        let parsed = DirectionBoardPrompt.parseUnderstandingLines("""
+        细节：关于明星的信息
+        ├─ 赵今麦今年多大
+        └─ 杨幂和刘亦菲合作过什么
+        关于代码的问题
+        ├─ 前端那个按钮怎么改
+        │  └─ 他说的是设置里那一排
+        └─ 后端接口怎么设计
+        矛盾：—
+        """)
+        let map = try #require(parsed.first { $0.label == "细节" }?.value)
+        let lines = map.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        // 分类行：没有树枝符号的两行。
+        let categories = lines.filter { !$0.contains("├") && !$0.contains("└") && !$0.hasPrefix("│") }
+        #expect(categories == ["关于明星的信息", "关于代码的问题"])
+        // 问题行都在分类**之后**（每一件都挂在某一类下面）。
+        #expect(lines.filter { $0.hasPrefix("├") || $0.hasPrefix("└") }.count == 4)
     }
 }
