@@ -267,26 +267,13 @@ struct NotchPillRootView: View {
     @ObservedObject var panelModel: NotchPanelModel
     var audioHistoryProvider: () -> [CGFloat]
 
-    /// **Listening 那一刻的展开进度**（2026-09-27）。两翼与刘海下面那行字幕读的是
-    /// **同一个值**，所以两块在每一帧都严格同宽 —— 这是「动画中间一块空白」的根治办法：
-    /// 原来两翼由相位驱动、字幕由另一条晚一轮的订阅驱动，中间那几十毫秒里带子比字幕宽，
-    /// 桌面就从那里透出来（实测每侧最宽多出约 25pt）。
+    /// 那一行字幕的文本（刘海下面那一行，只有 Listening 时画）。
     ///
-    /// 非 Listening 的相位一律按 1（= 全宽）算，所以别的相位的外观与从前一字不差。
+    /// ⚠️ **这个观察者只用来读文字**，不再用它驱动任何宽度（2026-09-27）。它曾经还带着
+    /// 「展开进度」：两翼与那一行读同一个 `bandRevealProgress`，靠"同一个值、同一个动画事务"
+    /// 让两块对齐。用户最终把那个方案整体否掉了（「完全放弃这个方案吧……直接显示……不需要动画」），
+    /// 所以进度值、`isBandPresented`、那个相位动画全部删除 —— 剩下的是**常数宽度**。
     @ObservedObject private var listeningTranscriptModel = NotchListeningTranscriptModel.shared
-
-    /// 两翼在这一帧展开到几分之几。
-    ///
-    /// **`isBandPresented` 那半边是收起动画**：相位一离开 `.listening`，字幕那条就开始缩回
-    /// （`hide()` 里那次 `withAnimation`），此刻两翼**必须跟着缩** —— 只看相位的话它到这里
-    /// 就变成 1（"非 Listening 一律满宽"），于是两翼满宽、字幕已经缩回去，桌面从两翼下面
-    /// 透出来（实测每侧最宽 76pt）。别的相位（打字提问、播报）里 `isBandPresented` 是 false，
-    /// 走的是"满宽"，与从前一字不差。
-    private var wingRevealProgress: CGFloat {
-        (panelModel.activityPhase == .listening || listeningTranscriptModel.isBandPresented)
-            ? listeningTranscriptModel.bandRevealProgress
-            : 1
-    }
 
     /// 刘海左侧那几颗「Notion 笔记」按钮怎么摆（2026-09-27 从录音搬到主 Agent）。
     /// 由控制器在装配时算好传进来 —— 只有它手里有 `NSScreen`，见
@@ -335,14 +322,20 @@ struct NotchPillRootView: View {
                 - NotchSupport.activeFlankWidth * 2
             let isActive = panelModel.activityPhase != .idle
 
-            // **整条（黑带 + 下面那行字幕）的宽度 —— 只有一个变量。**
-            // 黑带的三段与下面那一行都从这里取值，所以它们的左右边缘**在同一个视图里、
-            // 同一帧、同一个动画事务**中一起变（这就是"一个动画"的结构保证）。
-            // 式子本身住在 `NotchSupport`（展开态那条带子读的是它的兄弟函数），
-            // 所以"带子画多宽"只有一份算术。
-            let revealedBandWidth = NotchSupport.revealedListeningBandWidth(
-                pillWidth: pillWidth,
-                revealProgress: wingRevealProgress)
+            // **整条（黑带 + 下面那行字幕）的宽度 —— 只有一个变量，而且它现在是常数。**
+            //
+            // 用户 2026-09-27 的最终裁决（这一条把前三版全部作废）：
+            // > 我觉得这完全放弃这个方案吧。那就你的这个刘海，用户第一次按快捷键的时候，
+            // > 你就让他**直接显示**吧，就是直接就跟那个录音的时候一样的效果，**直接显示**……
+            // > 但是整个这个东西是**直接显示出来，不需要动画**。注意第一次不需要动画。
+            //
+            // 所以展开动画**整条删掉**：相位一到，黑带与那一行就是满宽，第一帧就是最终形态。
+            // 这同时把前三版反复踩的那一类问题**从结构上删掉** —— "两块各自动画"、
+            // "同一进度值但晚一拍"、"文字先铺满、黑带再长" 都建立在"宽度会变"这个前提上，
+            // 没有动画就没有那一类自由度，也没有"某一帧对不齐"这回事。
+            // 宽度式子仍住在 `NotchSupport`（展开态那条带子读的是同一个函数族）：
+            // 三段之间有 2pt 重叠，所以带子的实际宽度是「三段之和 − 4」。
+            let bandWidth = NotchSupport.wingBandWidth(pillWidth: pillWidth)
 
             ZStack(alignment: .top) {
                 // Negative spacing: each wing overlaps the middle segment by
@@ -369,7 +362,7 @@ struct NotchPillRootView: View {
                         squaresBottomOuterCorner: squaresBottomOuterCorner
                     )
                     .frame(
-                        width: isActive ? Self.leadingWingWidth * wingRevealProgress : 0,
+                        width: isActive ? Self.leadingWingWidth : 0,
                         height: notchHeight
                     )
                     // The clip lives OUTSIDE the animated width frame: inside
@@ -412,18 +405,14 @@ struct NotchPillRootView: View {
                         squaresBottomOuterCorner: squaresBottomOuterCorner
                     )
                     .frame(
-                        width: isActive ? Self.trailingWingWidth * wingRevealProgress : 0,
+                        width: isActive ? Self.trailingWingWidth : 0,
                         height: notchHeight
                     )
                     .clipped()
                 }
-                // The wing extension/retraction rides the phase change, so
-                // the wings slide out of the notch instead of popping.
-                //
-                // ⚠️ 时长从 `NotchSupport` 读（2026-09-27）：刘海下面那行字幕的展开
-                // 动画读的是**同一个数**，两块合起来才像一个动画（见那个常量的注释）。
-                .animation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration),
-                           value: panelModel.activityPhase)
+                // **两翼不再做滑出动画**（2026-09-27，用户：「直接显示…不需要动画」）：
+                // 相位一到就是满宽，相位一走就收掉。原来那行 `.animation(...)` 是
+                // "两块各自动画"的其中一块，删掉它连同那一整类问题一起删掉了。
 
                 // **「Notion 笔记」那几颗按钮**（2026-09-27 之后归主 Agent）：检测到关键词时
                 // 长在刘海左侧。位置由 `NotchSupport` 的屏幕矩形给出 —— 它是这块窗口里
@@ -447,7 +436,7 @@ struct NotchPillRootView: View {
             if squaresBottomOuterCorner {
                 NotchTranscriptLine(
                     text: listeningTranscriptModel.liveText,
-                    width: revealedBandWidth,
+                    width: bandWidth,
                     height: NotchSupport.notchTranscriptRowHeight,
                     // 上边是方的（与黑带拼在一起），只有下面两个角是圆的。
                     isAttachedToNotch: false)

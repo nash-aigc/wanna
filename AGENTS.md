@@ -542,40 +542,32 @@ The recording mute is now the between-replies half, and the AEC covers the windo
   `withAnimation` 都读它）+ `NotchSupport.revealedListeningBandWidth(notchWidth:revealProgress:)`
   = `刘海 + (两翼之和) × 进度`（两翼的宽度动画是同一个线性式子，所以边缘每一帧都重合）。
   进度由 `NotchListeningTranscriptPanelController.show()/hide()` 用 `withAnimation` 翻。
-  ⚠️ **2026-09-27 最终形态（第四次）：那一行搬进刘海面板，与黑带同一个视图、同一个宽度变量。**
-  前三版都建立在"两个窗口"这个前提上（黑带在刘海面板、那一行在另一块面板），
-  无论怎么对齐（同一时长/同一进度值/恒定宽度）都只是概率性的 —— 用户报了三遍，第三遍的原话是
-  「你应该是让他是一个动画才对，**现在又是两个动画了**」。这一版把那一行交给
-  `NotchPillRootView` 自己画，黑带与它在**同一个 `VStack`、读同一个宽度值** ——
-  **结构上只有一个动画**；那块独立面板只剩"展开后的编辑窗"。见 `开发经验/10-踩过的坑.md` D34。
+  ⚠️⚠️ **2026-09-27 FINAL（第五次，也是最后一次）：那条带子的展开动画被整体删掉。**
+  用户第五次看到它时的原话是「你完全没有修好，甚至说一点效果都没有。**我觉得这完全放弃这个方案吧。**
+  那就你的这个刘海，用户第一次按快捷键的时候，你就让他**直接显示**吧，就是直接就跟那个录音的时候
+  一样的效果，直接显示……但是整个这个东西是直接显示出来，**不需要动画**。注意第一次不需要动画。」
 
-  ⚠️⚠️ **搬进去的当天就踩了一个更大的坑（D35，用户第七次报同一个区域）**：窗口要变高 32pt，
-  而那一版**只改了高度、没动原点** —— AppKit 的 y 是**底边**，所以窗口**向上**长了 32pt，
-  黑带整块跑到屏幕外、那一行落到菜单栏上（用户：「两边的刘海、两边的内容都没有了…字幕显示到
-  菜单栏上」）。现在 `restingWindowFrame` 是 `y: pillFrame.maxY − 窗口高`（**顶边钉在屏幕顶边，
-  多出来的高度往下长**），实测活着的窗口 `Quartz(y=0, h=86)`（改前是 `y=-32`）。
-  同一天顺手修掉的两条：那一行原来**比黑带每边宽 2pt**（带子三段是 `HStack(spacing: -2)` 拼的，
-  实际宽度 = 三段之和 − `bandSegmentOverlap × 2`，而那行的宽度按三段之和算 —— 修法是两边都读
-  `NotchSupport.revealedListeningBandWidth`，它此前**一个调用点都没有**）；以及**展开态那一行
-  根本没画**（面板铺开走的是另一分支 `NotchExpandedWingBand`，那里现在也画同一行，
-  判据同样是 `notchBandSitsAboveTranscriptLine`）。
+  所以现在：**黑带与它下面那一行都是常数宽度，相位一到就在最终位置**。删掉的东西 ——
+  `NotchListeningTranscriptModel.bandRevealProgress` / `isBandPresented`（两个 `@Published`）、
+  `NotchPillRootView.wingRevealProgress` 与两翼的宽度乘法、那行
+  `.animation(.easeInOut(duration:), value: activityPhase)`、`show()` 里"先出现再翻进度"的两段式、
+  以及 `NotchSupport.listeningBandRevealDuration` / `revealedListeningBandWidth(pillWidth:revealProgress:)`
+  两个 API（换成**没有进度参数**的 `NotchSupport.wingBandWidth(pillWidth:)`，刘海面板与展开态两条带子
+  都读它，`restingWingBandWidth(on:)` 转发到它）。离屏渲染实测：Listening 时黑带与那一行都是
+  `x 130…847px`（718px = 359pt，逐像素同宽），接缝 `y=62…66px` **0 列透明**；静止态只有 185pt 那颗胶囊。
+  **D25 → D26 → D31 → D34 → D35 五条是同一个东西被修了五次**，终点是"把'两块'这个前提删掉"——
+  加回动画之前先读那五条。全文见 `开发经验/10-踩过的坑.md` D36。
 
-  ⚠️ **（下面是前三版的教训，保留）**： 前两版都是"让字幕跟着黑带
-  一起长"（时序对齐，量到每侧 ≤2px），而"任何一帧都不许透出桌面"是确定性要求 —— 只能靠
-  **几何上互相覆盖**保证：这一行从第一帧起就铺满整条宽度，黑带在它上面怎么长都盖得住 ✓
-  （用户自己给的退路：「如果不可以的话，你就直接让它直接显示出来也行，但是你绝对不可以出现
-  这种状态」；黑带自己的展开动画照旧）。见 `开发经验/10-踩过的坑.md` D31。
-  （下面是前两版的教训，保留：）
-  ⚠️ **光"时长一样"不够 —— 两块必须读同一个值**：第一版两翼由**相位**驱动、字幕由面板里那个
-  `bandRevealProgress` 驱动，差一个主队列轮次，展开头几十毫秒里带子比字幕宽（实测每侧 **25pt**），
-  桌面就从那里透出来（用户附图圈的就是那两个角：「你绝对不可以出现这种状态」）。现在两翼也读
-  `bandRevealProgress`（`wingRevealProgress`），并用 `NotchListeningTranscriptModel.isBandPresented`
-  （`show()` 起、`orderOut` 止）把**收起那一段也带上** —— 只按相位判的话收起时两翼被强行按满宽、
-  字幕在缩，实测每侧 **150px** 的白。**收起不缩宽度**（相位离开 Listening 后那条黑带还要留给
-  Thinking/Speaking），`hide()` 直接归零 + `orderOut`。面板的出现也从"相位订阅（晚一轮）"改成在
-  `refreshActivityPhase()` 里**同拍直调**（订阅保留，它是收起的出口）。
-  录屏逐帧量到（19–33fps）：时长 ≈350ms、展开过程中每侧露白 **≤2px（≈1pt）**、
-  **没有任何一帧只有一块**、两块收敛到同一对边缘。
+  ⚠️ 同一次还修了**「在说话的时候按 ESC 没退出、反而冒出 thinking」**，根因不是相位机而是
+  **ESC 根本没有停任务**：`interruptActiveResponse()` 开头有一条给"下一次提问"用的 guard
+  （`isAgentJobRunning` 时不取消任务，只停播报），因此主循环继续跑、每进下一步就写一次
+  `voiceState = .processing` → 相位算成 Thinking。修法三条：ESC 先清 `isAgentJobRunning`
+  再打断；相位用 `holdActivityPhaseAtIdle()`（**按住**到这一轮真的收尾，而不是一次性抑制，
+  且 `forceActivityPhaseIdle()` 在"已经按住"时不再翻抑制标志）；主循环 **循环体顶上**
+  加 `guard !Task.isCancelled`（原来唯一的取消判断在截屏之后，取消落地那一拍会先写 processing）。
+  ⚠️ **这三条没有在真机上按下过"正在跑时的那一次 ESC"**（这台机器没有可用语音输入、打字又被
+  输入法吃掉 Return）—— 结构上成立、未实测，如实记在 `开发经验/10-踩过的坑.md` D36 第三节。
+
 - **点刘海左侧那颗「Listening」**（`handleGlobalClick` 里新增的一个分支）走的是**录音两翼那一份矩形**
   （`NotchSupport.recordingWingFrames`）——「画在哪」由视图按 `NotchSupport.leadingWingWidth` 画、
   「点在哪」由控制器用同一个矩形判。判在**录音那条之后**（两者占同一块屏幕，谁真的在跑算谁的）、

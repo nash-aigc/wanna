@@ -1879,7 +1879,12 @@ final class NotchWindowController {
     /// is the one funnel every stop goes through, and this is the panel being
     /// told rather than having to infer it.
     func forceActivityPhaseIdle() {
-        activityPhaseHoldIsSuppressed = true
+        // **"按住"比"一次性抑制"更强**（2026-09-27）：ESC 那条路先 `holdActivityPhaseAtIdle()`
+        // 再走这里，两个机制叠在一起时不能让这一行把"按住"变成"只按一拍" ——
+        // 那正是用户报的「按了 ESC 反而冒出 thinking」的另一半。
+        if !panelModel.isActivityPhaseHeldAtIdle {
+            activityPhaseHoldIsSuppressed = true
+        }
         activityPhaseHoldTask?.cancel()
         activityPhaseHoldTask = nil
         // **语音聊天还连着的时候，这一下不能把「Chatting」也清掉**（用户
@@ -1897,11 +1902,18 @@ final class NotchWindowController {
     }
 
     /// ESC 打断那一下：把相位按在 idle 上，直到这一轮真的结束。
+    ///
+    /// **走 `externalSessionOverride`**（2026-09-24 那条既有规矩）：语音聊天还连着的时候，
+    /// 这一下收掉的是"这一轮的聆听/思考/播报"，不是那一整段会话 —— 屏幕上的「Chatting」
+    /// 与挂断按钮不该因为一次打断就消失（`forceActivityPhaseIdle` 里写着同一条理由）。
     func holdActivityPhaseAtIdle() {
         panelModel.isActivityPhaseHeldAtIdle = true
+        // 那个**一次性**抑制被这次"按住"接管：留着它会让"下一拍 idle"被当成
+        // "这一轮结束了"，而这里要的恰恰相反 —— 在一轮真的收尾之前一直按住。
+        activityPhaseHoldIsSuppressed = false
         activityPhaseHoldTask?.cancel()
         activityPhaseHoldTask = nil
-        panelModel.activityPhase = .idle
+        panelModel.activityPhase = panelModel.externalSessionOverride ?? .idle
         syncListeningTranscriptPanel()
     }
 
@@ -1918,7 +1930,7 @@ final class NotchWindowController {
         if panelModel.isActivityPhaseHeldAtIdle {
             activityPhaseHoldTask?.cancel()
             activityPhaseHoldTask = nil
-            panelModel.activityPhase = .idle
+            panelModel.activityPhase = panelModel.externalSessionOverride ?? .idle
             syncListeningTranscriptPanel()
             return
         }

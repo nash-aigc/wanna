@@ -60,25 +60,15 @@ final class NotchListeningTranscriptModel: ObservableObject {
     /// 展开的转写编辑窗开着没有。点刘海左侧那颗「Listening」切换（见 `handleGlobalClick`）。
     @Published var isEditorExpanded = false
 
-    /// **那一行（连同上面对着的黑带）展开到哪一步了**，0…1。
-    ///
-    /// 用户 2026-09-27：「展开动画非常撕裂……应该把它做成一个动画……可以把它从刘海向左右
-    /// 两侧展开……现在相当于上面一块、下面一块拼在一起，动画时时间又不对」。
-    ///
-    /// 屏幕上是两块（刘海面板画的黑带 + 这块面板画的字幕行），它们没法共用一个 CA 动画，
-    /// 所以"一个动画"= **同一个时长、同一条曲线、同一个触发时刻 + 同一条几何式子**：
-    /// 宽度由 `NotchSupport.revealedListeningBandWidth` 算，两翼的宽度动画与它同行。
-    /// 由 `NotchListeningTranscriptPanelController.show()/hide()` 用 `withAnimation` 翻。
-    @Published var bandRevealProgress: CGFloat = 0
-
-    /// **这条带子（黑带 + 字幕）此刻在屏幕上吗** —— 从 `show()` 到收起动画跑完、面板
-    /// 真正 `orderOut` 为止。
-    ///
-    /// 两翼的宽度靠它决定「要不要跟着 `bandRevealProgress` 走」：**收起的那 0.38 秒里也要跟**
-    /// （不然两翼已经回到满宽、字幕却缩回去了，桌面就从两翼下面透出来 —— 实测每侧最宽
-    /// 76pt 的一块白），而别的相位（打字提问的 Thinking、播报的 Speaking…）要与从前一字不差
-    /// 地走"相位非 idle 就满宽"，所以不能简单地只看相位。
-    @Published var isBandPresented: Bool = false
+    // ⚠️ **这里原来有两个 `@Published`（`bandRevealProgress` / `isBandPresented`），
+    // 2026-09-27 整块删掉。** 它们是"从刘海中心向左右展开"那套动画的全部状态：
+    // 两翼与那一行读同一个进度值，靠"同一个值、同一个动画事务"让两块在每一帧对齐。
+    // 用户最终把这个方案整体否掉了 ——
+    // 「我觉得这完全放弃这个方案吧……用户第一次按快捷键的时候，你就让他**直接显示**吧，
+    // 就是直接就跟那个录音的时候一样的效果，直接显示……**不需要动画**」——
+    // 屏幕上的黑带与那一行现在都是**常数宽度、相位一到就在最终位置**，
+    // 所以既不需要一个进度值，也不需要"这一块还在不在"那个标志。
+    // 谁再想加回动画，先读 `开发经验/10-踩过的坑.md` D25/D26/D31/D34/D35 五条。
 
     /// 用户在编辑窗里改过的正文。`nil` = 没改过，编辑框跟着识别结果显示。
     @Published private(set) var editorDraftText: String?
@@ -240,56 +230,38 @@ final class NotchListeningTranscriptPanelController {
     /// **新的一轮从这里开始**：文字与编辑状态归零（`beginRound`），所以"上一轮说的字"
     /// 不会在新一轮的第一句到达之前先在屏幕上闪一下。
     ///
-    /// 展开是**一次从刘海中心向左右两侧的动画**，与刘海那条黑带的宽度动画同一条曲线、
-    /// 同一个时长、同一个式子（见 `NotchSupport.listeningBandRevealDuration` /
-    /// `revealedListeningBandWidth`）。做法：面板先以「宽度 = 刘海」那一帧出现，**下一拍**
-    /// 再把进度翻成 1 —— 同一拍里建面板又翻进度，SwiftUI 画出来的第一帧就已经是展开完的
-    /// 样子（中间那一段动画根本不存在）。
+    /// ⚠️ **没有展开动画**（2026-09-27，用户的最终裁决）：「用户第一次按快捷键的时候，
+    /// 你就让他**直接显示**吧，就是直接就跟那个录音的时候一样的效果，**直接显示**……
+    /// 整个这个东西是**直接显示出来，不需要动画**。注意第一次不需要动画」。
+    ///
+    /// 这里原来有一套"先以宽度=刘海出现、下一拍再把进度翻成 1"的两段式（为了让那一行
+    /// 从刘海中心向左右长出来）—— 整段删掉。面板出现的那一帧，刘海面板那边的黑带与
+    /// 这一行**都已经在最终位置、最终宽度**上，屏幕上没有任何"正在长"的中间态，
+    /// 也就不存在"某一帧两块对不齐"这回事（那一类问题用户报过三遍）。
     func show() {
         revealGeneration += 1
-        let shouldRevealNow = isPresented || !panels.isEmpty
         isPresented = true
-        NotchListeningTranscriptModel.shared.isBandPresented = true
 
-        if panels.isEmpty {
-            NotchListeningTranscriptModel.shared.beginRound()
-            NotchListeningTranscriptModel.shared.bandRevealProgress = 0
+        guard panels.isEmpty else { return }
 
-            for screen in NSScreen.screens {
-                guard let panel = makePanel(for: screen) else { continue }
-                panel.orderFrontRegardless()
-                panels.append(panel)
-            }
-            // 收起态：点击穿透（那一行的点击走全局监听里的屏幕矩形）。
-            for panel in panels { panel.ignoresMouseEvents = true }
-            startObservingEditorExpansion()
-            applyEditorExpansionState()
+        NotchListeningTranscriptModel.shared.beginRound()
 
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.isPresented else { return }
-                withAnimation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration)) {
-                    NotchListeningTranscriptModel.shared.bandRevealProgress = 1
-                }
-            }
-            return
+        for screen in NSScreen.screens {
+            guard let panel = makePanel(for: screen) else { continue }
+            panel.orderFrontRegardless()
+            panels.append(panel)
         }
-
-        if shouldRevealNow {
-            // 收起动画还没走完（面板还在）—— 直接把进度推回 1，同一拍里的 `orderOut` 已被
-            // 代次挡掉。
-            withAnimation(.easeInOut(duration: NotchSupport.listeningBandRevealDuration)) {
-                NotchListeningTranscriptModel.shared.bandRevealProgress = 1
-            }
-        }
+        // 收起态：点击穿透（那一行的点击走全局监听里的屏幕矩形）。
+        for panel in panels { panel.ignoresMouseEvents = true }
+        startObservingEditorExpansion()
+        applyEditorExpansionState()
     }
 
     /// 那一行该走了 —— 用户说完、相位离开 Listening，或者刘海整个被别的 App 的全屏挡住。
     ///
-    /// **收是不动画的，直接收。** 展开那一下要"从刘海中间长出来"（用户的要求），
-    /// 但**收起时不能缩宽度** —— 相位离开 Listening 之后那条黑带**还要留在屏幕上**
-    /// （Thinking / Speaking 两个相位它都在），字幕一缩宽度，桌面就从两翼下面透出来
-    /// （实测每侧最宽 150px 的一块白）。所以收的时候：进度直接归零、面板立刻 `orderOut`，
-    /// 视觉上就是「字幕消失、带子进入 Thinking」—— 这正是它在这个 App 里原本的样子。
+    /// **收也是直接收**（没有动画）：相位一走，字幕与那一行同时消失。用户对这条的要求
+    /// 从头到尾都是"瞬间"（「界面应该瞬间消失」），展开那一半的动画现在也删了，
+    /// 所以出现与消失都是同一帧的事。
     func hide() {
         guard isPresented else { return }
         isPresented = false
@@ -299,8 +271,6 @@ final class NotchListeningTranscriptPanelController {
         NotchListeningTranscriptModel.shared.isEditorExpanded = false
 
         revealGeneration += 1
-        NotchListeningTranscriptModel.shared.bandRevealProgress = 0
-        NotchListeningTranscriptModel.shared.isBandPresented = false
         for panel in panels { panel.orderOut(nil) }
         panels.removeAll()
     }

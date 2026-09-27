@@ -1795,9 +1795,28 @@ final class CompanionManager: ObservableObject {
     }
 
     /// ESC 落在「正在跑」那一刻：停播报、收卡片、**只收这一轮派出去的 agent**。
+    ///
+    /// ⚠️ **2026-09-27 修的是这里，根因是"ESC 不停任务"。** 用户报「在说话的时候点击 ESC
+    /// 还是没有退出，然后显示什么 thinking」—— 而这条路上原来只有 `interruptActiveResponse()`，
+    /// 它对**正在跑的任务**是**故意只停播报、任务继续跑**的（那一层 guard 是给"下一次提问"
+    /// 用的：问一句新的不该顺手杀掉上一条任务）。于是：主循环那个 job 照跑 → 它每进下一步
+    /// 都会写一次 `voiceState = .processing` → 相位立刻算成 **Thinking** 又亮起来，
+    /// 而任务本身一点没停 —— 用户看到的正是"没退出 + 冒出 thinking"这两件事，它们是同一个原因。
+    ///
+    /// 用户的 ESC 规则是**真打断**（「执行过程中……真打断……以及**当前任务**（即刚才提交的
+    /// 任务）所涉及的所有 agent」），所以这里先清任务旗标再走打断 —— 那正是任务面板那颗
+    /// 「取消任务」走的同一件事（`cancelRunningJob()` 的注释里写着它和 `interruptActiveResponse`
+    /// 的唯一区别就是"不看旗标"）。
+    ///
+    /// 第二处是相位：`interruptActiveResponse` → `forceActivityPhaseIdle()` 只是**一次性**
+    /// 抑制（下一拍按 `voiceState` 算回来就又亮了），而取消是协作式的 —— 被打断的那一步
+    /// 可能还要跑完、期间还会写 `.processing`。所以这里用 `holdActivityPhaseAtIdle()`：
+    /// 相位**一直按在 idle 上，直到这一轮真的收尾**（也直到用户下一次按下快捷键 / 打字提问）。
     private func interruptTurnByEscapeWhileRunning() {
         let cancelledCycle = currentVoiceCycleID
-        print("⏹️ ESC 打断这一个周期（cycle=\(cancelledCycle ?? "无")）")
+        print("⏹️ ESC 打断这一个周期（cycle=\(cancelledCycle ?? "无")，任务旗标 \(isAgentJobRunning ? "在跑→收掉" : "没有")）")
+        isAgentJobRunning = false
+        notchWindowController?.holdActivityPhaseAtIdle()
         // 播报 + 鼠标旁那张卡片 + 主循环（含 sub agent）—— 都在这一个收口里。
         interruptActiveResponse()
         // **范围是"这一个周期"**（第一次按下 → 最后一轮回复结束，可能横跨好几轮），
@@ -3327,6 +3346,16 @@ final class CompanionManager: ObservableObject {
                 while true {
                     stepCount += 1
                     if stepCount > 1 { isAgentJobRunning = true }
+
+                    // **被打断之后，这一步不再往前走**（2026-09-27）。
+                    //
+                    // 这个判断以前只在**截屏之后**有一次，而循环体的第一件事就是写
+                    // `voiceState = .processing`。于是"取消落地"的那一刻会是这样：
+                    // 循环回到顶上 → 先把状态写成 processing → 相位算成 **Thinking** ——
+                    // 用户按了 ESC 反而看见 thinking 亮起来，而任务其实已经取消了。
+                    // 取消是**协作式**的（正在跑的那一步会跑完），所以这个判断必须在
+                    // **任何状态写入之前**，否则"打断"这两个字在屏幕上就是不成立的。
+                    guard !Task.isCancelled else { return }
 
                     // Pointing sets .idle while its flight plays; the spinner comes
                     // back for the duration of the next request.
