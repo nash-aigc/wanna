@@ -29,12 +29,19 @@ nonisolated struct DirectionBoardTurnDecision: Equatable {
     var typedInput: String = ""
     /// 大模型这一轮写的理解（四行里非空的那几行）。
     var understanding: [(label: String, value: String)] = []
+    /// **到目前为止那张需求图**（累积的）。
+    ///
+    /// 用户 2026-09-27 深夜点名要它跟着提交走进提示词：「实时模式最终的这个结果就是要发给
+    /// agent 的……**你要让 AI 知道**：如果最后一次回复的内容跟之前没关系，就按最后一次
+    /// 当做一个真正的需求来执行；如果有关系，就让 AI **整体来执行**……**这个直接写入提示词**」。
+    var accumulatedMindMap: String = ""
 
     static func == (lhs: DirectionBoardTurnDecision, rhs: DirectionBoardTurnDecision) -> Bool {
         lhs.typedInput == rhs.typedInput
             && lhs.confirmedDirections.map(\.keyword) == rhs.confirmedDirections.map(\.keyword)
             && lhs.understanding.map(\.label) == rhs.understanding.map(\.label)
             && lhs.understanding.map(\.value) == rhs.understanding.map(\.value)
+            && lhs.accumulatedMindMap == rhs.accumulatedMindMap
     }
 }
 
@@ -390,6 +397,11 @@ final class DirectionBoardSession: ObservableObject {
             "根据剪贴板里的内容总结一下",
             // 第五句：**说了参考但拿不到**（自检时前台多半不是访达）→ 看板右侧应出现「无法识别：选中文件」。
             "参考一下我选中的文件",
+            // 第六句：**突然换一件事**（用户 2026-09-27 截图里那一问）——
+            // 前面几轮全在讲别的东西，这一轮问一个跟它们没关系的问题。
+            // 判据：**它必须出现在右侧那张图上**（哪怕它同时被判成「矛盾」）——
+            // 用户的原话：「他即便是矛盾的话，他也应该在右侧显示，**因为他是用户的一个问题啊**」。
+            "北京跟上海是什么关系",
             // 第六句：**一个信息不全但完全不矛盾的简单问题**（用户 2026-09-27：「我问他北京在哪，
             // 他就问什么地方的北京……这就太墨迹了」）→ 「疑问」那一行**应当是「—」**，
             // 模型只正常回答，不反问。这一句就是钉住那条要求的。
@@ -432,7 +444,8 @@ final class DirectionBoardSession: ObservableObject {
                 .filter { $0.state == .confirmed }
                 .map { (keyword: $0.keyword, detail: detailForDirectionID($0.directionID)) },
             typedInput: typedInput.trimmingCharacters(in: .whitespacesAndNewlines),
-            understanding: understandingLines.filter { !$0.value.isEmpty })
+            understanding: understandingLines.filter { !$0.value.isEmpty },
+            accumulatedMindMap: accumulatedMindMap)
     }
 
     private var streamSelfCheckTask: Task<Void, Never>?
@@ -567,7 +580,8 @@ final class DirectionBoardSession: ObservableObject {
         let decision = DirectionBoardTurnDecision(
             confirmedDirections: confirmed,
             typedInput: typedInput.trimmingCharacters(in: .whitespacesAndNewlines),
-            understanding: understandingLines.filter { !$0.value.isEmpty })
+            understanding: understandingLines.filter { !$0.value.isEmpty },
+            accumulatedMindMap: accumulatedMindMap)
 
         previousRoundItems = displayedItems
         typedInput = ""

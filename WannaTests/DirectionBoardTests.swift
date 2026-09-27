@@ -176,24 +176,26 @@ struct DirectionBoardTests {
 
         // 只有用户**明确确认**的方向才发，而且**关键词和描述一起发**
         //（用户：「这个词跟描述的部分就会作为提示词的一部分来去发给 AI」）。
+        // ⚠️ 末尾现在**永远**跟着那段"怎么看最后一轮"（见 `lastTurnRelationRule`），
+        // 所以这几条断言改成"以……开头"。
         #expect(DirectionBoardPrompt.decoration(
-            decision([("保存到 Notion", "把内容整理成一条 Notion 笔记写进用户指定的那一页")], [], ""))
-            == "用户真实意图的任务方向是：保存到 Notion（把内容整理成一条 Notion 笔记写进用户指定的那一页）")
+            decision([("保存到 Notion", "把内容整理成一条 Notion 笔记写进用户指定的那一页")], [], ""))?
+            .hasPrefix("用户真实意图的任务方向是：保存到 Notion（把内容整理成一条 Notion 笔记写进用户指定的那一页）") == true)
         // 描述和关键词一样时不必重复括起来。
-        #expect(DirectionBoardPrompt.decoration(decision([("写周报", "写周报")], [], ""))
-            == "用户真实意图的任务方向是：写周报")
+        #expect(DirectionBoardPrompt.decoration(decision([("写周报", "写周报")], [], ""))?
+            .hasPrefix("用户真实意图的任务方向是：写周报") == true)
 
         // **大模型的理解**无条件跟着走（用户：「这部分全部都作为一个参考」）；顺序固定：
         // 方向 → 理解 → 用户输入。
         #expect(DirectionBoardPrompt.decoration(
             decision([("看图说话", "看屏幕描述内容")],
                      [("目标问题", "判断这道题选哪个"), ("类型", "做题")],
-                     "顺便截图"))
-            == """
+                     "顺便截图"))?
+            .hasPrefix("""
             用户真实意图的任务方向是：看图说话（看屏幕描述内容）
             模型对这次任务的理解是：目标问题：判断这道题选哪个；类型：做题
             用户的补充说明是：顺便截图
-            """)
+            """) == true)
     }
 
     // MARK: - 参考材料三类（屏幕 / 剪贴板 / 访达选中）
@@ -653,9 +655,11 @@ struct DirectionBoardTests {
             newQuestion: "行业 B 的第二个问题",
             previousRoundItems: [],
             accumulatedMindMap: "├─ 行业 A\n└─ 行业 B")
-        #expect(prompt.contains("这是到目前为止所有问题的汇总"))
+        // ⚠️ 标签**不能**写成"已经完整"（实测：一写成"到目前为止所有问题的汇总"，
+        // 模型就以为不用再加东西，只把旧图抄一遍 —— 用户报的"新问题没进图"就是这么来的）。
+        #expect(prompt.contains("它还不包含他这一轮刚问的"))
         #expect(prompt.contains("行业 A"))
-        #expect(prompt.contains("在它上面继续"))
+        #expect(prompt.contains("把他这一轮刚问的那件事加进去"))
     }
 
     /// **脑图不许把提示词抄成标题**（2026-09-27 截图里就是
@@ -678,5 +682,40 @@ struct DirectionBoardTests {
         #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("├─ 甲\n└─ 乙") == "├─ 甲\n└─ 乙")
         #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("他说的是：") == "")
         #expect(DirectionBoardPrompt.mindMapWithoutEchoedTitle("├─ 甲：乙") == "├─ 甲：乙")
+    }
+
+    /// **提交给 agent 的那段里必须有两样**（用户 2026-09-27 深夜点的名）：
+    /// ① 到目前为止那张需求图（"实时模式最终的这个结果就是要发给 agent 的"）；
+    /// ② **怎么看最后这一轮** —— 没关系就只执行最后一件，有关系就综合全盘考虑。
+    @Test func theSubmittedPromptCarriesTheMapAndTheLastTurnRule() throws {
+        let decision = DirectionBoardTurnDecision(
+            confirmedDirections: [],
+            typedInput: "",
+            understanding: [("需求", "在桌面上建一个文件夹")],
+            accumulatedMindMap: "├─ 北京上海的关系\n└─ 旅游景点")
+        let decoration = try #require(DirectionBoardPrompt.decoration(decision))
+        #expect(decoration.contains("北京上海的关系"))
+        #expect(decoration.contains("只是背景"))
+        #expect(decoration.contains("<how_to_read_the_last_turn>"))
+        #expect(decoration.contains("只按最后这一件当真正的需求去执行"))
+        #expect(decoration.contains("一起综合、全盘考虑"))
+    }
+
+    /// **「矛盾」和那张图不是二选一**（用户 2026-09-27：「他即便是矛盾的话，他也应该在右侧显示，
+    /// **因为他是用户的一个问题啊**」），而且带上去的旧图**不是"已经完整"**——
+    /// 标签一写成"到目前为止所有问题的汇总"，模型就以为不用再加东西了（实测就是这么丢的）。
+    @Test func theMindMapLabelNeverClaimsToBeComplete() throws {
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
+            looksAtTheScreen: true)
+        #expect(systemPrompt.contains("进了「矛盾」不等于不用进那张图"))
+        let prompt = DirectionBoardPrompt.understandingUserPrompt(
+            newQuestion: "北京跟上海的关系是什么",
+            previousRoundItems: [],
+            accumulatedMindMap: "├─ 赵今麦的信息")
+        // 标签必须说清"还不包含这一轮"，否则模型只会照着抄一遍。
+        #expect(prompt.contains("它还不包含他这一轮刚问的"))
+        #expect(!prompt.contains("到目前为止所有问题的汇总"))
+        #expect(prompt.contains("把他这一轮刚问的那件事加进去"))
     }
 }
