@@ -527,8 +527,8 @@ struct DirectionBoardTests {
             directions: [(id: "d1", keyword: "整理文件", detail: "把下载目录收拾一下")],
             looksAtTheScreen: true)
         // ① 脑图要带上他的原话、别过度简化（用户 2026-09-27 深夜那条）。
-        #expect(systemPrompt.contains("不要过度简化"))
-        #expect(systemPrompt.contains("他没说过一样"))
+        #expect(systemPrompt.contains("不许压成抽象的几个字"))
+        #expect(systemPrompt.contains("我没说过这个"))
         // ② 疑问：只关注逻辑矛盾，且明写不许问澄清类的问题。
         #expect(systemPrompt.contains("只写逻辑矛盾"))
         #expect(systemPrompt.contains("不要问澄清类的问题"))
@@ -536,7 +536,7 @@ struct DirectionBoardTests {
         #expect(systemPrompt.contains("什么地方的北京"))
         // ③ 以当前这一句为准 + 两种场景。
         #expect(systemPrompt.contains("以当前这一句为准"))
-        #expect(systemPrompt.contains("重开一张图"))
+        #expect(systemPrompt.contains("新开一个分支"))
 
         // 请求里，用户的原话必须被标成「目标以这一段为准」。
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
@@ -618,7 +618,7 @@ struct DirectionBoardTests {
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("只看最近这一次"))
         // **没关系就一个字都别提之前**（用户点名的那条，还给了一个反例）。
-        #expect(systemPrompt.contains("不要回复跟之前问题有关的任何内容"))
+        #expect(systemPrompt.contains("不要提之前的任何内容"))
         #expect(systemPrompt.contains("有关系的时候才参考，没关系是不参考"))
         #expect(systemPrompt.contains("中国在哪"))
         #expect(systemPrompt.contains("北京欢迎你"))
@@ -645,9 +645,9 @@ struct DirectionBoardTests {
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             looksAtTheScreen: true)
         // 这一版：图的素材是**整份问题清单**，一次调用写出一张完整的图。
-        #expect(systemPrompt.contains("一张图里要有上面清单里的每一件事"))
+        #expect(systemPrompt.contains("每一件事都要在图里"))
         // 他给的那个反例：先 A 后一串 B，不许拿 A 当标准套后面所有的问题。
-        #expect(systemPrompt.contains("不许因为"))
+        #expect(systemPrompt.contains("新开一个顶层分支"))
         #expect(systemPrompt.contains("两张卡片分工不同"))
 
         // 请求里要带上**他问过的每一件事**（整份清单）——
@@ -656,10 +656,10 @@ struct DirectionBoardTests {
         let prompt = DirectionBoardPrompt.understandingUserPrompt(
             newQuestion: "行业 B 的第二个问题",
             previousRoundItems: [],
-            askedQuestions: ["行业 A 的第一件事", "行业 A 的第二件事", "行业 B 的第一个问题"])
-        #expect(prompt.contains("按顺序问过的每一件事"))
-        #expect(prompt.contains("1. 行业 A 的第一件事"))
-        #expect(prompt.contains("3. 行业 B 的第一个问题"))
+            spokenTranscript: ["行业 A 的第一件事", "行业 A 的第二件事", "行业 B 的第一个问题"])
+        #expect(prompt.contains("他到目前为止说过的**全部内容**"))
+        #expect(prompt.contains("行业 A 的第一件事"))
+        #expect(prompt.contains("行业 B 的第一个问题"))
     }
 
     /// **脑图不许把提示词抄成标题**（2026-09-27 截图里就是
@@ -714,12 +714,12 @@ struct DirectionBoardTests {
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("进了「矛盾」不等于不用进那张图"))
-        #expect(systemPrompt.contains("他问过的每一件事"))
+        #expect(systemPrompt.contains("每一件事都要在图里"))
         let prompt = DirectionBoardPrompt.understandingUserPrompt(
             newQuestion: "北京跟上海的关系是什么",
             previousRoundItems: [],
-            askedQuestions: ["赵今麦的信息", "屏幕里是什么软件", "北京跟上海的关系是什么"])
-        #expect(prompt.contains("按顺序问过的每一件事"))
-        #expect(prompt.contains("3. 北京跟上海的关系是什么"))
+            spokenTranscript: ["赵今麦的信息", "屏幕里是什么软件", "北京跟上海的关系是什么"])
+        #expect(prompt.contains("他到目前为止说过的**全部内容**"))
+        #expect(prompt.contains("北京跟上海的关系是什么"))
     }
 }

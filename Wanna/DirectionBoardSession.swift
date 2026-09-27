@@ -77,7 +77,7 @@ final class DirectionBoardSession: ObservableObject {
     /// 「把之前所有的问题都当作需求整理出来，然后看用户到底在做什么」）。
     func resetAccumulatedMindMap() {
         accumulatedMindMap = ""
-        askedQuestions = []
+        spokenTranscript = []
     }
 
     /// 把上一轮的**矛盾**带上（写进提示词的 `<previous_questions>` 段）。
@@ -122,7 +122,7 @@ final class DirectionBoardSession: ObservableObject {
         for (index, answer) in recentCornerAnswers.enumerated() {
             // 用户 2026-09-27 深夜点名要的标法：「**一定要标清楚前一轮、两轮、三轮、四轮、五轮**
             // 分别是什么，一定要告诉 AI 上一轮的内容是什么，让它判断跟上一个内容有没有关系」。
-            let label = index == 0 ? "上一轮" : "上\(TurnReferenceMaterials.chineseNumber(index + 1))轮"
+            let label = "最近\(TurnReferenceMaterials.chineseNumber(index + 1))轮"
             lines.append("【\(label)｜\(formatter.string(from: answer.shownAt))】\(answer.text)")
         }
         let spokenAfter: String
@@ -337,7 +337,13 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    /// **这一次实时会话里他按顺序问过的每一件事**（原话，短句）。
+    /// **他到目前为止说过的全部内容**（按时间顺序，每个 2 秒轮接一段）。
+    ///
+    /// 用户 2026-09-27 深夜的要求就是"把它当一份文件发给 AI"：「用户实时模式下他的录音是**连续的**，
+    /// 他一直是录音的，所以说你是有一个**完整的**……**都是所有用户问题的一个文件的**。
+    /// 那么你**让 AI 根据这个文件来提炼出所有的问题**，然后整理出脑图不就行了吗？」
+    /// —— 所以**提炼问题这件事交给 AI**，代码只负责把这份文本攒起来（他不止一次说过
+    /// "能用一个调用解决的，别用复杂逻辑"）。
     ///
     /// ⚠️ 2026-09-27 深夜第三次改 —— 前两版都错在**给模型的信息不全**：
     /// 请求里只有"**前五轮**"，却要模型"把到目前为止**所有**问题整合成一张图" ——
@@ -349,11 +355,11 @@ final class DirectionBoardSession: ObservableObject {
     /// 然后让他生成几个标签的文本……**其实就是一次大模型调用就能够解决所有的问题**」。
     /// 所以现在**把"他问过的每一件事"整份发过去**，模型从完整输入里写完整的一张图 ——
     /// 不需要它记住任何东西，也不需要 App 替它拼。
-    private var askedQuestions: [String] = []
+    private var spokenTranscript: [String] = []
     /// 保留几轮（用户点名 **5**）。
-    static let rememberedTurnCount = 5
-    /// 最多记住他问过的多少件事（防"说了一整天"把提示词撑爆）。
-    static let maximumAskedQuestions = 40
+    static let rememberedTurnCount = 3
+    /// 最多留多少段（防"说了一整天"把提示词撑爆；一段就是一轮说的话）。
+    static let maximumSpokenSegments = 60
 
     private var recentCornerAnswers: [(text: String, shownAt: Date)] = []
     static let rememberedCornerAnswerCount = 3
@@ -850,14 +856,14 @@ final class DirectionBoardSession: ObservableObject {
             ? ""
             : latestTranscriptAfter(recentTurns[0].at).trimmingCharacters(in: .whitespacesAndNewlines)
         let newQuestion = transcribedAfterLastReply.isEmpty ? transcript : transcribedAfterLastReply
-        // 记下"他问过的这一件事"（同一个问题被重放多次时只记一次 —— 识别器给的是累积文本，
-        // 同一轮里这个函数会被调好几次）。
+        // 把这一轮他说的那段接进"说过的全部内容"（同一段被重放多次时只记一次 ——
+        // 识别器给的是累积文本，同一轮里这个函数会被调好几次）。
         let questionKey = Self.mindMapLineKey(newQuestion)
-        if !questionKey.isEmpty, askedQuestions.last.map(Self.mindMapLineKey) != questionKey {
-            askedQuestions.append(newQuestion)
+        if !questionKey.isEmpty, spokenTranscript.last.map(Self.mindMapLineKey) != questionKey {
+            spokenTranscript.append(newQuestion)
             // 上限只是防"说了一整天"把提示词撑爆；正常一次会话到不了。
-            if askedQuestions.count > Self.maximumAskedQuestions {
-                askedQuestions.removeFirst(askedQuestions.count - Self.maximumAskedQuestions)
+            if spokenTranscript.count > Self.maximumSpokenSegments {
+                spokenTranscript.removeFirst(spokenTranscript.count - Self.maximumSpokenSegments)
             }
         }
         MainFlowDiagnostics.log("🧭 看板：第 \(roundGeneration) 轮发请求（转写 \(transcript.count) 字）")
@@ -962,7 +968,7 @@ final class DirectionBoardSession: ObservableObject {
                     self.accumulatedMindMap = mindMap
                     MainFlowDiagnostics.log("🧭 看板：这一轮的图 \(mindMap.count) 字"
                                             + "（\(mindMap.split(separator: "\n").count) 行）"
-                                            + "；发上去的是他问过的 \(self.askedQuestions.count) 件事")
+                                            + "；发上去的是他说过的 \(self.spokenTranscript.count) 段")
                 }
 
                 // **疑问那一行是"常驻"的**：把这一轮的值记下来，下一轮带着它去问模型
@@ -1015,7 +1021,7 @@ final class DirectionBoardSession: ObservableObject {
             newQuestion: newQuestion,
             previousRoundItems: previousRoundItems,
             previousTurnsText: previousTurnsPromptBlock(),
-            askedQuestions: askedQuestions,
+            spokenTranscript: spokenTranscript,
             referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
             previousQuestions: pendingQuestionsPromptBlock())
         do {
