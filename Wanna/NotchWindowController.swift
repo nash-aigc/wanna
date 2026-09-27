@@ -277,6 +277,8 @@ final class NotchWindowController {
         AgentStripPanelController.shared.teardown()
         // 刘海下面那行字幕同理 —— 入口关掉之后它不该还留一块面板在屏幕上。
         NotchListeningTranscriptPanelController.shared.hide()
+        // 任务方向看板同理（同一批屏幕参数变化也走 `rebuildScreenPresences`，见上面那句）。
+        DirectionBoardPanelController.shared.sync(isVisible: false, isSheetExpanded: false)
         removeMonitors()
         hasPlayedBootChime = false
     }
@@ -1852,6 +1854,12 @@ final class NotchWindowController {
         } else {
             NotchListeningTranscriptPanelController.shared.hide()
         }
+        // **任务方向看板走同一个判据**（2026-09-27）：说话期间才出现，提交/说完就收起。
+        // 用户：「当用户按住快捷键时，即用户说话时，就持续显示，直到用户按下快捷键发送问题，
+        // 或等待 2 秒自动发送问题后才不显示」。写在这一处，两者不可能不一致。
+        DirectionBoardPanelController.shared.sync(
+            isVisible: panelModel.notchBandSitsAboveTranscriptLine,
+            isSheetExpanded: panelModel.isExpanded)
     }
 
     private var latestVoiceState: CompanionVoiceState = .idle

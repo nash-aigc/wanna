@@ -1154,6 +1154,8 @@ struct GeneralSettingsView: View {
                 SettingsNote(text: "这两个是命令行工具，Wanna 自己不附带。点「安装」会用你机器上的 Homebrew 现装 —— node 走 brew，claude 走 npm 官方包。装完不用重启，这里的字会自己变；也可以照按钮旁边那条命令自己在终端里装。")
             }
 
+            DirectionBoardSettingsSection(generalSettingsViewModel: generalSettingsViewModel)
+
             SettingsGroupLabel("它能做什么")
             SettingsCard {
                 SettingsRow(
