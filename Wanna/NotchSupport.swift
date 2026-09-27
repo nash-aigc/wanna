@@ -684,8 +684,17 @@ nonisolated enum NotchSupport {
         // 搬去了屏幕右上角（`agentStripPanelFrame`），它不再画在这个窗口里 ——
         // 当初把左侧外扩到 `restingLeadingFlankWidth` 正是为了给它腾地方，现在
         // 那块地方没有东西了。
+        let windowHeight = pillFrame.height + notchTranscriptRowHeight
         return CGRect(x: pillFrame.minX - activeFlankWidth,
-                      y: pillFrame.minY,
+                      // ⚠️ **顶边钉在屏幕顶边，多出来的高度往下长 —— 原点要跟着减。**
+                      // 写成 `y: pillFrame.minY`（原点不动、只加高度）是 2026-09-27 那次事故
+                      // 的**唯一**原因：AppKit 的 y 是**底边**，高度加了 32 而原点不动，窗口
+                      // 就是**向上**长 32pt —— 画在视图顶部的那条黑带（连同两翼）整块跑到屏幕
+                      // 外，而字幕按 `offset(y: notchHeight)` 落在窗口的第 32…64pt，正好压在
+                      // **菜单栏**那一条上。实测那一版活着的窗口：`Quartz(y=-32, h=86)`（y 是
+                      // 从屏幕顶边向下量的，负值即"顶边在屏幕上方"）。用户原话：
+                      // 「两边的刘海、两边的内容都没有了…字幕显示到菜单栏上」。
+                      y: pillFrame.maxY - windowHeight,
                       width: pillFrame.width + activeFlankWidth * 2,
                       // **高度多了刘海下面那一行字幕**（2026-09-27）：那一行原来住在
                       // `NotchListeningTranscriptPanelController` 的**另一块面板**里 ——
@@ -693,7 +702,7 @@ nonisolated enum NotchSupport {
                       //（量到 ≤2px 也不等于每一帧都不露，用户为此报了三遍）。
                       // 现在那一行由**这块窗口**自己画：黑带与它同一个视图、同一个宽度变量、
                       // 同一个动画事务 —— 从结构上不可能错开。
-                      height: pillFrame.height + notchTranscriptRowHeight)
+                      height: windowHeight)
     }
 
     /// 屏幕右上角那一排最多同时显示几个 agent 按钮。
@@ -750,14 +759,33 @@ nonisolated enum NotchSupport {
     /// 这个数就是那个时长：两翼的 `.animation` 与字幕的 `withAnimation` **都读它**。
     static let listeningBandRevealDuration: TimeInterval = 0.38
 
-    /// 展开过程中，那一整条（黑带 + 字幕）在 `revealProgress` 处的宽度。
+    /// **黑带三段之间的重叠**：`HStack(spacing: -bandSegmentOverlap)` —— 两翼各向中段压进 2pt。
+    ///
+    /// 为什么要有重叠：贴合（间距 0）时，翼的边缘与中段的边缘在**同一个坐标**上各自抗锯齿，
+    /// 落在一个像素边界上就会留下一条能透出桌面的细缝（2026-09-23 从 30fps 录屏里量到的，
+    /// 用户报的是「刘海的左侧和右侧分别有一个空白间隙」）。重叠之后那四个边缘全部落进对方的
+    /// 实心黑里，黑压黑，缝不可能存在。
+    ///
+    /// ⚠️ **代价是带子的实际宽度 = 三段之和 − 2 × 这个数**，所以任何"按带子宽度画东西"的
+    /// 地方（下面那行字幕、命中矩形）都要减掉它 —— 2026-09-27 实测过这个差：展开到一半时
+    /// 带子 272pt、那一行 276pt，**那一行每边多出 2pt**，正是因为那一行的宽度按"三段之和"算。
+    static let bandSegmentOverlap: CGFloat = 2
+
+    /// 展开过程中，那一整条（黑带 + 字幕）在 `revealProgress` 处的**实际**宽度。
     ///
     /// **它必须与两翼的宽度动画是同一个式子**，否则过程中两块会对不齐、桌面从缝里透出来：
     /// 两翼各自从 0 长到 `leadingWingWidth` / `trailingWingWidth`，所以整条带子在
-    /// 进度 p 处的宽度是 `刘海 + (两翼之和) × p`。字幕那一块读的就是这个函数
-    /// （它是**线性**的，所以只要时长、曲线、起点相同，两块的边缘在每一帧都重合）。
-    static func revealedListeningBandWidth(notchWidth: CGFloat, revealProgress: CGFloat) -> CGFloat {
-        notchWidth + (leadingWingWidth + trailingWingWidth) * max(0, min(1, revealProgress))
+    /// 进度 p 处的宽度是 `中段 + (两翼之和) × p − 两处重叠`。刘海面板那条黑带与它下面
+    /// 那一行字幕读的都是这个函数（它是**线性**的，所以只要时长、曲线、起点相同，
+    /// 两块的边缘在每一帧都重合 —— 而"每一帧都不许露"正是用户要的）。
+    ///
+    /// - Parameter pillWidth: 带子**中段**的宽度（静止那颗胶囊：刘海宽 + 两侧各 2pt）。
+    ///   注意不是刘海本身的宽度 —— 中段在活动态画的就是 `pillWidth`。
+    static func revealedListeningBandWidth(pillWidth: CGFloat, revealProgress: CGFloat) -> CGFloat {
+        let clampedProgress = max(0, min(1, revealProgress))
+        return pillWidth
+            + (leadingWingWidth + trailingWingWidth) * clampedProgress
+            - bandSegmentOverlap * 2
     }
 
     // MARK: - 临时 agent 的那一排（屏幕右上角，菜单栏下面一行）
@@ -1115,7 +1143,8 @@ nonisolated enum NotchSupport {
     /// 带子因此不会横向跳一下。
     static func restingWingBandWidth(on screen: NSScreen) -> CGFloat {
         guard notchRect(on: screen) != nil else { return 0 }
-        return leadingWingWidth + restingPillWidth(on: screen) + trailingWingWidth - 4
+        return leadingWingWidth + restingPillWidth(on: screen) + trailingWingWidth
+            - bandSegmentOverlap * 2
     }
 
     /// 收起态那条带子的「中段」宽度（就是那颗 pill）。

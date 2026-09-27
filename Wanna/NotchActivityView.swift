@@ -338,8 +338,11 @@ struct NotchPillRootView: View {
             // **整条（黑带 + 下面那行字幕）的宽度 —— 只有一个变量。**
             // 黑带的三段与下面那一行都从这里取值，所以它们的左右边缘**在同一个视图里、
             // 同一帧、同一个动画事务**中一起变（这就是"一个动画"的结构保证）。
-            let revealedBandWidth = pillWidth
-                + (Self.leadingWingWidth + Self.trailingWingWidth) * wingRevealProgress
+            // 式子本身住在 `NotchSupport`（展开态那条带子读的是它的兄弟函数），
+            // 所以"带子画多宽"只有一份算术。
+            let revealedBandWidth = NotchSupport.revealedListeningBandWidth(
+                pillWidth: pillWidth,
+                revealProgress: wingRevealProgress)
 
             ZStack(alignment: .top) {
                 // Negative spacing: each wing overlaps the middle segment by
@@ -358,7 +361,7 @@ struct NotchPillRootView: View {
                 // rest (both wings 0 wide: pill_left = center + 0 − 2 −
                 // (0 + 0 − 4)/2 … = center), and the ±1pt drift mid-animation
                 // is black-on-black and invisible.
-                HStack(spacing: -2) {
+                HStack(spacing: -NotchSupport.bandSegmentOverlap) {
                     NotchWingView(
                         phase: panelModel.activityPhase,
                         audioHistoryProvider: audioHistoryProvider,
@@ -434,16 +437,22 @@ struct NotchPillRootView: View {
 
             // **刘海下面那一行实时字幕**（2026-09-27 从另一块面板搬进来）。
             // 它与上面那条黑带**同一个视图、同一个宽度变量** —— 展开时一起从刘海中心向左右长，
-            // 任何一帧都不可能错开（所以也不会再露出桌面）。它显不显示只看相位：
-            // Listening 显示、其余不显示（用户：「Listening 时要显示，Speaking 时不显示」）。
-            if panelModel.activityPhase == .listening {
+            // 任何一帧都不可能错开（所以也不会再露出桌面）。
+            //
+            // 显示与否读的是**传进来的那个判据**（`notchBandSitsAboveTranscriptLine`：
+            // 相位是 Listening 且没有被别的 App 的全屏挡住），不是在这里重写一遍
+            // `activityPhase == .listening`：屏幕矩形的命中、那块编辑面板的显隐、
+            // 两翼外端的圆角、以及这里这一行，四处必须是**同一个条件**（用户 2026-09-27：
+            // 「Listening 时要显示，Speaking 时不显示」）。
+            if squaresBottomOuterCorner {
                 NotchTranscriptLine(
-                    text: NotchListeningTranscriptModel.shared.liveText,
+                    text: listeningTranscriptModel.liveText,
                     width: revealedBandWidth,
                     height: NotchSupport.notchTranscriptRowHeight,
                     // 上边是方的（与黑带拼在一起），只有下面两个角是圆的。
                     isAttachedToNotch: false)
                 .frame(width: geometry.size.width, alignment: .center)
+                // 紧贴在黑带下边缘 —— 于是"黑带 + 这一行"是一整块，接缝处两边都是方的。
                 .offset(y: notchHeight)
             }
         }
@@ -1113,6 +1122,10 @@ struct NotchExpandedWingBand: View {
     /// memberwise init 要求实参顺序与声明一致）。
     var squaresBottomOuterCorner: Bool = false
 
+    /// 那一行字幕的文本。**和收起态读的是同一个单例、同一个字段** —— 展开与收起两态之间
+    /// 切换时，屏幕上那句话不会变（这一整条带子存在的理由就是"两态看起来是同一条"）。
+    @ObservedObject private var listeningTranscriptModel = NotchListeningTranscriptModel.shared
+
     /// 右翼左边界在**展开窗口**里的 x。
     ///
     /// 带子整体居中在刘海中心上，所以带子的左边界要先算出来，再加上
@@ -1126,7 +1139,7 @@ struct NotchExpandedWingBand: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             // 装饰层：整条都不吃点击 —— 见类型注释里「只有右翼那颗按钮吃点击」。
-            HStack(spacing: -2) {
+            HStack(spacing: -NotchSupport.bandSegmentOverlap) {
                 NotchWingView(
                     phase: phase,
                     audioHistoryProvider: audioHistoryProvider,
@@ -1183,8 +1196,33 @@ struct NotchExpandedWingBand: View {
                 notchCenterX: notchCenterXInWindow,
                 placement: notionNoteButtonPlacement
             )
+
+            // **刘海下面那一行实时字幕**：展开态也要在，理由与上面那排按钮一字不差 ——
+            // 用户几乎总是在面板铺开的状态下说话，少了这一处，他说话时就看不到自己说了什么
+            //（这一行在 2026-09-27 搬进刘海面板之前，本来就由它自己那块面板画着，两态都看得见；
+            // 搬到 `NotchPillRootView` 之后收起态有了，展开态必须补上，否则就是平移了一处缺失）。
+            //
+            // 判据与收起态、与那块编辑面板的显隐、与两翼外端的圆角**是同一个**
+            //（`notchBandSitsAboveTranscriptLine`）。展开态这条带子是**恒定宽度**的
+            //（没有展开动画），所以这里不存在"两块动画对不上"的问题。
+            if squaresBottomOuterCorner {
+                NotchTranscriptLine(
+                    text: listeningTranscriptModel.liveText,
+                    width: wingBandWidth,
+                    height: NotchSupport.notchTranscriptRowHeight,
+                    isAttachedToNotch: false)
+                // 中心点压在黑带下边缘下面 —— 于是"黑带 + 这一行"在展开态也是紧贴的一整块。
+                .position(x: notchCenterXInWindow,
+                          y: notchBandHeight + NotchSupport.notchTranscriptRowHeight / 2)
+                .allowsHitTesting(false)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: notchBandHeight, alignment: .topLeading)
+        // 高度要多留出那一行：这一层是**铺满整块面板的 overlay**，不给它高度的话，
+        // 那一行就画在这个 frame 的外面 —— SwiftUI 不裁也不报错，但那属于"靠默认行为兜着"。
+        .frame(maxWidth: .infinity,
+               maxHeight: notchBandHeight
+                   + (squaresBottomOuterCorner ? NotchSupport.notchTranscriptRowHeight : 0),
+               alignment: .topLeading)
     }
 }
 
