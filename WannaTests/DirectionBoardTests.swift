@@ -648,6 +648,11 @@ struct DirectionBoardTests {
             looksAtTheScreen: true)
         // 这一版：图的素材是**整份问题清单**，一次调用写出一张完整的图。
         #expect(systemPrompt.contains("每一件事都要在图里"))
+        // **不限行数**（用户 2026-09-27 深夜：「我说的是提示词要求模型最多画 20 行的图，
+        // **没有这个限制**。用户的内容可能是**两个小时**，那这个图就应该是两个小时的内容，
+        // **用户所有的问题都应该在图里面显示**」）。
+        #expect(systemPrompt.contains("不限行数"))
+        #expect(!systemPrompt.contains("最多 20 行"))
         // 他给的那个反例：先 A 后一串 B，不许拿 A 当标准套后面所有的问题。
         #expect(systemPrompt.contains("新开一个顶层分支"))
         #expect(systemPrompt.contains("两张卡片分工不同"))
@@ -717,6 +722,11 @@ struct DirectionBoardTests {
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("进了「矛盾」不等于不用进那张图"))
         #expect(systemPrompt.contains("每一件事都要在图里"))
+        // **不限行数**（用户 2026-09-27 深夜：「我说的是提示词要求模型最多画 20 行的图，
+        // **没有这个限制**。用户的内容可能是**两个小时**，那这个图就应该是两个小时的内容，
+        // **用户所有的问题都应该在图里面显示**」）。
+        #expect(systemPrompt.contains("不限行数"))
+        #expect(!systemPrompt.contains("最多 20 行"))
         let prompt = DirectionBoardPrompt.understandingUserPrompt(
             newQuestion: "北京跟上海的关系是什么",
             previousRoundItems: [],
@@ -760,10 +770,11 @@ struct DirectionBoardTests {
     /// ② 标签下面先空一行再写内容（画树枝图时很常见）原来会**把整块丢掉**（空行 = 结束信号）。
     @Test func longMapsAndListsAreNotTruncated() throws {
         // ① 12 行的图必须整块留下（原来只剩 5 行）。
-        let mapLines = (1...12).map { "├─ 第 \($0) 件事" }.joined(separator: "\n")
+        let mapLines = (1...120).map { "├─ 第 \($0) 件事" }.joined(separator: "\n")
         let parsed = DirectionBoardPrompt.parseUnderstandingLines("细节：\n" + mapLines)
         let map = try #require(parsed.first { $0.label == "细节" }?.value)
-        #expect(map.split(separator: "\n").count == 12)
+        // 120 行也要整块留下（两小时的内容就是这个量级）。
+        #expect(map.split(separator: "\n").count == 120)
         // ② 标签下面空一行再写内容，也要收得到。
         let withBlank = DirectionBoardPrompt.parseUnderstandingLines("细节：\n\n├─ 甲\n└─ 乙")
         #expect(withBlank.first { $0.label == "细节" }?.value == "├─ 甲\n└─ 乙")
