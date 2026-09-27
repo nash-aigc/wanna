@@ -335,16 +335,16 @@ struct DirectionBoardTests {
     @Test func understandingRowsAreAlwaysTheSameFour() throws {
         // 2026-09-27 深夜：左侧只剩「矛盾」——「需求」并进了右侧那张脑图
         //（用户：「左侧边现在就让它显示**参考、矛盾**……就只显示这几个」）。
-        #expect(DirectionBoardPrompt.understandingLabels == ["细节", "矛盾"])
+        #expect(DirectionBoardPrompt.understandingLabels == ["细节", "矛盾", "拼写错误"])
         // 什么都不给 → 四行都在，全是空值。
         let empty = DirectionBoardPrompt.parseUnderstandingLines("")
         #expect(empty.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(empty.allSatisfy { $0.value.isEmpty })
-        // 只给一行 → 另一行仍然在（占位符由视图画）。
+        // 只给一行 → 另外两行仍然在（占位符由视图画）。
         let partial = DirectionBoardPrompt.parseUnderstandingLines("细节：├─ 整理下载目录")
         #expect(partial.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(partial.first { $0.label == "细节" }?.value == "├─ 整理下载目录")
-        #expect(partial.filter { $0.value.isEmpty }.count == 1)
+        #expect(partial.filter { $0.value.isEmpty }.count == 2)
     }
 
     /// **「答案」不能被「细节」吞掉** —— 理解和答案是**两节**，必须各归各的。

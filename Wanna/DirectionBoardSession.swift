@@ -896,14 +896,23 @@ final class DirectionBoardSession: ObservableObject {
             let screenshots = latestScreenGroup.map { (data: $0.imageData, label: $0.label) }
             let state = "用户这一轮说的话：\n\(newQuestion.prefix(500))"
 
-            // ① **Jev 判方向**（便宜、给概率）；② **大模型写那段理解**（小提示词）。
-            // 两条并行发，谁先回来谁先上屏。
+            // **三条并行**（用户 2026-09-27 深夜定的形状）：
+            // ① Jev 判方向（便宜、给概率）；
+            // ② **第一次大模型调用**：只看那份完整转写、**没有任何上下文** → 细节 / 矛盾 / 歧义；
+            // ③ **第二次大模型调用**：带上下文，**只回答最近这一问** → 答案 / 选择。
+            //
+            // 拆成两次的理由是他的原话：「因为刚才提示词是**既要让 AI 忽略之前的内容来回复最近的
+            // 一个问题，又要让 AI 参考之前的内容来总结所有的问题**……**每一个 AI 调用，
+            // 都是在回复一个方向的问题**」。
             async let probabilitiesTask = self.judgeWithJevIfConfigured(state: state, directions: directions)
-            async let paragraphTask = self.writeParagraphWithModel(newQuestion: newQuestion,
-                                                                   directions: directions,
-                                                                   screenshots: screenshots)
+            async let analysisTask = self.analyzeTranscriptWithModel()
+            async let answerTask = self.answerWithModel(newQuestion: newQuestion,
+                                                        directions: directions,
+                                                        screenshots: screenshots)
             let probabilities = await probabilitiesTask
-            let paragraphText = await paragraphTask
+            let analysisText = await analysisTask
+            let answerText = await answerTask
+            let paragraphText = analysisText
 
             guard self.roundGeneration == generation, self.isListening else { return }
             if let probabilities {
@@ -935,7 +944,8 @@ final class DirectionBoardSession: ObservableObject {
                 // ⚠️ 记的是**这一轮问的那段**（`newQuestion`），不是整段累积转写 ——
                 // 否则下一轮算出来的"新问题"会把这一轮的内容又算进去。
                 self.recentTurns.insert((question: newQuestion,
-                                         answer: String(paragraphText.prefix(Self.maximumReadingCharacters)),
+                                         answer: String((answerText ?? paragraphText)
+                                            .prefix(Self.maximumReadingCharacters)),
                                          at: Date()), at: 0)
                 if self.recentTurns.count > Self.rememberedTurnCount {
                     self.recentTurns.removeLast(self.recentTurns.count - Self.rememberedTurnCount)
@@ -953,7 +963,7 @@ final class DirectionBoardSession: ObservableObject {
                 self.streamingUpdateCount = 0
                 self.boardPreviewStreamingWriter?(false)
                 self.streamingAnswerText = ""
-                if let answer = DirectionBoardPrompt.parseAnswer(paragraphText) {
+                if let answer = answerText.flatMap(DirectionBoardPrompt.parseAnswer) {
                     self.previewAnswer = answer
                     self.answerPreviewWriter?(answer)
                     // **记下"我刚才回过这一条"** —— 下一轮他要对着它追问（「用英文再说一遍」）时，
@@ -981,8 +991,10 @@ final class DirectionBoardSession: ObservableObject {
                 // **用户对上一轮那些方向的评论，由模型在**这一轮**读懂**（两拍语义，用户 2026-09-27：
                 // 「他的理解是由大语言模型在第二轮……你必须要知道用户表达的是对上一轮 JEV 模型
                 // 它的结果的一个选择」）。编号按**上一轮那一列**回填。
+                // **「选择」也来自第二次调用** —— 判"他对上一轮那些方向说了什么"必须有上下文，
+                // 而第一次调用是**没有任何上下文**的（见 `answerWithModel`）。
                 let verdicts = DirectionBoardMatching.parseSelectionVerdict(
-                    paragraphText, previousRound: self.previousRoundItems)
+                    answerText ?? "", previousRound: self.previousRoundItems)
                 if !verdicts.isEmpty { self.applySelectionVerdict(verdicts) }
                 // 自检时把"上一轮那一列"打出来 —— 判定是按它回填的，日志里要能核对。
                 if Self.selfCheckMode != nil, !self.previousRoundItems.isEmpty {
@@ -992,6 +1004,76 @@ final class DirectionBoardSession: ObservableObject {
                 }
             }
             self.refreshDisplayedItems()
+        }
+    }
+
+    /// **第一次调用**：只看那份完整转写，没有任何上下文 —— 产出**细节 / 矛盾 / 歧义**三行。
+    ///
+    /// 拆开两次调用的理由（用户 2026-09-27 深夜）：「因为刚才提示词是**既要让 AI 忽略之前的内容
+    /// 来回复最近的一个问题，又要让 AI 参考之前的内容来总结所有的问题**……那这样的话就不会产生
+    /// 任何的干扰了。那这样的话，**每一个 AI 调用，都是在回复一个方向的问题**。」
+    ///
+    /// 所以这一条**不带截图、不带历史**：屏幕截图与"最近三轮"属于第二次调用的事。
+    private func analyzeTranscriptWithModel() async -> String? {
+        let transcript = spokenTranscript.joined(separator: "\n")
+        guard !transcript.isEmpty else { return nil }
+        do {
+            let (text, _) = try await visionChatAPI.analyzeImageStreaming(
+                images: [],
+                systemPrompt: DirectionBoardPrompt.transcriptAnalysisSystemPrompt(),
+                userPrompt: DirectionBoardPrompt.transcriptAnalysisUserPrompt(transcript: transcript),
+                roleOverride: CompanionManager.visionRoleOverride(
+                    forCardID: ConversationSessionsStore.activeSession().id.uuidString),
+                // **边收边渲染**（用户：「像流式输出，然后加上渲染逻辑、加点动画啊」）——
+                // 分片原来被丢掉，卡片要等整段回来才一次性上屏。
+                onTextChunk: { [weak self] partial in
+                    self?.applyStreamingParagraph(partial)
+                })
+            return DirectionBoardPrompt.cleanRawResponse(text)
+        } catch {
+            print("🧭 方向看板：第一次调用（梳理）失败 —— \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// 第二次调用的流式：**只往右下角那张卡片写**（那三行归第一次调用，别混）。
+    private func applyStreamingAnswer(_ partial: String) {
+        guard let answer = DirectionBoardPrompt.parseAnswer(partial), answer != streamingAnswerText else { return }
+        streamingAnswerText = answer
+        answerPreviewWriter?(answer)
+        boardPreviewStreamingWriter?(true)
+    }
+
+    /// **第二次调用**：带着上下文，**只回答最近这一问** —— 产出**答案 / 选择**。
+    ///
+    /// 它拿到的是：屏幕截图（参考材料）+ 最近三轮问答（标好"最近一轮/二轮/三轮"）+
+    /// 代码切出来的"他这一轮问的那一段"（标成重点）。判据只有一条：
+    /// **跟参考内容有关系就结合着答，没关系就只答最近这一问**。
+    private func answerWithModel(newQuestion: String,
+                                 directions: [(id: String, keyword: String, detail: String)],
+                                 screenshots: [(data: Data, label: String)]) async -> String? {
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions)
+        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
+            newQuestion: newQuestion,
+            previousRoundItems: previousRoundItems,
+            previousTurnsText: previousTurnsPromptBlock(),
+            referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
+            previousQuestions: nil)
+        do {
+            let (text, _) = try await visionChatAPI.analyzeImageStreaming(
+                images: screenshots,
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                roleOverride: CompanionManager.visionRoleOverride(
+                    forCardID: ConversationSessionsStore.activeSession().id.uuidString),
+                // **答案边出边写进右下角那张卡片**（与主 Agent 那条路同一种手感）。
+                onTextChunk: { [weak self] partial in
+                    self?.applyStreamingAnswer(partial)
+                })
+            return DirectionBoardPrompt.cleanRawResponse(text)
+        } catch {
+            print("🧭 方向看板：第二次调用（回答）失败 —— \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -1011,44 +1093,6 @@ final class DirectionBoardSession: ObservableObject {
     }
 
     /// 那段"AI 怎么理解"：**只用方向清单 + 用户的话**（不再发主 Agent 那 5000 字提示词）。
-    private func writeParagraphWithModel(newQuestion: String,
-                                         directions: [(id: String, keyword: String, detail: String)],
-                                         screenshots: [(data: Data, label: String)]) async -> String? {
-        // 每一轮都带图 → 提示词里那段"这一次带了屏幕截图，请看图再回答"成了**常规要求**，
-        // 不再是"带了图才追加的一段"。
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions)
-        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
-            newQuestion: newQuestion,
-            previousRoundItems: previousRoundItems,
-            previousTurnsText: previousTurnsPromptBlock(),
-            spokenTranscript: spokenTranscript,
-            referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
-            previousQuestions: pendingQuestionsPromptBlock())
-        do {
-            let (text, _) = try await visionChatAPI.analyzeImageStreaming(
-                images: screenshots,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                roleOverride: CompanionManager.visionRoleOverride(
-                    forCardID: ConversationSessionsStore.activeSession().id.uuidString),
-                // **边收边渲染**（用户 2026-09-27：「像**流式输出**，然后加上**渲染逻辑**、
-                // 加点动画啊」）。
-                //
-                // 这里原来是 `{ _ in }` —— **分片被丢掉**，于是卡片要等整段回复回来才一次性上屏：
-                // 屏幕上的表现就是"没有渲染逻辑、延迟非常长"。现在每来一段就重解析一次，
-                // 行是**固定高度**的、值带 `.id(value)` 淡入，所以内容是一行一行长出来的，
-                // 骨架一个像素都不动。
-                onTextChunk: { [weak self] partial in
-                    self?.applyStreamingParagraph(partial)
-                })
-            // ⚠️ **不截断**：解析（五行 + 任务结果）必须从完整原文里切 —— 显示那一步才限长。
-            return DirectionBoardPrompt.cleanRawResponse(text)
-        } catch {
-            print("🧭 方向看板：这次理解请求失败（保留上一次）—— \(error.localizedDescription)")
-            return nil
-        }
-    }
-
     /// **一大轮结束**：清掉临时那份类型文件（用户：「临时文件在每一轮对话结束时清掉。
     /// 是每一大轮……中间可能有打断，这算一个轮，不算两轮」）。
     /// 一大轮结束（追问窗口关闭）：清掉"这一轮的上下文"。
