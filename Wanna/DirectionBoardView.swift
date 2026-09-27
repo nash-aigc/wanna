@@ -98,7 +98,8 @@ struct DirectionBoardView: View {
     static let mindMapLabel = "细节"
     /// 左栏宽度 = 卡片宽度的 **40%**（用户指定的比例）。
     private var understandingColumnWidth: CGFloat {
-        (Self.cardWidth(forMultiplier: widthMultiplier) - Self.horizontalPadding * 2) * 0.48
+        // 用户 2026-09-27 深夜第四轮：「**左侧有点太宽了，把左侧缩小 20%**」→ 48% × 0.8 = 38.4%。
+        (Self.cardWidth(forMultiplier: widthMultiplier) - Self.horizontalPadding * 2) * 0.384
     }
     /// 方向格**固定三行**的高度（每行 = 一个格子的高度 28 + 行距 6）。
     /// 表格固定几行（用户 2026-09-27：「最上面这个表格**写成四行**」）。

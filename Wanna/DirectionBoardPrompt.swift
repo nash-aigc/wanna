@@ -98,7 +98,10 @@ nonisolated enum DirectionBoardPrompt {
               没有可梳理的就写「—」>
         疑问：<**只写逻辑矛盾** —— 他这句话自己前后对不上、和他前面刚明确说过的事实冲突、
               或者与下面「还没解决的疑问」里某一条直接抵触。**每一行一条**，格式
-              「**一、关于〈什么内容〉的疑问：〈和什么矛盾〉**」，序号用**一、二、三、四**（最多 4 条）。
+              「**一、关于〈什么内容〉的疑问： 〈和什么矛盾〉**」——
+              **冒号后面留一个空格**，空格右边才是具体内容（用户 2026-09-27：「用"关于什么什么的疑问："
+              的形式，**冒号后留一个空格，右侧显示具体的疑问内容**」）。
+              序号用**一、二、三、四**，**不同的疑问各占一行**。
 
               ⚠️⚠️ **不要问澄清类的问题**（用户 2026-09-27 的原话：「现在这个疑问有点太墨迹了……
               我问他北京在哪，他就问**什么地方的北京**；我让他介绍一个人，他就问**介绍什么人**，
@@ -106,6 +109,9 @@ nonisolated enum DirectionBoardPrompt {
               **用户的问题正常回答就好**」）。
               换句话说：**信息不全但前后不矛盾，就不写在这儿 —— 正常回答他就行**。
               少写、不写都是对的；为了凑而编一个问题是最糟的。
+              ⚠️ **这一行不要用 Markdown**（不要 `**` 加粗、不要 `#` 标题、不要列表符号）——
+              它是直接画在卡片上的纯文字。用户 2026-09-27：「**不要用 Markdown 格式**，
+              用"关于什么什么的疑问："的形式」。
               没有矛盾就整行写「—」。>
 
         **答案**：<只在这一轮**包含一个可以当场回答的问题**时才写（「北京在哪」「杨幂是谁」
@@ -322,7 +328,11 @@ nonisolated enum DirectionBoardPrompt {
                 }
                 let joined = collected.filter { !$0.isEmpty }.joined(separator: "\n")
                 guard !joined.isEmpty else { continue }   // 真的一个字都没有 → 不记（视图画占位符）
-                found[position.label] = joined
+                // 「疑问」那一行**在解析处统一形状**（用户 2026-09-27：「用"关于什么什么的疑问："的
+                // 形式，**冒号后留一个空格**，右侧显示具体的疑问内容」）—— 提示词里写了，但模型
+                // 不保证照做，而这一行是直接画给用户看的，所以这里再兜一次。
+                found[position.label] = position.label == questionLabel
+                    ? formattedQuestion(joined) : joined
             }
         }
         // 按用户定的顺序返回，**缺的那些留空串**（不是省略）。
@@ -397,6 +407,25 @@ nonisolated enum DirectionBoardPrompt {
     }
 
     /// 「—」「无」这类占位一律当成空（占位符由视图统一画，模型写的不算内容）。
+    /// 「疑问」那一行是**哪一行**（它与别的行形状不同，多一道整理）。
+    static let questionLabel = "疑问"
+
+    /// 把一条疑问整成用户定的形状：**`一、关于〈什么〉的疑问： 〈具体内容〉`**。
+    ///
+    /// 三件事，缺一不可：① **不带 Markdown**（模型爱把整行包进 `**`，屏幕上就是两个裸星号）；
+    /// ② 冒号统一成全角；③ **冒号后面留一个空格**（用户 2026-09-27：「冒号后留一个空格，
+    /// 右侧显示具体的疑问内容」）。只动**第一个**冒号 —— 内容里再出现冒号是内容自己的事。
+    nonisolated static func formattedQuestion(_ raw: String) -> String {
+        let withoutMarkdown = raw
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "＊", with: "")
+        var text = withoutMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let colon = text.firstIndex(where: { $0 == ":" || $0 == "：" }) else { return text }
+        let head = text[text.startIndex..<colon].trimmingCharacters(in: .whitespaces)
+        let tail = text[text.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        return head + "： " + tail
+    }
+
     private static func normalizedValue(_ raw: String) -> String {
         // ⚠️ **Markdown 的星号要剥掉**（2026-09-27 实测）：提示词里明写了「不要加 Markdown」，
         // 模型还是会把一整行包在 `**…**` 里（「**一、关于「这段」的疑问:…**」）——

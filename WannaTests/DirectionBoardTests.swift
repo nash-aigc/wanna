@@ -499,9 +499,10 @@ struct DirectionBoardTests {
         """
         let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
         let question = try #require(lines.first { $0.label == "疑问" }?.value)
-        // ⚠️ 解析会把全角冒号统一成半角（`parseUnderstandingLines` 第一行就做这件事），
-        // 所以断言里要用半角 —— 第一版用全角写，测试红了，红的是断言不是实现。
-        #expect(question == "一、关于「记到哪里」的疑问:是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音")
+        // ⚠️ 「疑问」这一行会被 `formattedQuestion` 整成用户定的形状：**全角冒号 + 冒号后一个空格**
+        //（用户 2026-09-27：「用"关于什么什么的疑问："的形式，冒号后留一个空格」）——
+        // 解析时先把全角冒号统一成半角、再在这一步还原成全角并补空格。
+        #expect(question == "一、关于「记到哪里」的疑问： 是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音")
         #expect(lines.first { $0.label == "目标" }?.value.isEmpty == false)
         // **一行里挤两个标签仍然要认**（模型常这么写）—— 别把上面那条修过头。
         // ⚠️ 「—」是空值标记，解析出来就是**空串**（见 `dashMeansEmptyNotContent`），
@@ -572,9 +573,21 @@ struct DirectionBoardTests {
     /// **模型爱把整行包在 `**…**` 里**（提示词写了「不要 Markdown」它照样写）——
     /// 这行字是直接画给用户看的，不剥掉就是屏幕上两个裸星号。
     @Test func markdownStarsAreStrippedFromTheRows() throws {
+        // 「疑问」那一行还要**统一成用户定的形状**：全角冒号 + **冒号后一个空格**
+        //（用户 2026-09-27：「用"关于什么什么的疑问："的形式，冒号后留一个空格，
+        // 右侧显示具体的疑问内容」）。
         let lines = DirectionBoardPrompt.parseUnderstandingLines(
             "疑问：**一、关于「这段」的疑问:他说的和上一句对不上**")
         #expect(lines.first { $0.label == "疑问" }?.value
-                == "一、关于「这段」的疑问:他说的和上一句对不上")
+                == "一、关于「这段」的疑问： 他说的和上一句对不上")
+        // 别的行不受这条形状约束（它们本来就没有冒号约定）。
+        let goal = DirectionBoardPrompt.parseUnderstandingLines("目标：把这段记下来")
+        #expect(goal.first { $0.label == "目标" }?.value == "把这段记下来")
+        // 各种写法都收敛到同一个形状。
+        #expect(DirectionBoardPrompt.formattedQuestion("关于文件的疑问:没说哪个文件")
+                == "关于文件的疑问： 没说哪个文件")
+        #expect(DirectionBoardPrompt.formattedQuestion("一、关于 X 的疑问：  内容")
+                == "一、关于 X 的疑问： 内容")
+        #expect(DirectionBoardPrompt.formattedQuestion("没有冒号的一句话") == "没有冒号的一句话")
     }
 }
