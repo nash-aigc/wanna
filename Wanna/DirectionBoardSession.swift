@@ -204,6 +204,8 @@ final class DirectionBoardSession: ObservableObject {
 
     /// 这一轮流式渲染写了几次（只用来核对"它真的在流"）。
     private var streamingUpdateCount = 0
+    /// 上一次**梳理**用的那句问题（用来算"攒够新内容了吗"，见 `analysisMinimumAdded`）。
+    private var lastAnalyzedQuestion = ""
     /// 这一轮流式写到右下角的那段（用于去重）。
     private var streamingAnswerText = ""
 
@@ -219,23 +221,32 @@ final class DirectionBoardSession: ObservableObject {
         guard !recentTurns.isEmpty else { return nil }
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
+        // ⚠️ **问题和结果分开写、每一块都有自己的标题**（用户 2026-09-27 深夜：
+        // 「一定要标注哪个是**最近一次**，哪个是**上一次**，哪个是**当前这一次**，
+        // 哪个是**上一次的问题**，哪个是**上一次的结果**。**你不要直接一拥在一起，要标清楚**」）。
+        //
+        // 他报的现象正是"没标清楚"的后果：「我问他，比如说他回复了我 10 个结果，然后我追问他，
+        // 我说**把最后一个结果展开说一说**，那他为什么**不知道最后一个结果是什么**呢？」
+        // —— 追问要能对上"上一次的结果"，那就得让那块结果**单独成段、有名字**。
         let blocks = recentTurns.enumerated().map { index, turn -> String in
-            let label = index == 0 ? "最近一次" : "倒数第\(TurnReferenceMaterials.chineseNumber(index + 1))次"
+            let ordinal = TurnReferenceMaterials.chineseNumber(index + 1)
+            let name = index == 0 ? "上一次" : "上\(ordinal)次"
             return """
-            【\(label)｜\(formatter.string(from: turn.at))】
-            他说的：\(turn.question.isEmpty ? "（这一轮没听到新的）" : turn.question)
-            你回的：\(turn.answer)
+            【\(name)的问题｜\(formatter.string(from: turn.at))】
+            \(turn.question.isEmpty ? "（这一轮没听到新的）" : turn.question)
+
+            【\(name)的结果】
+            \(turn.answer)
             """
         }
         return """
         <previous_turns>
-        前面几轮你们说过什么（**最近的在前；这只是参考，不是这一轮要做的事**）：
+        前面几轮**问过什么、你回的是什么**（最近的在前）：
         \(blocks.joined(separator: "\n\n"))
 
-        拿它判断**唯一的一件事**：他这次说的，跟上面这些**有没有关系**。
-        · **有关系** → 接着往下答（「细节」那张图沿着同一件事往下长）；
-        · **没关系** → **只答这一次的问题**，不要提之前的任何内容，也不要把两件事揉在一起。
-        它们全部只是参考。
+        他只是让你回答**这一次的问题**；上面这些是参考 —— 判断"有没有关系"用它，
+        没关系就一个字都别提。**如果他在追问上面某一条结果**（「把最后一个结果展开说说」
+        「用英文再说一遍」），就按那一块的原文来改。
         </previous_turns>
         """
     }
@@ -590,7 +601,9 @@ final class DirectionBoardSession: ObservableObject {
         roundGeneration += 1
         cadenceTimer?.invalidate()
         cadenceTimer = nil
-        requestTask?.cancel()
+        // ⚠️ **不 cancel 那次调用**（2026-09-27 深夜）：它的产物是**累积的那张图**，
+        // 晚到几秒照样有用 —— 而 cancel 掉就等于"用户按了快捷键之后，图永远停在上一版"
+        // （他报的「卡完之后就不显示了」正是这一半）。它自己落地时会按 cycle 判要不要。
         requestTask = nil
         isRequesting = false
         isListening = false
@@ -842,14 +855,18 @@ final class DirectionBoardSession: ObservableObject {
             MainFlowDiagnostics.stage("看板：他还在说（距上一句 \(String(format: "%.1f", secondsSinceHeSpoke))s）")
             return
         }
+        let minimumAdded = AppSettingsStore.snapshot().directionBoardMinimumAddedCharacters
         guard Self.shouldRequest(transcript: latestTranscript,
                                  lastRequestedTranscript: lastRequestedTranscript,
                                  isEnabled: isEnabled,
                                  isListening: isListening,
                                  isRequesting: isRequesting,
                                  isCancelled: isCancelled,
-                                 minimumAddedCharacters: AppSettingsStore
-                                     .snapshot().directionBoardMinimumAddedCharacters) else { return }
+                                 minimumAddedCharacters: minimumAdded) else { return }
+        // ⚠️ **梳理那条另有一道更粗的闸**（2026-09-27 深夜）：它每次都要**重画整张图**
+        //（输入是整份转写、输出是全部问题），比"只答一句"贵得多 —— 每 10 个字就重画一次
+        // 正是用户说的「**明显拖慢速度**」。答案那条不受这条影响（它照旧按 `minimumAdded`）。
+        let analysisMinimumAdded = max(minimumAdded * 3, 30)
         let transcript = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         lastRequestedTranscript = transcript
         // **这一轮的"新问题" = 上一轮回复落地之后他说的那段**（用户 2026-09-27：
@@ -877,6 +894,7 @@ final class DirectionBoardSession: ObservableObject {
         }
         MainFlowDiagnostics.log("🧭 看板：第 \(roundGeneration) 轮发请求（转写 \(transcript.count) 字）")
         let generation = roundGeneration
+        let cycleIDAtRequest = currentCycleID
         isRequesting = true
         streamingUpdateCount = 0
         // **这一轮带上去多少字的旧图** —— 用户报「右上角没有把所有问题都显示出来」时，
@@ -914,7 +932,14 @@ final class DirectionBoardSession: ObservableObject {
             // 一个问题，又要让 AI 参考之前的内容来总结所有的问题**……**每一个 AI 调用，
             // 都是在回复一个方向的问题**」。
             async let probabilitiesTask = self.judgeWithJevIfConfigured(state: state, directions: directions)
-            async let analysisTask = self.analyzeTranscriptWithModel()
+            // 梳理那次只在"攒够了新内容"时才发 —— 否则这一轮只刷新答案（与方向概率）。
+            let shouldAnalyze = Self.addedCharacterCount(transcript: newQuestion,
+                                                         since: lastAnalyzedQuestion)
+                >= analysisMinimumAdded
+            if shouldAnalyze { lastAnalyzedQuestion = newQuestion }
+            async let analysisTask = shouldAnalyze
+                ? self.analyzeTranscriptWithModel()
+                : String?.none
             async let answerTask = self.answerWithModel(newQuestion: newQuestion,
                                                         directions: directions,
                                                         screenshots: screenshots)
@@ -923,7 +948,14 @@ final class DirectionBoardSession: ObservableObject {
             let answerText = await answerTask
             let paragraphText = analysisText
 
-            guard self.roundGeneration == generation, self.isListening else { return }
+            // ⚠️ **只按"有没有换 cycle"作废，不再按"这一轮还开着吗"**（2026-09-27 深夜修）。
+            //
+            // 用户报「总是显示不出来……**卡完之后就不显示了**」。根因就在这里：梳理那次调用往往
+            // 要在用户已经**按了快捷键 / 开了下一轮**之后才回来，而原来这道闸要求
+            // `isListening == true` —— 结果被**整块丢掉**，图上于是什么都没有。
+            // 而那张图是**累积**的：它晚到几秒完全无害（画的还是同一份东西），
+            // 只有"换了一次大循环"（`cycleID` 变了）才该作废。
+            guard self.currentCycleID == cycleIDAtRequest else { return }
             if let probabilities {
                 self.jevProbabilities = probabilities
                 let top = probabilities.sorted { $0.value > $1.value }.prefix(3)
@@ -1022,8 +1054,14 @@ final class DirectionBoardSession: ObservableObject {
         // 否则下一轮算出来的"新问题"会把这一轮的内容又算进去。
         let recordedAnswer = answer ?? analysisText ?? ""
         guard !recordedAnswer.isEmpty else { return }
+        // ⚠️ **最近那一条结果不截断**（2026-09-27 深夜）：他追问「把最后一个结果展开说一说」时，
+        // 那句"最后一个结果"就在这段文字里 —— 砍到 600 字就答不上来（这是他的真实场景：
+        // 一次回复里列了 10 个结果）。更早的几轮仍然截断，那是"参考"，不需要全文。
+        let isNewestTurn = recentTurns.isEmpty
         recentTurns.insert((question: newQuestion,
-                            answer: String(recordedAnswer.prefix(Self.maximumReadingCharacters)),
+                            answer: isNewestTurn
+                                ? recordedAnswer
+                                : String(recordedAnswer.prefix(Self.maximumReadingCharacters)),
                             at: Date()), at: 0)
         if recentTurns.count > Self.rememberedTurnCount {
             recentTurns.removeLast(recentTurns.count - Self.rememberedTurnCount)
