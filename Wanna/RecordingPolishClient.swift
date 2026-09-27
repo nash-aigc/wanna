@@ -59,6 +59,9 @@ nonisolated enum RecordingPolishClient {
         <task>
         下面 <rules> 里是你必须遵守的处理要求。请**严格按照这些要求**，处理 <transcript> 里的
         语音转写内容。你的输出就是成品本身：不要解释、不要前言、不要后缀、不要复述要求。
+        **标点与空格都以原文为准**：**不要自己在中文和数字/英文之间插入空格** —— 转写原文里
+        没有空格的地方就保持没有（例如原文「上午2点」不要写成「上午 2 点」），
+        原文本来就有的空格也不要删。
         \(hasAttachments ? """
         随本消息还附有参考材料（见 <screenshot> 块）。**当 <transcript> 里的内容需要它才能
         理解或校正时，必须使用它** —— 例如转写里出现的人名、标题、按钮、数字、报错文字，
@@ -119,8 +122,43 @@ nonisolated enum RecordingPolishClient {
                        cameraFrames: [Data],
                        settings: AppSettings) async throws -> String {
         let endpoint = try resolvedEndpoint(settings: settings)
-        return try await send(prompt: prompt, screenshotJPEG: screenshotJPEG,
-                              cameraFrames: cameraFrames, endpoint: endpoint)
+        let polishedText = try await send(prompt: prompt, screenshotJPEG: screenshotJPEG,
+                                          cameraFrames: cameraFrames, endpoint: endpoint)
+        // 出口统一收一遍空格（提示词里已经写了那条要求，这里是**兜底** ——
+        // 模型不保证照做，而这一条是用户看着屏幕直接提的）。
+        return removingSpacesTheModelAdded(polishedText)
+    }
+
+    /// **把模型自己加的、转写原文里没有的那些空格收掉**（用户 2026-09-28 报的
+    /// 「转写之后的文字**中间的间距特别大**」）。
+    ///
+    /// 实测（`Wanna录音/` 里那一对同名文件）：
+    /// · 识别器给的：「呃，北京时间上午**2点**，下午**3点**。」—— 数字旁边**没有**空格；
+    /// · 模型润色完：「北京时间上午 **2 点**，下午 **3 点**。」—— 那是模型自己的排版习惯
+    ///  （中文与拉丁/数字之间加空格），不是他要的。
+    ///
+    /// 全库统计（`Wanna录音/*.txt`）把判据定了下来：源文本里**数字旁的空格只有 11 处**，
+    /// 而**汉字旁的英文空格有 836 处** —— 后者是识别器自己的写法（「主 agent」「notion」
+    /// 「macOS」），**要保留**。所以规则是：
+    /// **一个空格只有在"至少一侧是英文字母"时才留下**，其余（汉字↔数字、数字↔标点、
+    /// 汉字↔汉字）一律收掉。英文单词之间的空格当然也留（两侧都是字母）。
+    nonisolated static func removingSpacesTheModelAdded(_ text: String) -> String {
+        let characters = Array(text)
+        var output: [Character] = []
+        for (index, character) in characters.enumerated() {
+            let isSpace = character == " " || character == "\u{3000}"
+            if isSpace, index > 0, index + 1 < characters.count,
+               !isLatinLetter(characters[index - 1]), !isLatinLetter(characters[index + 1]) {
+                continue   // 两侧都不是英文字母 → 这个空格是模型加的，收掉
+            }
+            output.append(character)
+        }
+        return String(output)
+    }
+
+    /// 英文字母（**不含汉字** —— 汉字在 Unicode 里也是 letter，不排掉的话判据就废了）。
+    private nonisolated static func isLatinLetter(_ character: Character) -> Bool {
+        character.isLetter && !character.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
     }
 
     /// **「录音 → Notion 笔记」的整理**：同一套内核，但用**它自己那一套**地址 / Key / 模型。

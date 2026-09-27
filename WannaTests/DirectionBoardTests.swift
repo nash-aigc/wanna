@@ -578,6 +578,34 @@ struct DirectionBoardTests {
         #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
     }
 
+    /// **润色之后的文字里那些"模型自己加的空格"要收掉**（用户 2026-09-28 报的
+    /// 「转写之后的文字**中间的间距特别大**」）。
+    ///
+    /// 真实样本（`Wanna录音/2026-09-28-075027-B761` 那一对同名文件）：
+    /// 识别器给的是「呃，北京时间上午**2点**，下午**3点**。」（数字旁没有空格），
+    /// 模型润色完变成「北京时间上午 **2 点**，下午 **3 点**。」。
+    /// 全库统计：源文本里数字旁的空格只有 11 处，而汉字旁的**英文**空格有 836 处 ——
+    /// 后者是识别器自己的写法（「主 agent」「notion」），要保留。
+    /// 所以判据是：**一个空格只有在"至少一侧是英文字母"时才留下**。
+    @Test func spacesThePolishModelAddedAreRemoved() throws {
+        let strip = RecordingPolishClient.removingSpacesTheModelAdded
+        // 用户那条真实样本：数字两边的空格收掉。
+        #expect(strip("北京时间上午 2 点，下午 3 点。") == "北京时间上午2点，下午3点。")
+        #expect(strip("第 2 题") == "第2题")
+        #expect(strip("3~7 个字这样的选项") == "3~7个字这样的选项")
+        // **识别器自己的写法要留着**：汉字旁的英文、英文之间、英文旁的数字。
+        #expect(strip("主 agent 的理解") == "主 agent 的理解")
+        #expect(strip("用 notion 和 macOS") == "用 notion 和 macOS")
+        // 数字旁的汉字也一样收（识别器自己写「15上」这种，不留空格）——
+        // 只有**英文字母**参与的那个空格是识别器的习惯，才留着。
+        #expect(strip("macOS 15 上的 Safari") == "macOS 15上的 Safari")
+        #expect(strip("hello world") == "hello world")
+        // 汉字之间本来就不该有空格（有就是模型加的）。
+        #expect(strip("北京 时间") == "北京时间")
+        // 没有空格时一个字都不动。
+        #expect(strip("呃，北京时间上午2点，下午3点。") == "呃，北京时间上午2点，下午3点。")
+    }
+
     /// **「静音多久自动发送」= 1.5 秒，而且与字数无关**（用户 2026-09-28）。
     ///
     /// 他的原话：「我正常的要求是说完话 **1.5 秒之内**没有说话，自动发送……
