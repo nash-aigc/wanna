@@ -147,6 +147,8 @@ final class NotchWindowController {
 
     private var screenPresences: [ScreenPresence] = []
     private var cancellables: Set<AnyCancellable> = []
+    /// 刘海下面那行字幕的相位订阅 —— 只建一次（见 `bindListeningTranscriptPanel`）。
+    private var listeningTranscriptCancellable: AnyCancellable?
     private var keyDownMonitor: Any?
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
@@ -222,6 +224,7 @@ final class NotchWindowController {
 
         rebuildScreenPresences()
         installMonitorsIfNeeded()
+        bindListeningTranscriptPanel()
 
         if !screenPresences.isEmpty && !hasPlayedBootChime {
             hasPlayedBootChime = true
@@ -244,6 +247,8 @@ final class NotchWindowController {
         // 临时 agent 那一排也撤掉：它的点击是这两个监听接的（`handleGlobalClick`），
         // 监听一撤，留在屏幕上的按钮就变成了点不动的装饰。
         AgentStripPanelController.shared.teardown()
+        // 刘海下面那行字幕同理 —— 入口关掉之后它不该还留一块面板在屏幕上。
+        NotchListeningTranscriptPanelController.shared.hide()
         removeMonitors()
         hasPlayedBootChime = false
     }
@@ -718,6 +723,29 @@ final class NotchWindowController {
                 LongFormRecorderController.shared.handleWingButtonTap()
                 return
             }
+        }
+
+        // **主 Agent 说话时，刘海左侧那颗「Listening」也可点**（2026-09-27）：点它展开
+        // 转写编辑窗。用户的原话：「刘海左侧它这个时间是可以被点击的…我说话的时候它有一个叫
+        // listening 这个单词，那么也同样一个逻辑。我让 listening 可以被点击，点击之后展开，
+        // 展开的是录音，可以让用户编辑录音里面的内容」。
+        //
+        // 矩形与录音那条**共用同一个函数**（`NotchSupport.recordingWingFrames`）：画那一侧
+        // 用的是 `NotchSupport.leadingWingWidth` + 刘海矩形，点这一侧读的是同一个式子 ——
+        // 「画在哪」和「点在哪」只有一处算术（这个仓库为这件事被打过三次，最贵的一次差了 71pt）。
+        //
+        // 判在录音那条**之后**：两者占的是屏幕上的同一块地方（刘海左侧），谁真的在跑就算谁的
+        // —— 录音那条的闸门是录音控制器有没有在录，这条的闸门是相位是不是 Listening。
+        //
+        // 展开态（面板铺开）下同样有效：这条分支排在下面 `panelModel.isExpanded` 之前，
+        // 而那一整段结尾有一句无条件的 `return`（录音两翼那次就是被它挡掉的）。
+        if panelModel.activityPhase == .listening,
+           let presence = screenPresences.first(where: { $0.screen.frame.contains(clickLocation) }),
+           let wings = NotchSupport.recordingWingFrames(on: presence.screen),
+           wings.leading.contains(clickLocation) {
+            SoundEffectPlayer.shared.play(.recordingEditorOpened)
+            NotchListeningTranscriptModel.shared.isEditorExpanded = true
+            return
         }
 
         if panelModel.isExpanded {
@@ -1756,6 +1784,43 @@ final class NotchWindowController {
                 self.refreshActivityPhase()
             }
             .store(in: &cancellables)
+    }
+
+    /// 刘海下面那行字幕（和它的转写编辑窗）什么时候在：**只看相位**。
+    ///
+    /// 用户 2026-09-27 定的那条规则就是这个订阅的全部逻辑 ——
+    /// 「如果用户说完了，然后进入 thinking，那么这个录音的内容就消失掉了。什么时候用户说话，
+    /// 下面这个内容才会显示」，补的一句是「Listening 时要显示，Speaking 时不显示」。
+    /// 所以 `== .listening` 就出现、其余一律收起；**它不碰状态机**（打断、说完等待、自动
+    /// 发送都还是原来那套），只是在一个只读的相位上挂了一块显示。
+    ///
+    /// 屏幕被别的 App 的全屏挡住时（`isFullscreenSuppressed`）跟着刘海一起让位 —— 那正是
+    /// 刘海自己那两个 pill 的做法。
+    ///
+    /// 订阅建一次；`teardown()` 之后重建也还是这一条（`listeningTranscriptCancellable` 是
+    /// 存着的，不是每次调用都新建）。
+    private func bindListeningTranscriptPanel() {
+        guard listeningTranscriptCancellable == nil else {
+            syncListeningTranscriptPanel()
+            return
+        }
+        listeningTranscriptCancellable = Publishers.CombineLatest(
+            panelModel.$activityPhase, panelModel.$isFullscreenSuppressed)
+            .receive(on: DispatchQueue.main)
+            // **参数只用来看「有东西变了」，具体值现读 live 值。** `@Published` 在 willSet
+            // 里发值，`receive(on:)` 又把它推迟一个主队列轮次 —— 闭包拿到的参数和运行时的
+            // 真实值会是两份不同的读取（录音那边为这件事吃过一次亏，见 `startObservingRecorder`）。
+            .sink { [weak self] _, _ in
+                self?.syncListeningTranscriptPanel()
+            }
+    }
+
+    private func syncListeningTranscriptPanel() {
+        if panelModel.activityPhase == .listening, !panelModel.isFullscreenSuppressed {
+            NotchListeningTranscriptPanelController.shared.show()
+        } else {
+            NotchListeningTranscriptPanelController.shared.hide()
+        }
     }
 
     private var latestVoiceState: CompanionVoiceState = .idle
