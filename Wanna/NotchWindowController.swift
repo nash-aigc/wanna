@@ -140,11 +140,24 @@ final class NotchPanelModel: ObservableObject {
 @MainActor
 final class NotchWindowController {
 
-    /// Borderless panel that can become key — the expanded sheet has text
-    /// fields, and a window that cannot become key silently swallows every
-    /// keystroke.
+    /// Borderless panel that can become key **only while the sheet is expanded**.
+    ///
+    /// The expanded sheet has text fields, and a window that cannot become key
+    /// silently swallows every keystroke — so keyable is required then. But at
+    /// REST the pill must never be keyable: AppKit makes a visible keyable
+    /// window key at launch (`_sendFinishLaunchingNotification` →
+    /// `-[NSWindow makeKeyWindow]` → `_stealKeyFocusWithOptions` →
+    /// `SLPSStealKeyFocusReturningID`), which on every launch made the whole
+    /// app the active app and left the resting pill holding the keyboard —
+    /// measured 2026-09-28 from an 8-second launch `sample`. That is what
+    /// broke 「⌘⏎ 粘贴」: with Wanna active, the synthesised Cmd+V landed on
+    /// our own key window instead of the user's editor (「⌘⏎ 只是把内容放进了
+    /// 剪贴板，没有粘出去」).
     final class NotchPanel: NSPanel {
-        override var canBecomeKey: Bool { true }
+        /// Wired at creation to `panelModel.isExpanded`: expanded → keyable;
+        /// resting → never, so the pill can never hold or steal the keyboard.
+        var isSheetExpandedProvider: () -> Bool = { false }
+        override var canBecomeKey: Bool { isSheetExpandedProvider() }
     }
 
     private struct ScreenPresence {
@@ -327,6 +340,11 @@ final class NotchWindowController {
             // and the *global* monitor sees it. The sheet needs real events,
             // so expand() flips this back before making the panel key.
             panel.ignoresMouseEvents = true
+            // `canBecomeKey` follows the expansion state (see the class note):
+            // keyable only while the sheet is open, never at rest.
+            panel.isSheetExpandedProvider = { [weak self] in
+                self?.panelModel.isExpanded ?? false
+            }
 
             let rootView = NotchPanelRootSwitchingView(
                 panelModel: panelModel,
@@ -1704,6 +1722,13 @@ final class NotchWindowController {
         // cast a shadow (it halos under the menu bar), and a skipped
         // completion would otherwise leave the expanded-state shadow on.
         presence.panel.hasShadow = false
+
+        // The resting panel is not keyable any more (`NotchPanel.canBecomeKey`
+        // follows `isExpanded`), but AppKit does not resign a key window just
+        // because it stopped being keyable — a sheet that was key must hand
+        // the keyboard back explicitly on every path out, or the app stays
+        // active with the keyboard parked on an invisible-to-text pill.
+        presence.panel.resignKey()
 
         if let restingFrame = NotchSupport.restingWindowFrame(on: presence.screen) {
             let frame = presence.panel.frame

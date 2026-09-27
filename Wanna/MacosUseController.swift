@@ -634,6 +634,13 @@ enum MacosUseController {
         guard let pasteKeyCode = mapKeyNameToKeyCode("v") else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToPaste, forType: .string)
+        // **先走 Accessibility**（本进程唯一真的能落地的一条路 —— 证据见下面那个函数），
+        // 只有它失败（聚焦的不是文本区、或那个 App 不接受 AX 写入）才退回合成 ⌘V。
+        // 顺序不能反：合成那一发在本进程里进不去，而"先发 ⌘V 再用 AX"会在能落地的地方粘两次。
+        if insertTextAtCaretUsingAccessibility(textToPaste) {
+            MainFlowDiagnostics.log("⌨️ 看板：走 Accessibility 把 \(textToPaste.count) 字插到了光标处")
+            return true
+        }
         do {
             try pressKey(keyCode: pasteKeyCode, flags: modifierFlag(named: "cmd") ?? [])
             return true
@@ -641,6 +648,34 @@ enum MacosUseController {
             NSLog("[MacosUse] 粘贴失败：\(error)")
             return false
         }
+    }
+
+    /// 把一段文字插到**当前聚焦的输入区**的光标处 —— 走 Accessibility，不合成键盘事件。
+    ///
+    /// 为什么不是 `⌘V`（2026-09-28 实测）：**本进程合成的键盘事件落不到前台 App**。
+    /// 证据链：TextEdit 在前台、光标在正文里（手打的标记进得去）、Wanna 未激活
+    /// （`NSApp.isActive == false`、`NSApp.keyWindow == 无`）、`AXIsProcessTrusted() == true`、
+    /// 系统日志里没有 TCC 拒绝；而本进程发出的**不带任何修饰键的裸字符**和 `⌘V` **都进不去**，
+    /// 同一份投递代码（`.hidSystemState` source → `.cghidEventTap`）从终端进程发却能落地
+    /// （两次独立探针，其中一次特意装了和看板同款的会吞事件的 tap）。
+    /// 而 `AXSelectedText` 正是"粘贴"的等价语义 —— 有选区就替换、没有就插在光标处 ——
+    /// 并且与本文件已有的 `selectTextByContent` 走同一套授权。
+    static func insertTextAtCaretUsingAccessibility(_ textToInsert: String) -> Bool {
+        let systemWideElement = AXUIElementCreateSystemWide()
+        var focusedResult: CFTypeRef?
+        let focusError = AXUIElementCopyAttributeValue(
+            systemWideElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedResult
+        )
+        guard focusError == .success, let focusedResult else { return false }
+        let focusedElement = focusedResult as! AXUIElement
+        let setError = AXUIElementSetAttributeValue(
+            focusedElement,
+            kAXSelectedTextAttribute as CFString,
+            textToInsert as CFTypeRef
+        )
+        return setError == .success
     }
 
     /// Selects a stretch of text in the focused text area by finding the words in

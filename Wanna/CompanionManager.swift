@@ -616,9 +616,20 @@ final class CompanionManager: ObservableObject {
     /// 用户：「如果用户的光标没有在输入框里面，也没有点击它，那么按住 Command + Enter 就是粘贴，
     /// 即把右下角这部分的内容粘贴到光标的位置上」。
     ///
+    /// 「最近一个不是 Wanna 的活跃 App」—— `start()` 里的 workspace 观察者持续更新它，
+    /// `⌘⏎ 粘贴` 在键盘停在我们自己身上时先把那个 App 拉回前台。
+    private var lastUserFacingApplication: NSRunningApplication?
+    /// `addObserver(forName:)` 的 token —— 一释放观察者就失效，所以必须存住。
+    private var workspaceActivationObserver: NSObjectProtocol?
+
     /// 粘贴走 `MacosUseController.pasteKeepingClipboard`：它把文本放进剪贴板再合成一次 Cmd+V，
-    /// 而且**不还原剪贴板**（用户事后还能自己粘）。面板是 `.nonactivatingPanel`，
-    /// 所以"最前面的 App"仍然是他原来那个 —— 这一下正好粘在他的光标处，不会粘回我们自己。
+    /// 而且**不还原剪贴板**（用户事后还能自己粘）。
+    ///
+    /// ⚠️ **"把文本放进剪贴板"和"真的粘出去"是两件事**（用户 2026-09-27 报的
+    /// 「⌘⏎ 没有实现，只是粘贴到剪贴板了」）：合成的 ⌘V 只会落到**当前活跃 App 的
+    /// key window**。如果那一刻活跃的是我们自己（启动时 AppKit 把刘海面板选成 key 的
+    /// 窗口期，2026-09-28 在 8 秒启动 `sample` 里量到），⌘V 就落进了我们自己的
+    /// key window。所以这里先把"他刚才在用的那个 App"拉回前台，再把 ⌘V 发出去。
     private func pasteLiveReplyAtCursorThenExit() {
         let text = conversationBubbleTextForCopying().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
@@ -626,9 +637,30 @@ final class CompanionManager: ObservableObject {
             MainFlowDiagnostics.log("⌨️ 看板：按了粘贴键，但右下角那张卡片此刻是空的（没有可粘贴的内容）")
             return
         }
-        let didPaste = MacosUseController.pasteKeepingClipboard(text)
-        print("⏎ 看板：Cmd+Enter → 把那段回复粘到光标处（\(text.count) 字，粘贴\(didPaste ? "已发出" : "失败")）")
+        // 先退出这一轮（藏看板、结束实时模式）—— ⌘⏎ 的语义是"粘贴并退出"，
+        // 界面反馈必须立刻发生，不等后面那次前台切换的几十毫秒。
         handleEscapeKeyPressed()
+        let targetApp = lastUserFacingApplication
+        Task { @MainActor in
+            if let targetApp, !targetApp.isActive {
+                targetApp.activate(from: .current, options: [])
+                // 窗口服务器切换前台要几十毫秒 —— 立刻发 ⌘V 会仍然落在我们自己手里。
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            let didSendPasteKeystroke = MacosUseController.pasteKeepingClipboard(text)
+            // 这一行要能回答"⌘V 到底落到了谁手里"：真实的**当前活跃 App**（不是我们记的那个）、
+            // 我们自己是不是 active、有没有 key window、以及**辅助功能权限在不在** ——
+            // 没有那个权限时 `CGEvent.post` 不报错也不落地（系统静默丢弃）。
+            let frontmostAppName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "无"
+            let keyWindowDescription = NSApp.keyWindow.map { NSStringFromRect($0.frame) } ?? "无"
+            MainFlowDiagnostics.log("⌨️ 看板：Cmd+Enter → 剪贴板已写入 \(text.count) 字，"
+                + "粘贴 \(didSendPasteKeystroke ? "已发出" : "失败")"
+                + "｜活跃 App=\(frontmostAppName)"
+                + "｜Wanna isActive=\(NSApp.isActive)"
+                + "｜keyWindow=\(keyWindowDescription)"
+                + "｜辅助功能=\(AXIsProcessTrusted())"
+                + "｜以为的落点=\(targetApp?.localizedName ?? "没记到")")
+        }
     }
 
     /// 复制到剪贴板（`MessageCopyButton` 里那套的同一件事）。
@@ -878,6 +910,21 @@ final class CompanionManager: ObservableObject {
         // 标签页问题时实测：应用跑了两分钟，日志文件仍然是 0 字节，而窗口里其实
         // 已经有输出。改成行缓冲后 `> 日志文件` 能实时看到，探针才真的能用。
         setvbuf(stdout, nil, _IOLBF, 0)
+        // **⌘⏎ 粘贴的落点保障**（2026-09-28，「⌘⏎ 只是把内容放进了剪贴板，没有粘出去」的
+        // 根治之一）：持续记下「最近一个不是 Wanna 的活跃 App」。合成的 ⌘V 只会落到
+        // 当前活跃 App 的 key window —— 如果那一刻键盘停在我们自己身上（启动时 AppKit
+        // 把刘海面板选成 key 的窗口期，已在 8 秒启动 `sample` 里量到），`⌘⏎` 先把
+        // 他刚才在用的那个 App 拉回前台再发 ⌘V（见 `pasteLiveReplyAtCursorThenExit`）。
+        // ⚠️ token 必须存进属性：`addObserver(forName:)` 的返回值一释放，观察者立刻失效。
+        workspaceActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let activatedApp = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication,
+                  activatedApp.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+            self?.lastUserFacingApplication = activatedApp
+        }
         // TEMPORARY (2026-09-24): starts reporting main-thread stalls. See
         // `MainThreadHitchProbe`.
         MainThreadHitchProbe.shared.start()

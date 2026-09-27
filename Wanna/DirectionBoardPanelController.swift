@@ -347,15 +347,22 @@ final class DirectionBoardPanelController {
         installDragMonitors()
         installKeyMonitors()
         installConsumingKeyTap()
-        // **不用点卡片**（用户 2026-09-27：「把跟右上角卡片的交互去掉，**直接显示之后就自动识别
-        // 这两个快捷键**」）。两道一起上：
-        // ① 让它成为 key（`becomesKeyOnlyIfNeeded` 必须是 false，否则它永远成不了 key）；
-        // ② **真正的通路是那条会吞事件的全局 tap**（见 `installConsumingKeyTap`）——
-        //    因为系统只把键盘事件送给"当前激活的 App"，而 Wanna 从不激活。
-        panel.makeKey()
-        // 诊断：`makeKey()` 到底成没成（一次实测：卡片在屏幕上、回车却没人接 —— 就是这一下没成）。
-        MainFlowDiagnostics.log("⌨️ 看板：显示时尝试成为 key → isKeyWindow=\(panel.isKeyWindow)"
-                                + "（becomesKeyOnlyIfNeeded=\(panel.becomesKeyOnlyIfNeeded)）")
+        // **绝不 `makeKey()`** —— 用户 2026-09-27 报「⌘⏎ 只是把内容放进了剪贴板，没有粘出去」，
+        // 根因就在这里，而且它比那个症状大得多。
+        //
+        // 量到的（先把 TextEdit 摆在前台、再让板子出现，然后从外部发 ⌘V）：
+        //   · 没有 Wanna 时 → 那几个字进了 TextEdit；
+        //   · 板子在屏上时 → ⌘V **进不去**，连普通的 "zzz" 都进不去。
+        // 因为这块面板 `makeKey()` 之后**它就是整个会话的 key window**（不是因为 Wanna 被激活了），
+        // 于是合成的键盘事件全被它接走：⌘V 落到一张没有输入框的卡片上（＝"只是粘到剪贴板"），
+        // 而用户在自己 App 里**根本打不了字**。附带还打断了自动发送 ——
+        // `holdsTheAutomaticSend()` 里"面板是 key"那条判据于是恒为真，每次静音到点都被按住重来。
+        //
+        // 而 `makeKey()` 当年加进来的唯一目的（接住回车）**早就由那条会吞事件的全局 tap 接住了**
+        //（见 `installConsumingKeyTap`）：裸 ⏎ 放行、⌥⏎ 执行、⌘⏎ 粘贴，三条都是它认的。
+        // 所以这里回到文件头本来就写着的设计：**显示时不抢焦点**。
+        MainFlowDiagnostics.log("⌨️ 看板：显示（刻意不成为 key，免得抢走前台 App 的键盘）"
+                                + " → isKeyWindow=\(panel.isKeyWindow)")
         repositionForCurrentSize()
     }
 
@@ -387,15 +394,17 @@ final class DirectionBoardPanelController {
 
     /// **静音到点时该不该按住不发**（`BuddyDictationManager.automaticSendShouldWaitProvider` 问它）。
     ///
-    /// 三个判据，满足一个就算"他正在跟看板打交道"（用户：「检测一次用户的鼠标是不是在这个看板上，
+    /// 两个判据，满足一个就算"他正在跟看板打交道"（用户：「检测一次用户的鼠标是不是在这个看板上，
     /// 或者这个任务方向的看板是不是被激活、被点击、正在输入」）：
     /// 1. **鼠标在板上**（`NSEvent.mouseLocation` 落在面板矩形里）；
-    /// 2. 面板**是 key**（他刚点过输入框，正在打字）；
-    /// 3. 上一次交互在 2 秒内（点完立刻把鼠标挪开一点，仍然算"他还在弄这个"）。
+    /// 2. 上一次交互在 2 秒内（点完立刻把鼠标挪开一点，仍然算"他还在弄这个"）。
+    ///
+    /// ⚠️ 曾经还有第三个判据「面板是 key」—— 2026-09-27 删掉了：那时面板在显示时会 `makeKey()`，
+    /// 于是这条**恒为真**，每一次静音到点都被按住、倒计时从头再来，自动发送等于从来没生效过。
+    /// 现在面板不抢 key（见 `show()`），这条判据既没有意义、留着也只会再骗一次。
     func holdsTheAutomaticSend() -> Bool {
         guard isVisible, let panel else { return false }
         if panel.frame.contains(NSEvent.mouseLocation) { return true }
-        if panel.isKeyWindow { return true }
         if let lastInteractionAt, Date().timeIntervalSince(lastInteractionAt) < 2 { return true }
         return false
     }
@@ -427,27 +436,25 @@ final class DirectionBoardPanelController {
         // `notchTranscriptPanelWindowLevel`），所以这里取刘海面板那一档就正好夹在中间。
         panel.level = NotchSupport.notchPanelWindowLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        // 只有真需要键盘（点输入框）时才成为 key —— 平时绝不抢用户正在用的那个 App。
-        // ⚠️ **必须 false**（用户 2026-09-27 那条"不用点卡片就认回车"）：`true` 的意思是
-        // "只有某个子视图真的需要键盘输入时才成为 key"，而这张卡片上的输入框已经删掉了 ——
-        // 于是 AppKit **永远不让它成为 key**，`makeKey()` 静默失败、本地键盘监听一个事件都收不到
-        //（实测：卡片在屏幕上，按回车毫无反应）。
-        panel.becomesKeyOnlyIfNeeded = false
-        // 他点了输入框（面板成为 key）也算"正在跟他打交道"。
+        // **只有真需要键盘时才成为 key** —— 输入框已经删了，所以实际上它永不成为 key，
+        // 前台 App 的键盘不受任何影响（2026-09-27：这里曾经是 `false` + 显示时 `makeKey()`，
+        // 代价见 `show()` 里那段量到的结果）。回车那条路由全局 tap 走，不需要 key。
+        panel.becomesKeyOnlyIfNeeded = true
+        // 万一将来真有子视图要键盘而成了 key，那一下也算"他正在跟板子打交道"。
         panel.onBecameKey = { [weak self] in self?.noteUserInteraction() }
 
         let settings = AppSettingsStore.snapshot()
         let hostingView = NSHostingView(rootView: DirectionBoardView(
             session: .shared,
             theme: AnswerCardTheme(style: settings.answerCardStyle),
-            onInputFocused: { [weak panel] in
-                // 用户点了输入框：这时候要键盘，成为 key 是**他的**意思。
-                panel?.makeKey()
+            onInputFocused: { [weak self] in
+                // 输入框（如果哪天回来）要键盘时才成为 key —— 那一下是**他的**意思。
+                self?.panel?.makeKey()
             },
-            onCardTapped: { [weak panel] in
-                // 点了卡片（不是输入框）：**也只让它成为 key** —— 这样回车能生效，
-                // 而"光标在不在输入框里"这件事仍然区分得开（Cmd+Enter 执行 vs 粘贴）。
-                panel?.makeKey()
+            onCardTapped: { [weak self] in
+                // 点卡片**只记一次交互**（"他还在弄这个"，自动发送那一下据此按住不发），
+                // **不 `makeKey()`** —— 回车由全局 tap 认，抢 key 只会让他打不了字。
+                self?.noteUserInteraction()
             }))
         // ⚠️ **这里刻意不设 `sizingOptions = []`** —— 这块面板上它挡不住 SwiftUI 按内容改窗口
         //（调用方是 `NSHostingView.updateAnimatedWindowSize`，见文件头那段根因：设了也照样
