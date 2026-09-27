@@ -2914,6 +2914,27 @@ final class CompanionManager: ObservableObject {
             bailianTTSClient.stopPlayback()
         }
 
+        // **打断之后，界面必须回到「在听」**（2026-09-27 用户：「语音播放的过程中，如果我打断他，
+        // 那么他显示的内容应该是跟我最开始的时候相同 —— 下面是一行字幕，对吧？我打断他的意思就是
+        // 我在说话，那么他就应该继续进入这个说话的循环模式」）。
+        //
+        // 原来这里**只停播报**，而 `voiceState` 是"第一次出声时置 `.responding`、别的什么都不许清"
+        //（那条规矩是为了让 `scheduleVoiceStateResetAfterPlayback` 能认出"这是我这轮的回答播完了"）。
+        // 于是打断之后：播报停了，但那个复位任务随即看到 `isPlaying == false` → 把状态写成 `.idle`
+        // 并 `forceActivityPhaseIdle()` —— 用户明明正在说话（转写一直在往刘海那行字幕里流），
+        // 屏幕上却是**一片 idle**：字幕那行要求相位是 `.listening`，所以它根本不画。
+        //
+        // 所以这里要把状态**明确写成 `.listening`** —— 那是"麦克风开着、用户在说"的既有语义
+        //（窗口刚打开时那条 `if voiceState == .idle { voiceState = .listening }` 是同一个意思）。
+        // 那个复位任务不用手动取消：它自己有一条 `guard voiceState == .responding`，
+        // 我们一改它就自动让路 ✓。
+        switch voiceState {
+        case .processing, .responding:
+            voiceState = .listening
+        case .idle, .listening:
+            break
+        }
+
         guard AppSettingsStore.snapshot().autoScreenshotOnFollowUpSpeech else { return }
 
         // The interrupted answer's green marks were drawn for it, not for the
