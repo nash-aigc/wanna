@@ -575,7 +575,9 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 用户 2026-09-27：「卡片的宽度需要固定……不能超过它的两倍，不能太高，要么一倍，要么两倍……
     /// 让它固定显示为两倍宽度，**这个宽度可以让用户去设定**，设置页面里可以设定，但**默认固定两倍宽度**，
     /// 以便显示更多内容。」夹在 1…2（`clamped()` 兜住手改的 JSON）。
-    var directionBoardWidthMultiplier: Double = 2.0
+    // ⚠️ 2026-09-28：`directionBoardWidthMultiplier`（看板宽度倍数）已删 —— 7 字形的宽度是形状
+    // 定死的（横杠 360 / 竖条 340），那个设置存了也不生效，留着就是骗人。旧文件里多出来的这个键
+    // 现在被**忽略**（`decodeIfPresent` 的解码器只取它认识的键），不会让整份设置解不出来。
 
     /// ⚠️ **第一版留下的字段，今天没有任何界面读它**（方向早已改成 `TaskDirectionStore` 那份清单：
     /// 出厂 12 条 + 口述 + 每天中午复盘追加，见 `开发经验/19`）。保留只是为了老文件仍能解
@@ -1677,7 +1679,6 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
         settings.directionBoardMinimumAddedCharacters =
             min(max(settings.directionBoardMinimumAddedCharacters, 5), 20)
         // 看板宽度：1×~2×（用户说"要么一倍，要么两倍"，所以范围就夹在这里）。
-        settings.directionBoardWidthMultiplier = min(max(settings.directionBoardWidthMultiplier, 1.0), 2.0)
         // 门槛的可调范围也跟着抬起来：低于 0.5 等于没门槛（用户明确要"非常高"）。
         settings.directionBoardProbabilityThreshold =
             min(max(settings.directionBoardProbabilityThreshold, 0.5), 0.95)
@@ -1717,7 +1718,6 @@ nonisolated extension AppSettings {
         case showsResponseText
         case directionBoardEnabled
         case directionBoard
-        case directionBoardWidthMultiplier
         case directionBoardProbabilityThreshold
         case directionBoardMinimumAddedCharacters
         case answerBubbleLingerSeconds
@@ -1854,8 +1854,6 @@ nonisolated extension AppSettings {
         directionBoardEnabled = try container.decodeIfPresent(Bool.self, forKey: .directionBoardEnabled) ?? defaults.directionBoardEnabled
         directionBoardMinimumAddedCharacters = try container.decodeIfPresent(
             Int.self, forKey: .directionBoardMinimumAddedCharacters) ?? defaults.directionBoardMinimumAddedCharacters
-        directionBoardWidthMultiplier = try container.decodeIfPresent(
-            Double.self, forKey: .directionBoardWidthMultiplier) ?? defaults.directionBoardWidthMultiplier
         directionBoardProbabilityThreshold = try container.decodeIfPresent(
             Double.self, forKey: .directionBoardProbabilityThreshold) ?? defaults.directionBoardProbabilityThreshold
         directionBoard = DirectionBoardConfiguration.validated(

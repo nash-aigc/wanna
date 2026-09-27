@@ -223,10 +223,11 @@ struct BlueCursorView: View {
     /// fresh from the settings store on every render, so a change in 设置 takes
     /// effect on the next card without any restart.
     ///
-    /// The width cap (340) sits between the old transcript bubble's 280 and the
+    /// The width cap sits between the old transcript bubble's 280 and the
     /// conversation page's 460: a card floating beside the cursor must never
     /// span the screen, but a narrower cap would wrap every sentence into
-    /// slivers.
+    /// slivers. 这个数现在住在 `NotchSupport` —— 7 字形看板那条竖条**与它同宽**
+    /// （用户 2026-09-28），两处读同一个常量，不会只改到一半。
     private var answerCardBubble: some View {
         AnswerCardView(
             text: conversationBubbleText,
@@ -236,7 +237,7 @@ struct BlueCursorView: View {
                 || companionManager.isBoardPreviewStreaming,
             style: AppSettingsStore.snapshot().answerCardStyle
         )
-        .frame(maxWidth: 340, alignment: .leading)
+        .frame(maxWidth: NotchSupport.answerCardMaximumWidth, alignment: .leading)
         // **高度封顶 + 超出隐藏**（用户 2026-09-27：「若文本内容过长，建议限定右下角卡片高度……
         // 高度设计参考当前 Mac 电脑屏幕高度：从菜单栏下方到屏幕最下方，取该高度的 **70%**
         // 作为右下角卡片的最大长度，显示不完的内容在下方隐藏即可」）。

@@ -120,7 +120,6 @@ final class DirectionBoardPanelController {
 
     /// **用户自己把它拖走过** —— 一旦拖过，就**不再自动摆位**（否则下一次内容变高又会跳回鼠标旁边，
     /// 把他刚摆好的位置抢走）。用户 2026-09-27：「现在没法拖动，相当于它完全占据了屏幕空间」。
-    private var isUserPositioned = false
 
     // MARK: - 拖动（用户 2026-09-27：「看板可以通过拖动上面的文字部分或其他部分来移动位置」）
 
@@ -223,6 +222,7 @@ final class DirectionBoardPanelController {
         }
     }
 
+    /// 跟随鼠标用的监听（本地 + 全局各一个）—— 名字沿用旧变量，省得动 `deinit`/`hide()` 那些收尾。
     private var dragMonitors: [Any] = []
     private var keyMonitors: [Any] = []
     /// 回车 = 执行（由 `CompanionManager` 注入）。
@@ -271,24 +271,38 @@ final class DirectionBoardPanelController {
         keyMonitors = []
     }
 
-    private func installDragMonitors() {
+    /// **跟着鼠标走**（用户 2026-09-28：「我让它跟随鼠标移动的，它现在是固定的。我的要求是让
+    /// 右上角这个部分的卡片……它是跟随鼠标移动的效果才对，**就跟右下角的卡片是一样**，
+    /// 它们是跟随移动状态，**不需要点击**」）。
+    ///
+    /// 所以这里监听鼠标移动，把锚点更新成**当前**鼠标位置再重新摆位 —— 与右下角那张回复卡
+    /// （它画在覆盖层里、跟着鼠标 offset）用同一套语义，只是它必须挪的是窗口本身。
+    ///
+    /// ⚠️ 三个分寸：
+    /// · **`display: false`**（拖动那版留下的经验，用户 2026-09-27：「拖动这张卡片时，会有明显的
+    ///   卡顿和拖影现象」）：这一行每个鼠标移动事件都会跑，`display: true` 会同步重绘整棵树。
+    /// · **本地 + 全局两份监听**：本地那份收本 App 窗口上的移动，全局那份收别的 App 上的移动
+    ///  （`mouseMoved` 不吃 TCC，不需要额外授权）。
+    /// · **拖动监听整块去掉了**：卡片的右下角原来是"按住拖动"区（折叠钮的右 2/3），
+    ///   而按钮行整行注释掉之后那个区已经不存在 —— 留着它只会和"跟随鼠标"打架
+    ///  （一拖就把跟随关掉）。
+    private func installFollowMouseMonitors() {
         guard dragMonitors.isEmpty else { return }
-        let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            self?.beginDragIfInsidePanel(with: event)
+        let moved = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            self?.followMouseLocation()
             return event
         }
-        let dragged = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] event in
-            self?.continueDrag()
-            return event
+        let movedGlobally = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
+            self?.followMouseLocation()
         }
-        let up = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
-            self?.endDrag()
-            // ⚠️ **必须把事件放回去**：本地监听返回 `nil` ＝ **吞掉这个事件**，
-            // 而 SwiftUI 的按钮是**靠 mouseUp 才触发的** —— 吞了它，板上每一个按钮
-            //（选项、复制、取消三档）就全都点不动了。
-            return event
-        }
-        dragMonitors = [down, dragged, up].compactMap { $0 }
+        dragMonitors = [moved, movedGlobally].compactMap { $0 }
+    }
+
+    /// 把锚点挪到鼠标现在的位置，再重新摆位（`lastPlacedFrame` 会挡掉"没动"的那些事件）。
+    private func followMouseLocation() {
+        guard isVisible, panel != nil else { return }
+        anchorPoint = NSEvent.mouseLocation
+        repositionForCurrentSize()
     }
 
     private func removeDragMonitors() {
@@ -298,40 +312,12 @@ final class DirectionBoardPanelController {
         dragStartPanelOrigin = nil
     }
 
-    private func beginDragIfInsidePanel(with event: NSEvent) {
-        guard isVisible, let panel, event.window === panel else { return }
-        dragStartMouseLocation = NSEvent.mouseLocation
-        dragStartPanelOrigin = panel.frame.origin
-    }
 
-    private func continueDrag() {
-        guard isVisible, let panel, let startMouse = dragStartMouseLocation,
-              let startOrigin = dragStartPanelOrigin else { return }
-        // 第一次真的移动了才算"他挪过它" —— 单纯点一下不该把这轮自动摆位关掉。
-        isUserPositioned = true
-        let current = NSEvent.mouseLocation
-        var frame = panel.frame
-        frame.origin = CGPoint(x: startOrigin.x + (current.x - startMouse.x),
-                               y: startOrigin.y + (current.y - startMouse.y))
-        lastPlacedFrame = frame
-        // ⚠️ **`display: false` 是必须的**（用户 2026-09-27：「拖动这张卡片时，会有明显的卡顿和拖影现象」）：
-        // 这一行在**每一个鼠标移动事件**上都会跑，而 `display: true` 会**同步重绘整张卡片**
-        //（这张卡片的 SwiftUI 树不小：选项格 + 四行理解 + 三行输入 + 按钮行）——
-        // 每个事件都同步画一遍，就是卡顿与拖影的全部来源。
-        // 换成 `false` 让 AppKit 自己合并到下一个绘制周期 —— 这正是设置里那个窗口缩放手柄
-        //（`NotchWindowController` 里那条注释写了同样一句）当年修同一类问题的做法。
-        panel.setFrame(frame, display: false)
-    }
 
-    private func endDrag() {
-        dragStartMouseLocation = nil
-        dragStartPanelOrigin = nil
-    }
 
     private func show() {
         guard !isVisible else { return }
         isVisible = true
-        isUserPositioned = false
         // 锚点取一次。没有鼠标事件过（比如自检注入）时退回鼠标当前位置。
         anchorPoint = NSEvent.mouseLocation
         lastPlacedFrame = .zero
@@ -344,7 +330,7 @@ final class DirectionBoardPanelController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.repositionForCurrentSize() }
         panel.orderFrontRegardless()
-        installDragMonitors()
+        installFollowMouseMonitors()
         installKeyMonitors()
         installConsumingKeyTap()
         // **绝不 `makeKey()`** —— 用户 2026-09-27 报「⌘⏎ 只是把内容放进了剪贴板，没有粘出去」，
@@ -421,7 +407,8 @@ final class DirectionBoardPanelController {
     private func makePanel() -> NSPanel {
         let panel = DirectionBoardPanel(
             contentRect: NSRect(x: 0, y: 0,
-                                width: DirectionBoardView.cardWidth(forMultiplier: AppSettingsStore.snapshot().directionBoardWidthMultiplier), height: 220),
+                                width: NotchSupport.directionBoardBarWidth + NotchSupport.directionBoardMapWidth,
+                                height: NotchSupport.directionBoardBarHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
@@ -474,18 +461,22 @@ final class DirectionBoardPanelController {
     private func repositionForCurrentSize() {
         guard isVisible, let panel, let anchorPoint else { return }
         // 用户拖过之后就不再自动摆位（内容变高变矮时只保住他放的位置）。
-        guard !isUserPositioned else { return }
-        // ⚠️ **锚点是"显示那一刻"的鼠标位置，不是现在的**（用户 2026-09-27 报的 bug：
-        // 「用户点击折叠按钮之后，这个按钮相对屏幕的位置**不要变**。刚才点击之后这个按钮漂移了」）。
-        //
-        // 漂移的成因就是这个函数：它每次都用**当时**的鼠标位置重算原点 —— 而用户为了点那个折叠钮，
-        // 鼠标早就不在原来的地方了，于是卡片一收起来就"跳"到鼠标那儿去。
-        // `anchorPoint` 是 `show()` 里记下来的那一个，这里只用它，绝不重读鼠标。
+        // ⚠️ 锚点现在是**跟着鼠标走的**（`followMouseLocation()` 每个移动事件更新它）——
+        // 2026-09-28 用户改的口径：「它是跟随鼠标移动的效果才对……就跟右下角的卡片是一样」。
+        //（9-27 那版是"显示那一刻锚一次"，为的是点折叠钮时别漂；而按钮行现在已经整行注释掉了，
+        //  那个顾虑随之消失。）
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) })
                 ?? NSScreen.main else { return }
+        // **7 字形**：顶边钉在鼠标上方（横杠高 + 30），整块向下长 —— 横杠在鼠标上方、
+        // 那条竖条一直往下超过鼠标；折叠态只剩一颗小按钮，顶边离鼠标 12pt 就够。
+        //（判据读会话当前状态，所以折叠/展开各摆各的，切换时自动跟着变。）
+        let topOffset = DirectionBoardSession.shared.isCollapsed
+            ? NotchSupport.directionBoardCollapsedTopOffset
+            : NotchSupport.directionBoardExpandedTopOffset
         let frame = NotchSupport.directionBoardPanelFrame(anchor: anchorPoint,
                                                           size: panel.frame.size,
-                                                          on: screen)
+                                                          on: screen,
+                                                          topEdgeOffsetAboveAnchor: topOffset)
         guard frame != lastPlacedFrame else { return }
         lastPlacedFrame = frame
         panel.setFrame(frame, display: true)

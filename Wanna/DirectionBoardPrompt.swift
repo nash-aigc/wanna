@@ -41,7 +41,16 @@ nonisolated enum DirectionBoardPrompt {
     /// ⚠️ 2026-09-27 深夜再改（用户：「把这个**左侧边**调整一下。左侧边现在就让它显示
     /// **参考、矛盾**。就再简化一点，**就只显示这几个**」）：左侧不再单列「需求」——
     /// 右侧那张脑图**就是**对用户需求的梳理（他的原话），再单列一行是重复的。
-    static let understandingLabels = ["细节", "矛盾", "拼写错误"]
+    /// ⚠️ 2026-09-28（用户：「然后拼写错误，这个直接拿掉……如果是因为这个拼写错误是在大语言模型
+    /// 发送的时候要发送过去的，那么就在大语言模型提示词里面把这个关于拼写错误部分的相关内容删掉，
+    /// 就不让它生成关于拼写的问题了，**直接生成关于逻辑矛盾的问题**」）：
+    /// **「拼写错误」整行删掉** —— 卡片上不再画它，提示词里也不再让它生成。
+    /// 于是只剩两样：**脑图**（「细节」，住 7 的那条竖条）和**问题**（「矛盾」，住横杠里、
+    /// 每行前面一个 `?`）。
+    ///
+    /// 「目标 / 需求」也不在这份清单里（早先并进了脑图）；用户 2026-09-28 又按 7 字形数了一遍
+    /// 左半的内容（按钮 → 参考 → 矛盾 → 方向格子），同样没提它。
+    static let understandingLabels = ["细节", "矛盾"]
 
     /// 每一行认哪些标签（**第一个是正式名字**，其余是模型爱写的同义说法，一并认）。
     ///
@@ -50,10 +59,9 @@ nonisolated enum DirectionBoardPrompt {
     static let understandingLabelAliases: [(label: String, aliases: [String])] = [
         ("细节", ["细节", "注意", "备注", "梳理"]),
         ("矛盾", ["矛盾", "疑问"]),
-        // ⚠️ 用户 2026-09-27 深夜把「歧义」改成了「**拼写错误**」—— 理由是他在用**语音输入法**：
-        // 「考虑到用户使用的是语音输入法，让 AI 思考一下**哪些单词可能存在拼写错误**」。
-        // 「歧义」当别名留着：模型一时改不过来时，那一行照样落得上。
-        ("拼写错误", ["拼写错误", "拼写", "歧义", "可能听错", "听错"]),
+        // ⚠️ 「拼写错误」那一行已删（见 `understandingLabels` 的注释）。它的别名（拼写 / 歧义 /
+        // 可能听错 / 听错）保留在 `boundaryLabels` 那一侧的判断里 —— 模型万一还写回这个标签，
+        // 那一行只会被当成边界**截断**，不会凭空长出一行来。
     ]
 
     /// 一行标签下面最多再吃几行续行（防模型跑题写成一大篇）。
@@ -79,6 +87,9 @@ nonisolated enum DirectionBoardPrompt {
         // 「需求 / 目标」2026-09-27 起不再是独立一行（它进了脑图）—— 但模型一时改不过来
         // 还会写它，所以当边界：**只截断、不成行**，那一截不会漏进「矛盾」或正文里。
         "需求", "目标", "目标问题",
+        // 「拼写错误」2026-09-28 起整行删掉（提示词里不再让它生成）—— 同样当边界：
+        // 模型一时改不过来还会写「拼写错误：…」，不当边界的话那一截会并进「矛盾」里。
+        "拼写错误", "拼写", "歧义", "可能听错", "听错",
     ]
 
     /// 写"AI 怎么理解"用的系统提示词 —— **只给方向清单，不给主 Agent 提示词**。
@@ -107,7 +118,7 @@ nonisolated enum DirectionBoardPrompt {
         }
         return """
         你是一个任务方向识别器。用户正在对着一台 Mac 说话，你的任务是两件事：
-        **① 用固定的四行说清你理解他这次要做什么；② 如果能立刻算出结果，就把结果直接给出来。**
+        **① 用固定的两行说清你理解他这次要做什么；② 如果能立刻算出结果，就把结果直接给出来。**
 
         可能的方向（你可以从中挑，也可以都不挑）：
         \(lines.joined(separator: "\n"))
@@ -131,10 +142,9 @@ nonisolated enum DirectionBoardPrompt {
               · **不要写标题**：直接从 `├─` 开始（不要写"用户问过的问题"这类话）。
               没有可梳理的就写「—」>
         矛盾：<**只写逻辑矛盾** —— 他这句话自己前后对不上、和他前面刚明确说过的事实冲突、
-              或者与下面「还没解决的疑问」里某一条直接抵触。**每一行一条**，格式
-              「**一、关于〈什么内容〉的疑问： 〈和什么矛盾〉**」——
-              **冒号后面留一个空格**，空格右边才是具体内容。
-              序号用**一、二、三、四**，**不同的疑问各占一行**。
+              或者与下面「还没解决的疑问」里某一条直接抵触。**每一行一条，直接写那句问题本身**：
+              **不要序号**（不要「一、」「1.」）、**不要写「关于…的疑问：」这类包装** ——
+              卡片上会自动在每行前面加一个 `?：`，你只写冒号右边那句话，一句话说清就行。
 
               ⚠️⚠️ **不要问澄清类的问题**（用户 2026-09-27：「我问他北京在哪，他就问
               **什么地方的北京**；我让他介绍一个人，他就问**介绍什么人**，这就太墨迹了。**你只需要关注逻辑矛盾**，
@@ -342,24 +352,13 @@ nonisolated enum DirectionBoardPrompt {
         · 只有他自己前后**真的冲突**才算；**信息不全不算** —— 不要问澄清类的问题
           （他明确说过那叫"墨迹"：「我问他北京在哪，他就问什么地方的北京」）。
 
-        **第三件：找出"**确实听错、而且影响理解**"的词，写进「拼写错误」。**
-        · ⚠️ 他在用**语音输入法**，所以人名、软件名、英文单词会被听错 —— 但**只报"确实错了"的**：
-          **看上下文判断**（用户 2026-09-27 深夜：「**应该根据上下文来判断哪些地方确实有错误**，
-          而不是针对**单个单词**去思考有哪些拼写方式。**如果上下文逻辑正确、没有歧义，就不必纠结**」）。
-        · **重点只有一类：软件名 / 品牌名 / 英文词 / 产品名**（错了会让下游整个跑偏）。
-          例如听到「硅基流动」但上下文在讲模型广场 —— 那要说；听到「赵今麦」而上下文通顺 —— **不要说**。
-        · **下面这些一律不要报**（他点名嫌吵的那几种）：
-          – 口语衔接词（「在这个」「有时」「然后」）听起来像别的口语词；
-          – 普通中文词的同音字（「有哪些」之类）；
-          – 光凭"这个名字也可能写作另一个名字"的猜测（「杨幂可能是杨颖」）—— 没有上下文证据就不算错；
-          – 断句/口误的位置（「屏幕右侧，左侧」这种）—— 那是他的说法，不是听错。
-        · 每一条写清「听到的是 X，上下文看着像 Y」；**没有就写「—」，宁可空着**。
 
-        输出格式（**三行都必须写**，没有内容就写一个「—」，不要整行省略）：
+        输出格式（**两行都必须写**，没有内容就写一个「—」，不要整行省略）：
 
         细节：<那张分类树：**分类名顶格**，它下面的问题用 `├─` 打头>
-        矛盾：<`一、关于〈什么〉的矛盾： 〈前后哪里对不上〉`，冒号后留一个空格，一条一行；没有写「—」>
-        拼写错误：<`一、〈听到的词〉：可能是〈另一个词〉`，一条一行；没有写「—」>
+        矛盾：<**一行一句问题**，直接写问题本身；**不要编号**（不要「一、」），
+               **不要写「关于…的矛盾：」这类包装** —— 卡片上每一行前面会自动加一个 `?：`，
+               你只写冒号右边那句话。没有就写「—」>
         """
     }
 
@@ -369,8 +368,8 @@ nonisolated enum DirectionBoardPrompt {
         【他到目前为止说过的全部内容（连续的实时转写，按时间顺序）】
         \(transcript)
 
-        请只做三件事：**把他说过的每一件事按大类分组画成一张树**、**找出前后矛盾的地方**、
-        **找出可能被听错 / 拼错的词**（他用的语音输入法）。不要回答问题、不要给建议。
+        请只做两件事：**把他说过的每一件事按大类分组画成一张树**、**找出前后矛盾的地方**。
+        不要回答问题、不要给建议。
         """
     }
 
@@ -452,12 +451,11 @@ nonisolated enum DirectionBoardPrompt {
                 }
                 let joined = collected.filter { !$0.isEmpty }.joined(separator: "\n")
                 guard !joined.isEmpty else { continue }   // 真的一个字都没有 → 不记（视图画占位符）
-                // 「疑问」那一行**在解析处统一形状**（用户 2026-09-27：「用"关于什么什么的疑问："的
-                // 形式，**冒号后留一个空格**，右侧显示具体的疑问内容」）—— 提示词里写了，但模型
-                // 不保证照做，而这一行是直接画给用户看的，所以这里再兜一次。
-                if position.label == questionLabel {
-                    found[position.label] = formattedQuestion(joined)
-                } else if position.label == mindMapLabel {
+                // ⚠️ 2026-09-28：**解析处不再给「矛盾」那一行套形状** —— 形状改由视图统一成
+                // 「每行一个 `?：` + 一句问题」（`DirectionBoardView.questionTexts(from:)` →
+                // `questionLineText`）。原来那层 `formattedQuestion` 造的正是「关于…的疑问：」
+                // 那个包装，而用户现在要的是**没有包装、行首一个问号**。
+                if position.label == mindMapLabel {
                     // 脑图那一行去掉模型抄进来的标题（见 `mindMapWithoutEchoedTitle`）。
                     let map = mindMapWithoutEchoedTitle(joined)
                     if !map.isEmpty { found[position.label] = map }
@@ -573,20 +571,49 @@ nonisolated enum DirectionBoardPrompt {
     /// 我提示词里那几个词 —— 只有它们出现在"以冒号结尾的首行"里，才判为回显。
     private static let echoedInstructionMarkers = ["整合", "关系图", "分类树", "梳理", "树状图"]
 
-    /// 把一条疑问整成用户定的形状    /// 把一条疑问整成用户定的形状：**`一、关于〈什么〉的疑问： 〈具体内容〉`**。
+    /// 把模型写的一行「问题」整成屏幕上要显示的那一句。
     ///
-    /// 三件事，缺一不可：① **不带 Markdown**（模型爱把整行包进 `**`，屏幕上就是两个裸星号）；
-    /// ② 冒号统一成全角；③ **冒号后面留一个空格**（用户 2026-09-27：「冒号后留一个空格，
-    /// 右侧显示具体的疑问内容」）。只动**第一个**冒号 —— 内容里再出现冒号是内容自己的事。
-    nonisolated static func formattedQuestion(_ raw: String) -> String {
-        let withoutMarkdown = raw
+    /// 屏幕上每行的形状是 **`?：` + 一句话**（用户 2026-09-28：「只需要在每一行的开头写一个问号，
+    /// 就一个问号，然后冒号右边是那些内容」），所以这一行**只留内容**：
+    /// · 行首的序号（`一、` / `1.` / `1)`）摘掉 —— 再带个序号就成 `?：一、…` 了；
+    /// · 模型万一照旧格式写回 `?：` / `？:` 也摘掉（提示词里已经不要它了，这里兜旧输出，免得两层前缀）；
+    /// · 空行、以及只有占位符「—」的行返回空串，调用方据此过滤掉。
+    nonisolated static func questionLineText(_ rawLine: String) -> String {
+        var text = rawLine
+            .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "**", with: "")
             .replacingOccurrences(of: "＊", with: "")
-        var text = withoutMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let colon = text.firstIndex(where: { $0 == ":" || $0 == "：" }) else { return text }
-        let head = text[text.startIndex..<colon].trimmingCharacters(in: .whitespaces)
-        let tail = text[text.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-        return head + "： " + tail
+        // 行首的问号 / 冒号（任意组合）先摘干净。
+        while let first = text.first, "?？:：".contains(first) {
+            text.removeFirst()
+            text = text.trimmingCharacters(in: .whitespaces)
+        }
+        // 中文序号：`一、`…`十、`。
+        for ordinal in ["一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、"]
+        where text.hasPrefix(ordinal) {
+            text.removeFirst(ordinal.count)
+            break
+        }
+        // 「关于〈什么〉的疑问：」这一层包装也摘掉 —— 提示词里已经不要求它了（屏幕上还会再补一个
+        // `?：`，两层前缀读起来像口吃），但模型一时改不过来还会写。**判据收紧到"整行以「关于」开头"**，
+        // 免得把一句正常问题里出现的「问题：」误伤掉。
+        text = text.trimmingCharacters(in: .whitespaces)
+        if text.hasPrefix("关于") {
+            for wrapperTail in ["疑问：", "疑问:", "矛盾：", "矛盾:", "问题：", "问题:"] {
+                guard let range = text.range(of: wrapperTail) else { continue }
+                let tail = String(text[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !tail.isEmpty { text = tail }
+                break
+            }
+        }
+        // 阿拉伯序号：`1.` / `1、` / `1)` / `1）` —— 分隔符前面的部分全是数字才算。
+        if let separatorIndex = text.firstIndex(where: { "．.、)）".contains($0) }),
+           separatorIndex > text.startIndex,
+           text[text.startIndex..<separatorIndex].allSatisfy({ $0.isNumber }) {
+            text = String(text[text.index(after: separatorIndex)...])
+        }
+        text = text.trimmingCharacters(in: .whitespaces)
+        return text == "—" ? "" : text
     }
 
     private static func normalizedValue(_ raw: String) -> String {

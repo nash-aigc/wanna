@@ -1,0 +1,518 @@
+<title>7 字形看板</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap">
+<style>
+  /* 所有盒子按 border-box 算：给卡片写 width: 340px 时，内边距和边框算在 340 里 ——
+     否则 340 + 28(内边距) + 3(边框) = 371，回复卡会越过竖条的左边缘（第一版就是这样重叠的）。 */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    color-scheme: dark;
+    --ground: #08080a;
+    --stage: #16161a;
+    --card: #0c0c0e;
+    --card-2: #101014;
+    --rule: #1d1d21;
+    --edge: #2a2a2e;
+    --ink: #f2f2f4;
+    --ink-2: #b9b9c2;
+    --ink-3: #8a8a93;
+    --ink-4: #5c5c66;
+    --accent: #0a84ff;
+    --go: #4ade80;
+    --go-edge: rgba(74, 222, 128, 0.45);
+    --stop: #e0a0a0;
+    --stop-fill: rgba(150, 62, 62, 0.22);
+    --stop-edge: rgba(206, 96, 96, 0.45);
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --font-display: "Noto Serif SC", "Songti SC", Georgia, serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding-block: 40px 72px;
+    padding-inline: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  .eyebrow {
+    margin: 0 0 10px;
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  h1 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: clamp(26px, 4.4vw, 36px);
+    line-height: 1.28;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+
+  h2 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .lede {
+    margin: 16px 0 0;
+    max-width: 62ch;
+    color: var(--ink-2);
+    font-size: 15.5px;
+  }
+
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  /* ---- 舞台：按 1px = 1pt 画，注释上的数字因此就是真实数字 ---- */
+
+  .stage-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    background: var(--stage);
+  }
+
+  .stage {
+    position: relative;
+    width: 940px;
+    height: 540px;
+    background:
+      radial-gradient(120% 80% at 78% 0%, rgba(10, 132, 255, 0.05), transparent 60%),
+      var(--stage);
+  }
+
+  .menubar {
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-inline: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 11.5px;
+    color: rgba(255, 255, 255, 0.28);
+    letter-spacing: 0.04em;
+  }
+
+  .guide {
+    position: absolute;
+    border-color: rgba(10, 132, 255, 0.55);
+    border-style: dashed;
+    border-width: 0;
+    pointer-events: none;
+  }
+
+  .guide.top { border-top-width: 1px; }
+  .guide.right { border-right-width: 1px; }
+  .guide.left { border-left-width: 1px; }
+
+  .note {
+    position: absolute;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(8, 8, 10, 0.86);
+    border: 1px solid rgba(10, 132, 255, 0.35);
+    color: #9ecbff;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  .note.plain {
+    border-color: var(--edge);
+    color: var(--ink-3);
+  }
+
+  /* ---- 看板：7 字形 ---- */
+
+  .board-bar {
+    position: absolute;
+    left: 150px;
+    top: 54px;
+    width: 360px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--edge);
+    border-radius: 10px 0 0 0;
+    border-right: none;
+  }
+
+  .board-map {
+    position: absolute;
+    left: 510px;
+    top: 54px;
+    width: 340px;
+    height: 420px;
+    padding: 12px 14px;
+    background: var(--card);
+    border: 1px solid var(--edge);
+    border-left: 1px solid var(--rule);
+    border-radius: 0 10px 10px 0;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .chip {
+    padding: 3px 9px;
+    border: 1px solid var(--edge);
+    border-radius: 6px;
+    background: var(--card-2);
+    color: var(--ink-2);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  .chip.pinned { border-color: rgba(10, 132, 255, 0.45); color: var(--ink); }
+
+  .chip-cap {
+    align-self: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-4);
+  }
+
+  .doubts { display: flex; flex-direction: column; gap: 4px; }
+
+  .doubt {
+    font-size: 12.5px;
+    color: var(--ink-2);
+    line-height: 1.55;
+  }
+
+  .doubt .q {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-weight: 600;
+  }
+
+  .refs { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .ref {
+    padding: 2px 8px;
+    border: 1px solid var(--edge);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--ink-2);
+    font-size: 12px;
+  }
+
+  .bar-buttons {
+    display: flex;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .btn {
+    flex: 1;
+    text-align: center;
+    padding: 4px 0;
+    border-radius: 6px;
+    font-size: 12.5px;
+    border: 1px solid var(--edge);
+    color: var(--ink-2);
+    background: var(--card-2);
+  }
+
+  .btn.go { color: var(--go); border-color: var(--go-edge); background: rgba(74, 222, 128, 0.1); }
+  .btn.stop { color: var(--stop); border-color: var(--stop-edge); background: var(--stop-fill); }
+
+  .map-line {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: var(--ink-2);
+    white-space: pre;
+  }
+
+  .map-line.cat { color: var(--ink); font-weight: 600; }
+
+  /* ---- 右下角回复卡 ---- */
+
+  .answer {
+    position: absolute;
+    left: 150px;
+    top: 322px;
+    width: 340px;
+    padding: 12px 14px;
+    background: #000;
+    border: 1.5px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px;
+  }
+
+  .answer .label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-4);
+    margin-bottom: 6px;
+  }
+
+  .answer p {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.62;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+  }
+
+  /* ---- 鼠标 ---- */
+
+  .cursor { position: absolute; left: 114px; top: 284px; }
+
+  /* ---- 说明区 ---- */
+
+  .specs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 10px;
+  }
+
+  .spec {
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: #0c0c0e;
+    padding: 13px 15px;
+  }
+
+  .spec dt {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--ink-4);
+    margin-bottom: 4px;
+  }
+
+  .spec dd {
+    margin: 0;
+    font-size: 14.5px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .spec dd small { display: block; margin-top: 4px; font-size: 12.5px; color: var(--ink-3); }
+
+  ol.changes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px; }
+
+  ol.changes li {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  ol.changes li:last-child { border-bottom: none; padding-bottom: 0; }
+
+  ol.changes .n {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-4);
+    padding-top: 3px;
+  }
+
+  ol.changes strong { color: var(--ink); font-weight: 600; }
+
+  ol.changes span.body { color: var(--ink-2); font-size: 14.5px; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ink);
+  }
+
+  .ask {
+    border: 1px solid rgba(255, 190, 90, 0.35);
+    border-radius: 12px;
+    background: rgba(255, 190, 90, 0.06);
+    padding: 16px 18px;
+  }
+
+  .ask h2 { color: #f0c070; letter-spacing: 0.08em; }
+  .ask p { margin: 0; color: #e8d8bb; font-size: 14.5px; }
+  .ask p + p { margin-top: 8px; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+
+  @media (max-width: 520px) {
+    .stage { width: 940px; }
+    .page { padding-inline: 16px; }
+  }
+</style>
+
+<main class="page">
+  <header>
+    <p class="eyebrow">样式稿 · 代码一行未改</p>
+    <h1>右上角看板折成「7」</h1>
+    <p class="lede">
+      左半内容很少、右侧脑图很长，横排会留一大片没用的空白。改成一个 <b>7</b> 字：
+      顶上一横放左半内容（方向 ≤4 / 矛盾 / 参考 / 按钮），右侧一竖整条都是脑图；
+      鼠标右下角那张 <b>AI 回复卡</b>正好嵌进 7 的凹口里 —— 上面是横杠、右边是竖条，中间留一点距离。
+    </p>
+  </header>
+
+  <section>
+    <div class="stage-scroll">
+      <div class="stage">
+        <div class="menubar"><span>访达　文件　编辑　显示</span><span>周四 00:52</span></div>
+
+        <!-- 尺寸引导线 -->
+        <div class="guide top" style="left:510px; right:90px; top:36px;"></div>
+        <div class="guide left" style="left:866px; top:54px; height:420px;"></div>
+
+        <!-- 7 的横杠：左半内容 -->
+        <div class="board-bar">
+          <div class="chips">
+            <span class="chip pinned">看图说话</span>
+            <span class="chip">写成文字</span>
+            <span class="chip">保存到 Notion</span>
+            <span class="chip">指给我看</span>
+            <span class="chip-cap">≤ 4</span>
+          </div>
+          <div class="doubts">
+            <div class="doubt"><span class="q">?：</span>第 2 题只给答案，还是要写步骤</div>
+            <div class="doubt"><span class="q">?：</span>说「记到笔记里」但没说记到哪一页</div>
+          </div>
+          <div class="refs">
+            <span class="ref">屏幕一</span>
+            <span class="ref">屏幕二</span>
+            <span class="ref">剪贴板</span>
+          </div>
+          <div class="bar-buttons">
+            <span class="btn">折叠</span>
+            <span class="btn go">执行</span>
+            <span class="btn stop">取消</span>
+          </div>
+        </div>
+
+        <!-- 7 的竖条：脑图 -->
+        <div class="board-map">
+          <div class="map-line cat">这道题</div>
+          <div class="map-line">├─ 第 2 题该选哪个</div>
+          <div class="map-line">│&nbsp;&nbsp;└─ 要看到题干和 A / B / C / D</div>
+          <div class="map-line">├─ 把结果记到笔记</div>
+          <div class="map-line">│&nbsp;&nbsp;└─ 记到哪一页还没定</div>
+          <div class="map-line">└─ 顺带问一句上海</div>
+        </div>
+
+        <!-- 右下角回复卡 -->
+        <div class="answer">
+          <div class="label">右下角 · AI 回复卡（现状不变）</div>
+          <p>第 2 题选 A。-3 的相反数是 3，所以 A 是对的。</p>
+        </div>
+
+        <!-- 鼠标 -->
+        <div class="cursor">
+          <svg width="26" height="30" viewBox="0 0 26 30" aria-hidden="true">
+            <path d="M2 2 L2 24 L8.4 18.2 L12.4 27 L16.4 25 L12.4 16.4 L21 16.4 Z"
+                  fill="#f2f2f4" stroke="#08080a" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- 注释 -->
+        <div class="note" style="left:150px; top:8px;">7 的横杠 · 左半内容</div>
+        <div class="note" style="left:646px; top:8px;">脑图列宽 = 回复卡宽度 340pt</div>
+        <div class="note" style="left:440px; top:476px;">高 ≤ 菜单栏以下 × 70%（超高就在下方截断）</div>
+        <div class="note plain" style="left:150px; top:440px;">回复卡与竖条留 ~20pt，互不压边</div>
+        <div class="note plain" style="left:20px; top:286px;">鼠标</div>
+      </div>
+    </div>
+    <h2 style="margin-top:22px;">形状与配合</h2>
+    <div class="specs">
+      <div class="spec">
+        <dt>7 的横杠</dt>
+        <dd>360pt<small>方向 ≤4 ／ ? 矛盾 ／ 参考标签 ／ 按钮行，随内容定高</small></dd>
+      </div>
+      <div class="spec">
+        <dt>7 的竖条</dt>
+        <dd>340pt 宽<small>整条脑图，与右下角回复卡同宽；高度 ≤ 菜单栏以下 × 70%</small></dd>
+      </div>
+      <div class="spec">
+        <dt>两列之间</dt>
+        <dd>1pt 分割线<small>位置就是横杠的右边缘，向下拉满整条竖条</small></dd>
+      </div>
+      <div class="spec">
+        <dt>回复卡与竖条</dt>
+        <dd>留 ~20pt<small>回复卡在左、竖条在右，互不压边</small></dd>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>这一轮要动的地方（只动排版与提示词）</h2>
+    <ol class="changes">
+      <li>
+        <span class="n">01</span>
+        <span class="body"><strong>底部按钮只留三个</strong> —— 折叠 / 执行 / 取消，放在最下面一行。其余按钮
+        <code>注释掉</code>（不是删掉），以后随时能放开。</span>
+      </li>
+      <li>
+        <span class="n">02</span>
+        <span class="body"><strong>参考不再写「参考」二字</strong> —— 只把拿到的东西做成标签，排成一行。</span>
+      </li>
+      <li>
+        <span class="n">03</span>
+        <span class="body"><strong>矛盾不再写「矛盾」二字</strong> —— 每行开头一个 <code>?</code>，
+        冒号右边是内容，让「这是他要留意的问题」从符号上看出来。</span>
+      </li>
+      <li>
+        <span class="n">04</span>
+        <span class="body"><strong>拼写错误整块拿掉</strong> —— 行注释掉；提示词里对应的那一段也删掉，
+        让它不再生成拼写类的问题，只挑逻辑矛盾。</span>
+      </li>
+      <li>
+        <span class="n">05</span>
+        <span class="body"><strong>方向格子最多 4 个</strong> —— 只取相关性最高的前 4 个，多余的整块不画。</span>
+      </li>
+    </ol>
+  </section>
+
+  <section class="ask">
+    <h2>一处要你确认</h2>
+    <p><strong>「目标」那一行要不要留？</strong>你这次从下往上数的是：按钮 → 参考 → 矛盾 → 方向格子，
+    没有提「目标」。我按「左半只留你列的这几样」处理了 —— 上面这张稿里就没有它。</p>
+    <p>要留的话说一声，它就在方向格子下面、矛盾上面，占 6 行。</p>
+  </section>
+
+  <footer>
+    渲染与动画全部沿用现状：跟随鼠标、模糊聚焦的流式、流式期间骨架不动 —— 一行逻辑都不改。
+    这张稿只是把排版位置画出来给你过目。
+  </footer>
+</main>

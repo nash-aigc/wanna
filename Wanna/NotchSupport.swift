@@ -792,11 +792,15 @@ nonisolated enum NotchSupport {
     nonisolated static func directionBoardPanelFrame(anchor: CGPoint,
                                                      size: CGSize,
                                                      on screen: NSScreen,
+                                                     topEdgeOffsetAboveAnchor: CGFloat,
                                                      gap: CGFloat = 12,
                                                      margin: CGFloat = 8) -> CGRect {
         let visible = screen.visibleFrame
         var originX = anchor.x + gap
-        var originY = anchor.y + gap
+        // **顶边**（AppKit：+y 向上）钉在鼠标上方 `topEdgeOffsetAboveAnchor`，整块向下长 ——
+        // 7 字形的横杠在鼠标上方、那条竖条要一直往下超过鼠标，所以钉的只能是顶边。
+        let topEdgeY = anchor.y + topEdgeOffsetAboveAnchor
+        var originY = topEdgeY - size.height
         originX = min(max(originX, visible.minX + margin), visible.maxX - size.width - margin)
         originY = min(max(originY, visible.minY + margin), visible.maxY - size.height - margin)
         var frame = CGRect(x: originX, y: originY, width: size.width, height: size.height)
@@ -807,6 +811,45 @@ nonisolated enum NotchSupport {
             frame.origin.y = max(visible.minY + margin, bandRect.minY - frame.height - margin)
         }
         return frame
+    }
+
+    // MARK: - 「7 字形」看板的几何（2026-09-28）
+
+    // 用户给的形状：**左上一条横杠 + 右侧一整条竖条**（阿拉伯数字 7），
+    // 右下角那张 AI 回复卡嵌进凹口里 —— 横杠在上、竖条在右，中间留一点距离。
+    // ⚠️ 这几个常量**视图与定位共用**：画在哪（`DirectionBoardView`）与摆在哪
+    //（`directionBoardPanelFrame` / `DirectionBoardPanelController`）读同一份，
+    // 两处各写一遍必然会漂 —— 这个仓库为"画的和点的不一致"付过代价（`trailingWingOriginX` 那次差 71pt）。
+
+    /// 7 的**横杠**（左半内容：方向 ≤4 ／ ? 矛盾 ／ 参考标签 ／ 按钮行）宽。
+    nonisolated static let directionBoardBarWidth: CGFloat = 360
+    /// 横杠的高度 —— **定值**（行的集合恒定、每行预留固定行数，卡片高度因此不晃）。
+    ///
+    /// 算式（2026-09-28 三段定稿）：上边距 12 + 问题 10 行（10×16 + 9×3 = 187）+ 间隔 8
+    /// + 参考一行（17）+ 选项行 27（**贴底、没有下边距**）= **251**。
+    nonisolated static let directionBoardBarHeight: CGFloat = 251
+    /// 右下角那张 AI 回复卡的最大宽度 —— **7 字形那条竖条与它同宽**（用户 2026-09-28：
+    /// 「竖向这个宽度其实跟右下角卡片的宽度应该设置为一样的」）。
+    /// 两者是同一个数，所以放在一处：`OverlayWindow` 与看板都读它，改一个不会只改到一半。
+    nonisolated static let answerCardMaximumWidth: CGFloat = 340
+
+    /// 7 的**竖条**（那条脑图）宽 —— 就是回复卡的宽度。
+    nonisolated static var directionBoardMapWidth: CGFloat { answerCardMaximumWidth }
+    /// 横杠下沿离鼠标 30pt：横杠整条在鼠标**上方**，回复卡在鼠标**下方**，两者不打架。
+    nonisolated static let directionBoardBarClearance: CGFloat = 30
+    /// 折叠态（只剩那颗折叠钮）时，顶边离鼠标 12pt —— 展开态那条 254pt 的偏移对小卡片没有意义。
+    nonisolated static let directionBoardCollapsedTopOffset: CGFloat = 12
+
+    /// 展开态面板顶边该在鼠标上方多高 —— 横杠高 + 30。
+    nonisolated static var directionBoardExpandedTopOffset: CGFloat {
+        directionBoardBarHeight + directionBoardBarClearance
+    }
+
+    /// 7 那条竖条（脑图）能有多高：**菜单栏以下那块高度的 70%**（与右下角回复卡同一条规矩 ——
+    /// 用户 2026-09-28：「高度……可以测量一下当前电脑屏幕的高度，然后占据它的 70%，最多占据 70%」）。
+    nonisolated static func directionBoardMapMaximumHeight(on screen: NSScreen) -> CGFloat {
+        let heightBelowMenuBar = screen.frame.height - menuBarHeight(on: screen)
+        return max(280, heightBelowMenuBar * 0.7)
     }
 
     /// 刘海那条带子（两翼 + 中段）在 **AppKit 坐标**里的矩形 —— 看板不许压住它。

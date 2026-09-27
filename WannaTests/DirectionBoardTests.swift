@@ -11,6 +11,7 @@
 //  口述解析错会把用户随口一句话当成一个新方向存进文件。所以边界都钉死。
 //
 
+import AppKit
 import Foundation
 import Testing
 @testable import Wanna
@@ -330,12 +331,14 @@ struct DirectionBoardTests {
     /// **行的集合恒定** —— 这是卡片"不再跳"的全部依据。
     ///
     /// 用户 2026-09-27：「他回复结果的时候总是跳、总是蹦……内容有时候有软件目标细节，有时候没有」
-    /// +「这几行固定在这，而不是突然间有、突然间没有」。所以解析**永远返回那四行**，
+    /// +「这几行固定在这，而不是突然间有、突然间没有」。所以解析**永远返回那几行**，
     /// 缺的行值是空串（视图画占位符），行的数量不随模型怎么写而变。
-    @Test func understandingRowsAreAlwaysTheSameFour() throws {
+    ///
+    /// ⚠️ 2026-09-28：`understandingLabels` 只剩 **脑图 + 矛盾** 两行（「拼写错误」整行删掉）。
+    @Test func understandingRowsAreAlwaysTheSameSet() throws {
         // 2026-09-27 深夜：左侧只剩「矛盾」——「需求」并进了右侧那张脑图
         //（用户：「左侧边现在就让它显示**参考、矛盾**……就只显示这几个」）。
-        #expect(DirectionBoardPrompt.understandingLabels == ["细节", "矛盾", "拼写错误"])
+        #expect(DirectionBoardPrompt.understandingLabels == ["细节", "矛盾"])
         // 什么都不给 → 四行都在，全是空值。
         let empty = DirectionBoardPrompt.parseUnderstandingLines("")
         #expect(empty.map(\.label) == DirectionBoardPrompt.understandingLabels)
@@ -344,7 +347,7 @@ struct DirectionBoardTests {
         let partial = DirectionBoardPrompt.parseUnderstandingLines("细节：├─ 整理下载目录")
         #expect(partial.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(partial.first { $0.label == "细节" }?.value == "├─ 整理下载目录")
-        #expect(partial.filter { $0.value.isEmpty }.count == 2)
+        #expect(partial.filter { $0.value.isEmpty }.count == 1)
     }
 
     /// **「答案」不能被「细节」吞掉** —— 理解和答案是**两节**，必须各归各的。
@@ -505,10 +508,12 @@ struct DirectionBoardTests {
         """
         let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
         let question = try #require(lines.first { $0.label == "矛盾" }?.value)
-        // ⚠️ 「疑问」这一行会被 `formattedQuestion` 整成用户定的形状：**全角冒号 + 冒号后一个空格**
-        //（用户 2026-09-27：「用"关于什么什么的疑问："的形式，冒号后留一个空格」）——
-        // 解析时先把全角冒号统一成半角、再在这一步还原成全角并补空格。
-        #expect(question == "一、关于「记到哪里」的疑问： 是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音")
+        // ⚠️ 2026-09-28：解析处**不再给这一行套形状** —— 它原样出来（只把全角冒号统一成半角），
+        // 形状交给画的那一侧（`questionTexts` → `?：` + 一句话）。
+        #expect(question == "一、关于「记到哪里」的疑问:是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音")
+        // 画的时候序号与包装都摘掉，只剩那句问题。
+        #expect(DirectionBoardView.questionTexts(from: question)
+                == ["是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音"])
         #expect(lines.first { $0.label == "矛盾" }?.value.isEmpty == false)
         // **一行里挤两个标签仍然要认**（模型常这么写）—— 别把上面那条修过头。
         // ⚠️ 「—」是空值标记，解析出来就是**空串**（见 `dashMeansEmptyNotContent`），
@@ -544,15 +549,50 @@ struct DirectionBoardTests {
         #expect(userPrompt == "帮我把下载目录整理一下")
     }
 
-    /// 用户 2026-09-27 的尺寸：**矛盾缩小两次 30%**、**需求再增加一点**、表格 **4 行**、参考 **3 行**。
-    /// 这几行是卡片"高度不晃"的全部依据，写死在这里。
+    /// 用户 2026-09-28 的尺寸（7 字形）：**横杠 360 × 224、竖条 340、方向格子 2 行、
+    /// 问题 3 行、参考标签 2 行**。这些数字是卡片"高度不晃"的全部依据，写死在这里。
+    ///
+    /// ⚠️ 竖条宽必须**等于右下角那张回复卡的宽度**（用户 2026-09-28：「竖向这个宽度其实跟
+    /// 右下角卡片的宽度应该设置为一样的」）—— 两者是同一个数，改一个必须改另一个。
     @Test func theReservedRowsMatchTheUsersSizes() throws {
-        #expect(DirectionBoardView.reservedLineCounts["矛盾"] == 5)
-        // 「需求」不再是独立一行（并进了脑图）。
-        #expect(DirectionBoardView.reservedLineCounts["需求"] == nil)
-        #expect(DirectionBoardView.reservedLineCounts["细节"] == 7)
-        #expect(DirectionBoardView.directionGridRows == 4)
-        #expect(DirectionBoardView.referenceTagRowLines == 3)
+        // 用户 2026-09-28：「矛盾……**固定 10 行**」「参考……显示在**一行**上」「3 个选项显示在一行」。
+        #expect(DirectionBoardView.questionRowLines == 10)
+        #expect(DirectionBoardView.referenceTagRowLines == 1)
+        #expect(DirectionBoardView.optionSlots == 3)
+        #expect(DirectionBoardView.barWidth == 360)
+        #expect(DirectionBoardView.barHeight == 251)
+        #expect(DirectionBoardView.mapWidth == 340)
+        #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
+    }
+
+    /// **7 字形的几何**：横杠在鼠标上方、竖条一直往下。
+    ///
+    /// 用户 2026-09-28：「高度……可以测量一下当前电脑屏幕的高度，然后占据它的 **70%**，
+    /// 最多占据 70%」+「竖条……显示在右下角卡片的右侧，中间有一点距离」。
+    @Test func theSevenShapeSitsAboveAndRightOfTheAnswerCard() throws {
+        let screen = try #require(NSScreen.main ?? NSScreen.screens.first)
+        // 竖向：顶边钉在「鼠标 + 横杠高 + 30」上。
+        #expect(NotchSupport.directionBoardExpandedTopOffset
+                == NotchSupport.directionBoardBarHeight + NotchSupport.directionBoardBarClearance)
+        let anchor = CGPoint(x: 900, y: 500)
+        let size = CGSize(width: NotchSupport.directionBoardBarWidth + NotchSupport.directionBoardMapWidth,
+                          height: NotchSupport.directionBoardBarHeight)
+        let frame = NotchSupport.directionBoardPanelFrame(anchor: anchor, size: size, on: screen,
+                                                          topEdgeOffsetAboveAnchor:
+                                                            NotchSupport.directionBoardExpandedTopOffset)
+        // 横杠的下沿正好在鼠标上方 30pt（AppKit：+y 向上），于是它**整个在鼠标上方**。
+        let barBottom = frame.maxY - NotchSupport.directionBoardBarHeight
+        #expect(abs(barBottom - (anchor.y + NotchSupport.directionBoardBarClearance)) < 0.5)
+        // 竖条的左边缘 = 横杠的右边缘 = 鼠标右侧 (12 + 横杠宽)，比回复卡的最大右边缘还靠右
+        //（回复卡从鼠标 +12 起、最宽 340）—— 中间那条缝就是这么来的。
+        let mapLeft = frame.minX + NotchSupport.directionBoardBarWidth
+        let answerCardRightEdge = anchor.x + 12 + NotchSupport.answerCardMaximumWidth
+        #expect(mapLeft > answerCardRightEdge)
+        // 横向：顶边那个偏移不动 x，只动 y。
+        #expect(abs(frame.minX - (anchor.x + 12)) < 0.5)
+        // 高度上限 = 菜单栏以下那块高度的 70%（与右下角回复卡同一条规矩）。
+        let expectedCap = (screen.frame.height - NotchSupport.menuBarHeight(on: screen)) * 0.7
+        #expect(abs(NotchSupport.directionBoardMapMaximumHeight(on: screen) - expectedCap) < 0.5)
     }
 
     /// **「参考文件 / 参考文件夹」现在从剪贴板取，判据只有一条：是不是绝对路径**
@@ -577,24 +617,28 @@ struct DirectionBoardTests {
 
     /// **模型爱把整行包在 `**…**` 里**（提示词写了「不要 Markdown」它照样写）——
     /// 这行字是直接画给用户看的，不剥掉就是屏幕上两个裸星号。
+    ///
+    /// ⚠️ 2026-09-28 起「矛盾」每一行的形状是 **`?：` + 一句话**（用户：「只需要在每一行的开头
+    /// 写一个问号，就一个问号，然后冒号右边是那些内容」）—— 于是**解析处不再套形状**，
+    /// 由 `questionTexts` / `questionLineText` 在画的这一侧把行首清理干净。
     @Test func markdownStarsAreStrippedFromTheRows() throws {
-        // 「疑问」那一行还要**统一成用户定的形状**：全角冒号 + **冒号后一个空格**
-        //（用户 2026-09-27：「用"关于什么什么的疑问："的形式，冒号后留一个空格，
-        // 右侧显示具体的疑问内容」）。
         let lines = DirectionBoardPrompt.parseUnderstandingLines(
-            "疑问：**一、关于「这段」的疑问:他说的和上一句对不上**")
-        #expect(lines.first { $0.label == "矛盾" }?.value
-                == "一、关于「这段」的疑问： 他说的和上一句对不上")
-        // 别的行不受这条形状约束（它们本来就没有冒号约定）。
-        // 「目标」现在只当边界（那一行并进了脑图）—— 它的内容不许漏进别的行里。
+            "矛盾：**一、关于「这段」的疑问:他说的和上一句对不上**")
+        // 解析出来还是原文（只剥了 `**`）—— 形状不在这里定。
+        #expect(lines.first { $0.label == "矛盾" }?.value == "一、关于「这段」的疑问:他说的和上一句对不上")
+        // 画的时候：序号与「关于…的疑问：」那层包装都摘掉，只剩那句问题。
+        #expect(DirectionBoardView.questionTexts(
+            from: lines.first { $0.label == "矛盾" }?.value ?? "") == ["他说的和上一句对不上"])
+        // 别的行不受影响。「目标」现在只当边界（那一行并进了脑图）—— 内容不许漏进别的行里。
         let goal = DirectionBoardPrompt.parseUnderstandingLines("目标：把这段记下来\n细节：├─ 素材")
         #expect(goal.first { $0.label == "细节" }?.value == "├─ 素材")
-        // 各种写法都收敛到同一个形状。
-        #expect(DirectionBoardPrompt.formattedQuestion("关于文件的疑问:没说哪个文件")
-                == "关于文件的疑问： 没说哪个文件")
-        #expect(DirectionBoardPrompt.formattedQuestion("一、关于 X 的疑问：  内容")
-                == "一、关于 X 的疑问： 内容")
-        #expect(DirectionBoardPrompt.formattedQuestion("没有冒号的一句话") == "没有冒号的一句话")
+        // 单行的清理规则。
+        #expect(DirectionBoardPrompt.questionLineText("一、关于 X 的疑问：  内容") == "内容")
+        #expect(DirectionBoardPrompt.questionLineText("1. 记到哪一页还没定") == "记到哪一页还没定")
+        #expect(DirectionBoardPrompt.questionLineText("?：已经带了问号") == "已经带了问号")
+        #expect(DirectionBoardPrompt.questionLineText("没有序号的一句话") == "没有序号的一句话")
+        #expect(DirectionBoardPrompt.questionLineText("—") == "")
+        #expect(DirectionBoardPrompt.questionLineText("   ") == "")
     }
 
     /// **只看最近这一次**（用户 2026-09-27）：「如果最近的问题跟之前有关系，AI 就知道该怎么回复；

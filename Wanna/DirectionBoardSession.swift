@@ -445,6 +445,12 @@ final class DirectionBoardSession: ObservableObject {
             // 判据：**它必须出现在右侧那张图上**（哪怕它同时被判成「矛盾」）——
             // 用户的原话：「他即便是矛盾的话，他也应该在右侧显示，**因为他是用户的一个问题啊**」。
             "北京跟上海是什么关系",
+            // ⚠️ 2026-09-28 补的三句：**为了让脑图长过横杠的高度**（横杠 224）——
+            // 7 字形的竖条要"一直往下长"，而这条路径只有脑图真的长起来才量得到
+            //（原来那一组八句只攒到 12 行 ≈ 216pt，正好比横杠矮，面板恒为 224，量不出增长）。
+            "帮我把下载目录按月份归一下类",
+            "再把上周的会议记录整理成三条待办",
+            "顺便查一下这个季度还有哪些报表没交",
             // 第六句：**一个信息不全但完全不矛盾的简单问题**（用户 2026-09-27：「我问他北京在哪，
             // 他就问什么地方的北京……这就太墨迹了」）→ 「疑问」那一行**应当是「—」**，
             // 模型只正常回答，不反问。这一句就是钉住那条要求的。
@@ -1227,6 +1233,10 @@ final class DirectionBoardSession: ObservableObject {
             directions: TaskDirectionStore.shared.allDirections(),
             jevProbabilities: jevProbabilities,
             probabilityThreshold: settings.directionBoardProbabilityThreshold,
-            pinnedStates: TaskDirectionStore.shared.pinnedStates())
+            pinnedStates: TaskDirectionStore.shared.pinnedStates(),
+            // **最多显示 4 格**（用户 2026-09-28：「这个卡片，模型生出来的卡片，让它最多显示 4 个。
+            // 也就是说要调整一下这个模型整个的权重或者筛选的逻辑，只筛选出前 4 个相关性东西」）——
+            // 7 字形的横杠只有 360pt 宽，2 列 × 2 行正好 4 个；多出来的相关性更低，排在后面被丢掉。
+            maximumItemCount: 4)
     }
 }

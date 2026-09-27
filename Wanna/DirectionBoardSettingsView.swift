@@ -46,19 +46,10 @@ struct DirectionBoardSettingsSection: View {
                 SettingsSwitch(isOn: generalSettingsViewModel.binding(\.directionBoardEnabled))
             }
 
-            SettingsCardRowDivider()
-            SettingsRow(
-                label: "看板宽度",
-                description: "看板宽度 = 240pt × 这个倍数：1 倍 = 240、1.5 倍 = 360、**2 倍（默认）= 480**。宽度是固定的，内容多了只多排几列，不会越长越宽。"
-            ) {
-                SettingsSegmentedPicker(
-                    selection: generalSettingsViewModel.binding(\.directionBoardWidthMultiplier),
-                    options: [
-                        SettingsPickerOption(label: "1 倍", value: 1.0),
-                        SettingsPickerOption(label: "1.5 倍", value: 1.5),
-                        SettingsPickerOption(label: "2 倍", value: 2.0),
-                    ])
-            }
+            // ⚠️ **「看板宽度」那一行删掉了（2026-09-28）**：卡片改成 7 字形之后，宽度由形状定死 ——
+            // 横杠 360pt、竖条 340pt（= 右下角那张回复卡的最大宽度，用户指定），
+            // 于是那个倍数设置**存了也不会有任何效果**。一个存了不生效的开关比没有开关更糟，
+            // 所以连同 `AppSettings.directionBoardWidthMultiplier` 一起删掉。
 
             SettingsCardRowDivider()
             SettingsRow(

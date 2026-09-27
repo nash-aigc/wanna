@@ -35,42 +35,23 @@ struct DirectionBoardView: View {
     /// 点卡片就抢走输入焦点的话，这两种就没法区分了。
     var onCardTapped: () -> Void = {}
 
-    /// **宽度固定，不随内容长**（用户 2026-09-27 两次强调）：
-    /// 「卡片的宽度需要固定……**不能超过它的两倍**……要么一倍，要么两倍」
-    /// 「让它固定显示为**两倍宽度**，这个宽度可以让用户去设定，设置页面里可以设定，
-    /// 但**默认固定两倍宽度**，以便显示更多内容」。
+    /// **7 字形的两段尺寸由 `NotchSupport` 给**（视图与定位共用那份，见那里的注释）：
+    /// 横杠 360 × 224、竖条 340（**= 右下角那张回复卡的最大宽度**，用户 2026-09-28 指定）。
     ///
-    /// 所以宽度 = **结果卡片宽度（340）× 用户设的倍数**（默认 2 → 680），而且**恒定** ——
-    /// 内容多了不撑宽，只多排几行（列数由这条宽度反推出来）。
-    /// 左下角固定由面板那一侧保证（`directionBoardPanelFrame` 的原点 = 鼠标 +12pt）。
-    /// 卡片的**基准宽度**：1 倍 = 240、1.5 倍 = 360、2 倍 = **480**（默认）。
-    ///
-    /// 用户 2026-09-27：「把卡片的宽度再缩小 50%，现在太宽了」——
-    /// 680 减一半是 340，但那样**选项格会掉到 1 列**（4 列要 ~656pt）、理解四行也会大量折行，
-    /// 卡片会变成又窄又高的一条。问过他之后选的是 **480（−30%）**：选项格 2 列、按钮行照旧放得下。
-    /// 基准跟着从 340 调到 240，这样设置页那三档（1 / 1.5 / 2 倍）的**相对关系不变**，
-    /// 默认值也仍然是 2 倍 —— 不用迁移任何存盘的值。
-    /// 用户 2026-09-27：「卡片整体宽度在之前缩小 30% 的基础上**增加回来**，
-    /// **约为右下角卡片宽度的两倍**」→ 340 × 2 = **680**。
-    static let resultCardWidth: CGFloat = 340
-    /// 一格的最小宽度 —— 它决定"这条宽度里排几列"：680 的卡片用掉 24 的左右边距之后是 656，
-    /// 656 / 164 = **4 列**（用户 2026-09-27：「改成 4 列显示吧，现在 3 列太窄了，
-    /// 每个卡片的空白间距太大」—— 原来是 190，算出来是 3 列）。
-    static let columnWidth: CGFloat = 152    // 480 的卡片（可用 456）→ **3 列**（用户 2026-09-27：
-                                             // 「卡片是三列，现在还是两列」）
+    /// 用户 2026-09-28：「右侧……竖向这个宽度其实跟右下角卡片的宽度应该设置为一样的」。
+    /// 原来那套「宽度 = 340 × 设置里的倍数」随之作废 —— 形状定死了宽度，倍数那个设置
+    /// 留着只会变成一个存了也不生效的开关，所以它连同设置页那一行一起删掉了。
+    static var barWidth: CGFloat { NotchSupport.directionBoardBarWidth }
+    static var barHeight: CGFloat { NotchSupport.directionBoardBarHeight }
+    static var mapWidth: CGFloat { NotchSupport.directionBoardMapWidth }
     static let horizontalPadding: CGFloat = 12
+    /// 竖条里文字离上下沿的边距。
+    static let mapVerticalPadding: CGFloat = 12
 
-    /// 这张卡片该多宽（**与内容无关**，只看设置里那个倍数）。
-    static func cardWidth(forMultiplier multiplier: Double) -> CGFloat {
-        let clamped = min(max(multiplier, 1.0), 2.0)
-        return resultCardWidth * CGFloat(clamped)
-    }
-
-    /// 这条宽度里能排几列（至少 1 列，最多 5 列 —— 用户：「最多不要超过 5 列」）。
-    static func columnCount(forMultiplier multiplier: Double, itemCount: Int) -> Int {
-        let usableWidth = cardWidth(forMultiplier: multiplier) - horizontalPadding * 2
-        let fitting = Int(usableWidth / columnWidth)
-        return min(max(min(fitting, max(itemCount, 1)), 1), 5)
+    /// 竖条（脑图）能有多高：**菜单栏以下那块高度的 70%**，与右下角回复卡同一条规矩。
+    static var maximumMapHeight: CGFloat {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return 560 }
+        return NotchSupport.directionBoardMapMaximumHeight(on: screen)
     }
 
     /// **左列里那条表格排几列**：恒为 **2**（用户 2026-09-27 深夜：「标签3行肯定写不下，
@@ -82,59 +63,36 @@ struct DirectionBoardView: View {
         max(min(session.displayedItems.count, 2), 1)
     }
 
-    /// **每一行文字占的高度** —— 用它把「目标 / 细节 / 疑问」的高度**提前定死**。
-    ///
-    /// 用户 2026-09-27：「目标预留三行内容，细节预留五行内容，固定下来……不要让卡片高度总是变化。
-    /// 如果显示不完全，就隐藏」，随后改成「细节显示为 7 行，需要提前预留 7 行」，
-    /// 并新增一行「疑问」预留 4 行；以及「目标和细节这两行内容的高度**总是不固定，总是漂移**……
-    /// 内容渲染到右侧提前预留的空行部分，**不要因为生成了新内容就让整个标题和内容上下晃动**」。
-    static let understandingLineHeight: CGFloat = 16
-    /// 每一行预留几行（顺序与 `understandingLabels` 一致）。
-    /// 用户 2026-09-27 深夜第三轮：**疑问缩小两次 30%**（10 → **5 行**，「太大了，整个高度宽度
-    /// 占用太大」）、**目标再增加一点**（6 → **8 行**，「目标也太墨迹了」—— 地方给足、话要少）。
-    /// 键就是卡片上显示的那两个字 —— 2026-09-27 深夜随标签一起改名
-    ///（用户：「把左侧这个**目标**调整为**需求**，把**疑问**调整为**矛盾**，
-    /// 因为左侧其实就是在**了解用户的需求**」）。
-    /// ⚠️ 2026-09-27 深夜：左侧只剩「矛盾」（「需求」并进了右侧那张脑图）。
-    /// 2026-09-27 深夜：加了第三行。名字先是「歧义」，随后按用户的意思改成「**拼写错误**」——
-    /// 他在用语音输入法：「让 AI 思考一下**哪些单词可能存在拼写错误**」。
-    static let reservedLineCounts: [String: Int] = ["细节": 7, "矛盾": 5, "拼写错误": 4]
+    /// **左边那半（横杠）里，问题那一块固定几行** —— 高度提前定死。
+    /// 用户 2026-09-28：「矛盾的内容……每一行的开头写一个问号，就一个问号，然后冒号右边是
+    /// 那些内容，让用户知道这是个问题」+「你就让它**固定 10 行**吧……也就是说渲染的时候
+    /// **无论有没有字、有没有矛盾，你就固定渲染 10 行**就好了。然后渲染的时候就是按照
+    /// **有动画**的方式来渲染」。
+    static let questionRowLines = 10
+    /// 问题那一块的高度 = 预留几行 × 行高。
+    private static let questionRowHeight: CGFloat = CGFloat(questionRowLines) * 16
+        + CGFloat(questionRowLines - 1) * 3
 
-    /// **脑图那一行是哪一行**（「细节」）—— 它单独占右栏，且**不画标题**。
+    /// **每条问题占的高度** —— 用它把问题那一块的高度**提前定死**（用户反复强调"高度不许晃"）。
+    static let understandingLineHeight: CGFloat = 16
+
+    /// **脑图那一行是哪一行**（「细节」）—— 它单独占右栏（那条竖条），且**不画标题**。
     static let mindMapLabel = "细节"
-    /// 左栏宽度 = 卡片宽度的 **40%**（用户指定的比例）。
-    private var understandingColumnWidth: CGFloat {
-        // 用户 2026-09-27 深夜第四轮：「**左侧有点太宽了，把左侧缩小 20%**」→ 48% × 0.8 = 38.4%。
-        (Self.cardWidth(forMultiplier: widthMultiplier) - Self.horizontalPadding * 2) * 0.384
-    }
-    /// 方向格**固定三行**的高度（每行 = 一个格子的高度 28 + 行距 6）。
-    /// 表格固定几行（用户 2026-09-27：「最上面这个表格**写成四行**」）。
-    static let directionGridRows = 4
+
+    /// 方向格**固定两行**的高度（每行 = 一个格子的高度 28 + 行距 6）。
+    ///
+    /// 用户 2026-09-28 把左半压到 360pt 宽：2 列 × 2 行 = 看得见 4 个方向，与他说的
+    /// 「最多显示 4 个」正好对上（筛选在 `DirectionBoardMatching` 那一侧）。
+    static let directionGridRows = 2
     private static let directionGridHeight: CGFloat = CGFloat(directionGridRows) * 28
         + CGFloat(directionGridRows - 1) * 6
 
-    /// 内容那一整块的高度（固定）：左列要装下「表格 2 行 + 参考 1 行 + 目标 4 行 + 疑问 5 行」，
-    /// 右列的脑图就铺满这个高度（用户：「**右侧全部都是脑图**」）。
-    /// 参考标签那一行的高度：**固定两行**（单行时下面空着）—— 理由见 `referenceTagRow`。
-    /// 参考标签那一块固定几行（用户 2026-09-27：「参考这块**写成三行**」）。
-    static let referenceTagRowLines = 3
-    /// 参考那一块的高度 = **标题那一行** + 三行标签。
-    private static let referenceTagRowHeight: CGFloat = understandingLabelHeight
-        + CGFloat(referenceTagRowLines) * 17 + CGFloat(referenceTagRowLines - 1) * 4
-
-    /// 内容块最多能有多高 —— **按屏幕算**（菜单栏以下那块高度的 70%，与右下角那张结果卡同一条规矩）。
-    ///
-    /// 内容比它矮就按内容，比它高才裁 —— 那是屏幕的物理限制，不是我们给它设的天花板。
-    static var maximumContentBlockHeight: CGFloat {
-        let visibleHeight = NSScreen.main?.visibleFrame.height
-            ?? NSScreen.screens.first?.visibleFrame.height ?? 900
-        return max(320, visibleHeight * 0.7)
-    }
-
-    /// 用户设的宽度倍数（默认 2）。
-    private var widthMultiplier: Double {
-        AppSettingsStore.snapshot().directionBoardWidthMultiplier
-    }
+    /// 参考标签那一块**固定一行**（没有标题 —— 用户 2026-09-28：「不需要写"参考"两个字，
+    /// 只需要把具体参考的内容用标签的形式显示在**一行**就可以了」）。
+    static let referenceTagRowLines = 1
+    /// 参考那一块的高度 = 预留行数 × 标签行高。
+    private static let referenceTagRowHeight: CGFloat =
+        CGFloat(referenceTagRowLines) * 17 + CGFloat(referenceTagRowLines - 1) * 4
 
     /// 编号那一列有多宽（「第三个方向」里的 3）。
     private static let numberColumnWidth: CGFloat = 18
@@ -143,26 +101,24 @@ struct DirectionBoardView: View {
         Group {
             if session.isCollapsed {
                 collapsedCard
+                    // **折叠之后整张卡片就只剩那个按钮**（用户：「折叠后……变成一个折叠按钮」）——
+                    // 所以宽度也跟着收，不然屏幕上会留一条空条。
+                    .padding(.horizontal, Self.horizontalPadding)
+                    .padding(.vertical, Self.cardBottomPadding)
+                    .frame(width: Self.collapseButtonWidth * 3 + Self.horizontalPadding * 2,
+                           alignment: .leading)
             } else {
-                expandedCard
+                sevenCard
             }
         }
-        .padding(.horizontal, Self.horizontalPadding)
-        .padding(.top, Self.cardBottomPadding)
-        .padding(.bottom, Self.cardBottomPadding)
-        // **折叠之后整张卡片就只剩那个按钮**（用户：「折叠后……变成一个折叠按钮」）——
-        // 所以宽度也跟着收，不然屏幕上会留一条 680 宽的空条。
-        .frame(width: session.isCollapsed
-               ? Self.collapseButtonWidth * 3 + Self.horizontalPadding * 2
-               : Self.cardWidth(forMultiplier: widthMultiplier),
-               alignment: .leading)
+        // 展开态：**7 字形**那一条轮廓（横杠 + 竖条）；折叠态：一个小圆角矩形。
         .background(AnswerCardView.cardBackground(theme: theme))
-        .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
+        .clipShape(currentOutlineShape)
         .overlay(
-            RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
+            currentOutlineShape
                 // 被按住不发 → 告警色呼吸；**折叠着 → 绿色**（用户：「折叠后卡片边缘自动变成绿色，
                 // 便于用户快速在桌面上看到其位置」）；其余用主题边框。
-                .strokeBorder(borderTint, lineWidth: borderWidth)
+                .stroke(borderTint, lineWidth: borderWidth)
                 .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
                 .animation(.easeInOut(duration: 0.25), value: session.isCollapsed)
         )
@@ -173,6 +129,13 @@ struct DirectionBoardView: View {
         // 就停止呼吸」）。
         .onChange(of: session.isUserSpeaking) { _, isSpeaking in isBreathing = isSpeaking }
         .onAppear { isBreathing = session.isUserSpeaking }
+    }
+
+    /// 当前该用哪条轮廓：折叠态是小圆角矩形，展开态是 **7 字形**。
+    private var currentOutlineShape: AnyShape {
+        session.isCollapsed
+            ? AnyShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
+            : AnyShape(DirectionBoardSevenShape(barWidth: Self.barWidth, barHeight: Self.barHeight))
     }
 
     private var borderTint: Color {
@@ -269,118 +232,18 @@ struct DirectionBoardView: View {
     private static var collapseToggleHeight: CGFloat { cancelRowHeight }
     /// 卡片四周的内边距（原来是写死的 10；折叠钮要"贴到最下面"，所以它得是个常量）。
     private static let cardBottomPadding: CGFloat = 10
+    /// 横杠里第一行与上沿的距离。
+    static let barTopPadding: CGFloat = 12
     /// 左 1/3（能点）与右 2/3（只能拖）的底色 —— 他要"用颜色区分开"。
     private static let collapseClickableColor = Color.white.opacity(0.13)
     private static let collapseDragColor = Color.white.opacity(0.03)
 
-    private var directionList: some View {
-        // **多列**（用户：「表格上面那几个表格应该是多列的，不是单列，你现在是单列、多行。
-        // 我的意思是多行可以多列，可以到 2 到 3 列」）—— 有几个方向就排几列（最多 5），
-        // 超过 5 个才换行。
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8),
-                                 count: directionColumnCount),
-                  alignment: .leading,
-                  spacing: 6) {
-            if session.displayedItems.isEmpty {
-                // 一行占位（与别的行同一个宽度、同一个高度）—— 卡片在这一块**高度与位置都不动**。
-                Text(Self.emptyValuePlaceholder)
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.textColor.opacity(0.35))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(theme.textColor.opacity(0.04))
-                    )
-                    .gridCellColumns(directionColumnCount)
-            }
-            ForEach(session.displayedItems, id: \.directionID) { item in
-                directionRow(item)
-            }
-        }
-        // **固定占两行的高度**（用户 2026-09-27 深夜：「标签3行肯定写不下，**写成2行就好**」——
-        // 表格现在住在左列里，左列只有 262pt 宽，排 2 列正好、第 3 行放不下）——
-        // 于是这一块也**不再随卡片里有多少个方向而变高变矮**，多的被裁掉（`maximumItemCount` 另有上限）。
-        .frame(height: Self.directionGridHeight, alignment: .top)
-        .clipped()
-    }
+    // ⚠️ **2026-09-28：原来那个多列的「方向表格」（`directionList` / `directionRow` / 那套
+    // 按状态变色的底色与边框）删掉了** —— 它被横杠底下那一行 3 个格子的 `optionRow` 取代
+    //（用户：「三个显示在一行……把这些与文字无关的那些按钮的区间全都给取消掉，
+    // 就留一个文字，留一个编号就可以了」）。这就是"尽可能精简"，好让一行塞得下三个。
 
-    private func directionRow(_ item: DirectionBoardDisplayItem) -> some View {
-        // 状态**就在这一格上**（固定状态存在文件里，`displayedItems` 每轮带着它）——
-        // 不再有第二份"界面上的选中状态"要去同步。
-        let state = item.state
-        let text = item.keyword
-        let textColor: Color = {
-            switch state {
-            case .confirmed: return DS.Colors.success
-            case .denied: return DS.Colors.destructive
-            case .pending: return theme.textColor
-            }
-        }()
 
-        return HStack(spacing: 6) {
-            // **编号**：用户说「第三个方向」指的就是它。
-            Text("\(item.number)")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(state == .pending ? theme.textColor.opacity(0.75) : textColor)
-                .frame(width: Self.numberColumnWidth, height: 18)
-                .background(
-                    Circle().fill(textColor.opacity(state == .pending ? 0.12 : 0.20))
-                )
-
-            Text(text)
-                .font(.system(size: 12, weight: state == .pending ? .regular : .semibold))
-                .foregroundStyle(textColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // 点文字 = 选中（用户：「任务方向可以通过点击的方式选择，用户点击某一个方向即可」）。
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    session.toggleConfirm(directionID: item.directionID, displayedText: text)
-                }
-                .help("点一下 = 这个是我想做的（也可以直接说「第 \(item.number) 个方向」）")
-
-            Button {
-                session.toggleDeny(directionID: item.directionID)
-            } label: {
-                Image(systemName: state == .confirmed ? "checkmark" : "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(textColor.opacity(state == .pending ? 0.5 : 1.0))
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("点一下 = 这个不是我想做的")
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(backgroundColor(for: state))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(borderColor(for: state), lineWidth: 1)
-        )
-    }
-
-    private func backgroundColor(for state: DirectionBoardDisplayItem.State) -> Color {
-        switch state {
-        case .confirmed: return DS.Colors.success.opacity(0.18)
-        case .denied: return DS.Colors.destructive.opacity(0.18)
-        case .pending: return theme.textColor.opacity(0.06)
-        }
-    }
-
-    private func borderColor(for state: DirectionBoardDisplayItem.State) -> Color {
-        switch state {
-        case .confirmed: return DS.Colors.success.opacity(0.8)
-        case .denied: return DS.Colors.destructive.opacity(0.8)
-        case .pending: return theme.textColor.opacity(0.14)
-        }
-    }
 
     // MARK: - 参考材料的标签
 
@@ -392,34 +255,26 @@ struct DirectionBoardView: View {
     ///
     /// 样式也是他定的：「改大一点，做成矩形，**上下边距小一点**，加上圆角，字体大一点」——
     /// 所以从 Capsule(10pt 字) 改成 RoundedRectangle(12pt 字、垂直 1pt)。
+    /// **参考标签那一行**（用户 2026-09-28：「不需要写"参考"两个字，只需要把具体参考的内容
+    /// 用标签的形式显示在**一行**就可以了」）—— 所以没有标题，只有标签本身。
     private var referenceTagRow: some View {
-        // **标题在上、标签在下**（与「目标 / 疑问」同一套 —— 见 `understandingRow` 的注释）。
-        VStack(alignment: .leading, spacing: 2) {
-            Text("参考")
-                .font(.system(size: Self.understandingLabelFontSize, weight: .semibold))
-                .foregroundStyle(theme.textColor.opacity(0.55))
-
-            // ⚠️ **标签放在一个会换行的流里，而不是 HStack**（2026-09-27 实测）：表格搬进左列之后
-            // 这一栏只有 262pt 宽，`HStack` 里放不下就**从右边截掉** —— 屏幕上量到的是
-            // 「无法识别…」，而被截掉的正是"哪一类没拿到"这唯一有用的信息。
-            ReferenceTagFlowLayout(spacing: 6, lineSpacing: 4) {
-                ForEach(referenceCollector.materials.tags, id: \.self) { tag in
-                    referenceTag(tag, tint: DS.Colors.success)
-                }
-                // **多张截图时明确"以最近一次为准"**（用户：「用户询问屏幕内容时，重点关注最近一次
-                // 屏幕截图……避免回复最初的屏幕内容」）。提示词里也写了同一句。
-                if referenceCollector.materials.screenshots.count > 1 {
-                    referenceTag("重点关注最近一次屏幕内容", tint: DS.Colors.accent)
-                }
-                ForEach(referenceCollector.materials.unresolved, id: \.self) { label in
-                    referenceTag("无法识别：" + label, tint: DS.Colors.warning)
-                }
+        ReferenceTagFlowLayout(spacing: 6, lineSpacing: 4) {
+            ForEach(referenceCollector.materials.tags, id: \.self) { tag in
+                referenceTag(tag, tint: DS.Colors.success)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // **多张截图时明确"以最近一次为准"**（用户：「用户询问屏幕内容时，重点关注最近一次
+            // 屏幕截图……避免回复最初的屏幕内容」）。提示词里也写了同一句。
+            if referenceCollector.materials.screenshots.count > 1 {
+                referenceTag("重点关注最近一次屏幕内容", tint: DS.Colors.accent)
+            }
+            ForEach(referenceCollector.materials.unresolved, id: \.self) { label in
+                referenceTag("无法识别：" + label, tint: DS.Colors.warning)
+            }
         }
-        // **高度提前定死成三行**（用户那条反复强调的规矩：「它每一个位置上的高度都是固定的……
-        // 不要让高度总是晃」）：标签不够三行时下面空着，但卡片高度因此恒定。
-        .frame(height: Self.referenceTagRowHeight, alignment: .top)
+        // **高度提前定死成两行**（那条反复强调的规矩：「它每一个位置上的高度都是固定的……
+        // 不要让高度总是晃」）：标签不够两行时下面空着，但卡片高度因此恒定。
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: Self.referenceTagRowHeight, alignment: .topLeading)
         .transition(.opacity)
         .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.tags)
         .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.unresolved)
@@ -490,130 +345,216 @@ private struct ReferenceTagFlowLayout: Layout {
 
     // MARK: - 说明区（**固定四行，永远画着**）
 
-    /// **四行固定**：目标问题 / 类型 / 参考 / 细节（顺序、标签都由 `DirectionBoardPrompt` 给）。
+    // ⚠️ **2026-09-28：这里原来那一套「目标 / 细节 / 疑问 / 拼写错误」的四行、以及画它们的
+    // `understandingRow` 一起删掉了** —— 左半只剩「矛盾」一条，而它是**没有标题**的
+    //（`?：` 就是它的行首，见 `questionLines`）；脑图搬进了 7 的那条竖条（`mapColumn`）。
+    // 行的数据仍然由 `DirectionBoardPrompt.understandingLabels` 给（`理解` 那一行在提示词里照旧发），
+    // 只是屏幕上不再一五一十地画。
+
+    /// **7 字形**（用户 2026-09-28 的规格 + 他给的示意图）。
     ///
-    /// 用户 2026-09-27 的两句合起来就是这一段的设计：「他回复结果的时候总是跳、总是蹦……
-    /// 内容有时候有软件目标细节，有时候没有」+「这几行固定在这，而不是突然间有、突然间没有，
-    /// 这对体验影响太差了」。所以：行的集合恒定、值可能为空（画占位符）、**卡片高度因此恒定**。
-    /// **左栏**：AI 对用户的理解（目标 / 疑问）。
-    private var understandingColumn: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(session.understandingLines.enumerated()), id: \.offset) { index, line in
-                if line.label != Self.mindMapLabel {
-                    understandingRow(label: line.label, value: line.value, revealIndex: index + 1)
-                }
-            }
-        }
-        // 整块**高度固定**（各行自己预留了几行就占几行）—— 这样内容来了也只是填进预留的位置，
-        // 卡片高度与标题位置都不动。
-        // ⚠️ 这里原来有一个 ✕（"这个理解不对"）。**删掉了**：理解现在是**无条件**跟着提示词发给
-        // 模型的（用户 2026-09-27：「这个大语言模型的理解，你可以去发，发过去」），
-        // 也就是说"确认"这个动作没有意义了 —— 一个点了不改变任何事情的按钮比没有按钮更糟。
-    }
-
-    /// **右栏：那张脑图**（「细节」）—— 用户 2026-09-27：「右侧从上到下都是细节，**高度占据整个
-    /// 卡片的高度**。**不再有细节标题**，直接显示整个脑图」。
-
-    private var expandedCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // **左右两栏**（用户 2026-09-27 深夜说清了两次：「我说的是**左右布局**。
-            // **最上面那个标签和表格也要放在左边**，**右侧全部都是脑图**」）：
-            //
-            //   左列（40%）：方向表格（固定 2 行）→ 参考标签 → 目标 → 疑问
-            //   右列（60%）：**从上到下整块都是脑图**（不画标题，高度铺满这一整块）
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 8) {
-                    // **表格永远画着**（用户 2026-09-27：「卡片设计出来之后，**整个样式和位置不应该变化**。
-                    // 我发现**左上角这五行突然间消失了**」）。
-                    //
-                    // 原来这里是 `if !displayedItems.isEmpty { directionList }` —— 一旦那一轮
-                    // 本地关键词没命中、Jev 又没给出概率（第一轮请求还没回来时就是这种状态），
-                    // 整块**凭空消失**，下面所有东西一起往上跳。这和"需求/矛盾空着也画占位符"
-                    // 是同一条规矩：**行的集合恒定**，没内容就画占位。
-                    directionList
-                    if !referenceCollector.materials.tags.isEmpty ||
-                        !referenceCollector.materials.unresolved.isEmpty {
-                        referenceTagRow
-                    }
-                    understandingColumn
-                }
-                .frame(width: understandingColumnWidth, alignment: .topLeading)
-                // 行不再各自裁剪，所以**由整列兜底**：超出这块就裁掉
-                //（卡片高度仍然恒定 —— 它挂在这块上，不挂在行上）。
-                // 左列同样"内容多高就多高" —— 行不再各自裁剪，也不再用估算的块高。
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxHeight: Self.maximumContentBlockHeight, alignment: .top)
-
-                mindMapColumn
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            // 这一块**不再钉高**：内容多高它就多高（顶边钉住、往下长），上限见 `maximumContentBlockHeight`。
-
-            // 最下面一行：折叠钮（贴左下角）+ 复制/执行/退出 + 两档取消。
-            cancelRow
+    /// ```text
+    ///   ┌──── 横杠（360）─────┬─ 竖条（340 = 右下角回复卡宽度）─┐
+    ///   │ 方向 ≤4             │                                 │
+    ///   │ ?：矛盾（每行一个问号）│        脑 图（整条，           │
+    ///   │ 参考标签（没有标题）  │        高度 ≤ 菜单栏以下 70%）   │
+    ///   │ 折叠｜执行｜取消      │                                 │
+    ///   └─────────────────────┘                                 │
+    ///                          └─────────────────────────────────┘
+    /// ```
+    ///
+    /// 为什么是 7：用户的原话 ——「右侧……它非常非常长，而左侧又非常的少，
+    /// 所以就会占用一个很大的空白空间，这完全没有意义，所以把它做成一个 7 字形」。
+    /// 右下角那张 AI 回复卡就嵌进**凹口**里（横杠在上、竖条在右，中间留一点距离）。
+    private var sevenCard: some View {
+        HStack(alignment: .top, spacing: 0) {
+            barColumn
+            mapColumn
         }
     }
 
-    /// **右栏：那张脑图**（「细节」）—— 用户 2026-09-27：「右侧从上到下都是细节，**高度占据整个
-    /// 卡片的高度**。**不再有细节标题**，直接显示整个脑图」。
-    private var mindMapColumn: some View {
+    /// **7 的那一横**（三段，从下往上）。
+    ///
+    /// 用户 2026-09-28 定的顺序（他中途改过一次口，最后确认的是这一版）：
+    ///
+    /// ```text
+    ///   ?：矛盾 ①…            ← 固定 10 行（有没有内容都占这 10 行，高度不晃）
+    ///   ……                    （有动画：一行一行淡入）
+    ///   [屏幕一] [剪贴板]      ← 参考标签，一行，定高
+    ///   ┌─────┬─────┬─────┐
+    ///   │1 看图说话│2 操作电脑│3 写成文字│  ← **贴住底边**（这行不许留空隙）
+    ///   └─────┴─────┴─────┘
+    /// ```
+    ///
+    /// 底下为什么贴边：用户 2026-09-28 ——「这一行一定要**紧贴这个边框线**……我发现你之前总是
+    /// 有很大的空行、很大的空隙。我为什么要这样设计呢？**不就是为了压缩高度空间吗**」。
+    ///
+    /// ⚠️ **底部那一行按钮（折叠 / 执行 / 取消）整行注释掉了**（用户：「什么折叠呀、执行啊、
+    /// 这些取消啊，**全都删掉，全都注释掉**」）—— 看板现在是**纯展示**的：执行走 ⌥⏎、
+    /// 退出走 ESC、取消走「取消任务看板」那句话。按钮的实现都留着（见 `actionRow` 的注释）。
+    private var barColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            questionLines
+                .padding(.horizontal, Self.horizontalPadding)
+                .padding(.top, Self.barTopPadding)
+            Spacer(minLength: 8)
+            referenceTagRow
+                .padding(.horizontal, Self.horizontalPadding)
+            optionRow
+        }
+        .frame(width: Self.barWidth, height: Self.barHeight, alignment: .topLeading)
+        // **横杠与竖条之间那条分割线**（用户 2026-09-28：「右侧一条分割线」）——
+        // 只画到横杠的下沿：再往下，竖条的左边缘本身就是那条线（见 `DirectionBoardSevenShape`）。
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(theme.textColor.opacity(0.10))
+                .frame(width: 1)
+        }
+    }
+
+    /// **最下面那一行：模型筛出来的 3 个方向**（用户 2026-09-28：「最多 4 个……多了不要，
+    /// 那就这样吧，这 3 个吧，三个显示在一行上」）。
+    ///
+    /// 样式**照抄最下面原来那一行按钮**（他的原话：「三个按钮的样式应该参考最下边这一行，
+    /// 那个取消按钮、执行按钮，它们这些样式就是极简化，然后中间用分割线分割就行了。
+    /// 颜色呢，就是正常颜色」）—— 所以是同一套：一整条底 + 格子之间一条细线 +
+    /// **一格只留「编号 + 文字」**（编号就是 `1 2 3` 三个字符，没有圆圈底、没有 ✗、没有别的按钮）。
+    ///
+    /// ⚠️ 这一行**贴住卡片的下沿和左右两边**（负内边距，与原来那条按钮行同一种做法）——
+    /// 他要的就是"压缩高度空间"，底下不许再留内边距。
+    private var optionRow: some View {
+        HStack(alignment: .center, spacing: 0) {
+            ForEach(0..<Self.optionSlots, id: \.self) { slot in
+                if slot > 0 { cancelRowDivider }
+                if slot < session.displayedItems.count {
+                    let item = session.displayedItems[slot]
+                    optionCell(item)
+                } else {
+                    // 不够 3 个也照样占着这一格 —— 行的集合恒定，高度与位置都不动。
+                    Color.clear
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .frame(height: Self.cancelRowHeight)
+        .background(Self.buttonBarColor)
+        // 贴死左/右/下三边（负内边距把这一行顶出横杠的内边距）。
+        .padding(.bottom, 0)
+    }
+
+    /// 一格选项：`编号 + 关键词`，颜色按它的状态（确认＝绿 / 否定＝红 / 待定＝正文色）。
+    ///
+    /// 可点（用户一直用它 ——「点一下 = 这个是我想做的」），但**没有任何多余的东西**：
+    /// 编号只是两个字符，没有圆圈底、没有 ✗ 按钮（用户 2026-09-28：
+    /// 「把这些与文字无关的那些…全都给取消掉，就留一个文字，留一个编号就可以了」）。
+    private func optionCell(_ item: DirectionBoardDisplayItem) -> some View {
+        let tint: Color = {
+            switch item.state {
+            case .confirmed: return DS.Colors.success
+            case .denied: return DS.Colors.destructive
+            case .pending: return theme.textColor
+            }
+        }()
+        return Button {
+            session.toggleConfirm(directionID: item.directionID, displayedText: item.keyword)
+        } label: {
+            HStack(spacing: 4) {
+                Text("\(item.number)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(tint.opacity(0.8))
+                Text(item.keyword)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(item.state == .confirmed
+              ? "点一下 = 取消这个方向（也可以直接说「第 \(item.number) 个方向」）"
+              : "点一下 = 这个是我想做的（也可以直接说「第 \(item.number) 个方向」）")
+    }
+
+    /// 左边那一栏里**固定几个方向格**（用户 2026-09-28：3 个，一行）。
+    static let optionSlots = 3
+
+    /// **7 的那一竖**：整条脑图（不画标题），宽度与右下角回复卡相同。
+    private var mapColumn: some View {
         let value = session.understandingLines.first { $0.label == Self.mindMapLabel }?.value ?? ""
         return Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
             .font(.system(size: 12, design: .monospaced))
             .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .id(value)
             .transition(.opacity)
             .animation(.easeOut(duration: 0.28), value: value)
+            .padding(.horizontal, Self.horizontalPadding)
+            .padding(.vertical, Self.mapVerticalPadding)
+            .frame(width: Self.mapWidth, alignment: .topLeading)
+            // **能长多长由屏幕决定**（上限 = 菜单栏以下 × 70%），超了就在下面截断。
+            //
+            // ⚠️ **这里不能加 `maxHeight: .infinity`**（第一版加了，实测面板恒为横杠的 224 高）：
+            // 那会让竖条变成"可伸缩的子视图"，于是 HStack 的高度只由**横杠**决定，
+            // 脑图再多也被裁在 224 里 —— 而 "7 的竖条一直往下长" 正是这个形状的意义。
+            // 去掉之后高度由内容自己撑（上限只挂在屏幕上），HStack 取两者较大的那个。
+            .frame(maxHeight: Self.maximumMapHeight, alignment: .topLeading)
+            .clipped()
     }
 
-    /// 一行理解：左边标签定宽，右边值（**空值画占位符**，不是不画）。
-    private func understandingRow(label: String, value: String, revealIndex: Int) -> some View {
-        // **标题在上面、内容在下面**（用户 2026-09-27 深夜：「把右侧的标题和内容**换行显示**，
-        // 不要显示在一行，**这样内容会有更多空间**。**标题在上面，内容在下面，标题文字稍微大一点**」）。
-        //
-        // 原来标签和值挤在同一行，值那边被标签那一列吃掉 50pt —— 左列只有 262pt 的时候
-        // 这是很实在的一笔；换行之后值拿到**整列宽度**，同一个字号的文字每行多装三四个字。
-        let reservedHeight = Self.understandingLabelHeight
-            + CGFloat(Self.reservedLineCounts[label] ?? 3) * Self.understandingLineHeight
-        return VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: Self.understandingLabelFontSize, weight: .semibold))
-                .foregroundStyle(theme.textColor.opacity(0.55))
-            Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
-                // 「细节」那张关系图要**等宽**才对齐（用户要的竖形图/脑图，靠的就是字符对齐）。
-                .font(.system(size: 12,
-                              design: label == "细节" ? .monospaced : .default))
-                .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id(value)
-                .transition(.opacity.combined(with: .offset(y: 6)))
+    /// **左侧那几条问题**（原「矛盾」）：**不画标签**，每行以 `?：` 开头
+    ///（用户 2026-09-28：「也不需要写"矛盾"，只需要在**每一行的开头写一个问号，就一个问号**，
+    /// 然后冒号右边是那些内容，让用户知道这是个问题」）。
+    private var questionLines: some View {
+        let value = session.understandingLines.first { $0.label == DirectionBoardPrompt.questionLabel }?.value ?? ""
+        let lines = Self.questionTexts(from: value)
+        return VStack(alignment: .leading, spacing: 3) {
+            if lines.isEmpty {
+                Text(Self.emptyValuePlaceholder)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textColor.opacity(0.35))
+            } else {
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text("?：")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(DS.Colors.accent)
+                        Text(line)
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .id(line)
+                    .transition(.opacity.combined(with: .offset(y: 5)))
+                    .animation(.easeOut(duration: 0.28).delay(Double(index) * 0.05), value: line)
+                }
+            }
         }
-        // ⚠️ **不再给每一行定高 + 裁剪**（2026-09-27 深夜修，用户：「他为什么只是显示一部分呢？
-        // **他留这么大的空间**，不就是让你把这个文字能够完全地显示到这个空间里面吗？
-        // 好像你把这个组件限制的高度，**这个文字被掩盖了，但是下边还有很大的空白空间**呢」）。
-        //
-        // 原来每行写死 `reservedLineCounts × 行高` 再 `.clipped()` —— 那是**左列还是自由高度**
-        // 的年代留下的（为了让卡片高度不随内容变）。现在**卡片高度由整块 `contentBlockHeight`
-        // 钉死**、左右两列各自固定，行里多出来的字**没有理由再裁**：左列整体有边界（见下面
-        // 左列的 `.clipped()`），单行就让它按内容长。
-        //
-        // 于是"卡片高度恒定"这条不变量仍然成立（它现在挂在**块**上，不挂在行上），
-        // 而"文字被裁掉、下面却空着"这类现象从结构上消失了。
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        // 换了内容就淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」）——
-        // 逐行错开一点点，四行看起来是"写进去"的，而不是整块跳出来。
-        .animation(.easeOut(duration: 0.28).delay(Double(revealIndex) * 0.05), value: value)
+        // 预留几行就是几行 —— 内容少了下面空着，卡片高度不动。
+        .frame(height: Self.questionRowHeight, alignment: .topLeading)
+        .clipped()
     }
+
+    /// 把模型给的那一段拆成"一条一个问题"的行。
+    ///
+    /// 去掉行首的序号（`一、` / `1.` 这类）—— 左半现在用 `?：` 当行首，再带个序号就重复了。
+    /// 提示词里也已经写明不要编号、不要「关于…的疑问：」那种包装（`DirectionBoardPrompt`），
+    /// 这里再兜一次：**模型写回老格式时也不会在屏幕上露出两层前缀**。
+    static func questionTexts(from rawValue: String) -> [String] {
+        rawValue
+            .split(separator: "\n")
+            .map { DirectionBoardPrompt.questionLineText(String($0)) }
+            .filter { !$0.isEmpty }
+    }
+
 
     /// 那一行没有内容时画的东西（**占位符**：行不能消失，否则卡片会跳）。
     private static let emptyValuePlaceholder = "—"
-    /// 标题那一行的高度（标题现在自己占一行，见 `understandingRow`）。
-    static let understandingLabelHeight: CGFloat = 18
-    /// 标题的字号 —— 用户 2026-09-27：「**标题文字稍微大一点**」（原来是 11）。
-    static let understandingLabelFontSize: CGFloat = 12.5
 
 
     // MARK: - 输入框区（**高度固定**）
@@ -625,11 +566,16 @@ private struct ReferenceTagFlowLayout: Layout {
     // 回车那套里"光标在输入框内"这一支也随之失效 —— `panel.firstResponder is NSTextView`
     // 永远是 false，于是 `Cmd+Enter` 恒等于"粘贴"、`Enter` 恒等于"执行"，正是他要的。
 
-    /// **取消看板那一行**：暗红色、三列、有高度（用户：「这一行要有一定的高度，颜色是暗红色」）。
+    /// **7 字横杠最下面那一行按钮**：折叠 ｜ 执行 ｜ 取消（2026-09-28 只留这三个）。
     ///
-    /// 三档的语义（用户）：取消本次 = 这一次大循环；取消十分钟 = 十分钟内（本循环或新循环）都不显示；
-    /// 取消今日 = 到**明天凌晨 0 点**为止（不是"24 小时之后"）。
-    private var cancelRow: some View {
+    /// 剩下的（复制 / 退出 / 取消十分钟）**在代码里注释着**，实现一行没删 —— 去掉注释就能回来。
+    /// 「取消」的语义（用户）：这一次大循环不再显示看板（**录音照旧**）。
+    /// ⚠️⚠️ **2026-09-28：整行注释掉了，`barColumn` 里不再画它**（用户：「什么折叠呀、执行啊、
+    /// 这些取消啊，**全都删掉，全都注释掉**」）。看板现在是**纯展示**的：
+    /// 执行走 ⌥⏎、退出走 ESC、取消说「取消任务看板」—— 三条路都还在，与这一行无关。
+    /// **想放回来**：在 `barColumn` 的最后加一句 `actionRow`（它需要的 `collapseToggle` /
+    /// `actionButton` / `cancelButton` 与那几个宽度常量**都原样留着**）。
+    private var actionRow: some View {
         // **这一行是"一个按钮"**（用户 2026-09-27 深夜：「最下边这一行**所有的按钮样式变成统一的
         // 样式**，**用颜色来区分**，可以理解为**它们是一个按钮**，颜色不一样，
         // **用分割线和颜色来区分**」）。
@@ -642,32 +588,41 @@ private struct ReferenceTagFlowLayout: Layout {
             collapseToggle
 
             cancelRowDivider
-            // **复制 / 执行 / 退出**：把结果拿走（不是"丢掉这一轮"），所以是绿色系。
-            actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
-                         help: "把右下角那张卡片里 AI 回复的内容复制下来",
-                         isEnabled: session.hasCopyableReply) {
-                session.copyReplyAction?()
-            }
-            cancelRowDivider
             actionButton(title: "执行", icon: "play.fill", width: Self.executeButtonWidth,
                          help: "把当前任务发给主 Agent 去执行（与按 Command + 回车同效）") {
                 session.sendTurnAction?()
             }
-            cancelRowDivider
-            actionButton(title: "退出", icon: "xmark", width: Self.exitButtonWidth,
-                         help: "不执行，直接取消这一轮（与按 ESC 同效）") {
-                session.exitTurnAction?()
-            }
 
             cancelRowDivider
-            // 两档取消：暗红只给这两格（它们是"把这一轮丢掉"）。
             cancelButton(title: "取消", help: "这一次循环不再显示看板（录音照旧）") {
                 session.cancelForThisCycle()
             }
-            cancelRowDivider
-            cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
-                session.cancelForTenMinutes()
-            }
+
+            // ⚠️⚠️ **下面三个按钮暂时注释掉（2026-09-28，用户：「只保留折叠按钮、执行按钮、取消按钮，
+            // 只保留这三个，其他的以后可以随时取消注释让它功能复现」）**。
+            // 它们各自的实现（`session.copyReplyAction` / `exitTurnAction` / `cancelForTenMinutes`）
+            // 一个字都没动，去掉注释就能回来 —— 相关的 `actionButton` / `cancelButton` /
+            // 宽度常量也都留着。
+            //
+            //            cancelRowDivider
+            //            // **复制**：把右下角那张卡片里 AI 回复的内容复制下来。
+            //            actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
+            //                         help: "把右下角那张卡片里 AI 回复的内容复制下来",
+            //                         isEnabled: session.hasCopyableReply) {
+            //                session.copyReplyAction?()
+            //            }
+            //
+            //            cancelRowDivider
+            //            // **退出**：不执行，直接取消这一轮（与按 ESC 同效）。
+            //            actionButton(title: "退出", icon: "xmark", width: Self.exitButtonWidth,
+            //                         help: "不执行，直接取消这一轮（与按 ESC 同效）") {
+            //                session.exitTurnAction?()
+            //            }
+            //
+            //            cancelRowDivider
+            //            cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
+            //                session.cancelForTenMinutes()
+            //            }
         }
         .frame(height: Self.cancelRowHeight)
         // 一整条的底 —— 各格自己的颜色刷在上面，所以这里只是"缝"和圆角的底色。
@@ -755,5 +710,56 @@ private struct ReferenceTagFlowLayout: Layout {
         Rectangle()
             .fill(theme.textColor.opacity(0.10))
             .frame(height: 1)
+    }
+}
+
+/// **7 字形那条轮廓**：左上一条横杠 + 右侧一整条竖条（长出来的是那条竖条）。
+///
+/// 用户 2026-09-28 给的形状 —— 右下角那张 AI 回复卡就嵌进 **凹口** 里（横杠在上、竖条在右）。
+/// 四个外角圆角；**凹口下面那个角（脑图的左下角）也有圆角**（用户：「那个脑图它的左下角
+/// 应该有圆角」）；凹口顶上那个内角是直角。
+///
+/// ⚠️ **左上角那一段圆弧不能漏**（第一版漏了）：`closeSubpath()` 会从底左角直接连回起点，
+/// 左边缘于是成了**斜线** —— 屏幕上看就是"整个左边是畸形的梯形"
+///（用户 2026-09-28 截图圈出来的正是它）。
+struct DirectionBoardSevenShape: Shape {
+    /// 横杠（左半内容）的宽度 —— 竖条从这条线往右开始。
+    var barWidth: CGFloat
+    /// 横杠的高度 —— 凹口的顶边就是它。
+    var barHeight: CGFloat
+    var cornerRadius: CGFloat = AnswerCardView.cardCornerRadius
+
+    func path(in rect: CGRect) -> Path {
+        let radius = max(0, min(cornerRadius, min(rect.width, rect.height) / 2, barHeight / 2))
+        let barBottom = rect.minY + barHeight
+        let innerX = min(rect.minX + barWidth, rect.maxX)
+        var path = Path()
+        // 从左边缘（底左角圆角之上）起，顺时针一圈。坐标系 y 向下，所以角度 0° = 向右、90° = 向下。
+        path.move(to: CGPoint(x: rect.minX, y: barBottom - radius))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+        path.addArc(center: CGPoint(x: rect.minX + radius, y: rect.minY + radius),
+                    radius: radius,
+                    startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+        path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.minY + radius),
+                    radius: radius,
+                    startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
+                    radius: radius,
+                    startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+        // 竖条的下沿往左，走到**脑图左下角那个圆角** —— 再沿竖条的左边缘往上。
+        path.addLine(to: CGPoint(x: innerX + radius, y: rect.maxY))
+        path.addArc(center: CGPoint(x: innerX + radius, y: rect.maxY - radius),
+                    radius: radius,
+                    startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        path.addLine(to: CGPoint(x: innerX, y: barBottom))
+        // 凹口的顶边（横杠的下沿）往左 → 底左角圆角 → 回到起点。
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: barBottom))
+        path.addArc(center: CGPoint(x: rect.minX + radius, y: barBottom - radius),
+                    radius: radius,
+                    startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        path.closeSubpath()
+        return path
     }
 }
