@@ -1874,7 +1874,15 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         // 所以只在「此刻确实没有播报」时走快路；一旦有播报在放（「新提问立刻打断播报」关掉的
         // 用户），就照旧等 VPIO 起来再采，那条已写死的 AEC 契约一个字不改。
         let isPlayingBack = isBotSpeakingProvider?() ?? false
-        if !isPlayingBack, await installOwnEngineTapIfPossible(handler: tapHandler) {
+        // ⚠️ **只有共享引擎没开着的时候才走快采。**
+        //
+        // 快采是"另起一条引擎去抢同一个输入设备"。共享引擎**已经开着**的时候（常见：
+        // 上一轮回答之后它还热着，`audioEngineIdleReleaseMinutes` 之内），再起第二条
+        // 会互相掐 —— 而这个仓库里被掐死的那个恰恰是**开着回声消除的那条**，
+        // 于是「播报中说话能打断」和「播完 30 秒内还能追问」会**一起死**（用户 2026-09-27
+        // 报的「你把打断的逻辑删掉了」）。共享引擎开着时它本来就只要 ~139ms，压根不需要快采。
+        let sharedEngineIsAlreadyRunning = sharedVoicePlaybackEngineProvider?()?.isEngineCurrentlyRunning ?? false
+        if !isPlayingBack, !sharedEngineIsAlreadyRunning, await installOwnEngineTapIfPossible(handler: tapHandler) {
             // **这一场录音就交给它了 —— 现在不去动共享引擎。**
             //
             // 第一版是在这里**立刻**把共享引擎的 VPIO 拉起来、起来后交班。实测那一次的缝是

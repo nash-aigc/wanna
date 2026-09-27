@@ -438,9 +438,20 @@ final class CompanionManager: ObservableObject {
     /// bubble so it can be read before it becomes a question. A second tap of the
     /// shortcut sends it, and simply speaking again replaces it.
     /// **这一轮（这一次提交）的分组 id** —— 与派出去的临时 agent 身上那个 `groupID`
-    /// 是同一个值。ESC 打断靠它只收这一轮派出去的活（见
-    /// `AgentActivityBoard.cancelRunningTasks(inGroup:reason:)`）。
+    /// 是同一个值。侧栏按它把同一轮派出去的活折成一个文件夹。
     private var currentTurnGroupID: String?
+
+    /// **这一个「周期」的 id** —— ESC 的打断范围用的是它，不是 `groupID`。
+    ///
+    /// 用户 2026-09-27 重新界定了范围：「终止的是**从第一次按快捷键到最后一轮 AI 回复结束**
+    /// 这中间出现的**所有 agent**；对其他轮、对全新的一轮没有任何影响。」一个周期里可能有
+    /// **好几轮**（用户在播报中打断、或播完 30 秒内继续说，都在同一个连续监听窗口里续下去），
+    /// 所以粒度必须比 `groupID` 大。为什么不用 `sessionID`/`startedAt`，见
+    /// `EphemeralAgent.cycleID` 的注释。
+    ///
+    /// 生命周期：**一次全新的按下**（`voiceState == .idle && !isContinuousListening`，
+    /// 也就是不是在窗口里续的那种）时生成；这一串结束（`endContinuousListeningWindow`）时清掉。
+    private var currentVoiceCycleID: String?
 
     /// **这一轮被 ESC 取消了**：录音照存、什么都不发。
     ///
@@ -1768,6 +1779,10 @@ final class CompanionManager: ObservableObject {
     /// ESC 落在「正在听」那一刻：**中断录音、录音照存、什么都不发**。
     private func cancelTurnByEscapeWhileListening() {
         turnCancelledByEscape = true
+        // **界面立刻收掉，不许转成 Thinking 挂在那儿**（用户 2026-09-27：「界面应该瞬间消失，
+        // 但现在还有一个 thinking 的东西没有取消」）：`forceActivityPhaseIdle()` 是这个仓库里
+        // 「显式停止立刻生效」的唯一收口（相位里那个 2.5 秒的 hold 就是它绕过的）。
+        notchWindowController?.forceActivityPhaseIdle()
         if buddyDictationManager.isContinuousListening {
             endContinuousListeningWindow(reason: "user pressed escape")
             return
@@ -1780,13 +1795,15 @@ final class CompanionManager: ObservableObject {
 
     /// ESC 落在「正在跑」那一刻：停播报、收卡片、**只收这一轮派出去的 agent**。
     private func interruptTurnByEscapeWhileRunning() {
-        let cancelledGroup = currentTurnGroupID
-        print("⏹️ ESC 打断这一轮（group=\(cancelledGroup ?? "无")）")
+        let cancelledCycle = currentVoiceCycleID
+        print("⏹️ ESC 打断这一个周期（cycle=\(cancelledCycle ?? "无")）")
         // 播报 + 鼠标旁那张卡片 + 主循环（含 sub agent）—— 都在这一个收口里。
         interruptActiveResponse()
+        // **范围是"这一个周期"**（第一次按下 → 最后一轮回复结束，可能横跨好几轮），
+        // 不是"这一轮"：用户 2026-09-27 特意纠正过这一点。
         let cancelledTasks = AgentActivityBoard.shared.cancelRunningTasks(
-            inGroup: cancelledGroup,
-            reason: "用户按 ESC 打断了这一次提交")
+            inCycle: cancelledCycle,
+            reason: "用户按 ESC 打断了这一个周期")
         // 这一轮派出去的活如果挂在某张 **Claude Code 卡片**上，那张卡片自己的子进程也要停。
         // ⚠️ 边界（如实记在这里）：一张 Claude Code 卡片只有**一个**子进程，所以这张卡上
         // 更早那一轮的活会被一起停掉 —— 这是那个数据结构本身的边界，不是这里能绕开的；
@@ -1942,6 +1959,11 @@ final class CompanionManager: ObservableObject {
 
             // 新的一轮，ESC 标志清零（上一轮如果没走到收尾，别把它带到这一轮上来）。
             turnCancelledByEscape = false
+            // **一次全新的按下 = 开一个新周期**（用户 2026-09-27：「从第一次按快捷键到最后一轮
+            // AI 回复结束」）。在连续监听窗口里续着说的那种按下**不算**新周期 —— 它属于当前这个。
+            if !buddyDictationManager.isContinuousListening {
+                currentVoiceCycleID = UUID().uuidString
+            }
             // Recorded so the release can tell a tap (send what's waiting) from a
             // hold (say something new). See `handleFinalTranscript`.
             shortcutPressBeganAt = Date()
@@ -2840,6 +2862,8 @@ final class CompanionManager: ObservableObject {
     private func endContinuousListeningWindow(reason: String) {
         continuousListeningWindowTask?.cancel()
         continuousListeningWindowTask = nil
+        // 窗口关掉 = 这一串（周期）结束：ESC 的打断范围到此为止，下一次按下开新的。
+        currentVoiceCycleID = nil
         // 窗口关了，Notion 那张检测表也跟着停 —— 它只在这条窗口活着的时候有意义。
         NotionNoteSession.shared.endListening()
         print("🎙️ BuddyDictationManager: continuous listening window closing (\(reason)); playback \(bailianTTSClient.isPlaying ? "still active" : "idle")")
@@ -3252,10 +3276,18 @@ final class CompanionManager: ObservableObject {
                 /// 侧栏里因此折叠成一个「文件夹」（用户 2026-09-26 的要求）。
                 /// **一轮生成一次**，不是每派一次生成一次。
                 let turnGroupID = UUID().uuidString
-                // 记到实例上：ESC 打断要用它界定「这一次提交派出去的所有 agent」。
-                // 为什么是它而不是 sessionID / startedAt / cardID，见
-                // `AgentActivityBoard.cancelRunningTasks(inGroup:reason:)` 的注释。
+                // 记到实例上：侧栏按它分组（同一轮派出去的活折成一个文件夹）。
                 currentTurnGroupID = turnGroupID
+                // **这一个周期的 id**：ESC 的打断范围用它（比 groupID 大一级 —— 一个周期
+                // 可能横跨好几轮）。它由按下那一刻生成，所以这里只是取；
+                // 万一没有（理论上不会），就地补一个。
+                let turnCycleID: String
+                if let existingCycleID = currentVoiceCycleID {
+                    turnCycleID = existingCycleID
+                } else {
+                    turnCycleID = UUID().uuidString
+                    currentVoiceCycleID = turnCycleID
+                }
 
                 /// **这一轮的主会话标题**（归档页按主会话折叠，标题一起记下来：会话
                 /// 改名/被删之后，归档里仍然认得出是哪一次 —— 用户：「防止用户找不到
@@ -3484,6 +3516,7 @@ final class CompanionManager: ObservableObject {
                         ephemeralAgentID = AgentActivityBoard.shared.beginTask(
                             request: transcript,
                             groupID: turnGroupID,
+                            cycleID: turnCycleID,
                             sessionID: turnSessionID.uuidString,
                             sessionTitle: turnSessionTitle)
                         AgentActivityBoard.shared.appendStep(
@@ -3693,6 +3726,7 @@ final class CompanionManager: ObservableObject {
                             ephemeralAgentID = AgentActivityBoard.shared.beginTask(
                             request: transcript,
                             groupID: turnGroupID,
+                            cycleID: turnCycleID,
                             sessionID: turnSessionID.uuidString,
                             sessionTitle: turnSessionTitle)
                         }

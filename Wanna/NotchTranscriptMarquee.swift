@@ -96,6 +96,17 @@ struct SmoothRevealedTranscriptText: View {
                 windowStart = max(0, text.count - Self.maximumWindowCharacters)
                 slideOffset = availableWidth - Self.width(of: String(text.dropFirst(windowStart)))
             }
+            // **这一行的宽度变了也要重新钉右边缘**（2026-09-27）。
+            //
+            // 它以前只跟着 `text` 变：Listening 那条字幕的宽度现在是**动画**的
+            //（展开时从刘海那么宽长到整条），而 `onAppear` 是在**宽度还很小**的时候算的
+            // `slideOffset` —— 于是文字先画在**左边**，等第一句转写到达再"跳"到右边、
+            // 然后才向左走（用户 2026-09-27：「文字从左边出现，先跳到最右边，再从右到左移动」）。
+            // 录音带那条没有这个现象，是因为它的宽度从第一帧就是最终的宽度。
+            // 宽度变了就**不带动画**地重新钉一次右边缘 —— 那正是"文字右边缘永远钉在右端"的定义。
+            .onChange(of: availableWidth) { _, newWidth in
+                slideOffset = newWidth - Self.width(of: String(text.dropFirst(windowStart)))
+            }
             .onChange(of: text) { _, newText in
                 let total = newText.count
                 // 窗口太长时把左端推近。**裁掉的是屏幕外面那部分**，而右边缘仍然钉住，

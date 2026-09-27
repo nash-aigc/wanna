@@ -379,6 +379,13 @@ final class VoicePlaybackEngine {
     /// The handler and buffer size are remembered so the tap can be moved when
     /// playback starts or ends — see `handCaptureToCaptureOnlyEngine` and
     /// `takeCaptureBackForPlayback`.
+    /// **引擎此刻是不是开着**（采集或播报都算）。
+    ///
+    /// 2026-09-27 新增，给 `BuddyDictationManager` 的「快采」用：**只有在共享引擎没开的时候**
+    /// 才允许另起一条自己的引擎去抢这个输入设备 —— 同一个输入设备上两条引擎互相掐是这个仓库
+    /// 早就踩过的坑（见 `installInputTap` 上面那段注释与 `开发经验/10-踩过的坑.md` D28）。
+    var isEngineCurrentlyRunning: Bool { isEngineStarted }
+
     func installInputTap(bufferSize: AVAudioFrameCount, handler: @escaping AVAudioNodeTapBlock) async throws {
         installedInputTapHandler = handler
         installedInputTapBufferSize = bufferSize

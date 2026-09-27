@@ -167,6 +167,22 @@ nonisolated struct EphemeralAgent: Identifiable, Sendable, Equatable, Codable {
     /// 全部放在这一组上」。一组 = 一轮提问里派出去的所有活儿（id 由那一轮生成）。
     var groupID: String?
 
+    /// **这条任务属于哪个「周期」。**（2026-09-27 用户重新界定 ESC 的打断范围）
+    ///
+    /// 用户的原话：「终止的是**从第一次按快捷键到最后一轮 AI 回复结束**这中间出现的
+    /// **所有 agent**；对其他轮、对全新的一轮没有任何影响。」——注意这里说的是**一个周期**，
+    /// 而一个周期里**可能有好几轮**（用户在播报中打断、或播完 30 秒内继续说，都会在同一个
+    /// 连续监听窗口里续下去）。所以：
+    ///
+    /// · **`groupID` 不够用**：它是"一轮提问"的粒度（侧栏按它折叠成一个文件夹），
+    ///    而 ESC 要停的是整个周期里的**全部** agent（可能横跨好几轮）。
+    /// · **`sessionID` 也不行**：那是**会话**，跨很多个周期。
+    /// · `startedAt` 只是一条时间戳，没有边界。
+    ///
+    /// 所以新增这一个字段，由 `CompanionManager` 在**一次全新的按下**（不是在窗口里续的那种）
+    /// 时生成，窗口关掉（这一轮周期结束）时作废；派活时与 `groupID` 一起写进来。
+    var cycleID: String?
+
     /// **这条任务属于哪个主会话。** 归档页按它折叠（用户 2026-09-26：「归档页面应该是：
     /// 某个卡片（折叠形式），然后点击后显示（卡片=主会话，和不同的其他分组或任务的卡片）
     /// 的会话」），所以创建时就记下来，而不是事后去猜 ✗。
@@ -256,6 +272,7 @@ nonisolated struct EphemeralAgent: Identifiable, Sendable, Equatable, Codable {
          title: String,
          request: String,
          groupID: String? = nil,
+         cycleID: String? = nil,
          sessionID: String? = nil,
          sessionTitle: String? = nil,
          externalAgentKind: String? = nil,
@@ -266,6 +283,7 @@ nonisolated struct EphemeralAgent: Identifiable, Sendable, Equatable, Codable {
         self.title = title
         self.request = request
         self.groupID = groupID
+        self.cycleID = cycleID
         self.sessionID = sessionID
         self.sessionTitle = sessionTitle
         self.externalAgentKind = externalAgentKind
@@ -292,7 +310,8 @@ nonisolated struct EphemeralAgent: Identifiable, Sendable, Equatable, Codable {
     /// 读回来一律从 false 起。
     private enum CodingKeys: String, CodingKey {
         case id, title, request, startedAt, finishedAt, status, steps, toolCalls
-        case groupID, sessionID, sessionTitle, externalAgentKind
+        case groupID
+        case cycleID, sessionID, sessionTitle, externalAgentKind
         case cardKind, cardID, handoffReason, handedOffAt, failureReason, attempts
     }
 
@@ -307,6 +326,7 @@ nonisolated struct EphemeralAgent: Identifiable, Sendable, Equatable, Codable {
         steps = try container.decodeIfPresent([String].self, forKey: .steps) ?? []
         toolCalls = try container.decodeIfPresent([String].self, forKey: .toolCalls) ?? []
         groupID = try container.decodeIfPresent(String.self, forKey: .groupID)
+        cycleID = try container.decodeIfPresent(String.self, forKey: .cycleID)
         sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
         sessionTitle = try container.decodeIfPresent(String.self, forKey: .sessionTitle)
         externalAgentKind = try container.decodeIfPresent(String.self, forKey: .externalAgentKind)
@@ -410,6 +430,7 @@ final class AgentActivityBoard: ObservableObject {
     /// 那正是用户要的「任务自动从主循环卡片移动到 Claude Code 卡片」。
     func beginTask(request: String,
                    groupID: String? = nil,
+                   cycleID: String? = nil,
                    sessionID: String? = nil,
                    sessionTitle: String? = nil,
                    externalAgentKind: String? = nil,
@@ -419,6 +440,7 @@ final class AgentActivityBoard: ObservableObject {
         let agent = EphemeralAgent(title: Self.shortTitle(from: request),
                                    request: request,
                                    groupID: groupID,
+                                   cycleID: cycleID,
                                    sessionID: sessionID,
                                    sessionTitle: sessionTitle,
                                    externalAgentKind: externalAgentKind,
@@ -495,11 +517,15 @@ final class AgentActivityBoard: ObservableObject {
     /// 收尾语义与"失败"一致（`failed` + 一条 reason），因为对用户来说这就是「这一轮
     /// 没做成」，而 reason 让复盘页看得出是**被他按 ESC 打断的**，不是自己崩的。
     /// 失败的按钮本来就「不退场」（见 `scheduleRetirement`），所以这里也不用排退场。
+    /// **ESC 的打断范围 = 一个「周期」里的全部 agent**（2026-09-27 用户重新界定）。
+    ///
+    /// 见 `EphemeralAgent.cycleID` 上那段：一个周期 = 第一次按下 → 这一串 AI 回复结束，
+    /// 中间可能有好几轮（靠 30 秒连续监听窗口续下去的那些）。
     @discardableResult
-    func cancelRunningTasks(inGroup groupID: String?, reason: String) -> [EphemeralAgent] {
-        guard let groupID, !groupID.isEmpty else { return [] }
+    func cancelRunningTasks(inCycle cycleID: String?, reason: String) -> [EphemeralAgent] {
+        guard let cycleID, !cycleID.isEmpty else { return [] }
         var cancelled: [EphemeralAgent] = []
-        for index in agents.indices where agents[index].groupID == groupID
+        for index in agents.indices where agents[index].cycleID == cycleID
             && agents[index].status == .running {
             agents[index].status = .failed
             agents[index].failureReason = reason
