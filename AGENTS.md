@@ -595,6 +595,20 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 真机实测过用户点的那道题：预览里打开《初中数学浙江中考数学真题.pdf》，注入「参考屏幕内容，分析一下
 这道题可能选哪一个」→ 绿框里给出「第 1 题:-3 的相反数是 3，选 A（选项 A 为 3）。」
 
+**第七版再补（2026-09-27 深夜，第二次实测）。** ① 右下角**"显示了两个回复"**：提交那一刻就把
+预览收了、而真答案要 1~2 秒才到 → 卡片先消失再被重画。改成**交接**：提交时不动预览，真答案的**第一个字**
+到达时才 `clearAnswerPreview()`（同一张卡片换内容，中间不空帧），打断或下一轮真开始时才收。
+② **"连续问到第六七轮就卡死"（语音识别那块不再出字、三块界面全无变化）—— 根因未定**：
+用户说"你可以看一下刚才的记录"，但**那条路一个字都没落盘**（双击启动的 App 里 `print` 进不了任何地方，
+`log show --predicate 'process == "Wanna"'` 返回 0 行；唯一的 `录音诊断.log` 是长录音那条路的）。
+所以这一轮**先装仪器**：新文件 `Wanna/MainFlowDiagnostics.swift` 写
+`~/Library/Application Support/Wanna/主Agent诊断.log`，记三样 —— **音频心跳**（连续监听期间每 2 秒一行
+`N 块/2s 峰值 x`，一句话三分：0 块 = tap/引擎没了 / 有块全零 = 设备哑了 / 有块有峰值 = 故障在下游）、
+**识别会话生命周期**（这一句开始、定稿到达带字数、tap 装撤）、**主线程看门狗**（往返 > 2 秒记一行
+**带阶段标记**，用来分辨"主线程被堵住"与"主线程闲着、各链各自停摆"）。已排除的：
+`beginNextUtterance()` **有**重置 `connectionRecoveryAttempts`，不是重连预算用光。
+顺带把截图从"每轮一张"改成"**一句一张**"（说「参考屏幕」时作废重截）——**这是省开销，不是那个卡死的修复**。
+
 **第七版补（2026-09-27 深夜，他真机实测报的两个"没反应"）。**
 ① 「**他应该直接看到屏幕啊**」—— 原来那一轮的请求**只在他说出「参考屏幕/根据图片」这类组合词时才带图**
 （说到才截、存起来给后面几轮复用），而他真说的是「屏幕上的第 2 题该选哪个」——没有那四个字，
@@ -951,6 +965,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `DirectionBoardPrompt.swift` | ~351 | 看板那次请求的**提示词与解析**。系统提示词**只给方向清单**（约三百 token，不是主 Agent 那五千字）。**卡片固定四行**（`understandingLabels` = 目标问题 / 类型 / 参考 / 细节，顺序是用户定的）：`parseUnderstandingLines` 的契约是「**永远返回这四行**，缺的行值是空串」（视图画占位符，卡片高度因此恒定 —— 用户：「这几行固定在这，而不是突然间有、突然间没有」）；`understandingLabelAliases` 每行带一串别名（模型常写回 `软件`/`文件`/`目标` 这些老标签）；**去重叠**是必须的（`目标问题:` 里嵌着 `目标:` 与 `问题:`，不处理那一行会被切成三段空值）；`任务结果`/`答案`/`选择` 是**边界标签**（只截断、不成行，见 `boundaryLabels`）。另有 `parseAnswer` / `parseSection`（「答案」那一节，取最后一次出现，最多续两行）、`parseLabelLine`（**不能只认行首**：实测模型写在同一行上）、`leftoverParagraphText`（按"保留没被覆盖的字"拼 —— 删区间会在别名互相嵌套时崩）。⚠️ **`cleanRawResponse`（不截断）给解析、`cleanParagraph`（200 字上限）只给显示**。 |
 | `DirectionBoardSession.swift` | ~668 | 看板的状态机（`@MainActor ObservableObject` 单例）：`beginListening(cycleID:)`（新的一大轮 → 清临时文件）/ `noteLiveTranscript` / `endListening` / `endBigRound` / `consumeTurnDecision`；节奏闸门三条（每 3 秒 + 文本变了 + **新增 ≥10 字、标点不算**，阈值设置页可调）；**一个请求里并行发两路** —— `JevDecisionClient` 判方向（给概率）+ 小提示词写那段理解（说「参考屏幕」时带上当场截的那张图）；代次计数丢弃过期回复；`contentRevision` 每次回复落地 +1（视图据此播那一下淡入）；点过/说过的方向**钉住编号与位置**（口述编号的映射表 `spokenNumberTargets` 见 `DirectionBoardMatching.resolvedSpokenNumber` 的注释）；总闸门三档（取消本次 / 十分钟 / **今日到明天凌晨 0 点**，全程**不轮询** —— 一个布尔 + 一次日期比较）。**纯观察者**：不碰 `currentResponseTask` / `voiceState` / 历史 / TTS / 截图。含 `WANNA_DIRECTION_BOARD_SELFCHECK` 自检（`1` 假转写不发请求 / `live` 真发一次 / `stream` 只喂字幕量卡顿）。 |
 | `DirectionBoardView.swift` | ~386 | 卡片的**四段，每一段都固定画着**：编号方向格（多列，最多 5 列）/ **任务结果**（绿框「结果」小标，没算出来显示 `—`）/ **AI 的理解**（目标问题 / 类型 / 参考 / 细节四行，标签列定宽 50，空值显示 `—`）/ 三行输入框 / 暗红三列取消。值的文字带 `.id(value)` + `.transition(.opacity + offset)`，外层 `.animation(.easeOut(0.28).delay(行号 × 0.05))` —— 逐行错开淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」），**骨架不动**。外壳直接复用结果卡片那几个常量与 `cardBackground`。宽度 = 340 × 设置倍数（默认 2 → 680），**与内容无关、恒定**。 |
+| `MainFlowDiagnostics.swift` | ~175 | **主 Agent 这条语音链的诊断日志 + 主线程看门狗**（2026-09-27 新建）。用户报「连续问到第六七轮就卡死」而那条路**一个字都没落盘**，所以先装仪器：日志落 `~/Library/Application Support/Wanna/主Agent诊断.log`，记**音频心跳**（连续监听期间每 2 秒一行 `N 块/2s 峰值 x.xxx` —— 0 块 = tap/引擎没了、有块但全零 = 设备哑了、有块有峰值 = 故障在下游）、**识别会话生命周期**、**主线程看门狗**（后台每 1 秒往主队列投一次，往返 > 2 秒记一行并带上当时的阶段标记 —— 用来分辨"主线程被堵住"与"主线程闲着各链各自停摆"）。只写文件、纯入队不阻塞调用方、2MB 轮转、不改变任何行为。与长录音那条路的 `录音诊断.log` 是同一条规矩：**发现故障的位置必须从用户手里挪到机器手里**。 |
 | `DirectionBoardPanelController.swift` | ~255 | 看板住的那块**可点击**面板。⚠️ **尺寸归 SwiftUI、位置归我们**：`NSHostingView` 会按内容改窗口尺寸（`updateAnimatedWindowSize`，保持顶边），**刻意不设 `sizingOptions = []`**（这块面板上它挡不住 —— 根因与实测见本节上面第五版那段），改成订阅 `NSWindow.didResizeNotification` → `repositionForCurrentSize()` 每次用「锚点 + 夹进屏幕」重算原点（只改原点，不成环）。显示时只 `orderFrontRegardless()`、`becomesKeyOnlyIfNeeded`（**点了输入框才是 key**）；`holdsTheAutomaticSend()` 是"他正在跟看板打交道"的判据（鼠标在板上 / 面板是 key / 2 秒内交互过），静音自动发送那一下据此按住不发。 |
 | `DirectionBoardSettingsView.swift` | ~225 | 设置 → 操作 的「任务方向看板」一节：总开关、宽度倍数（1 / 1.5 / 2×）、最小新增字数（5…20）、概率阈值（0.3…0.9）、取消状态 + 恢复显示、**两份文件分开显示**（固定那份给「在访达中显示 / 恢复默认」，临时那份给「立刻清空」）、方向清单（每条可删 + 手动添加）、JEV key 一行（保存进 `JevKey.txt`，不在 AppSettings 里）。 |
 | `NotchListeningTranscript.swift` | ~390 | **主 Agent 说话时刘海下面那一行字幕，和点开之后的转写编辑窗**（2026-09-27，接线图第 2、3 条）。三块：`NotchListeningTranscriptModel`（这一轮的文本 + 编辑草稿，单例）、`NotchListeningTranscriptView`（收起=那一行 `NotchTranscriptLine`，展开=`NotchExpandedTranscriptPanel`）、`NotchListeningTranscriptPanelController`（它那块透明、点击穿透、永不改尺寸的面板，层级 `.popUpMenu` —— 在刘海面板之上，所以展开面板时那一行照样看得见）。**只由相位驱动**：`== .listening` 就出现、其余收起（用户：「如果用户说完了，然后进入 thinking，那么这个录音的内容就消失掉了」），**不碰状态机**。`CompanionManager` 在两条实时转写回调里喂它（按住说话 + 连续追问）—— 它是说话时那些字**唯一的**落点（鼠标旁那颗气泡不再显示实时转写，见 Settings 那一节）；刘海左侧那颗「Listening」的点击归 `handleGlobalClick`，读的是录音两翼那一份矩形（`recordingWingFrames`）。**编辑窗里改过的字会顶替这一句发出去的话**（`consumeEditedTranscript()`，取走即清、一轮一次）—— 这是它与录音那条唯一的语义差别，也是「可以让用户编辑录音里面的内容」唯一有意义的落点。 |

@@ -245,12 +245,30 @@ extension DirectionBoardMatching {
         return normalized.contains("取消任务看板") || normalized.contains("取消任务方向")
     }
 
-    // ⚠️ 这里原来有一个 `screenReferenceRequested`（用户说了「参考屏幕/根据图片」才截屏）。
-    // **2026-09-27 删掉了**：用户实测发现「屏幕上的第 2 题该选哪个」这种问法里没有那四个字，
-    // 于是**根本没有截图、模型真的看不到屏幕**，右下角回一句"我还没看到题目内容"
-    //（他说：「他为什么会显示没有看到屏幕呢？**他应该直接看到屏幕啊**」）。
-    // 现在改成**每一轮请求都带一张当下的屏幕**（`DirectionBoardSession.captureScreenForBoard`），
-    // 那个口令式的开关就没有存在的必要了。
+    /// **用户说了"参考/根据 + 屏幕/图片/桌面"吗** —— 是就把这一句那张截图作废、重新截一张。
+    ///
+    /// ⚠️ 它的含义在 2026-09-27 变过一次，别再弄混：
+    /// · 原来是「说到才截」—— 于是「屏幕上的第 2 题该选哪个」这种**没有那四个字**的问法
+    ///   一张图都没有，模型真的看不到屏幕（用户：「**他应该直接看到屏幕啊**」）；
+    /// · 现在截图是**每一句一张**（`DirectionBoardSession.turnScreenshot`），所以这个函数
+    ///   退化成「**现在重截**」—— 用户那句「每一次转写识别到就截一次屏」照旧成立。
+    ///
+    /// 组合词是**相邻**判定的（去掉标点后前后紧挨着），不是"句子里同时出现这两个词"——
+    /// 后者会把「我的屏幕上没有这个图片」也算成一次截屏。
+    nonisolated static func screenReferenceRequested(in transcriptText: String) -> Bool {
+        let normalized = normalize(transcriptText)
+        guard !normalized.isEmpty else { return false }
+        let references = ["参考", "根据", "请看", "看一下", "看下"]
+        let targets = ["屏幕", "图片", "桌面", "截图", "画面"]
+        for reference in references {
+            for target in targets {
+                if normalized.contains(reference + target) || normalized.contains(target + reference) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
 
     /// 中文数字 → 整数（只认 1…99；认不出来返回 nil）。
     nonisolated static func chineseNumeral(_ text: String) -> Int? {

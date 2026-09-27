@@ -568,6 +568,18 @@ final class CompanionManager: ObservableObject {
     /// which is what keeps the setting to one gate, in the pipeline that fills this.
     @Published private(set) var streamingAnswerText: String = ""
 
+    /// **把答案预览收掉**（右下角那张卡片回到"没有东西"的状态）。
+    ///
+    /// ⚠️ **不要在"提交"那一刻收**（2026-09-27 实测踩到）：提交之后真正的答案要 1~2 秒才到，
+    /// 那一刻收掉的话卡片会**先消失、再冒出来**，用户看到的是「显示了个回复，然后没过半秒钟
+    /// 它又显示了一个全新的回复」——他要的是"就显示一次"。
+    /// 现在只在**真答案的第一个字到达时**（见流式写入那一处）和**这一轮彻底结束/被打断时**收：
+    /// 卡片从头到尾只换一次内容，中间不消失。
+    func clearAnswerPreview() {
+        guard !answerPreviewText.isEmpty else { return }
+        answerPreviewText = ""
+    }
+
     /// **答案预览** —— 用户还在说话、任务还没发出去之前，右下角那张卡片上先显示的东西。
     ///
     /// 用户 2026-09-27：「鼠标右下角这部分显示的是对用户提示词回复的一个**结果**……右下角这卡片
@@ -834,6 +846,11 @@ final class CompanionManager: ObservableObject {
                 DirectionBoardSession.shared.logTurnDecisionForSelfCheck()
             }
         }
+
+        // **主 Agent 这条链的诊断日志 + 主线程看门狗**（2026-09-27 新建）。
+        // 用户报过「连续问到第六七轮就卡死、界面没有任何变化」，而那条路当时**一个字都没落盘**
+        //（双击启动的 App，`print` 进不了任何地方），所以只能猜。见 `MainFlowDiagnostics` 文件头。
+        MainFlowDiagnostics.startMainThreadWatchdog()
 
         refreshAllPermissions()
         print("🔑 Wanna start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
@@ -2162,6 +2179,7 @@ final class CompanionManager: ObservableObject {
                         // 方向看板：**本地关键词匹配在这里立刻发生**（不花请求），
                         // 模型的标签随后到、只填没命中的那几行。
                         DirectionBoardSession.shared.noteLiveTranscript(partialTranscript)
+                MainFlowDiagnostics.stage("按住说话：收到实时转写")
                         // **刘海下面那行字幕**（2026-09-27）—— 说话时你正在说的字**唯一的**
                         // 显示处就是它。
                         NotchListeningTranscriptModel.shared.setLiveText(partialTranscript)
@@ -3208,6 +3226,8 @@ final class CompanionManager: ObservableObject {
     /// 只有这一处取 —— 四条提交路径共用 `sendTranscriptToVisionChatWithScreenshot`，所以
     /// 不可能有哪条路漏掉或者取两次。没点过（也没输入过）时返回 `nil`。
     private static func consumeDirectionBoardIntentTags() -> String? {
+        // ⚠️ 这里**不**收右下角的答案预览（`consumeTurnDecision()` 里会收）—— 收了卡片会先消失
+        // 再被真答案重新画出来，看起来就是"两个回复"。交接放在真答案的第一个字那里。
         DirectionBoardPrompt.decoration(DirectionBoardSession.shared.consumeTurnDecision())
     }
 
@@ -3220,6 +3240,9 @@ final class CompanionManager: ObservableObject {
     private func sendTranscriptToVisionChatWithScreenshot(transcript: String,
                                                           sendsScreenshot: Bool = true,
                                                           userIntentTags: String? = nil) {
+        MainFlowDiagnostics.log("▶️ 提交一轮：转写 \(transcript.count) 字"
+                                + "，截图=\(sendsScreenshot ? "要" : "不要")")
+        MainFlowDiagnostics.stage("提交：抓截图")
         // **方向看板那几行在这里取一次**（用户点过的方向 + 输入框里的补充说明）。
         //
         // 放在这个函数的开头，是因为**四条提交路径全部经过它**（快捷键发送 / 2 秒静默 /
@@ -3707,7 +3730,11 @@ final class CompanionManager: ObservableObject {
                             // 那张卡片只留最后的结果（收尾时 settle 会写进去）。见本循环
                             // 上面 `hasStartedExecutingTaskWork` 的注释。
                             guard !hasStartedExecutingTaskWork else { return }
+                            // **交接**：真答案的第一个字到达时把预览收掉 —— 两段文字落在同一张
+                            // 卡片上、中间不空一帧，用户看到的是"答案被补全了"而不是"又冒出一个回复"。
+                            self?.clearAnswerPreview()
                             self?.streamingAnswerText = displayText
+                            MainFlowDiagnostics.stage("回答：正在流式上屏")
                         }
                     )
 
@@ -4435,6 +4462,8 @@ final class CompanionManager: ObservableObject {
     private func clearAnswerBubble() {
         answerBubbleClearTask?.cancel()
         answerBubbleClearTask = nil
+        // 那一轮被打断/停下了 → 它的答案预览也作废（否则它会一直挂在右下角）。
+        clearAnswerPreview()
         streamingAnswerText = ""
         isAnswerStreamLive = false
         // 底部那行的时间跟着气泡一起清：留着一个上一轮的时刻，下一轮回复的

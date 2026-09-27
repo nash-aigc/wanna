@@ -958,6 +958,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         lastRecordedAudioPowerSampleDate = .distantPast
 
         print("🎙️ BuddyDictationManager: continuous listening ended")
+        MainFlowDiagnostics.flushAudioHeartbeat()
+        MainFlowDiagnostics.log("🎙️ 连续监听：窗口结束（tap 已撤）")
     }
 
     /// Opens the first ASR session of the window and installs the tap.
@@ -1008,9 +1010,12 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                     self?.updateAudioPowerLevel(from: buffer)
                     // 只读观察者：主 Agent 那一轮录音从这里拿音频（接线图第 4 条）。
                     self?.capturedAudioBufferObserver?(buffer)
+                    // 诊断：音频到底还在不在（每 2 秒一行；见 `MainFlowDiagnostics`）
+                    MainFlowDiagnostics.noteAudioBuffer(peak: Self.rawPeakAmplitude(of: buffer))
                 }
                 isContinuousListeningOnSharedEngine = true
                 print("🎙️ BuddyDictationManager: listening tap installed on the shared TTS engine")
+        MainFlowDiagnostics.log("🎙️ 连续监听：tap 已装（共享引擎）")
                 return
             } catch {
                 // Falling back must not leave the shared engine half-configured.
@@ -1036,6 +1041,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             // 同上：own-engine 兜底这一条也要喂观察者，否则共享引擎不可用时
             // 主 Agent 那一轮就没有音频了。
             self?.capturedAudioBufferObserver?(buffer)
+            // 诊断：音频到底还在不在（每 2 秒一行；见 `MainFlowDiagnostics`）
+            MainFlowDiagnostics.noteAudioBuffer(peak: Self.rawPeakAmplitude(of: buffer))
         }
 
         audioEngine.prepare()
@@ -1145,6 +1152,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     /// real ones are handed to the caller as a new question. Either way the
     /// next utterance needs a fresh websocket, so the session is replaced.
     private func handleContinuousListeningFinalTranscript(_ transcriptText: String) {
+        MainFlowDiagnostics.log("🎙️ 定稿到达：\(transcriptText.count) 字「\(transcriptText.prefix(30))」")
         // A final is only expected while a request is outstanding
         // (isContinuousListeningAwaitingFinal). Without a request, this is a
         // LATE final from a session the grace fallback already cancelled and
@@ -1278,6 +1286,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         // maximum-utterance cap hang off this.
         guard !continuousListeningUtteranceActive else { return }
         continuousListeningUtteranceActive = true
+        // 诊断：这一句从哪一刻开始（配合 `MainFlowDiagnostics` 里那条音频心跳，
+        // 就能看出"用户开口了但音频没了"和"音频在但没有字"是两回事）。
+        MainFlowDiagnostics.log("🎙️ 这一句开始（触发=\(trigger)）")
         continuousListeningSpeechAccumulatorSeconds = 0
         continuousListeningUtteranceStartedAt = Date()
         continuousListeningSilenceStartedAt = nil
@@ -1878,6 +1889,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             self?.updateAudioPowerLevel(from: buffer)
             // 只读观察者：主 Agent 的「一轮一条录音」从这里拿音频（接线图第 4 条）。
             self?.capturedAudioBufferObserver?(buffer)
+            // 诊断：音频到底还在不在（每 2 秒一行；见 `MainFlowDiagnostics`）
+            MainFlowDiagnostics.noteAudioBuffer(peak: Self.rawPeakAmplitude(of: buffer))
         }
         // **先开一路"快采"，再把采集交给开了 VPIO 的共享引擎。**（2026-09-27）
         //
@@ -2147,6 +2160,23 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         }
 
         return orderedKeyterms
+    }
+
+    /// **这一块的原始峰值**（0…1，没做任何放大/平滑）—— 只给诊断用。
+    ///
+    /// 与 `updateAudioPowerLevel` 里那个"boosted"值刻意分开：那个乘了 10.2 又做了平滑，
+    /// 用来看"有没有声音"会被那两个处理带偏；诊断要的是**裸的样本峰值** ——
+    /// 它恒为 0 就说明设备交出来的就是零（这正是"录音全是零"那一类故障的判据）。
+    nonisolated static func rawPeakAmplitude(of audioBuffer: AVAudioPCMBuffer) -> Float {
+        guard let channelData = audioBuffer.floatChannelData else { return 0 }
+        let channelSamples = channelData[0]
+        let frameCount = Int(audioBuffer.frameLength)
+        guard frameCount > 0 else { return 0 }
+        var peak: Float = 0
+        for sampleIndex in 0..<frameCount {
+            peak = max(peak, abs(channelSamples[sampleIndex]))
+        }
+        return peak
     }
 
     private func updateAudioPowerLevel(from audioBuffer: AVAudioPCMBuffer) {

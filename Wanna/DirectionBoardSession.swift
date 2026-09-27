@@ -79,6 +79,14 @@ final class DirectionBoardSession: ObservableObject {
     private var lastRequestedTranscript = ""
     /// 最近一次 Jev 判断给出的概率（方向 id → P(是)）。
     private var jevProbabilities: [String: Double] = [:]
+    /// **这一句用的那张屏幕截图**（一轮只截一张）。
+    ///
+    /// 2026-09-27 改：原来是**每一轮请求都截一张**（每 3 秒一次全屏抓取）—— 那是为了修
+    /// 「他应该直接看到屏幕啊」而加的，代价是每 3 秒一次 `SCScreenshotManager` 全屏截图。
+    /// 现在改成**一句一张**：第一次请求时截，这一句里复用；用户说「参考屏幕 / 看屏幕」
+    /// 这类词时作废重截（这正是他原来那条「每一次转写识别到就截一次屏」）。
+    private var turnScreenshot: [(data: Data, label: String)] = []
+
     /// **最近三轮**模型的理解原文（最近的那一轮在最前）—— 用户要的连续性：
     /// 「你要在发送给下一轮模型的时候要保留前三轮……让它重点参考最近一轮」。
     private var recentReadings: [String] = []
@@ -213,6 +221,9 @@ final class DirectionBoardSession: ObservableObject {
         lastRequestedTranscript = ""
         paragraph = ""
         understandingLines = DirectionBoardPrompt.understandingLabels.map { ($0, "") }
+        // 新的一句 → 上一句那张屏幕截图作废（下一次请求重新截一张）。
+        turnScreenshot = []
+        // 新一轮开始 = 上一轮的答案预览作废（这里是"真的换了一轮"，不是同一轮的提交）。
         previewAnswer = nil
         answerPreviewWriter?(nil)
         contentRevision = 0
@@ -234,6 +245,12 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         latestTranscript = transcriptText
+        // **说了「参考屏幕 / 看屏幕」这类词 → 把这一句那张图作废**，下一次请求重新截一张。
+        //（原来是"说到才截"；现在截图是每句一张，它退化成"现在重截" —— 用户那句
+        // 「每一次转写识别到就截一次屏」照旧成立。）
+        if DirectionBoardMatching.screenReferenceRequested(in: transcriptText) {
+            turnScreenshot = []
+        }
         refreshDisplayedItems()
     }
 
@@ -274,8 +291,11 @@ final class DirectionBoardSession: ObservableObject {
         typedInput = ""
         paragraph = ""
         displayedItems = []
-        previewAnswer = nil
-        answerPreviewWriter?(nil)
+        // ⚠️ **这里不收右下角的预览**（`previewAnswer` / `answerPreviewWriter` 都不动）：
+        // 提交之后真答案要 1~2 秒才到，这一刻收掉的话卡片会先消失再冒出来 ——
+        // 用户报的「显示了个回复，然后没过半秒钟它又显示了一个全新的回复」就是这个。
+        // 交接在 `CompanionManager` 里：真答案的第一个字到达时（`clearAnswerPreview()`），
+        // 或这一轮被打断时（`clearAnswerBubble()`）。
         // 收尾（见上）：停表、不再听、在飞的请求作废。
         endListening()
         return decision
@@ -450,6 +470,9 @@ final class DirectionBoardSession: ObservableObject {
     private func requestIfTheTranscriptChanged() {
         guard !suppressesRequestsForSelfCheck else { return }
         refreshCancellationState()
+        // 三道闸门没过也要留一行（每 3 秒最多一行，且只在"有话说"时才可能重复）——
+        // 「看板不动了」到底是闸门没过、还是请求没回来，只有这一行能分辨。
+        defer { MainFlowDiagnostics.stage("看板：空闲（等下一拍）") }
         guard Self.shouldRequest(transcript: latestTranscript,
                                  lastRequestedTranscript: lastRequestedTranscript,
                                  isEnabled: isEnabled,
@@ -460,6 +483,7 @@ final class DirectionBoardSession: ObservableObject {
                                      .snapshot().directionBoardMinimumAddedCharacters) else { return }
         let transcript = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         lastRequestedTranscript = transcript
+        MainFlowDiagnostics.log("🧭 看板：第 \(roundGeneration) 轮发请求（转写 \(transcript.count) 字）")
         let generation = roundGeneration
         isRequesting = true
 
@@ -475,7 +499,16 @@ final class DirectionBoardSession: ObservableObject {
             // 这块板子的用途本来就是"看着屏幕理解你在说什么"，图不该由一句口令来解锁。
             // 截图本身就排除了 Wanna 自己的窗口（`SCContentFilter(display:excludingWindows:)`
             // 按 bundle id 过滤），所以两张卡片模型是看不见的 —— 不会看到自己的界面。
-            let screenshots = await self.captureScreenForBoard()
+            // 这一句已经有图就复用，没有才截（一句一张）。
+            let screenshots: [(data: Data, label: String)]
+            if self.turnScreenshot.isEmpty {
+                MainFlowDiagnostics.stage("看板：截屏")
+                let captured = await self.captureScreenForBoard()
+                self.turnScreenshot = captured
+                screenshots = captured
+            } else {
+                screenshots = self.turnScreenshot
+            }
             let state = "用户到目前为止说的话：\n\(transcript.prefix(500))"
 
             // ① **Jev 判方向**（便宜、给概率）；② **大模型写那段理解**（小提示词）。
