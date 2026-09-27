@@ -122,57 +122,13 @@ struct DirectionBoardView: View {
     private static let referenceTagRowHeight: CGFloat = understandingLabelHeight
         + CGFloat(referenceTagRowLines) * 17 + CGFloat(referenceTagRowLines - 1) * 4
 
-    /// 内容块的高度。
+    /// 内容块最多能有多高 —— **按屏幕算**（菜单栏以下那块高度的 70%，与右下角那张结果卡同一条规矩）。
     ///
-    /// ⚠️ 2026-09-27 深夜：**它现在跟着那张图长**（用户：「他留这么大的空间，不就是让你把这个文字
-    /// 能够完全地显示到这个空间里面吗？」＋「用户的内容可能是**两个小时**，那这个图就应该是
-    /// 两个小时的内容，**用户所有的问题都应该在图里面显示**」）。
-    ///
-    /// 取三者最大：左列的最低要求 / **图需要多少行** / 一个 264 的下限。
-    /// **上限挂在屏幕上**（菜单栏以下那块高度的 70%，与右下角那张结果卡同一条规矩）——
-    /// 再长就只能裁了：那是屏幕的物理限制，不是我们给它设的天花板。
-    private static var contentBlockHeight: CGFloat {
-        contentBlockHeight(forMindMapLines: 0)
-    }
-
-    /// 图上**已经画出来的行数**（决定卡片要长多高）。
-    ///
-    /// 用"行数 × 行高"而不是去量文字：那张图是**等宽字体**、一行行高是定的；
-    /// 而量文字要么再引一层 `GeometryReader`，要么根本量不到自然高度
-    ///（它被 `.frame(maxHeight: .infinity)` 撑着，量出来永远是框高）。
-    /// 行数够准，而且**可预测** —— 卡片高度不会随渲染时机跳。
-    private var mindMapLineCount: Int {
-        let value = session.understandingLines
-            .first { $0.label == Self.mindMapLabel }?.value ?? ""
-        return value.isEmpty ? 0 : value.split(separator: "\n", omittingEmptySubsequences: false).count
-    }
-
-    private static let mindMapLineHeight: CGFloat = 16
-
-    private static func contentBlockHeight(forMindMapLines lineCount: Int) -> CGFloat {
-        // 左列「装得下」的最低要求：表格 + 参考 + 矛盾（5 行）+ 拼写错误（4 行）+ 间距。
-        let leftColumnRequirement = directionGridHeight
-            + referenceTagRowHeight                       // 含它自己的标题行
-            + understandingLabelHeight + understandingLineHeight * 5   // 矛盾：标题 + 5 行
-            + understandingLabelHeight + understandingLineHeight * 4   // 拼写错误：标题 + 4 行
-            + 20                                          // 三处间距：8 + 8 + 4
-        let mindMapRequirement = CGFloat(lineCount) * mindMapLineHeight + 8
-        // 这一版之前钉死的下限（2 × 264）—— 图短的时候卡片也不会缩得太小。
-        let floorFromEarlierVersion: CGFloat = 2 * 264
-        return min(max(leftColumnRequirement, mindMapRequirement, floorFromEarlierVersion),
-                   maximumContentBlockHeight)
-    }
-
-    /// 内容块最多能有多高 —— **按屏幕算**（菜单栏以下那块高度的 70%）。
+    /// 内容比它矮就按内容，比它高才裁 —— 那是屏幕的物理限制，不是我们给它设的天花板。
     static var maximumContentBlockHeight: CGFloat {
         let visibleHeight = NSScreen.main?.visibleFrame.height
             ?? NSScreen.screens.first?.visibleFrame.height ?? 900
         return max(320, visibleHeight * 0.7)
-    }
-
-    /// 这一轮卡片实际用的块高（**跟着图长**）。
-    private var resolvedContentBlockHeight: CGFloat {
-        Self.contentBlockHeight(forMindMapLines: mindMapLineCount)
     }
 
     /// 用户设的宽度倍数（默认 2）。
@@ -584,13 +540,14 @@ private struct ReferenceTagFlowLayout: Layout {
                 .frame(width: understandingColumnWidth, alignment: .topLeading)
                 // 行不再各自裁剪，所以**由整列兜底**：超出这块就裁掉
                 //（卡片高度仍然恒定 —— 它挂在这块上，不挂在行上）。
-                .frame(height: resolvedContentBlockHeight, alignment: .top)
-                .clipped()
+                // 左列同样"内容多高就多高" —— 行不再各自裁剪，也不再用估算的块高。
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxHeight: Self.maximumContentBlockHeight, alignment: .top)
 
                 mindMapColumn
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: resolvedContentBlockHeight, alignment: .top)
+            // 这一块**不再钉高**：内容多高它就多高（顶边钉住、往下长），上限见 `maximumContentBlockHeight`。
 
             // 最下面一行：折叠钮（贴左下角）+ 复制/执行/退出 + 两档取消。
             cancelRow
