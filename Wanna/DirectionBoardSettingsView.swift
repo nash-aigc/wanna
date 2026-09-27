@@ -21,6 +21,13 @@ struct DirectionBoardSettingsSection: View {
 
     /// 清单变了要重画（store 发通知）。
     @State private var directions: [TaskDirection] = TaskDirectionStore.shared.allDirections()
+
+    private var fixedCount: Int { TaskDirectionStore.shared.fixedDirections().count }
+    private var temporaryCount: Int { TaskDirectionStore.shared.temporaryDirections().count }
+
+    private func reload() {
+        directions = TaskDirectionStore.shared.allDirections()
+    }
     @State private var newKeyword = ""
     @State private var newDetail = ""
     @State private var jevKeyDraft = JevDecisionClient.apiKey() ?? ""
@@ -90,23 +97,32 @@ struct DirectionBoardSettingsSection: View {
         SettingsGroupLabel("方向清单（一个文件）")
         SettingsCard {
             SettingsRow(
-                label: "清单文件",
-                description: "所有方向都在这个文件里：一个关键词 + 一句描述。出厂那份是从主 Agent 的提示词里提炼的；你说过的方向会追加进来；每天中午十二点复盘还会把高频任务/工具追加进来（只改这一个文件）。"
+                label: "固定类型（\(fixedCount) 条）",
+                description: "出厂那份 + 每天中午复盘追加的，都在这个文件里：一个关键词 + 一句描述。出厂那份是从主 Agent 提示词里提炼的；复盘只改这一个文件。"
             ) {
                 HStack(spacing: 6) {
-                    Text("\(directions.count) 条")
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.Colors.textSecondary)
                     Button("在访达中显示") {
                         NSWorkspace.shared.activateFileViewerSelecting([TaskDirectionStore.fileURL])
                     }
                     .buttonStyle(DSPillButtonStyle())
                     Button("恢复默认") {
                         TaskDirectionStore.shared.restoreBuiltinDefaults()
-                        directions = TaskDirectionStore.shared.allDirections()
+                        reload()
                     }
                     .buttonStyle(DSPillButtonStyle())
                 }
+            }
+
+            SettingsCardRowDivider()
+            SettingsRow(
+                label: "临时类型（\(temporaryCount) 条）",
+                description: "你说话时口述出来的类型（含「参考屏幕」时模型算出来的那个结果），存在同级目录的另一个文件里。**每一大轮结束自动清掉** —— 它不该沉淀到固定清单里。"
+            ) {
+                Button("立刻清空") {
+                    TaskDirectionStore.shared.clearTemporaryDirections()
+                    reload()
+                }
+                .buttonStyle(DSPillButtonStyle())
             }
 
             ForEach(directions) { direction in
@@ -117,7 +133,7 @@ struct DirectionBoardSettingsSection: View {
                 ) {
                     Button("删除") {
                         TaskDirectionStore.shared.remove(id: direction.id)
-                        directions = TaskDirectionStore.shared.allDirections()
+                        reload()
                     }
                     .buttonStyle(DSPillButtonStyle())
                 }
@@ -134,9 +150,9 @@ struct DirectionBoardSettingsSection: View {
                     Button("追加") {
                         let added = TaskDirectionStore.shared.append(keyword: newKeyword,
                                                                      detail: newDetail,
-                                                                     source: .user)
+                                                                     source: .review)
                         if added { newKeyword = ""; newDetail = "" }
-                        directions = TaskDirectionStore.shared.allDirections()
+                        reload()
                     }
                     .buttonStyle(DSPillButtonStyle())
                 }

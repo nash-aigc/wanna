@@ -54,6 +54,10 @@ final class DirectionBoardSession: ObservableObject {
     private var jevProbabilities: [String: Double] = [:]
     /// 这一轮**强制显示**的方向（用户刚口述出来的新方向 —— 它还没有 Jev 概率）。
     private var forcedDirectionIDs: Set<String> = []
+    /// 这一轮因为"参考屏幕"截下来的图（发送给模型时带上）。
+    private var referenceScreenshots: [(data: Data, label: String)] = []
+    /// 这一次"参考屏幕"的提到是不是已经截过了（边缘触发）。
+    private var didCaptureForThisMention = false
     /// 上一次模型回的那段原文（每次请求都是全新的内容，所以要带上它保持连续）。
     private var previousReading = ""
     /// 被选中的先后顺序 —— 钉住（位置 + 编号）靠它。
@@ -139,7 +143,11 @@ final class DirectionBoardSession: ObservableObject {
 
     func beginListening(cycleID: String?) {
         guard isEnabled else { return }
-        if let cycleID, cycleID != currentCycleID { cancelledForThisCycle = false }
+        if let cycleID, cycleID != currentCycleID {
+            cancelledForThisCycle = false
+            // **新的一大轮**：上一轮口述出来的临时类型清掉。
+            TaskDirectionStore.shared.clearTemporaryDirections()
+        }
         currentCycleID = cycleID
         refreshCancellationState()
 
@@ -154,6 +162,8 @@ final class DirectionBoardSession: ObservableObject {
         previousReading = ""
         jevProbabilities = [:]
         forcedDirectionIDs = []
+        referenceScreenshots = []
+        didCaptureForThisMention = false
         selectionStates = [:]
         confirmedTexts = [:]
         confirmedOrder = []
@@ -173,7 +183,18 @@ final class DirectionBoardSession: ObservableObject {
             return
         }
         latestTranscript = transcriptText
-        // **他口述了一个清单里没有的新方向** → 追加进那份文件（这就是第二种来源）。
+        // **说了「参考屏幕 / 根据图片」这类组合词 → 当场截一张屏**（用户：
+        // 「每一次转写识别到就截一次屏」）。边缘触发：同一次提到只截一张（与
+        // `BuddyScreenKeywordDetector` 同一个做法 —— 识别器会给整句累积文本，不去重就会连截）。
+        let mentionsScreenReference = DirectionBoardMatching.screenReferenceRequested(in: transcriptText)
+        if mentionsScreenReference, !didCaptureForThisMention {
+            didCaptureForThisMention = true
+            Task { @MainActor [weak self] in await self?.captureReferenceScreenshot() }
+        } else if !mentionsScreenReference {
+            didCaptureForThisMention = false
+        }
+
+        // **他口述了一个清单里没有的新方向** → 追加进**临时**那份文件（这就是第二种来源）。
         // 追加之后这一轮**强制显示它**（新方向还没有 Jev 概率，不强制就看不见）。
         if let newDirection = DirectionBoardMatching.spokenNewDirection(in: transcriptText),
            !TaskDirectionStore.shared.contains(keyword: newDirection) {
@@ -446,6 +467,8 @@ final class DirectionBoardSession: ObservableObject {
         lastRequestedTranscript = transcript
         let generation = roundGeneration
         isRequesting = true
+        let screenshots = referenceScreenshots
+        let hasScreenReference = !screenshots.isEmpty
 
         requestTask = Task { [weak self] in
             guard let self else { return }
@@ -457,7 +480,9 @@ final class DirectionBoardSession: ObservableObject {
             // 两条并行发，谁先回来谁先上屏。
             async let probabilitiesTask = self.judgeWithJevIfConfigured(state: state, directions: directions)
             async let paragraphTask = self.writeParagraphWithModel(transcript: transcript,
-                                                                   directions: directions)
+                                                                   directions: directions,
+                                                                   screenshots: screenshots,
+                                                                   asksForLabel: hasScreenReference)
             let probabilities = await probabilitiesTask
             let paragraphText = await paragraphTask
 
@@ -471,6 +496,19 @@ final class DirectionBoardSession: ObservableObject {
             if let paragraphText, !paragraphText.isEmpty {
                 self.paragraph = paragraphText
                 self.previousReading = String(paragraphText.prefix(Self.maximumPreviousReadingCharacters))
+                // **带屏幕参考时，模型给的"这次是什么类型"也变成一个可点的类型**（进临时文件）。
+                // 用户那个数学题的例子：「这道题应该选 A，那结果就是固定的」—— 那个答案本身就是选项。
+                if let label = DirectionBoardPrompt.parseLabelLine(paragraphText),
+                   !TaskDirectionStore.shared.contains(keyword: label) {
+                    if TaskDirectionStore.shared.append(keyword: label,
+                                                        detail: "根据屏幕内容判断出来的结果：\(label)",
+                                                        source: .user) {
+                        let identifier = TaskDirectionStore.shared.allDirections()
+                            .first { DirectionBoardMatching.normalize($0.keyword)
+                                == DirectionBoardMatching.normalize(label) }?.id
+                        if let identifier { self.forcedDirectionIDs.insert(identifier) }
+                    }
+                }
             }
             self.refreshDisplayedItems()
         }
@@ -493,15 +531,16 @@ final class DirectionBoardSession: ObservableObject {
 
     /// 那段"AI 怎么理解"：**只用方向清单 + 用户的话**（不再发主 Agent 那 5000 字提示词）。
     private func writeParagraphWithModel(transcript: String,
-                                         directions: [(id: String, keyword: String, detail: String)])
-        async -> String? {
-        let settings = AppSettingsStore.snapshot()
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions)
+                                         directions: [(id: String, keyword: String, detail: String)],
+                                         screenshots: [(data: Data, label: String)],
+                                         asksForLabel: Bool) async -> String? {
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(directions: directions,
+                                                                          asksForLabel: asksForLabel)
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(transcript: transcript,
                                                                       previousReading: previousReading)
         do {
             let (text, _) = try await visionChatAPI.analyzeImageStreaming(
-                images: [],
+                images: screenshots,
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 roleOverride: CompanionManager.visionRoleOverride(
@@ -512,6 +551,29 @@ final class DirectionBoardSession: ObservableObject {
             print("🧭 方向看板：这次理解请求失败（保留上一次）—— \(error.localizedDescription)")
             return nil
         }
+    }
+
+    /// 当场截一张屏（用户说「参考屏幕」那一刻的画面）。
+    private func captureReferenceScreenshot() async {
+        let settings = AppSettingsStore.snapshot()
+        do {
+            let captures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
+                maximumDimension: settings.screenshotMaxDimension == 0 ? nil : settings.screenshotMaxDimension,
+                compressionQuality: settings.screenshotCompressionQuality,
+                capturesAllDisplays: settings.capturesAllDisplays)
+            guard isListening else { return }
+            referenceScreenshots = captures.map { (data: $0.imageData, label: $0.label) }
+            print("🧭 方向看板：说到「参考屏幕/图片」—— 当场截了 \(captures.count) 张，这次判断会带上")
+        } catch {
+            print("🧭 方向看板：截屏失败（这次就不带图）—— \(error.localizedDescription)")
+        }
+    }
+
+    /// **一大轮结束**：清掉临时那份类型文件（用户：「临时文件在每一轮对话结束时清掉。
+    /// 是每一大轮……中间可能有打断，这算一个轮，不算两轮」）。
+    func endBigRound() {
+        TaskDirectionStore.shared.clearTemporaryDirections()
+        forcedDirectionIDs.removeAll()
     }
 
     private func refreshDisplayedItems() {

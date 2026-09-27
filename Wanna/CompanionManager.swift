@@ -2987,6 +2987,9 @@ final class CompanionManager: ObservableObject {
         NotionNoteSession.shared.endListening()
         DirectionBoardSession.shared.endListening()
         _ = DirectionBoardSession.shared.consumeTurnDecision()
+        // **一大轮到此结束**（窗口关了就是这一大轮结束 —— 中间几轮打断/续说都算同一个大轮）：
+        // 清掉这一轮口述出来的**临时类型**文件。
+        DirectionBoardSession.shared.endBigRound()
         print("🎙️ BuddyDictationManager: continuous listening window closing (\(reason)); playback \(bailianTTSClient.isPlaying ? "still active" : "idle")")
         buddyDictationManager.endContinuousListening()
         if voiceState == .listening {

@@ -61,10 +61,22 @@ nonisolated final class TaskDirectionStore {
 
     /// 文件位置：与其它几个 store 一样放在 Application Support（仓库外，0600）。
     static var fileURL: URL {
-        let supportDirectory = FileManager.default
+        supportDirectory.appendingPathComponent("TaskDirections.json")
+    }
+
+    /// **临时类型**的文件，与固定那份**同级目录**（用户 2026-09-27：
+    /// 「在文件的同级目录创建一个叫"临时类型"的文件。一个是固定类型的文件，一个是临时类型的文件」）。
+    ///
+    /// 它装的只有"用户这一轮口述出来的类型"（以及带屏幕参考时模型给出的那个答案），
+    /// **每一大轮结束就清掉** —— 所以它是临时的，不进那份固定清单。
+    static var temporaryFileURL: URL {
+        supportDirectory.appendingPathComponent("TaskDirectionsTemporary.json")
+    }
+
+    private static var supportDirectory: URL {
+        FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Wanna", isDirectory: true)
-        return supportDirectory.appendingPathComponent("TaskDirections.json")
     }
 
     // MARK: - 读
@@ -74,9 +86,23 @@ nonisolated final class TaskDirectionStore {
         lock.lock()
         defer { lock.unlock() }
         if let cached { return cached }
-        let loaded = loadFromDisk()
+        let loaded = loadFromDisk(at: Self.fileURL) + loadFromDisk(at: Self.temporaryFileURL)
         cached = loaded
         return loaded
+    }
+
+    /// **固定那份**（不含临时）—— 设置页分别显示两个文件的条数用。
+    func fixedDirections() -> [TaskDirection] {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadFromDisk(at: Self.fileURL)
+    }
+
+    /// **临时那份**（这一轮口述出来的）。
+    func temporaryDirections() -> [TaskDirection] {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadFromDisk(at: Self.temporaryFileURL)
     }
 
     /// 只读关键词与描述（给判断用）。
@@ -92,6 +118,7 @@ nonisolated final class TaskDirectionStore {
     // MARK: - 写（只允许追加与删除单条；没有"整份替换"之外的第三种）
 
     /// **追加一条**（去重：关键词归一化之后相同就不加）。返回是否真的加进去了。
+    /// **追加一条**。`source == .user`（用户口述）写进**临时**那份；其余写进固定那份。
     @discardableResult
     func append(keyword: String, detail: String, source: TaskDirection.Source) -> Bool {
         let trimmedKeyword = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -99,38 +126,53 @@ nonisolated final class TaskDirectionStore {
         guard !trimmedKeyword.isEmpty else { return false }
         guard !contains(keyword: trimmedKeyword) else { return false }
 
-        var directions = allDirections()
+        let target = source == .user ? Self.temporaryFileURL : Self.fileURL
+        var directions = loadFromDisk(at: target)
         directions.append(TaskDirection(id: Self.slug(for: trimmedKeyword),
                                         keyword: trimmedKeyword,
                                         detail: trimmedDetail.isEmpty ? trimmedKeyword : trimmedDetail,
                                         source: source.rawValue,
                                         addedAt: Date()))
-        write(directions)
-        print("🧭 任务方向：追加了一条（\(source.rawValue)）—— \(trimmedKeyword)")
+        write(directions, to: target)
+        print("🧭 任务方向：追加了一条（\(source.rawValue)\(source == .user ? "，临时文件" : "")）—— \(trimmedKeyword)")
         return true
     }
 
-    func remove(id: String) {
-        write(allDirections().filter { $0.id != id })
+    /// **清掉临时那份**（每一大轮结束时调）。
+    ///
+    /// 用户 2026-09-27：「临时文件在每一轮对话结束时清掉。是每一**大**轮，就是一整个大轮，
+    /// 中间可能有打断、有些东西，这算一个轮，不算两轮，算一轮，然后自动清掉。」
+    func clearTemporaryDirections() {
+        let existing = loadFromDisk(at: Self.temporaryFileURL)
+        guard !existing.isEmpty else { return }
+        write([], to: Self.temporaryFileURL)
+        print("🧭 任务方向：临时文件已清（\(existing.count) 条）")
     }
 
-    /// 把用户改过的清单**恢复成出厂那份**（设置页那颗按钮）。
+    func remove(id: String) {
+        // 两处都找一遍：它可能在固定那份，也可能在临时那份。
+        for url in [Self.fileURL, Self.temporaryFileURL] {
+            let remaining = loadFromDisk(at: url).filter { $0.id != id }
+            write(remaining, to: url)
+        }
+    }
+
+    /// 把用户改过的清单**恢复成出厂那份**（设置页那颗按钮；只动固定那份）。
     func restoreBuiltinDefaults() {
-        write(Self.builtinDirections)
+        write(Self.builtinDirections, to: Self.fileURL)
     }
 
     // MARK: - 内部
 
-    private func write(_ directions: [TaskDirection]) {
+    private func write(_ directions: [TaskDirection], to url: URL) {
         lock.lock()
-        cached = directions
+        cached = nil   // 两份拼在一起的结果变了，缓存作废
         lock.unlock()
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(directions) else { return }
-        let url = Self.fileURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
@@ -139,18 +181,17 @@ nonisolated final class TaskDirectionStore {
         NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
     }
 
-    private func loadFromDisk() -> [TaskDirection] {
-        guard let data = try? Data(contentsOf: Self.fileURL) else {
-            // 第一次跑：把出厂那份写下去（**从此这个文件就是真相**，代码里那份只是种子）。
-            write(Self.builtinDirections)
+    private func loadFromDisk(at url: URL) -> [TaskDirection] {
+        guard let data = try? Data(contentsOf: url) else {
+            // 固定那份第一次跑：把出厂那份写下去（**从此这个文件就是真相**，代码里那份只是种子）。
+            // 临时那份**不种子** —— 空的就该是空的。
+            guard url == Self.fileURL else { return [] }
+            write(Self.builtinDirections, to: url)
             return Self.builtinDirections
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let directions = try? decoder.decode([TaskDirection].self, from: data),
-              !directions.isEmpty else {
-            return Self.builtinDirections
-        }
+        guard let directions = try? decoder.decode([TaskDirection].self, from: data) else { return [] }
         return directions
     }
 
