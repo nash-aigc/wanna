@@ -27,7 +27,10 @@ struct NotchRecordingBandView: View {
     private static let maximumButtonSize: CGFloat = 30
     /// 跑马灯那一条的高度。**对外可见** —— 控制器算窗口高度时必须用同一个数，
     /// 两处各写一遍就是 42 vs 32 那个差的来源（见 `panelFrame`）。
-    static let ribbonHeight: CGFloat = 32
+    ///
+    /// **数字住在 `NotchSupport`**（2026-09-27）：主 Agent 说话时刘海下面那一行要
+    /// 和它逐像素一致，所以这一个数有两个读者。这里只是转发，和两翼宽度同一个写法。
+    static let ribbonHeight: CGFloat = NotchSupport.notchTranscriptRowHeight
 
     /// 每侧向刘海**里面**压进多少。
     ///
@@ -261,84 +264,33 @@ struct NotchRecordingBandView: View {
     ///
     /// 新说的内容永远在最下面一行（`liveRow`），和展开前那一行的内容是同一份
     /// 数据，所以「实时转写」在展开状态下照样成立。
+    ///
+    /// **这一块 2026-09-27 抽成了共用视图**（`NotchTranscriptMarquee.swift` 里的
+    /// `NotchExpandedTranscriptPanel`）：主 Agent 说话时的 Listening 要**一模一样**的
+    /// 这一个窗口（用户：「整个的排版，整个的效果…完全照搬过来」），所以排版、材质、
+    /// 圆角、三个快捷键现在只有一份实现。这里只剩「把录音的哪几个字段接到哪几个参数上」。
     private var expandedTranscriptPanel: some View {
-        VStack(spacing: 0) {
-            // 顶行 = **原来那一行实时转写留在原位**，现在是**整整一行都给它**。
-            //
-            // 复制按钮从这一行删掉了（用户：「把整个第一行右侧的复制按钮删掉，让第一行
-            // 全部显示转写的内容」）。复制还有两条路，不缺口：⌘+Enter 一键复制并结束；
-            // 而关窗本身就会把内容送进剪贴板（那是「任何一次录音都不会丢」的收口）。
-            //
-            // 这一行是**黑的** —— 它和上面的黑带连成一片，是刘海的延伸；再往下的正文区
-            // 才是浮雕色。
-            SmoothRevealedTranscriptText(text: recorder.marqueeText,
-                                         availableWidth: bandWidth * 2 - 32,
-                                         textColor: DS.Colors.success)
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 46)
-            .background(Color.black)
-
-            // **一整个可编辑的文本**，不是一行行的列表。
-            //
-            // 用户的原话：「双击之后只能编辑某一行，我希望能够编辑所有的文本，
-            // 而且文本之间不要换行，因为文字是连续的……现在只能显示、只能编辑
-            // 某一行，体验太差了」。所以这里是一个 `TextEditor`：点哪改哪，
-            // 全文连续，段落之间没有换行。
-            TextEditor(text: Binding(
+        NotchExpandedTranscriptPanel(
+            topLineText: recorder.marqueeText,
+            panelWidth: bandWidth * 2,
+            bodyText: Binding(
                 get: { recorder.transcriptDisplayText },
-                set: { recorder.applyEditedTranscript($0) }))
-                .font(.system(size: 17))
-                .foregroundColor(EmbossMaterial.textPrimary)
-                // 用户要求「行间距稍微再增大一点」。
-                .lineSpacing(9)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 12)
-                // **左右两边的边框删掉** —— 用户：「展开后显示红色方框的内容，
-                // 左右两边的边框删掉」。原来正文装在一张带影子的卡片里（四边都有边），
-                // 现在去掉卡片，正文直接铺在窗口底上、占满整宽。
-                // ⌘S 保存。不按也会在折叠时自动保存（用户要求），
-                // 这个快捷键只是给一个「我确认过了」的显式动作。
-                .background(
-                    Button("") { recorder.saveTranscriptDraft() }
-                        .keyboardShortcut("s", modifiers: .command)
-                        .opacity(0)
-                )
-                // ESC 折叠（用户要求：「用户点击 ESC 自动折叠刚才展开的部分」）。
-                .onExitCommand { recorder.collapseTranscriptEditor() }
-                .padding(.bottom, 16)
-
-            // ⌘+Enter：复制全部 + 关窗 + 结束转写，三件事一次做完。
-            // 用户的要求：「按住 command 加 enter，就会复制当前所有简历内容，然后
-            // 关闭弹窗，转写结束。这个按钮做三件事：复制到剪贴板、弹窗关闭、转写结束」。
-            Button {
+                set: { recorder.applyEditedTranscript($0) }),
+            savesDraft: { recorder.saveTranscriptDraft() },
+            onCollapse: { recorder.collapseTranscriptEditor() },
+            onCopyAllAndCollapse: {
+                // ⌘+Enter：复制全部 + 关窗 + 结束转写，三件事一次做完（用户的要求：
+                // 「按住 command 加 enter，就会复制当前所有简历内容，然后关闭弹窗，
+                // 转写结束。这个按钮做三件事：复制到剪贴板、弹窗关闭、转写结束」）。
                 recorder.copyTranscriptToClipboard()
                 recorder.collapseTranscriptEditor()
                 recorder.finishCurrentSession()
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut(.return, modifiers: .command)
-            .opacity(0)
-            .frame(width: 0, height: 0)
-
-            // **这里不再有 `transcriptRibbon`。** 那一行已经搬到顶行、和黑带连成
-            // 一片了；留在底部的话，面板最下面会多出一条黑边 —— 用户报的
-            // 「弹出窗口的最下面应该没有黑色，现在还有黑色」就是它。
-        }
-        // 展开时这块比黑带**宽一倍**（用户要求：「宽度再增加两倍，然后居中对齐」）。
-        // 窗口本身在展开时也会跟着变宽 —— 见 `NotchRecordingOverlayController.panelFrame`。
-        .frame(width: bandWidth * 2, height: Self.expandedPanelBodyHeight, alignment: .bottom)
-        // 风格 01 · 软浮雕：窗口底 #26262b，比面板 #2e2e34 暗一档。
-        // 黑带本身仍是纯黑 —— 它要和硬件刘海熔成一体，不参与材质。
-        .background(EmbossMaterial.page)
-        .clipShape(RecordingRibbonShape(cornerRadius: 22, roundsTopCorners: true))
+            })
     }
 
     /// 展开面板的高度。同样对外可见，理由同上。
-    static let expandedPanelBodyHeight: CGFloat = 560
+    /// **数字住在 `NotchSupport`**（录音带与主 Agent 的编辑窗共用一个高度）。
+    static let expandedPanelBodyHeight: CGFloat = NotchSupport.notchTranscriptEditorBodyHeight
 
     /// 最下面那行：正在说的内容，实时更新。展开和收起时是同一条数据。
     private var liveRow: some View {
@@ -394,7 +346,11 @@ struct NotchRecordingBandView: View {
 /// **关键在「两个方向相反的影子」。** 只有暗影是普通投影、只有高光是描边，
 /// 两个一起才是「凸起来的那一块」—— 这就是新拟态的全部机制，少一个就退化成
 /// 一张普通的卡片。按下时两个都翻成 `inset`，那块就从凸变成凹。
-private enum EmbossMaterial {
+///
+/// 2026-09-27 从 `private` 放开：展开的转写编辑窗抽成了共用视图
+///（`NotchExpandedTranscriptPanel`，住在 `NotchTranscriptMarquee.swift`），
+/// 它和这里用的是同一份材质 —— 也就是「录音带与主 Agent 那个窗口长得一模一样」的实现方式。
+enum EmbossMaterial {
     /// 页面底：比面板**暗**一档。新拟态要求面板和底同色系、只差明度。
     static let page = Color(hex: "#26262B")
     static let panel = Color(hex: "#2E2E34")

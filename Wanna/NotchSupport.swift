@@ -714,6 +714,23 @@ nonisolated enum NotchSupport {
     /// 同名常量）—— 两处必须同一个数，否则这条带画多宽就又变成两份算术。
     static let recordingBandLeadingOverlap: CGFloat = 14
 
+    // MARK: - 刘海下面那一行（录音带 / 主 Agent 的字幕）
+
+    /// 刘海**下面**那一行字幕的高度（录音带跑马灯 / 主 Agent 说话时的字幕）。
+    ///
+    /// 2026-09-27 从 `NotchRecordingBandView.ribbonHeight` 提到这里：那时主 Agent 的
+    /// 字幕要**一模一样**的那一行（用户：「整个的排版，整个的效果…完全照搬过来」），
+    /// 于是这一个数有了两个读者 —— 各写一份就是「同一条带子两处厚度不同」那种漂。
+    /// 那一侧的静态量现在是**转发**（和 `leadingWingWidth` 一样的写法）。
+    static let notchTranscriptRowHeight: CGFloat = 32
+
+    /// 展开后的**转写编辑窗**正文区的高度（刘海下面那一整块）。
+    ///
+    /// 同一个理由提到这里（原来在 `NotchRecordingBandView.expandedPanelBodyHeight`）：
+    /// 录音带与主 Agent 的编辑窗是同一个视图（`NotchExpandedTranscriptPanel`），
+    /// 所以这个数只能有一份。
+    static let notchTranscriptEditorBodyHeight: CGFloat = 560
+
     // MARK: - 临时 agent 的那一排（屏幕右上角，菜单栏下面一行）
     //
     // 用户 2026-09-26：「刘海左侧这个 agent 的小图标，就是状态图标，应该放在右侧，
@@ -890,6 +907,16 @@ nonisolated enum NotchSupport {
     /// 又**在 `OverlayWindow` 生来的 `.screenSaver`(1000) 之下** —— 我们自己的光标 / 绿圈 /
     /// 白板那一族必须仍然盖在它上面，否则光标会被这句字幕挡住。
     static let recordingBandWindowLevel: NSWindow.Level = .popUpMenu
+
+    /// 主 Agent 说话时那行字幕 + 它的转写编辑窗那一块面板的层级（2026-09-27）。
+    ///
+    /// **必须在刘海面板之上**（`notchPanelWindowLevel` 是 `.mainMenu + 1`）：面板展开时
+    /// 那一行也要看得见 —— 与展开态那条状态带同一条理由（用户 2026-09-24：「用户在对话
+    /// 页面时也应该有这个动画效果，无论是正常对话、打断，还是未挂断的运行状态，都要能看到
+    /// 当前状态」）。和录音带同层（`.popUpMenu`），因为两者占的是**屏幕上的同一块**
+    ///（刘海下面那一行）；它们分属两个互斥的子系统 —— 麦克风只有一个，谁先占谁赢 ——
+    /// 所以同时出现的唯一可能是用户一边长录音一边按主 Agent 键，那时重叠也在预期之内。
+    static let notchTranscriptPanelWindowLevel: NSWindow.Level = .popUpMenu
 
     static let agentStripWindowLevel: NSWindow.Level = .mainMenu
 

@@ -1920,6 +1920,11 @@ final class CompanionManager: ObservableObject {
                         //（上面那个函数第一行就按「说到屏幕立即截屏」的开关 return 了，
                         // 而 Notion 有它自己的总闸），所以不能塞进那个函数里。
                         self?.noteNotionLiveTranscript(partialTranscript)
+                        // **刘海下面那行字幕**（2026-09-27）。它**不看下面那个开关** ——
+                        // 那是鼠标旁那颗气泡的开关（`liveTranscriptText`），这条字幕是主
+                        // Agent 说话时自己的显示（用户：「下面要显示一个类似于录音这个…
+                        // 从右到左滑动」），所以必须喂在 guard 之前。
+                        NotchListeningTranscriptModel.shared.setLiveText(partialTranscript)
                         // The waveform is the default UI; the words are optional.
                         // Leaving this empty is what keeps the overlay waveform-only,
                         // which is why the setting needs no other support.
@@ -2002,7 +2007,15 @@ final class CompanionManager: ObservableObject {
         _ finalTranscript: String,
         sendsImmediately: Bool
     ) {
-        let trimmedTranscript = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        // **用户在刘海下面那行字幕的编辑窗里改过字，就以他改的为准**（2026-09-27）。
+        // 取走即清：一轮只顶替一次（下一轮由 `beginRound` 归零）。
+        //
+        // 这是主 Agent 那个编辑窗**唯一**与录音那条不同的地方：录音那条改的是"存下来的
+        // 转写"，这条改的是**这一句要发出去的话**（把那句话修正之后再问模型，正是用户
+        // 要「编辑录音里面的内容」的意义）。它不碰状态机 —— 打断、说完等待、自动发送
+        // 全都还在原来的位置，这里只是把送进管线的那个字符串换掉。
+        let trimmedTranscript = NotchListeningTranscriptModel.shared.consumeEditedTranscript()
+            ?? finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedTranscript.isEmpty else {
             // Nothing was heard. With confirmation on, anything already waiting
@@ -2555,6 +2568,9 @@ final class CompanionManager: ObservableObject {
                     self?.handleInterimTranscriptForScreenDetection(interimTranscriptText)
                     // 同上：连续追问的实时转写也喂给 Notion 检测。
                     self?.noteNotionLiveTranscript(interimTranscriptText)
+                    // 同上：也喂给刘海下面那行字幕 —— 连续追问期间相位同样是 Listening，
+                    // 用户说话时下面那行就应该在（同一条规则，不为这条窗口开例外）。
+                    NotchListeningTranscriptModel.shared.setLiveText(interimTranscriptText)
                 },
                 onUtteranceFinalized: { [weak self] finalTranscriptText in
                     self?.submitFollowUpQuestion(finalTranscriptText)
@@ -2776,7 +2792,9 @@ final class CompanionManager: ObservableObject {
     /// screenshot (the pre-captured one if it is waiting), agent loop, TTS,
     /// history — exactly as if the user had pressed the shortcut and spoken.
     private func submitFollowUpQuestion(_ finalTranscriptText: String) {
-        let trimmedTranscriptText = finalTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 与按住说话那条同一个口子：编辑窗里改过的字顶替识别结果（见 `handleFinalTranscript`）。
+        let trimmedTranscriptText = NotchListeningTranscriptModel.shared.consumeEditedTranscript()
+            ?? finalTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscriptText.isEmpty else { return }
 
         // 与按住说话那条完全相同的一道岔：命中关键词就存成笔记（或按取消作废），
