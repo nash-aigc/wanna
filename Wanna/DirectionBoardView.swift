@@ -90,30 +90,38 @@ struct DirectionBoardView: View {
     /// 内容渲染到右侧提前预留的空行部分，**不要因为生成了新内容就让整个标题和内容上下晃动**」。
     static let understandingLineHeight: CGFloat = 16
     /// 每一行预留几行（顺序与 `understandingLabels` 一致）。
-    /// 用户 2026-09-27 深夜第二轮：目标 → **6 行**（+2）、疑问 → **10 行**（+5）。
-    static let reservedLineCounts: [String: Int] = ["目标": 6, "细节": 7, "疑问": 10]
+    /// 用户 2026-09-27 深夜第三轮：**疑问缩小两次 30%**（10 → **5 行**，「太大了，整个高度宽度
+    /// 占用太大」）、**目标再增加一点**（6 → **8 行**，「目标也太墨迹了」—— 地方给足、话要少）。
+    static let reservedLineCounts: [String: Int] = ["目标": 8, "细节": 7, "疑问": 5]
 
     /// **脑图那一行是哪一行**（「细节」）—— 它单独占右栏，且**不画标题**。
     static let mindMapLabel = "细节"
     /// 左栏宽度 = 卡片宽度的 **40%**（用户指定的比例）。
     private var understandingColumnWidth: CGFloat {
-        (Self.cardWidth(forMultiplier: widthMultiplier) - Self.horizontalPadding * 2) * 0.4
+        (Self.cardWidth(forMultiplier: widthMultiplier) - Self.horizontalPadding * 2) * 0.48
     }
     /// 方向格**固定三行**的高度（每行 = 一个格子的高度 28 + 行距 6）。
-    private static let directionGridHeight: CGFloat = 2 * 28 + 6
+    /// 表格固定几行（用户 2026-09-27：「最上面这个表格**写成四行**」）。
+    static let directionGridRows = 4
+    private static let directionGridHeight: CGFloat = CGFloat(directionGridRows) * 28
+        + CGFloat(directionGridRows - 1) * 6
 
     /// 内容那一整块的高度（固定）：左列要装下「表格 2 行 + 参考 1 行 + 目标 4 行 + 疑问 5 行」，
     /// 右列的脑图就铺满这个高度（用户：「**右侧全部都是脑图**」）。
     /// 参考标签那一行的高度：**固定两行**（单行时下面空着）—— 理由见 `referenceTagRow`。
-    private static let referenceTagRowHeight: CGFloat = 38
+    /// 参考标签那一块固定几行（用户 2026-09-27：「参考这块**写成三行**」）。
+    static let referenceTagRowLines = 3
+    /// 参考那一块的高度 = **标题那一行** + 三行标签。
+    private static let referenceTagRowHeight: CGFloat = understandingLabelHeight
+        + CGFloat(referenceTagRowLines) * 17 + CGFloat(referenceTagRowLines - 1) * 4
 
     private static var contentBlockHeight: CGFloat {
         // 左列「装得下」的最低要求：表格 2 行 + 参考 2 行 + 目标 6 行 + 疑问 10 行 + 三处间距。
         let leftColumnRequirement = directionGridHeight
-            + referenceTagRowHeight
-            + understandingLineHeight * 6
-            + understandingLineHeight * 10
-            + 20
+            + referenceTagRowHeight                       // 含它自己的标题行
+            + understandingLabelHeight + understandingLineHeight * 8   // 目标：标题 + 8 行
+            + understandingLabelHeight + understandingLineHeight * 5   // 疑问：标题 + 5 行
+            + 20                                          // 三处间距：8 + 8 + 4
         // 用户 2026-09-27 深夜：「……**整体高度再增加一倍**」—— 上一版这一块是 264，
         // 所以取两者里更大的那个：行数是下限，翻倍是他明写的数。多出来的高度全给右栏那张脑图
         //（他要的就是「右侧全部都是脑图」）。
@@ -220,7 +228,7 @@ struct DirectionBoardView: View {
     /// 折叠钮的宽度（左 1/3 折叠、右 2/3 拖动 → 整块是它的 3 倍宽）。
     private static let collapseButtonWidth: CGFloat = 22
     /// 折叠钮的高度 = 按钮行高 + 卡片下边距（于是顶边与按钮行齐平、底边压到卡片最下沿）。
-    private static var collapseToggleHeight: CGFloat { cancelRowHeight + cardBottomPadding }
+    private static var collapseToggleHeight: CGFloat { cancelRowHeight }
     /// 卡片四周的内边距（原来是写死的 10；折叠钮要"贴到最下面"，所以它得是个常量）。
     private static let cardBottomPadding: CGFloat = 10
     /// 左 1/3（能点）与右 2/3（只能拖）的底色 —— 他要"用颜色区分开"。
@@ -333,14 +341,11 @@ struct DirectionBoardView: View {
     /// 样式也是他定的：「改大一点，做成矩形，**上下边距小一点**，加上圆角，字体大一点」——
     /// 所以从 Capsule(10pt 字) 改成 RoundedRectangle(12pt 字、垂直 1pt)。
     private var referenceTagRow: some View {
-        HStack(alignment: .top, spacing: 6) {
-            // **左侧标题「参考」**（用户 2026-09-27：「最上面一行（屏幕一、屏幕二）左侧加标题「参考」」）。
-            // **「参考」占的正是下面那个标签列**（用户：「左侧的标题要对齐」）—— 用与「目标/疑问」
-            // **同一个宽度**，标签于是从**内容列**开始，整块是齐的。
+        // **标题在上、标签在下**（与「目标 / 疑问」同一套 —— 见 `understandingRow` 的注释）。
+        VStack(alignment: .leading, spacing: 2) {
             Text("参考")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: Self.understandingLabelFontSize, weight: .semibold))
                 .foregroundStyle(theme.textColor.opacity(0.55))
-                .frame(width: Self.understandingLabelWidth, alignment: .leading)
 
             // ⚠️ **标签放在一个会换行的流里，而不是 HStack**（2026-09-27 实测）：表格搬进左列之后
             // 这一栏只有 262pt 宽，`HStack` 里放不下就**从右边截掉** —— 屏幕上量到的是
@@ -360,9 +365,8 @@ struct DirectionBoardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // **高度提前定死成两行**（用户那条反复强调的规矩：「它每一个位置上的高度都是固定的……
-        // 不要让高度总是晃」）：只有一行标签时下面也空着，但卡片高度因此恒定 ——
-        // 第二个标签到来时不会把下面所有东西顶下去。
+        // **高度提前定死成三行**（用户那条反复强调的规矩：「它每一个位置上的高度都是固定的……
+        // 不要让高度总是晃」）：标签不够三行时下面空着，但卡片高度因此恒定。
         .frame(height: Self.referenceTagRowHeight, alignment: .top)
         .transition(.opacity)
         .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.tags)
@@ -504,14 +508,17 @@ private struct ReferenceTagFlowLayout: Layout {
 
     /// 一行理解：左边标签定宽，右边值（**空值画占位符**，不是不画）。
     private func understandingRow(label: String, value: String, revealIndex: Int) -> some View {
-        let reservedHeight = CGFloat(Self.reservedLineCounts[label] ?? 3) * Self.understandingLineHeight
-        return HStack(alignment: .top, spacing: 6) {
-            // 标签列顶对齐（`alignment: .top`）——「左侧的标题要对齐」。
+        // **标题在上面、内容在下面**（用户 2026-09-27 深夜：「把右侧的标题和内容**换行显示**，
+        // 不要显示在一行，**这样内容会有更多空间**。**标题在上面，内容在下面，标题文字稍微大一点**」）。
+        //
+        // 原来标签和值挤在同一行，值那边被标签那一列吃掉 50pt —— 左列只有 262pt 的时候
+        // 这是很实在的一笔；换行之后值拿到**整列宽度**，同一个字号的文字每行多装三四个字。
+        let reservedHeight = Self.understandingLabelHeight
+            + CGFloat(Self.reservedLineCounts[label] ?? 3) * Self.understandingLineHeight
+        return VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: Self.understandingLabelFontSize, weight: .semibold))
                 .foregroundStyle(theme.textColor.opacity(0.55))
-                // 标签定宽按**最长的那一个**（「目标问题」四个字）算 —— 写死 26 会让它折行。
-                .frame(width: Self.understandingLabelWidth, alignment: .leading)
             Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
                 // 「细节」那张关系图要**等宽**才对齐（用户要的竖形图/脑图，靠的就是字符对齐）。
                 .font(.system(size: 12,
@@ -533,8 +540,10 @@ private struct ReferenceTagFlowLayout: Layout {
 
     /// 那一行没有内容时画的东西（**占位符**：行不能消失，否则卡片会跳）。
     private static let emptyValuePlaceholder = "—"
-    /// 标签那一列的宽度（按「目标问题」四个字量出来的）。
-    private static let understandingLabelWidth: CGFloat = 50
+    /// 标题那一行的高度（标题现在自己占一行，见 `understandingRow`）。
+    static let understandingLabelHeight: CGFloat = 18
+    /// 标题的字号 —— 用户 2026-09-27：「**标题文字稍微大一点**」（原来是 11）。
+    static let understandingLabelFontSize: CGFloat = 12.5
 
 
     // MARK: - 输入框区（**高度固定**）
@@ -551,82 +560,62 @@ private struct ReferenceTagFlowLayout: Layout {
     /// 三档的语义（用户）：取消本次 = 这一次大循环；取消十分钟 = 十分钟内（本循环或新循环）都不显示；
     /// 取消今日 = 到**明天凌晨 0 点**为止（不是"24 小时之后"）。
     private var cancelRow: some View {
-        HStack(alignment: .top, spacing: 0) {
-            // **两个"不是取消"的按钮**（用户 2026-09-27：「在取消这一行的最左侧增加一个按钮，
-            // 叫复制按钮……它的右侧还有一个按钮，叫复制并退出」）——
-            // 刻意用中性色并与那三档之间隔一条线：它们是"把结果拿走"，不是"把这一轮丢掉"，
-            // 混成暗红会让人以为按了会丢东西。
-            // **折叠钮贴左下角**（用户 2026-09-27：「最左侧是折叠按钮，**左边距、下边距为 0，
-            // 也就是贴紧边缘，类似从左下角长出来一样**。可以理解为左下角有一个正方形」）。
-            // 所以它不能再被卡片的 12pt 内边距套住 —— 用负 padding 把它顶到边上（见下面 buttonRowInset）。
-            // 折叠钮的底边比按钮行更低（它一直压到卡片下沿）—— 所以这一行的对齐靠上。
+        // **这一行是"一个按钮"**（用户 2026-09-27 深夜：「最下边这一行**所有的按钮样式变成统一的
+        // 样式**，**用颜色来区分**，可以理解为**它们是一个按钮**，颜色不一样，
+        // **用分割线和颜色来区分**」）。
+        //
+        // 所以从"三组各自带底色的圆角块 + 组间留白"改成**一整条**：一个圆角底铺满卡片下沿，
+        // 里面每一格同高、同字体、同内边距，**格子之间一律一条纯白细线**，
+        // 每一格自己刷所属那一组的颜色（折叠＝中性灰、复制/执行/退出＝绿、取消两档＝暗红）。
+        // 三组的宽度、字号、圆角从此不可能漂 —— 它们不是三个控件，是一条按钮上的三段颜色。
+        HStack(alignment: .center, spacing: 0) {
             collapseToggle
 
-            // **两个复制按钮是"一整块"**（用户 2026-09-27：「你让他们的两个按钮合并成一个，
-            // 就是**样式上合并成一个**，然后**中间有条细线**，就跟右侧是一样的」）——
-            // 与右边那三档完全同一种做法：一个圆角底 + 里面一条**纯白细线**，
-            // 而不是两个各自带底色的圆角块中间夹一条线（那是上一版，他说没改对）。
-            // **复制 / 执行 / 退出**（用户 2026-09-27：「右侧分别是复制按钮、执行按钮和退出按钮。
-            // 执行按钮就是**执行并退出**，退出按钮是**不执行、直接取消任务**」）——
-            // 一整块底 + 中间两条纯白细线，与右侧那三档同一种做法。
-            HStack(spacing: 0) {
-                actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
-                             help: "把右下角那张卡片里 AI 回复的内容复制下来",
-                             isEnabled: session.hasCopyableReply) {
-                    session.copyReplyAction?()
-                }
-                Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1.5, height: 20)
-                actionButton(title: "执行", icon: "play.fill", width: Self.executeButtonWidth,
-                             help: "把当前任务发给主 Agent 去执行（与按 Command + 回车同效）") {
-                    session.sendTurnAction?()
-                }
-                Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1.5, height: 20)
-                actionButton(title: "退出", icon: "xmark", width: Self.exitButtonWidth,
-                             help: "不执行，直接取消这一轮（与按 ESC 同效）") {
-                    session.exitTurnAction?()
-                }
+            cancelRowDivider
+            // **复制 / 执行 / 退出**：把结果拿走（不是"丢掉这一轮"），所以是绿色系。
+            actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
+                         help: "把右下角那张卡片里 AI 回复的内容复制下来",
+                         isEnabled: session.hasCopyableReply) {
+                session.copyReplyAction?()
             }
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Self.actionButtonColor)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .opacity(session.hasCopyableReply ? 1 : 0.45)
-
-            // 中性按钮与三档取消之间隔一条**空白**（不是分割线）：底色的分界本身就把它们分开了。
-            Spacer().frame(width: 8)
-
-            // 三档取消自成一组，**暗红底色只给这一组** —— 那两个按钮是"拿走结果"，
-            // 不该跟着一起变红。
-            HStack(spacing: 0) {
-                cancelButton(title: "取消", help: "这一次循环不再显示看板（录音照旧）") {
-                    session.cancelForThisCycle()
-                }
-                cancelRowDivider
-                cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
-                    session.cancelForTenMinutes()
-                }
-                // 「取消今日」按用户 2026-09-27 的要求删掉（「卡片右下角「取消」「今日」删除」）。
-                // 那三档的总闸门仍在设置页与「取消任务看板」那句话里 —— 只是这一行不再画它。
+            cancelRowDivider
+            actionButton(title: "执行", icon: "play.fill", width: Self.executeButtonWidth,
+                         help: "把当前任务发给主 Agent 去执行（与按 Command + 回车同效）") {
+                session.sendTurnAction?()
             }
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Self.cancelRowColor)
-            )
+            cancelRowDivider
+            actionButton(title: "退出", icon: "xmark", width: Self.exitButtonWidth,
+                         help: "不执行，直接取消这一轮（与按 ESC 同效）") {
+                session.exitTurnAction?()
+            }
+
+            cancelRowDivider
+            // 两档取消：暗红只给这两格（它们是"把这一轮丢掉"）。
+            cancelButton(title: "取消", help: "这一次循环不再显示看板（录音照旧）") {
+                session.cancelForThisCycle()
+            }
+            cancelRowDivider
+            cancelButton(title: "取消十分钟", help: "十分钟内不显示（包括新开的循环）") {
+                session.cancelForTenMinutes()
+            }
         }
-        // **折叠钮贴左下角**（用户 2026-09-27 深夜：「左下角这个卡片的按钮还是有边距，按钮最左边
-        // 跟卡片外边框之间有间距，**不应该有间距**」）。做法是把**整行**向左、向下各顶出
-        // 卡片内边距那么多 —— 于是折叠钮的左边缘落在卡片外边框上、下边缘落在卡片下沿，
-        // 而右侧那三档的位置**一点没动**（行的左边缘移了 12，右边缘仍在内边距那一条线上）。
-        .padding(.leading, -Self.horizontalPadding)
+        .frame(height: Self.cancelRowHeight)
+        // 一整条的底 —— 各格自己的颜色刷在上面，所以这里只是"缝"和圆角的底色。
+        .background(Self.buttonBarColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        // **贴住卡片的下沿和左右两边**（用户 2026-09-27：「按钮最左边跟卡片外边框之间有间距，
+        // **不应该有间距**」）。做法是把整行向外顶出卡片内边距那么多 ——
+        // 于是它从左边缘到下边缘到右边缘都是通的，读起来就是卡片底部那一条。
+        .padding(.horizontal, -Self.horizontalPadding)
         .padding(.bottom, -Self.cardBottomPadding)
         // ⚠️ **这里不许再加 `frame(height:)`**：负内边距是靠"内容的布局高度比它画出来的高度
         // 小 10pt"起作用的，再套一个 frame 就把这个高度**顶回去**、负内边距等于没写
-        //（第一版就是这么写的，屏幕上量到的仍是 15pt 的缝）。现在这一行的布局高度 = 26，
-        // 内容（36 高的折叠钮）向下溢出 10pt，正好落进卡片的下内边距里 → 底边贴住卡片下沿。
+        //（第一版就是这么写的，屏幕上量到的仍是 15pt 的缝）。
     }
 
-    /// 取消那一行**左侧那两个按钮的底色**（中性 —— 它们不是"取消"）。
+    /// 这一整条的底色（各格自己的颜色刷在上面，所以它只在格子之间的缝里露出来）。
+    private static let buttonBarColor = Color.white.opacity(0.04)
+    /// 取消那一行**左侧那两个按钮的底色**    /// 取消那一行**左侧那两个按钮的底色**（中性 —— 它们不是"取消"）。
     private static let actionButtonColor = DS.Colors.success.opacity(0.12)
     /// 两个按钮各自的宽度（用户 2026-09-27：「复制的按钮要小一点，因为它就两个字；
     /// 复制并退出的按钮大一点」）。
@@ -640,7 +629,7 @@ private struct ReferenceTagFlowLayout: Layout {
     private var cancelRowDivider: some View {
         Rectangle()
             .fill(Self.cancelRowDividerColor)
-            .frame(width: 1.5, height: 20)
+            .frame(width: 1.5, height: Self.cancelRowHeight - 6)
     }
 
     /// 复制 / 复制并退出 —— 中性色（`surface2` 底 + 正文色字），与三档取消明确区分。
@@ -658,6 +647,8 @@ private struct ReferenceTagFlowLayout: Layout {
             // **绿色**（用户 2026-09-27：「它的字体、背景颜色是绿色」，与右侧那套极简风格一致）。
             .foregroundStyle(DS.Colors.success)
             .frame(width: width, height: Self.cancelRowHeight)
+            // 每一格自己刷底色 —— 一条按钮上的三段颜色就是这么来的。
+            .background(Self.actionButtonColor)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -675,13 +666,16 @@ private struct ReferenceTagFlowLayout: Layout {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Self.cancelRowTextColor)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Self.cancelRowColor)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
     }
 
-    private static let cancelRowHeight: CGFloat = 26
+    /// 用户 2026-09-27 深夜：「最下面这一行的按钮**高度增加 30%**，现在太小了」
+    ///（上一轮刚按他说的减了 20%，他看完说太小 —— 21 → **27**）。
+    private static let cancelRowHeight: CGFloat = 27
     /// 暗红：比正文暗、比背景亮，一眼看出是"关掉它"这一类的动作，但不至于抢走注意。
     private static let cancelRowColor = Color(red: 0.35, green: 0.09, blue: 0.10)
     private static let cancelRowTextColor = Color(red: 0.98, green: 0.72, blue: 0.72)

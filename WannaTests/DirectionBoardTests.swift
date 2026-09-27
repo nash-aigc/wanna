@@ -510,4 +510,71 @@ struct DirectionBoardTests {
         #expect(packed.first { $0.label == "目标" }?.value == "整理文件")
         #expect(packed.first { $0.label == "细节" }?.value == "打个比方")
     }
+
+    /// **提示词里三件用户 2026-09-27 当场定的事，一句都不许被后来改回去**：
+    /// ① 目标**只看用户自己的话**（屏幕是参考，不是目标）；
+    /// ② 疑问**只写逻辑矛盾**，不许问澄清类的问题（「什么地方的北京」那种墨迹）；
+    /// ③ **以当前这一句为准**（问题可以是跳跃的），并且用户的原话在请求里要被**标成重点**。
+    @Test func thePromptKeepsTheUsersWordsAsTheGoal() throws {
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: [(id: "d1", keyword: "整理文件", detail: "把下载目录收拾一下")],
+            looksAtTheScreen: true)
+        // ① 目标：用户的提示词才是目标，屏幕只是参考。
+        #expect(systemPrompt.contains("只看用户自己说的那句话"))
+        #expect(systemPrompt.contains("用户的提示词才是目标"))
+        // ② 疑问：只关注逻辑矛盾，且明写不许问澄清类的问题。
+        #expect(systemPrompt.contains("只写逻辑矛盾"))
+        #expect(systemPrompt.contains("不要问澄清类的问题"))
+        #expect(systemPrompt.contains("用户的问题正常回答就好"))
+        #expect(systemPrompt.contains("什么地方的北京"))
+        // ③ 以当前这一句为准 + 两种场景。
+        #expect(systemPrompt.contains("以当前这一句为准"))
+        #expect(systemPrompt.contains("重开一张图"))
+
+        // 请求里，用户的原话必须被标成「目标以这一段为准」。
+        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(
+            transcript: "帮我把下载目录整理一下",
+            previousRoundItems: [],
+            recentReadings: [])
+        #expect(userPrompt.contains("这是重点，目标以这一段为准"))
+        #expect(userPrompt.contains("帮我把下载目录整理一下"))
+    }
+
+    /// 用户 2026-09-27 的尺寸：**疑问缩小两次 30%**、**目标再增加一点**、表格 **4 行**、参考 **3 行**。
+    /// 这几行是卡片"高度不晃"的全部依据，写死在这里。
+    @Test func theReservedRowsMatchTheUsersSizes() throws {
+        #expect(DirectionBoardView.reservedLineCounts["疑问"] == 5)
+        #expect(DirectionBoardView.reservedLineCounts["目标"] == 8)
+        #expect(DirectionBoardView.directionGridRows == 4)
+        #expect(DirectionBoardView.referenceTagRowLines == 3)
+    }
+
+    /// **「参考文件 / 参考文件夹」现在从剪贴板取，判据只有一条：是不是绝对路径**
+    /// （用户 2026-09-27：「检测一下剪贴板的内容是不是一个路径、**是不是一个绝对路径**就可以了，
+    /// 不需要去看选中文件。我发现这个东西很难实现」）。
+    @Test func clipboardPathsMustBeAbsolute() throws {
+        // 绝对路径：认。
+        #expect(TurnReferenceMaterials.absolutePaths(inText: "/Users/mjm/Desktop/a.pdf")
+                == ["/Users/mjm/Desktop/a.pdf"])
+        #expect(TurnReferenceMaterials.absolutePaths(inText: "/tmp\n/Users/mjm")
+                == ["/tmp", "/Users/mjm"])
+        // `~` 开头要展开成绝对路径（它是绝对路径的另一种写法，不是相对路径）。
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        #expect(TurnReferenceMaterials.absolutePaths(inText: "~/Desktop") == [home + "/Desktop"])
+        // **相对路径不认** —— 主 Agent 拿到 `Downloads/a.pdf` 哪也去不了。
+        #expect(TurnReferenceMaterials.absolutePaths(inText: "Downloads/a.pdf").isEmpty)
+        #expect(TurnReferenceMaterials.absolutePaths(inText: "./a.pdf").isEmpty)
+        // 普通句子当然不认（这是"复制了一段话"的情形，它不是文件）。
+        #expect(TurnReferenceMaterials.absolutePaths(inText: "帮我把这段话整理一下").isEmpty)
+        #expect(TurnReferenceMaterials.absolutePaths(inText: "").isEmpty)
+    }
+
+    /// **模型爱把整行包在 `**…**` 里**（提示词写了「不要 Markdown」它照样写）——
+    /// 这行字是直接画给用户看的，不剥掉就是屏幕上两个裸星号。
+    @Test func markdownStarsAreStrippedFromTheRows() throws {
+        let lines = DirectionBoardPrompt.parseUnderstandingLines(
+            "疑问：**一、关于「这段」的疑问:他说的和上一句对不上**")
+        #expect(lines.first { $0.label == "疑问" }?.value
+                == "一、关于「这段」的疑问:他说的和上一句对不上")
+    }
 }

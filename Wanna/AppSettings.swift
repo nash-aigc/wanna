@@ -1358,13 +1358,29 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 概念就是同一个"哪个键做什么"，没有理由再造一个。默认 `.returnKey` = **Enter 粘贴**。
     var boardPasteShortcut: ComposerSendShortcut = .returnKey
 
-    /// **「选中文件 / 选中文件夹」那一组**（只看主 Agent 那条路用）。
+    /// **「文件 / 文件夹」那一组**（只看主 Agent 那条路用）。
     ///
-    /// 说到这些词 → 去访达取当前选中的**绝对路径**（只给路径、不给内容）。用户 2026-09-27 拍板
-    /// 「用这组默认词」，设置页里可以改。
+    /// ⚠️ **2026-09-27 改道**：原来这组是"去访达取当前选中的绝对路径"，整块删掉了
+    ///（用户：「把识别选中文件和选中文件夹的逻辑删掉……**我发现这个东西很难实现**」）。
+    /// 现在说到这些词 → **去看剪贴板里是不是绝对路径**，是就带上（只给路径、不给内容）。
+    /// 用户点名的那两个说法（「参考文件」「参考文件夹」）在最前面。
     var selectedItemKeywords: String = AppSettings.defaultSelectedItemKeywords
 
     static let defaultSelectedItemKeywords = """
+    参考文件
+    参考文件夹
+    参考这个文件
+    参考这个文件夹
+    选中文件
+    选中的文件
+    选中文件夹
+    选中的文件夹
+    这个文件
+    这个文件夹
+    """
+    /// **上一版的默认值** —— 用户存的是它的话，一次性换成新的（仓规：改默认值得配一次迁移，
+    /// 否则老用户设置文件里存着旧值，新加的「参考文件」永远不生效）。
+    static let legacySelectedItemKeywords = """
     选中文件
     选中的文件
     选中文件夹
@@ -1937,7 +1953,16 @@ nonisolated extension AppSettings {
             notionClipboardKeywords = storedClipboardKeywords ?? defaults.notionClipboardKeywords
         }
         notionScreenKeywords = try container.decodeIfPresent(String.self, forKey: .notionScreenKeywords) ?? defaults.notionScreenKeywords
-        selectedItemKeywords = try container.decodeIfPresent(String.self, forKey: .selectedItemKeywords) ?? defaults.selectedItemKeywords
+        // ⚠️ 同一类迁移：这一组 2026-09-27 换成了**从剪贴板取绝对路径**，默认词里补了
+        // 用户点名的「参考文件 / 参考文件夹」—— 存的正好是老默认值（＝他从没改过）就换新的。
+        let storedSelectedItemKeywords = try container.decodeIfPresent(String.self, forKey: .selectedItemKeywords)
+        if let storedSelectedItemKeywords, storedSelectedItemKeywords != defaults.selectedItemKeywords,
+           storedSelectedItemKeywords.trimmingCharacters(in: .whitespacesAndNewlines)
+            == Self.legacySelectedItemKeywords.trimmingCharacters(in: .whitespacesAndNewlines) {
+            selectedItemKeywords = defaults.selectedItemKeywords
+        } else {
+            selectedItemKeywords = storedSelectedItemKeywords ?? defaults.selectedItemKeywords
+        }
         boardPasteShortcut = try container.decodeIfPresent(ComposerSendShortcut.self,
                                                           forKey: .boardPasteShortcut)
             ?? defaults.boardPasteShortcut

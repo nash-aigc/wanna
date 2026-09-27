@@ -196,13 +196,13 @@ struct DirectionBoardSettingsSection: View {
                 placeholder: "复制内容\n参考剪贴板")
             SettingsCardRowDivider()
             SettingsTextEditorRow(
-                label: "选中文件 / 文件夹",
-                description: "说到这些词就去**访达取你当前选中的东西的绝对路径**（只给路径、不给内容）。**只有访达是前台窗口时才取** —— 否则当口误忽略。第一次会弹一次「控制访达」的授权框。",
+                label: "文件 / 文件夹",
+                description: "说到这些词就**去看剪贴板里是不是一个绝对路径**（`/` 开头那种），是就带上 —— **只给路径、不给内容**，需要看内容让 Agent 自己去读。不是路径就什么都不带（卡片上标「无法识别」）。**在你说的那一刻读**，所以之后再复制别的东西也不影响这一轮。",
                 text: generalSettingsViewModel.binding(\.selectedItemKeywords),
-                placeholder: "选中文件\n选中的文件夹")
+                placeholder: "参考文件\n参考文件夹")
         }
         SettingsNote(
-            text: "这三组词是**代码**在认（不是 AI）：识别到就去取材料，**取到了才在卡片上显示标签** —— 说了词但没取到（比如访达不是前台），标签不会出现。一行一个词。"
+            text: "这三组词是**代码**在认（不是 AI）：识别到就去取材料，**取到了才在卡片上显示标签** —— 说了词但没取到（比如剪贴板里不是路径），标签不会出现。一行一个词。"
         )
 
         SettingsGroupLabel("方向判断（Jev 决策模型）")

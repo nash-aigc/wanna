@@ -108,6 +108,20 @@ nonisolated struct TurnReferenceMaterials {
         return tags
     }
 
+    /// 从一段文本里挑出**绝对路径**（一行一条）。
+    ///
+    /// 用户 2026-09-27 定的判据就是这两个字：**绝对**。所以只认 `/` 开头（以及 `~/` 展开之后
+    /// 的绝对路径），相对路径不认 —— 他说「参考文件」时给一个 `Downloads/a.pdf`，
+    /// 主 Agent 拿着它哪也去不了。
+    nonisolated static func absolutePaths(inText text: String) -> [String] {
+        text.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { $0.hasPrefix("~/") ? FileManager.default.homeDirectoryForCurrentUser.path
+                    + String($0.dropFirst(1)) : $0 }
+            .filter { $0.hasPrefix("/") }
+    }
+
     /// 把路径分成「文件」与「文件夹」两类（**按磁盘上的真实类型判**，不看有没有扩展名 ——
     /// 一个叫 `Readme` 的目录没有扩展名，靠名字判会把它算成文件）。
     nonisolated static func splitPathsByKind(_ paths: [String]) -> (files: [String], folders: [String]) {
@@ -155,11 +169,8 @@ final class TurnReferenceCollector: ObservableObject {
     private var lastScreenMentionCount = 0
     private var lastClipboardMentionCount = 0
     private var lastSelectedMentionCount = 0
-    /// 剪贴板与访达**一轮只取一次**：它们反映的是"当前状态"，不像屏幕有"说几次截几次"的语义。
+    /// 剪贴板**一轮只取一次**：它反映的是"当前状态"，不像屏幕有"说几次截几次"的语义。
     private var didReadClipboardThisTurn = false
-    private var didReadFinderSelectionThisTurn = false
-    /// 授权那一页**一次启动只替他打开一次**（不然他每说一次「选中文件」，屏幕就弹一次设置）。
-    private var didOpenAutomationSettingsThisRun = false
     private var isCapturingScreenshot = false
 
     // MARK: - 一轮的开始与结束
@@ -172,7 +183,6 @@ final class TurnReferenceCollector: ObservableObject {
         lastClipboardMentionCount = 0
         lastSelectedMentionCount = 0
         didReadClipboardThisTurn = false
-        didReadFinderSelectionThisTurn = false
         appendScreenshot(reason: "按下快捷键自动截屏")
     }
 
@@ -183,7 +193,7 @@ final class TurnReferenceCollector: ObservableObject {
         lastClipboardMentionCount = 0
         lastSelectedMentionCount = 0
         didReadClipboardThisTurn = false
-        didReadFinderSelectionThisTurn = false
+        isClipboardReadAsPaths = false
     }
 
     // MARK: - 每一条实时转写
@@ -227,14 +237,25 @@ final class TurnReferenceCollector: ObservableObject {
             }
         }
 
-        // ③ 访达选中：一轮只取一次，而且**只在前台是访达时**才取。
+        // ③ **文件 / 文件夹：不看访达，看剪贴板**（用户 2026-09-27 拍板，
+        //    原话：「把识别选中文件和选中文件夹的逻辑删掉，只保留一个自动的、默认的去查看屏幕。
+        //    参数参考来源：**第一是屏幕，第二是剪贴板**。如果用户说的是参考文件、参考文件夹，
+        //    **这时要去看剪贴板的内容是不是文件夹路径或文件路径**，如果是，就把它写入进去……
+        //    用户可能一边说一边操作其他事情，剪贴板的内容一直在变化，所以用户说完这些话后，
+        //    **检测一下剪贴板的内容是不是一个路径、是不是一个绝对路径就可以了，不需要去看选中文件。
+        //    我发现这个东西很难实现**」）。
+        //
+        //    ⚠️ **必须在"他说这句话的这一刻"读，而且读到的值立刻冻进 `materials`** ——
+        //    他接着可能就复制别的东西，剪贴板是会变的（同一条原话的后半句就是这个担心：
+        //    「写入进去之后，要存到提示词里面，因为未来用户复制其他内容的时候，你可能就忘了」）。
         let selectedMentions = NotionNoteDetector.transcriptMentionCount(selectedKeywords, in: transcriptText,
                                                                          edgeCharacterCount: window)
         if selectedMentions > lastSelectedMentionCount {
             lastSelectedMentionCount = selectedMentions
-            if !didReadFinderSelectionThisTurn {
-                didReadFinderSelectionThisTurn = true
-                readFinderSelection()
+            if !didReadClipboardThisTurn {
+                didReadClipboardThisTurn = true
+                isClipboardReadAsPaths = true
+                if !readClipboardForTurn(requireAbsolutePaths: true) { markUnresolved("文件 / 文件夹") }
             }
         }
     }
@@ -279,14 +300,43 @@ final class TurnReferenceCollector: ObservableObject {
     /// 也重试三次。重试三次失败后，就在任务意图识别的看板上显示……用这样的方式来避免无限循环」）。
     static let maximumAttemptsPerReference = 3
 
-    /// 读剪贴板。**文字文件抽正文、其余只取路径**（用户 2026-09-27 拍板的那条分工）。
-    @discardableResult
-    private func readClipboardForTurn() -> Bool {
+    /// 这一轮的剪贴板是不是**按路径**读的（说「参考文件」时为真）—— 只用于日志与标签。
+    private var isClipboardReadAsPaths = false
+
+    /// 说了「参考」但没拿到 → 记下来（**只显示、不进提示词**）。
+    ///
+    /// 用户 2026-09-27：「即便用户说了"参考"，但没有找到，就直接在看板上显示"无法识别"」。
+    private func markUnresolved(_ label: String) {
+        guard !materials.unresolved.contains(label) else { return }
+        materials.unresolved.append(label)
+        MainFlowDiagnostics.log("📎 参考材料：\(label) —— 说了参考但没拿到，看板上标「无法识别」")
+    }
+
+    /// 读一次剪贴板。
+    /// - Parameter requireAbsolutePaths: **只认文件 / 文件夹的绝对路径**（说「参考文件 / 参考文件夹」
+    ///   时走这一档）。不是路径就返回 false —— 调用方据此标「无法识别」。
+    private func readClipboardForTurn(requireAbsolutePaths: Bool = false) -> Bool {
         let pasteboard = NSPasteboard.general
 
-        // ① 文件 / 文件夹（访达里复制的那种）。
+        // ① 文件 / 文件夹 —— **两种来源都认**：访达里复制来的文件 URL，或者**一段绝对路径文本**
+        //    （用户 2026-09-27：「检测一下剪贴板的内容**是不是一个路径、是不是一个绝对路径**就可以了」）。
         let fileURLs = (pasteboard.readObjects(forClasses: [NSURL.self],
                                                options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if fileURLs.isEmpty, let raw = pasteboard.string(forType: .string) {
+            // 纯文本形态的路径（从终端 / 编辑器里复制出来的那种）。
+            let pathLines = TurnReferenceMaterials.absolutePaths(inText: raw)
+            if !pathLines.isEmpty {
+                materials.selectedPaths = pathLines
+                materials.clipboard = .paths(pathLines)
+                MainFlowDiagnostics.log("📎 参考材料：剪贴板 绝对路径 \(pathLines.count) 条 —— "
+                                        + pathLines.joined(separator: "、"))
+                return true
+            }
+            if requireAbsolutePaths {
+                MainFlowDiagnostics.log("📎 参考材料：说了「参考文件」，但剪贴板里不是绝对路径")
+                return false
+            }
+        }
         if !fileURLs.isEmpty {
             // 文字文件 → 正文；其余（含文件夹）→ 只要绝对路径。
             var texts: [String] = []
@@ -305,9 +355,18 @@ final class TurnReferenceCollector: ObservableObject {
                                             sourceName: fileURLs.count == 1 ? fileURLs[0].lastPathComponent : nil)
             } else {
                 materials.clipboard = .paths(paths)
+                // **同时记进"路径"那一栏** —— 卡片上的「文件 / 文件夹」两个标签读的是它
+                //（它们要的是"有没有文件、有没有文件夹"，与来源无关）。
+                materials.selectedPaths = paths
             }
             MainFlowDiagnostics.log("📎 参考材料：剪贴板 \(materials.clipboard?.logLine ?? "无")")
             return true
+        }
+
+        // **要路径而上面没拿到** → 后面三种（图片 / 文本 / 别的）一律不算。
+        if requireAbsolutePaths {
+            MainFlowDiagnostics.log("📎 参考材料：说了「参考文件」，但剪贴板里不是绝对路径")
+            return false
         }
 
         // ② 图片。
@@ -337,135 +396,12 @@ final class TurnReferenceCollector: ObservableObject {
     /// **只在前台是访达时才取**（用户：「只需要判断一件事：当前正在激活的窗口是不是访达，
     /// 如果不是就放弃……因为如果不是，可能是用户口误或其他原因」）。
     ///
-    /// 走 AppleScript：`NSAppleScript` 会**阻塞**（等 Finder 回事件），所以放到专用串行队列上跑 ——
-    /// 主线程上跑它就是拿界面去等访达（而今天刚加的主线程看门狗会立刻把它抓出来）。
-    /// - Parameter onMainThread: 这次是不是"为了拿到授权而走主线程"的那一试（见 `-1743` 那段注释）。
-    private func readFinderSelection(attempt: Int = 1, onMainThread: Bool = false) {
-        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else {
-            MainFlowDiagnostics.log("📎 参考材料：说了选中文件，但前台不是访达 → 放弃"
-                                    + "（当前是 \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "未知")）")
-            markUnresolved("选中文件")
-            return
-        }
-        // ⚠️ **`-1743`（Not authorized）必须回主线程再试一次**（2026-09-27 实测）：
-        // 第一次是在专用串行队列上发的，系统**没有弹授权框**、直接回了
-        // `Not authorized to send Apple events to Finder.`（错误号 -1743），
-        // 而 Info.plist 里 `NSAppleEventsUsageDescription` 是有的（`plutil -p` 核对过）。
-        // 授权框只能由主线程上的那次发送带出来 —— 所以拿到 -1743 就回主线程重发一次，
-        // 那一发才会把「Wanna 想要控制访达」问出来。
-        let send: (@escaping ([String]) -> Void) -> Void = { completion in
-            let work = {
-                let result = Self.finderSelectedPaths()
-                Task { @MainActor in completion(result.paths) }
-            }
-            if onMainThread {
-                // **发之前先把自己激活**：macOS 那个「Wanna 想要控制访达」的授权框
-                // 需要一个能上前的 App 才弹得出来 —— Wanna 是 `LSUIElement`（没有 Dock 图标、
-                // 平时从不成为 active），后台直接发的结果就是**静默拒绝**：
-                // 错误号 -1743，而"自动化"列表里连条目都不会多出来。
-                // 用户 2026-09-27 实测正是如此：他那一页里 Wanna 下面只有 System Events 与 Safari。
-                NSApp.activate(ignoringOtherApps: true)
-                DispatchQueue.main.async(execute: work)
-            } else {
-                Self.finderSelectionQueue.async(execute: work)
-            }
-        }
-        send { paths in
-            Task { @MainActor in
-                if let failure = Self.lastFinderSelectionFailure, failure.isNotAuthorized {
-                    if !onMainThread {
-                        MainFlowDiagnostics.log("📎 参考材料：访达事件没被授权（-1743）→ 激活 App 后重发一次"
-                                                + "（授权框需要一个能上前的 App 才弹得出来）")
-                        self.readFinderSelection(attempt: attempt, onMainThread: true)
-                        return
-                    }
-                    // 主线程上、App 也激活了，还是 -1743 → 说明**这一页里根本没有它**
-                    //（用户那次实测就是：列表里只有 System Events 与 Safari）。
-                    // 把他直接送到那一页，比让他自己在设置里翻要省事。
-                    MainFlowDiagnostics.log("📎 参考材料：访达事件仍未被授权 → 打开「隐私与安全性 → 自动化」")
-                    self.markUnresolved("选中文件")
-                    if !self.didOpenAutomationSettingsThisRun {
-                        self.didOpenAutomationSettingsThisRun = true
-                        WindowPositionManager.openAutomationSettings()
-                    }
-                    return
-                }
-                guard !paths.isEmpty else {
-                    // **重试三次就放弃**（用户：「尝试的话，重试三次就可以了……用这样的方式来避免无限循环」）。
-                    // 退避很短：这里多半是"访达刚切过去、选中项还没读到"那种瞬态。
-                    guard attempt < Self.maximumAttemptsPerReference else {
-                        MainFlowDiagnostics.log("📎 参考材料：访达选中取不到，试了 \(attempt) 次 → 放弃")
-                        TurnReferenceCollector.shared.markUnresolved("选中文件")
-                        return
-                    }
-                    MainFlowDiagnostics.log("📎 参考材料：访达这次没拿到选中项，第 \(attempt) 次重试")
-                    try? await Task.sleep(for: .milliseconds(200 * attempt))
-                    TurnReferenceCollector.shared.readFinderSelection(attempt: attempt + 1)
-                    return
-                }
-                TurnReferenceCollector.shared.materials.selectedPaths = paths
-                MainFlowDiagnostics.log("📎 参考材料：访达选中 \(paths.count) 项 —— "
-                                        + paths.joined(separator: "、"))
-            }
-        }
-    }
-
-    /// 说了「参考」但没拿到 → 记下来（**只显示、不进提示词**）。
-    private func markUnresolved(_ label: String) {
-        guard !materials.unresolved.contains(label) else { return }
-        materials.unresolved.append(label)
-        MainFlowDiagnostics.log("📎 参考材料：\(label) —— 说了参考但没拿到，看板上标「无法识别」")
-    }
-
-    /// AppleScript 在**专用串行队列**上跑（它阻塞；放主线程就是拿界面去等访达）。
-    private static let finderSelectionQueue = DispatchQueue(label: "wanna.finder-selection")
-
-    /// 取访达选中项的 POSIX 路径。
-    ///
-    /// ⚠️ 第一次调用会弹一次系统授权框「Wanna 想要控制访达」——
-    /// **必须由人在系统对话框里点**（这是仓库里写明的"三种躲不掉的用户参与"之一）。
-    /// 另外 Info.plist 里要有 `NSAppleEventsUsageDescription`：**没有那个键的话
-    /// macOS 会静默拒绝**（不弹框、不报错、什么都不发生）—— 这个仓库最怕的就是那种失败。
-    /// 上一次取访达选中时的失败信息（给调用方判断"是不是没授权"）。
-    nonisolated(unsafe) static var lastFinderSelectionFailure: (isNotAuthorized: Bool, message: String)?
-
-    nonisolated static func finderSelectedPaths() -> (paths: [String], error: (isNotAuthorized: Bool, message: String)?) {
-        let source = """
-        tell application "Finder"
-            set theSelection to selection
-            set thePaths to {}
-            repeat with anItem in theSelection
-                try
-                    set end of thePaths to POSIX path of (anItem as alias)
-                end try
-            end repeat
-            return thePaths
-        end tell
-        """
-        guard let script = NSAppleScript(source: source) else { return ([], nil) }
-        var errorInfo: NSDictionary?
-        let result = script.executeAndReturnError(&errorInfo)
-        if let errorInfo {
-            let number = (errorInfo[NSAppleScript.errorNumber] as? Int) ?? 0
-            let failure = (isNotAuthorized: number == -1743,
-                           message: (errorInfo[NSAppleScript.errorMessage] as? String) ?? "\(errorInfo)")
-            MainFlowDiagnostics.log("📎 参考材料：访达 AppleScript 出错 —— \(errorInfo)")
-            // 记下来给调用方判"是不是没授权"（要回主线程再试一次那一支靠它）。
-            lastFinderSelectionFailure = failure
-            return ([], failure)
-        }
-        lastFinderSelectionFailure = nil
-        var paths: [String] = []
-        let count = result.numberOfItems
-        guard count > 0 else { return ([], nil) }
-        for index in 1...count {
-            if let value = result.atIndex(index)?.stringValue, !value.isEmpty {
-                // 访达给文件夹的 POSIX 路径带一个结尾斜杠，统一去掉（拼进提示词里更干净）。
-                paths.append(value.hasSuffix("/") && value.count > 1 ? String(value.dropLast()) : value)
-            }
-        }
-        return (paths, nil)
-    }
+    // ⚠️ **这里原来有一整套"读访达当前选中的文件"**（`NSAppleScript` 问 Finder、专用串行队列、
+    // `-1743` 未授权时回主线程重发一次、Info.plist 的 `NSAppleEventsUsageDescription`…）。
+    // **2026-09-27 整块删掉** —— 用户的原话：「把识别选中文件和选中文件夹的逻辑删掉……
+    // **我发现这个东西很难实现**」。文件 / 文件夹这一类现在**从剪贴板取**
+    //（见 `noteLiveTranscript` 第 ③ 段）：他说「参考文件」时读一次剪贴板，
+    // **只认绝对路径**，读到就冻进 `materials`。于是不再需要 Apple Events，也不再需要那个授权。
 
     // MARK: - 拼提示词（主 Agent 与看板共用同一份）
 
@@ -509,7 +445,8 @@ final class TurnReferenceCollector: ObservableObject {
             if !folders.isEmpty {
                 lines.append("文件夹：\n" + folders.map { "- " + $0 }.joined(separator: "\n"))
             }
-            body.append("【访达里当前选中的】\n" + lines.joined(separator: "\n"))
+            body.append("【用户提到的文件 / 文件夹（来自剪贴板，只给绝对路径）】\n"
+                        + lines.joined(separator: "\n"))
         }
 
         return """
