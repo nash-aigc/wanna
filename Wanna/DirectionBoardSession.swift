@@ -71,6 +71,10 @@ final class DirectionBoardSession: ObservableObject {
 
     /// 「取消本次」—— 只在这一次大循环里有效。
     private var cancelledForThisCycle = false
+
+    /// **被选中的先后顺序** —— 钉住（位置 + 编号）就靠它（用户：「如果用户选择某一个方向，
+    /// 就应该把这个方向定住，位置固定，数字固定……除非用户说取消这个方向」）。
+    private var confirmedOrder: [Int] = []
     private var latestTranscript = ""
     private var lastRequestedTranscript = ""
     private var modelRowLabels: [Int: String] = [:]
@@ -211,6 +215,7 @@ final class DirectionBoardSession: ObservableObject {
         localMatches = [:]
         selectionStates = [:]
         confirmedTexts = [:]
+        confirmedOrder = []
         summaryState = .pending
         summaryConfirmedText = nil
         isHeldFromAutomaticSend = false
@@ -364,11 +369,16 @@ final class DirectionBoardSession: ObservableObject {
         if selectionStates[rowIndex] == .confirmed {
             selectionStates[rowIndex] = .pending
             confirmedTexts[rowIndex] = nil
+            // 取消 = 解冻（用户：「除非用户说取消这个方向，否则位置和数字都固定」）。
+            confirmedOrder.removeAll { $0 == rowIndex }
+            refreshDisplayedItems()
             return
         }
         selectionStates[rowIndex] = .confirmed
         confirmedTexts[rowIndex] = displayedText
-        print("🎛️ 方向看板：选中「\(displayedText)」（第 \(rowIndex + 1) 类）")
+        if !confirmedOrder.contains(rowIndex) { confirmedOrder.append(rowIndex) }
+        refreshDisplayedItems()
+        print("🎛️ 方向看板：选中「\(displayedText)」（已钉住，编号不再变）")
     }
 
     /// AI 那段总结：点一下 = 确认（整段变绿）；再点一次 = 取消。
@@ -426,6 +436,8 @@ final class DirectionBoardSession: ObservableObject {
             if selectionStates[item.rowIndex] != .pending {
                 selectionStates[item.rowIndex] = .pending
                 confirmedTexts[item.rowIndex] = nil
+                confirmedOrder.removeAll { $0 == item.rowIndex }
+                refreshDisplayedItems()
                 print("🎛️ 方向看板：口述「取消第 \(number) 个方向」→ 取消选中「\(item.text)」")
             }
             return
@@ -447,7 +459,9 @@ final class DirectionBoardSession: ObservableObject {
         guard selectionStates[rowIndex] != .confirmed else { return }
         selectionStates[rowIndex] = .confirmed
         confirmedTexts[rowIndex] = text
-        print("🎛️ 方向看板：\(how) → 自动选中「\(text)」")
+        if !confirmedOrder.contains(rowIndex) { confirmedOrder.append(rowIndex) }
+        refreshDisplayedItems()
+        print("🎛️ 方向看板：\(how) → 自动选中「\(text)」（已钉住）")
     }
 
     // MARK: - 节奏与请求
@@ -578,9 +592,29 @@ final class DirectionBoardSession: ObservableObject {
     private func refreshDisplayedItems() {
         let configuration = self.configuration
         localMatches = DirectionBoardConfiguration.rowMatches(in: latestTranscript, configuration: configuration)
-        displayedItems = DirectionBoardConfiguration.displayedItems(
+        var items = DirectionBoardConfiguration.displayedItems(
             transcriptText: latestTranscript,
             modelRowLabels: modelRowLabels,
             configuration: configuration)
+
+        // **把用户已经选中的那几格钉在前面、编号不改**（用户 2026-09-27：
+        // 「如果用户选择某一个方向，就应该把这个方向定住，位置固定，数字固定，不需要左右变化……
+        // 除非用户说取消这个方向，否则位置和数字都固定，其他位置可以变化」）。
+        //
+        // 做法：按"被选中的先后顺序"把它们排到最前再统一编号 —— 于是他确认过的第 2 个方向
+        // 永远是 2，后面那些没选的怎么变都不影响他嘴里念的那个数字。
+        let pinnedRowIndices = confirmedOrder.filter { rowIndex in
+            selectionStates[rowIndex] == .confirmed && items.contains(where: { $0.rowIndex == rowIndex })
+        }
+        let pinnedItems = pinnedRowIndices.compactMap { rowIndex in
+            items.first(where: { $0.rowIndex == rowIndex })
+        }
+        let restItems = items.filter { !pinnedRowIndices.contains($0.rowIndex) }
+        displayedItems = (pinnedItems + restItems).enumerated().map { offset, item in
+            DirectionBoardDisplayItem(rowIndex: item.rowIndex,
+                                      rowTitle: item.rowTitle,
+                                      text: item.text,
+                                      number: offset + 1)
+        }
     }
 }

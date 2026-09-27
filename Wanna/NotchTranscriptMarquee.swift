@@ -40,17 +40,25 @@ struct SmoothRevealedTranscriptText: View {
     /// 0.6s 让动画永远跑不完，被下一批**从当前呈现值**平滑接上（这一点也是实测的：
     /// 5 组配置 + 21 次真实重定目标，打断瞬间的位置跳变**全是 0.000pt**）—— 于是
     /// 连续说话时屏幕上的位移是连续的，没有静止段。
-    /// **一个字的滑动用多久 —— 必须与"识别结果多久来一次"同量级。**
+    /// **一个字的滑动用多久 —— 按"距上一条结果多久"自适应。**
     ///
-    /// ⚠️ 2026-09-27 用户报「刘海下面这个字幕非常卡顿」，根因就是这一个数：它是 **0.6 秒**，
-    /// 而识别器给的是**每秒约 10 次**的累积文本（每 ~100ms 一次）。每一次新结果都会
-    /// 用 `withAnimation` 起一段新的 0.6 秒动画，而 100ms 后下一条就把它打断 ——
-    /// 于是每一小段只走完 **约 1/6** 的距离，目标又往前跑了：**字永远在追、永远追不上**，
-    /// 屏幕上就是"又卡又滞后"。
+    /// 两版都试过、都被用户当场否掉，这一条把两次教训都记下来：
     ///
-    /// 取 **0.1 秒**：一段动画刚好在下一条结果到达时结束，位移连成一条匀速的线。
-    /// 这个数**不是**凭感觉调的，它等于识别结果的间隔（10 次/秒），换识别服务时要跟着改。
-    private static let slideDuration: Double = 0.1
+    /// · **0.6 秒（固定）**：识别结果每 ~0.1 秒来一条（每秒约 10 次累积文本），
+    ///   每一条都起一段 0.6 秒的动画、100ms 后就被下一条打断 —— 每小段只走完约 1/6 的距离，
+    ///   目标又往前跑了，字**永远在追**（用户报「非常卡顿」）。
+    /// · **0.1 秒（固定）**：动画刚好在下一条到达时结束，理论上连成匀速 ——
+    ///   实测**更糟**：屏幕上是「**一个字一个字、一段一段地移动**」，而且**连录音那条也跟着卡了**
+    ///   （用户 2026-09-27 第二次报，影响面比第一次更大）。说明瓶颈不在时长，而在**渲染跟不上**：
+    ///   间隔取满只会把"渲染掉帧"暴露成看得见的台阶。
+    ///
+    /// 所以现在**不猜**：每一段动画的时长 = **距上一条结果的实际间隔**（0.06…0.6 之间夹住）。
+    /// 结果来得密，动画就短（一次位移只有十几 pt，短动画看不出台阶）；来得疏就长。
+    /// ⚠️ 真正的根因要等采样说话（见 `开发经验/19` 第五版"没验到"那一段）——
+    /// 这一版只是先把"比原来更差"这个回归止住。
+    private static let slideDurationLowerBound: Double = 0.06
+    private static let slideDurationUpperBound: Double = 0.6
+    @State private var lastUpdateAt: Date?
     /// 窗口的**基准**字数。
     private static let maximumWindowCharacters = 160
     /// 裁剪的迟滞：窗口再多长这么多字才裁一次。
@@ -118,6 +126,7 @@ struct SmoothRevealedTranscriptText: View {
                 slideOffset = newWidth - Self.width(of: String(text.dropFirst(windowStart)))
             }
             .onChange(of: text) { _, newText in
+                let duration = adaptiveSlideDuration()
                 let total = newText.count
                 // 窗口太长时把左端推近。**裁掉的是屏幕外面那部分**，而右边缘仍然钉住，
                 // 所以屏幕上**看不出任何变化** —— 这一步不带动画是安全的。
@@ -129,10 +138,20 @@ struct SmoothRevealedTranscriptText: View {
                     return
                 }
                 let shownNow = String(newText.dropFirst(windowStart))
-                withAnimation(.linear(duration: Self.slideDuration)) {
+                withAnimation(.linear(duration: duration)) {
                     slideOffset = availableWidth - Self.width(of: shownNow)
                 }
             }
+    }
+
+    /// 这一段的动画时长 = **距上一条结果的实际间隔**（夹在 0.06…0.6 之间）。
+    ///
+    /// 顺带把"上一条是什么时候"记下来（`lastUpdateAt`），下一次就用它算间隔。
+    private func adaptiveSlideDuration() -> Double {
+        let now = Date()
+        let interval = lastUpdateAt.map { now.timeIntervalSince($0) } ?? Self.slideDurationUpperBound
+        lastUpdateAt = now
+        return min(max(interval, Self.slideDurationLowerBound), Self.slideDurationUpperBound)
     }
 
     /// 用同一个字体直接量文字宽度。批判者实测过：SwiftUI 自己渲染的宽度 =

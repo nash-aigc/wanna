@@ -59,6 +59,20 @@ struct DirectionBoardSettingsSection: View {
 
             SettingsCardRowDivider()
             SettingsRow(
+                label: "看板宽度",
+                description: "结果卡片是 340pt，看板按这个倍数走（默认 2 倍 = 680pt）。宽度是固定的，内容多了只多排几列，不会越长越宽。"
+            ) {
+                SettingsSegmentedPicker(
+                    selection: generalSettingsViewModel.binding(\.directionBoardWidthMultiplier),
+                    options: [
+                        SettingsPickerOption(label: "1 倍", value: 1.0),
+                        SettingsPickerOption(label: "1.5 倍", value: 1.5),
+                        SettingsPickerOption(label: "2 倍", value: 2.0),
+                    ])
+            }
+
+            SettingsCardRowDivider()
+            SettingsRow(
                 label: "每隔 3 秒问一次的门槛",
                 description: "新增多少个字才值得问模型一次（标点不算）。太小等于没门槛，太大你要等很久才看到一次理解。"
             ) {

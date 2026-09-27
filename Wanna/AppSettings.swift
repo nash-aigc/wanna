@@ -519,6 +519,13 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 范围 5…20（`clamped()` 兜住手改的 JSON）。
     var directionBoardMinimumAddedCharacters: Int = 10
 
+    /// **看板的宽度 = 结果卡片宽度（340）的几倍**（默认 2 倍）。
+    ///
+    /// 用户 2026-09-27：「卡片的宽度需要固定……不能超过它的两倍，不能太高，要么一倍，要么两倍……
+    /// 让它固定显示为两倍宽度，**这个宽度可以让用户去设定**，设置页面里可以设定，但**默认固定两倍宽度**，
+    /// 以便显示更多内容。」夹在 1…2（`clamped()` 兜住手改的 JSON）。
+    var directionBoardWidthMultiplier: Double = 2.0
+
     /// 看板的六个方向短语与它们的关键词（`DirectionBoardConfiguration`）。
     ///
     /// 用户 2026-09-27：「做成设置页可改」。默认那六个短语是他点名的那一套；
@@ -1546,6 +1553,8 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
         // 太大他要等很久才看到一次理解）。
         settings.directionBoardMinimumAddedCharacters =
             min(max(settings.directionBoardMinimumAddedCharacters, 5), 20)
+        // 看板宽度：1×~2×（用户说"要么一倍，要么两倍"，所以范围就夹在这里）。
+        settings.directionBoardWidthMultiplier = min(max(settings.directionBoardWidthMultiplier, 1.0), 2.0)
         settings.answerBubbleLingerSeconds = min(max(settings.answerBubbleLingerSeconds, 0), 15)
         settings.rememberedConversationRounds = min(max(settings.rememberedConversationRounds, 0), 30)
         settings.finalTranscriptGracePeriodSeconds = min(max(settings.finalTranscriptGracePeriodSeconds, 0.5), 3)
@@ -1582,6 +1591,7 @@ nonisolated extension AppSettings {
         case showsResponseText
         case directionBoardEnabled
         case directionBoard
+        case directionBoardWidthMultiplier
         case directionBoardMinimumAddedCharacters
         case answerBubbleLingerSeconds
         case cursorPresenceMode
@@ -1715,6 +1725,8 @@ nonisolated extension AppSettings {
         directionBoardEnabled = try container.decodeIfPresent(Bool.self, forKey: .directionBoardEnabled) ?? defaults.directionBoardEnabled
         directionBoardMinimumAddedCharacters = try container.decodeIfPresent(
             Int.self, forKey: .directionBoardMinimumAddedCharacters) ?? defaults.directionBoardMinimumAddedCharacters
+        directionBoardWidthMultiplier = try container.decodeIfPresent(
+            Double.self, forKey: .directionBoardWidthMultiplier) ?? defaults.directionBoardWidthMultiplier
         directionBoard = DirectionBoardConfiguration.validated(
             try container.decodeIfPresent(DirectionBoardConfiguration.self, forKey: .directionBoard)
                 ?? defaults.directionBoard)

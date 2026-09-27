@@ -31,23 +31,39 @@ struct DirectionBoardView: View {
 
     @FocusState private var isInputFocused: Bool
 
-    /// **宽度不再是固定的 340**（用户 2026-09-27 取消了那条约束）：
-    /// 「我最开始跟你说的是这个卡片的宽度一定要跟正常情况下 AI 生成结果那个卡片的宽度一致，
-    /// **现在取消这个限制，它可以很宽，但是左下角的位置必须固定**」。
+    /// **宽度固定，不随内容长**（用户 2026-09-27 两次强调）：
+    /// 「卡片的宽度需要固定……**不能超过它的两倍**……要么一倍，要么两倍」
+    /// 「让它固定显示为**两倍宽度**，这个宽度可以让用户去设定，设置页面里可以设定，
+    /// 但**默认固定两倍宽度**，以便显示更多内容」。
     ///
-    /// 现在宽度**由列数决定**：一列 ~190pt，最多 5 列（「最多不要超过 5 列，正常情况下是 1~5 列」）。
+    /// 所以宽度 = **结果卡片宽度（340）× 用户设的倍数**（默认 2 → 680），而且**恒定** ——
+    /// 内容多了不撑宽，只多排几行（列数由这条宽度反推出来）。
     /// 左下角固定由面板那一侧保证（`directionBoardPanelFrame` 的原点 = 鼠标 +12pt）。
+    static let resultCardWidth: CGFloat = 340
     static let columnWidth: CGFloat = 190
-    static let maximumColumnCount = 5
     static let horizontalPadding: CGFloat = 12
 
-    /// 现在这张卡片该多宽（列数 = 显示的格数，最多 5）。
-    static func cardWidth(forColumnCount columnCount: Int) -> CGFloat {
-        let columns = min(max(columnCount, 1), maximumColumnCount)
-        return CGFloat(columns) * columnWidth + horizontalPadding * 2
+    /// 这张卡片该多宽（**与内容无关**，只看设置里那个倍数）。
+    static func cardWidth(forMultiplier multiplier: Double) -> CGFloat {
+        let clamped = min(max(multiplier, 1.0), 2.0)
+        return resultCardWidth * CGFloat(clamped)
     }
 
-    private var columnCount: Int { min(max(session.displayedItems.count, 1), Self.maximumColumnCount) }
+    /// 这条宽度里能排几列（至少 1 列，最多 5 列 —— 用户：「最多不要超过 5 列」）。
+    static func columnCount(forMultiplier multiplier: Double, itemCount: Int) -> Int {
+        let usableWidth = cardWidth(forMultiplier: multiplier) - horizontalPadding * 2
+        let fitting = Int(usableWidth / columnWidth)
+        return min(max(min(fitting, max(itemCount, 1)), 1), 5)
+    }
+
+    /// 用户设的宽度倍数（默认 2）。
+    private var widthMultiplier: Double {
+        AppSettingsStore.snapshot().directionBoardWidthMultiplier
+    }
+
+    private var columnCount: Int {
+        Self.columnCount(forMultiplier: widthMultiplier, itemCount: session.displayedItems.count)
+    }
     /// **下面那两块固定高度**（用户点名要求）：说明 4 行 + 输入框一行。
     static let paragraphHeight: CGFloat = 4 * 20
     private static let inputHeight: CGFloat = 30
@@ -70,7 +86,7 @@ struct DirectionBoardView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(width: Self.cardWidth(forColumnCount: columnCount), alignment: .leading)
+        .frame(width: Self.cardWidth(forMultiplier: widthMultiplier), alignment: .leading)
         .background(AnswerCardView.cardBackground(theme: theme))
         .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
         .overlay(
