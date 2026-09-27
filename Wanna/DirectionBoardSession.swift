@@ -53,8 +53,10 @@ final class DirectionBoardSession: ObservableObject {
     var copyReplyAction: (() -> Void)?
     /// 「复制并退出」：复制之后**退出这一轮**（与按 ESC 同效）。
     var copyReplyAndExitAction: (() -> Void)?
-    /// **回车 = 执行**（把这一轮交给主 Agent，与按下快捷键同效）。
+    /// **回车 = 执行**（把这一轮交给主 Agent，与按下快捷键同效）。也是那个「执行」按钮。
     var sendTurnAction: (() -> Void)?
+    /// **「退出」按钮**：不执行、直接取消这一轮（与按 ESC 同效）。
+    var exitTurnAction: (() -> Void)?
     /// **光标不在输入框时的 `Cmd+Enter` = 粘贴**（把右下角那段回复粘到光标处，然后退出这一轮）。
     var pasteReplyAtCursorAndExitAction: (() -> Void)?
 

@@ -904,6 +904,10 @@ final class CompanionManager: ObservableObject {
         boardSession.pasteReplyAtCursorAndExitAction = { [weak self] in
             self?.pasteLiveReplyAtCursorThenExit()
         }
+        // 「退出」按钮 = 不执行、直接取消（与 ESC 同一条路）。
+        boardSession.exitTurnAction = { [weak self] in
+            self?.handleEscapeKeyPressed()
+        }
         // 键盘那套装在**面板**上（本地键盘监听只在事件发给本 App 时触发）——
         // 它需要的是"执行"与"粘贴并退出"这两个动作，不看板的状态。
         DirectionBoardPanelController.shared.directionBoardCopyAndSend = { [weak self] in

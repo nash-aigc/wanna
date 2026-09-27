@@ -331,8 +331,8 @@ struct DirectionBoardTests {
     /// +「这几行固定在这，而不是突然间有、突然间没有」。所以解析**永远返回那四行**，
     /// 缺的行值是空串（视图画占位符），行的数量不随模型怎么写而变。
     @Test func understandingRowsAreAlwaysTheSameFour() throws {
-        // 2026-09-27 用户删到只剩两行：「目标问题」→「目标」，删掉「类型」「参考」。
-        #expect(DirectionBoardPrompt.understandingLabels == ["目标", "细节"])
+        // 2026-09-27 用户删到两行，随后又加回一行「疑问」（AI 读出来的歧义/矛盾）。
+        #expect(DirectionBoardPrompt.understandingLabels == ["目标", "细节", "疑问"])
         // 什么都不给 → 四行都在，全是空值。
         let empty = DirectionBoardPrompt.parseUnderstandingLines("")
         #expect(empty.map(\.label) == DirectionBoardPrompt.understandingLabels)
@@ -341,7 +341,7 @@ struct DirectionBoardTests {
         let partial = DirectionBoardPrompt.parseUnderstandingLines("目标：整理文件")
         #expect(partial.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(partial.first { $0.label == "目标" }?.value == "整理文件")
-        #expect(partial.filter { $0.value.isEmpty }.count == 1)
+        #expect(partial.filter { $0.value.isEmpty }.count == 2)
     }
 
     /// **「答案」不能被「细节」吞掉** —— 理解和答案是**两节**，必须各归各的。
@@ -422,7 +422,7 @@ struct DirectionBoardTests {
         // 「任务类型」已经被删掉了（用户 2026-09-27），但它仍然当**边界**：
         // 它自己不出现，内容也不许漏进「细节」。
         let typeLines = DirectionBoardPrompt.parseUnderstandingLines("任务类型：做题\n细节：只动下载目录")
-        #expect(typeLines.map(\.label) == ["目标", "细节"])
+        #expect(typeLines.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(typeLines.first { $0.label == "细节" }?.value == "只动下载目录")
     }
 

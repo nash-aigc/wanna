@@ -448,6 +448,12 @@ final class DirectionBoardPanelController {
         guard isVisible, let panel, let anchorPoint else { return }
         // 用户拖过之后就不再自动摆位（内容变高变矮时只保住他放的位置）。
         guard !isUserPositioned else { return }
+        // ⚠️ **锚点是"显示那一刻"的鼠标位置，不是现在的**（用户 2026-09-27 报的 bug：
+        // 「用户点击折叠按钮之后，这个按钮相对屏幕的位置**不要变**。刚才点击之后这个按钮漂移了」）。
+        //
+        // 漂移的成因就是这个函数：它每次都用**当时**的鼠标位置重算原点 —— 而用户为了点那个折叠钮，
+        // 鼠标早就不在原来的地方了，于是卡片一收起来就"跳"到鼠标那儿去。
+        // `anchorPoint` 是 `show()` 里记下来的那一个，这里只用它，绝不重读鼠标。
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) })
                 ?? NSScreen.main else { return }
         let frame = NotchSupport.directionBoardPanelFrame(anchor: anchorPoint,

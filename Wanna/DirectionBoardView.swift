@@ -54,7 +54,8 @@ struct DirectionBoardView: View {
     /// 一格的最小宽度 —— 它决定"这条宽度里排几列"：680 的卡片用掉 24 的左右边距之后是 656，
     /// 656 / 164 = **4 列**（用户 2026-09-27：「改成 4 列显示吧，现在 3 列太窄了，
     /// 每个卡片的空白间距太大」—— 原来是 190，算出来是 3 列）。
-    static let columnWidth: CGFloat = 164
+    static let columnWidth: CGFloat = 152    // 480 的卡片（可用 456）→ **3 列**（用户 2026-09-27：
+                                             // 「卡片是三列，现在还是两列」）
     static let horizontalPadding: CGFloat = 12
 
     /// 这张卡片该多宽（**与内容无关**，只看设置里那个倍数）。
@@ -69,6 +70,16 @@ struct DirectionBoardView: View {
         let fitting = Int(usableWidth / columnWidth)
         return min(max(min(fitting, max(itemCount, 1)), 1), 5)
     }
+
+    /// **每一行文字占的高度** —— 用它把「目标 / 细节 / 疑问」的高度**提前定死**。
+    ///
+    /// 用户 2026-09-27：「目标预留三行内容，细节预留五行内容，固定下来……不要让卡片高度总是变化。
+    /// 如果显示不完全，就隐藏」，随后改成「细节显示为 7 行，需要提前预留 7 行」，
+    /// 并新增一行「疑问」预留 4 行；以及「目标和细节这两行内容的高度**总是不固定，总是漂移**……
+    /// 内容渲染到右侧提前预留的空行部分，**不要因为生成了新内容就让整个标题和内容上下晃动**」。
+    static let understandingLineHeight: CGFloat = 16
+    /// 每一行预留几行（顺序与 `understandingLabels` 一致）。
+    static let reservedLineCounts: [String: Int] = ["目标": 3, "细节": 7, "疑问": 4]
 
     /// 用户设的宽度倍数（默认 2）。
     private var widthMultiplier: Double {
@@ -157,13 +168,9 @@ struct DirectionBoardView: View {
                 .frame(width: Self.collapseHalfWidth, height: Self.cancelRowHeight)
                 .background(Self.collapseDragColor)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(session.isCollapsed ? DS.Colors.success.opacity(0.6)
-                                                  : theme.textColor.opacity(0.16),
-                              lineWidth: 1)
-        )
+        // **不加自己的边框**（用户 2026-09-27：「外边框也就是折叠按钮的边框，**不要再增加一个边框**」）——
+        // 它就是卡片左下角那一块，边框由卡片本身给。折叠态时卡片的边框变绿，那也就是它的边框。
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private static let collapseHalfWidth: CGFloat = 26
@@ -312,9 +319,13 @@ struct DirectionBoardView: View {
         HStack(spacing: 6) {
             // **左侧标题「参考」**（用户 2026-09-27：「最上面一行（屏幕一、屏幕二）左侧加标题「参考」」）。
             // 它也是原来那一行「参考」被删掉之后的去处 —— 参考材料这件事现在由这排标签代表。
+            // **「参考」占的正是下面那个标签列**（用户 2026-09-27：「左侧的标题要对齐……
+            // 现在屏幕上这些标签比下面的内容更靠左，应该让它们在竖直方向上的位置固定、确定」）——
+            // 所以它用与「目标/细节/疑问」**同一个宽度**，标签于是从**内容列**开始，整块是齐的。
             Text("参考")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(theme.textColor.opacity(0.55))
+                .frame(width: Self.understandingLabelWidth, alignment: .leading)
             ForEach(referenceCollector.materials.tags, id: \.self) { tag in
                 referenceTag(tag, tint: DS.Colors.success)
             }
@@ -365,6 +376,8 @@ struct DirectionBoardView: View {
                 understandingRow(label: line.label, value: line.value, revealIndex: index + 1)
             }
         }
+        // 整块**高度固定**（各行自己预留了几行就占几行）—— 这样内容来了也只是填进预留的位置，
+        // 卡片高度与标题位置都不动。
         // ⚠️ 这里原来有一个 ✕（"这个理解不对"）。**删掉了**：理解现在是**无条件**跟着提示词发给
         // 模型的（用户 2026-09-27：「这个大语言模型的理解，你可以去发，发过去」），
         // 也就是说"确认"这个动作没有意义了 —— 一个点了不改变任何事情的按钮比没有按钮更糟。
@@ -372,20 +385,28 @@ struct DirectionBoardView: View {
 
     /// 一行理解：左边标签定宽，右边值（**空值画占位符**，不是不画）。
     private func understandingRow(label: String, value: String, revealIndex: Int) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        let reservedHeight = CGFloat(Self.reservedLineCounts[label] ?? 3) * Self.understandingLineHeight
+        return HStack(alignment: .top, spacing: 6) {
+            // 标签列顶对齐（`alignment: .top`）——「左侧的标题要对齐」。
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(theme.textColor.opacity(0.55))
                 // 标签定宽按**最长的那一个**（「目标问题」四个字）算 —— 写死 26 会让它折行。
                 .frame(width: Self.understandingLabelWidth, alignment: .leading)
             Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
-                .font(.system(size: 12))
+                // 「细节」那张关系图要**等宽**才对齐（用户要的竖形图/脑图，靠的就是字符对齐）。
+                .font(.system(size: 12,
+                              design: label == "细节" ? .monospaced : .default))
                 .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .id(value)
                 .transition(.opacity.combined(with: .offset(y: 6)))
         }
+        // **高度提前定死**：这些行有多少内容都占这么多（超出隐藏）——
+        // 于是新内容只是填进预留的位置，标题与内容都不会上下晃。
+        .frame(height: reservedHeight, alignment: .top)
+        .clipped()
         // 换了内容就淡入（用户：「我希望让它有一种动画效果，而不是突然间显示出来」）——
         // 逐行错开一点点，四行看起来是"写进去"的，而不是整块跳出来。
         .animation(.easeOut(duration: 0.28).delay(Double(revealIndex) * 0.05), value: value)
@@ -416,23 +437,33 @@ struct DirectionBoardView: View {
             // 叫复制按钮……它的右侧还有一个按钮，叫复制并退出」）——
             // 刻意用中性色并与那三档之间隔一条线：它们是"把结果拿走"，不是"把这一轮丢掉"，
             // 混成暗红会让人以为按了会丢东西。
-            // **折叠钮在「复制」左边**（用户 2026-09-27 指定的位置）。
+            // **折叠钮贴左下角**（用户 2026-09-27：「最左侧是折叠按钮，**左边距、下边距为 0，
+            // 也就是贴紧边缘，类似从左下角长出来一样**。可以理解为左下角有一个正方形」）。
+            // 所以它不能再被卡片的 12pt 内边距套住 —— 用负 padding 把它顶到边上（见下面 buttonRowInset）。
             collapseToggle
-            Spacer().frame(width: 6)
 
             // **两个复制按钮是"一整块"**（用户 2026-09-27：「你让他们的两个按钮合并成一个，
             // 就是**样式上合并成一个**，然后**中间有条细线**，就跟右侧是一样的」）——
             // 与右边那三档完全同一种做法：一个圆角底 + 里面一条**纯白细线**，
             // 而不是两个各自带底色的圆角块中间夹一条线（那是上一版，他说没改对）。
+            // **复制 / 执行 / 退出**（用户 2026-09-27：「右侧分别是复制按钮、执行按钮和退出按钮。
+            // 执行按钮就是**执行并退出**，退出按钮是**不执行、直接取消任务**」）——
+            // 一整块底 + 中间两条纯白细线，与右侧那三档同一种做法。
             HStack(spacing: 0) {
                 actionButton(title: "复制", icon: "doc.on.doc", width: Self.copyButtonWidth,
-                             help: "把右下角那张卡片里 AI 回复的内容复制下来") {
+                             help: "把右下角那张卡片里 AI 回复的内容复制下来",
+                             isEnabled: session.hasCopyableReply) {
                     session.copyReplyAction?()
                 }
                 Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1.5, height: 20)
-                actionButton(title: "复制并退出", icon: "doc.on.doc.fill", width: Self.copyAndExitButtonWidth,
-                             help: "复制这段回复，然后退出这一轮（与按 ESC 同效）") {
-                    session.copyReplyAndExitAction?()
+                actionButton(title: "执行", icon: "play.fill", width: Self.executeButtonWidth,
+                             help: "把当前任务发给主 Agent 去执行（与按 Command + 回车同效）") {
+                    session.sendTurnAction?()
+                }
+                Rectangle().fill(Self.cancelRowDividerColor).frame(width: 1.5, height: 20)
+                actionButton(title: "退出", icon: "xmark", width: Self.exitButtonWidth,
+                             help: "不执行，直接取消这一轮（与按 ESC 同效）") {
+                    session.exitTurnAction?()
                 }
             }
             .background(
@@ -470,8 +501,9 @@ struct DirectionBoardView: View {
     private static let actionButtonColor = DS.Colors.success.opacity(0.12)
     /// 两个按钮各自的宽度（用户 2026-09-27：「复制的按钮要小一点，因为它就两个字；
     /// 复制并退出的按钮大一点」）。
-    private static let copyButtonWidth: CGFloat = 60
-    private static let copyAndExitButtonWidth: CGFloat = 96
+    private static let copyButtonWidth: CGFloat = 58
+    private static let executeButtonWidth: CGFloat = 58
+    private static let exitButtonWidth: CGFloat = 58
 
     /// 三档之间的分割线 —— 用户 2026-09-27：「它们中间的分割线你给它画得**再亮一点、再大一点，
     /// 颜色再明确一点，用白色**」。所以是**纯白**（不是原来那种 12% 白），而且比原来高
@@ -487,6 +519,7 @@ struct DirectionBoardView: View {
                               icon: String,
                               width: CGFloat,
                               help: String,
+                              isEnabled: Bool = true,
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 4) {
@@ -500,9 +533,11 @@ struct DirectionBoardView: View {
         }
         .buttonStyle(.plain)
         .help(help)
-        // 右下角那张卡片是空的时候没什么可复制 —— 置灰而不是让它复制一段空字符串。
-        .disabled(!session.hasCopyableReply)
-        .opacity(session.hasCopyableReply ? 1 : 0.4)
+        // ⚠️ **只有「复制」受这条管**（右下角那张卡片是空的时候没什么可复制）。
+        // 第一版把 `.disabled` 加在 `actionButton` 里，于是「执行」「退出」也跟着灰了 ——
+        // 而那两个键任何时候都该能按（没有可复制的内容 ≠ 不能执行/不能退出）。
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.4)
     }
 
     private func cancelButton(title: String, help: String, action: @escaping () -> Void) -> some View {
