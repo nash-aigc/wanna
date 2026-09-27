@@ -267,6 +267,11 @@ struct NotchPillRootView: View {
     @ObservedObject var panelModel: NotchPanelModel
     var audioHistoryProvider: () -> [CGFloat]
 
+    /// 刘海左侧那几颗「Notion 笔记」按钮怎么摆（2026-09-27 从录音搬到主 Agent）。
+    /// 由控制器在装配时算好传进来 —— 只有它手里有 `NSScreen`，见
+    /// `NotchSupport.notionNoteButtonPlacement`。nil = 这块屏没有刘海，什么都不画。
+    var notionNoteButtonPlacement: NotchSupport.NotionNoteButtonPlacement?
+
     /// Wing widths measured 2026-09-22: the full band spans ~355pt — left
     /// wing ~78, right wing ~87. The word
     /// is right-aligned against the notch, so the left wing only needs to
@@ -369,10 +374,52 @@ struct NotchPillRootView: View {
                 // The wing extension/retraction rides the phase change, so
                 // the wings slide out of the notch instead of popping.
                 .animation(.easeInOut(duration: 0.38), value: panelModel.activityPhase)
+
+                // **「Notion 笔记」那几颗按钮**（2026-09-27 之后归主 Agent）：检测到关键词时
+                // 长在刘海左侧。位置由 `NotchSupport` 的屏幕矩形给出 —— 它是这块窗口里
+                // **唯一**一处不随两翼动画伸缩的东西（按钮在带子外面，靠"离刘海中心多远"定位）。
+                NotionNoteButtonAnchor(
+                    notchCenterX: geometry.size.width / 2,
+                    placement: notionNoteButtonPlacement
+                )
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }
         .ignoresSafeArea()
+    }
+}
+
+/// 刘海左侧那几颗「Notion 笔记」按钮的**落点**。
+///
+/// 形状来自 `NotchSupport.notionNoteButtonPlacement`（三个偏移，全部由屏幕矩形相减得到），
+/// 所以画的位置与 `handleGlobalClick` 里那三个 slot 命中的位置**不可能漂**。
+///
+/// 摆法是"零尺寸锚点 + 把那一行以 trailing 挂上去"：`.position` 定的是**中心**，
+/// 而按钮那一行是按**右边缘**定位的（新的从右往左长），所以锚点的 x 直接就是
+/// "按钮右边缘离刘海中心多远"这个数，不需要知道这一行此刻有几颗、有多宽。
+///
+/// 它自己观察 `NotionNoteSession`：谁把它放进视图树，谁就不必再关心"什么时候该出现"。
+struct NotionNoteButtonAnchor: View {
+
+    /// 刘海中心在**这一层**里的 x。
+    let notchCenterX: CGFloat
+    let placement: NotchSupport.NotionNoteButtonPlacement?
+
+    @ObservedObject private var notionSession = NotionNoteSession.shared
+
+    var body: some View {
+        if let placement, notionSession.showsNotionNoteButtons {
+            Color.clear
+                .frame(width: 0, height: 0)
+                .overlay(alignment: .trailing) { NotionNoteButtonRow() }
+                .position(
+                    x: notchCenterX - placement.trailingOffsetFromNotchCenter,
+                    // 这一层（静止窗口 / 展开窗口）的顶边**就是屏幕顶边**，所以离屏幕顶边多远
+                    // 可以直接当 y 用。
+                    y: placement.topInsetFromScreenTop
+                        + NotchSupport.notionNoteButtonSizes[0].height / 2
+                )
+        }
     }
 }
 
@@ -852,6 +899,9 @@ struct NotchPanelRootSwitchingView: View {
     var notchCenterXInWindow: CGFloat = 0
     var wingBandWidth: CGFloat = 0
     var restingPillWidth: CGFloat = 0
+    /// 刘海左侧那几颗「Notion 笔记」按钮怎么摆（2026-09-27 从录音搬到主 Agent）。
+    /// 由控制器在装配时算好 —— 只有它手里有 `NSScreen`。nil = 这块屏没有刘海。
+    var notionNoteButtonPlacement: NotchSupport.NotionNoteButtonPlacement?
 
     /// **展开态骨架已经建好** —— 控制器据此摘掉遮罩、放出重内容（见
     /// `NotchWindowController.revealExpandedSheetIfPending(on:)`）。
@@ -904,6 +954,7 @@ struct NotchPanelRootSwitchingView: View {
                         notchBandHeight: notchBandHeight,
                         wingBandWidth: wingBandWidth,
                         restingPillWidth: restingPillWidth,
+                        notionNoteButtonPlacement: notionNoteButtonPlacement,
                         hangUpAction: {
                             // 走"任何一通语音会话"的漏斗：Ask 页那通电话不在
                             // `voiceChatController` 里（它是独立管线）。
@@ -922,7 +973,8 @@ struct NotchPanelRootSwitchingView: View {
         } else {
             NotchPillRootView(
                 panelModel: panelModel,
-                audioHistoryProvider: audioHistoryProvider
+                audioHistoryProvider: audioHistoryProvider,
+                notionNoteButtonPlacement: notionNoteButtonPlacement
             )
         }
     }
@@ -964,6 +1016,8 @@ struct NotchExpandedWingBand: View {
     /// 收起态那条带子的总宽和它中段的宽，都由 `NotchSupport` 给出。
     let wingBandWidth: CGFloat
     let restingPillWidth: CGFloat
+    /// 刘海左侧那几颗「Notion 笔记」按钮怎么摆 —— 见 `NotchPillRootView` 的同名属性。
+    var notionNoteButtonPlacement: NotchSupport.NotionNoteButtonPlacement?
     /// 语音聊天进行中，右翼是一颗真的挂断按钮。
     var hangUpAction: (() -> Void)?
 
@@ -1027,6 +1081,14 @@ struct NotchExpandedWingBand: View {
                 )
                 .help("挂断")
             }
+
+            // **「Notion 笔记」那几颗按钮**：展开态也要在（界面上几乎总是展开的，
+            // 少了这一处，主 Agent 说话时那几颗按钮就只有收起态才看得见）。
+            // 位置与收起态是同一份算术 —— `notchCenterXInWindow` 减 `NotchSupport` 给的偏移。
+            NotionNoteButtonAnchor(
+                notchCenterX: notchCenterXInWindow,
+                placement: notionNoteButtonPlacement
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: notchBandHeight, alignment: .topLeading)
     }

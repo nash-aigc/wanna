@@ -50,15 +50,14 @@ struct NotchRecordingBandView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // **保存中（第三态）：整条带子连同左右两翼一起收掉**，屏幕上只留最左边那颗
-            // 按钮显示「保存中…」（用户 2026-09-27：「然后这个刘海他就应该消失…只保留最左侧
-            // 这个…最干净」）。
-            if !recorder.isSavingNotionNote {
-                band
-            }
-            if recorder.isSavingNotionNote {
-                EmptyView()
-            } else if recorder.isTranscriptExpanded {
+            // **录音这条带子只有两态：在录 / 展开看转写**（2026-09-27）。
+            //
+            // 这里原来还有第三态「保存中」—— 整条带子连同两翼一起收掉、只留最左边那颗
+            // 「Notion 笔记」按钮。那一整套（关键词、参考材料、三颗按钮、后台监听）**搬去了
+            // 主 Agent 的快捷键**（见 `NotionNoteSession`），录音这边一段不剩，所以这个分支
+            // 连同它上面那个「刘海左侧那两颗按钮」的 overlay 一起删掉了。
+            band
+            if recorder.isTranscriptExpanded {
                 expandedTranscriptPanel
             } else {
                 VStack(spacing: 0) {
@@ -91,90 +90,9 @@ struct NotchRecordingBandView: View {
         // 所以把不变量写下来，别让它继续靠巧合成立。
         // 展开态内容高度本来就等于窗口高度，这一行在那里是 no-op。
         .frame(maxHeight: .infinity, alignment: .top)
-        // **刘海左侧那两颗按钮**（用户 2026-09-27：「在刘海左侧显示按钮。注意识别宽度，因为
-        // 录音时刘海宽度会变化，按钮显示在**刘海展开后宽度的左侧**」）。
-        //
-        // 定位靠"从右边推"：这块视图铺满整块面板（`frame(maxWidth: .infinity)`），面板宽是
-        // `bandWidth * 2`（见 `panelFrame`），所以**从右边缘往左推 `1.5 × bandWidth`** 正好落在
-        // 带子左边缘（`bandLeft = 0.5 × bandWidth`）再往左 10pt —— 与"录音时带子变宽"这件事
-        // 天然无关，因为它算的就是那一刻的 bandWidth。
-        // ⚠️ **必须是 `.topTrailing`，不能只写 `.trailing`。** 只写 trailing 时 overlay 在
-        // **竖直方向居中** —— 而这块面板有 592pt 高（刘海 + 560），于是按钮被画在面板中段
-        //（实测 frame.y=281），屏幕上看着就像"根本没画出来"（我第一次就是截了顶部 80pt，
-        // 什么都没看到，误判成没渲染）。
-        .overlay(alignment: .topTrailing) {
-            if recorder.showsNotionNoteButtons {
-                notionNoteButtons
-                    .padding(.trailing, bandWidth * 1.5 + 10)
-                    .padding(.top, (NotchRecordingBandView.ribbonHeight) / 2 - 15)
-            }
-        }
         .onChange(of: recorder.audioLevel) { _, newLevel in
             if recorder.isSpeechDetected { heldLevel = newLevel }
         }
-    }
-
-    /// **最多三颗按钮**（用户 2026-09-27 的最终形状），从刘海那侧往左依次：
-    /// ①「取消」（总开关，点了全部取消、按普通录音走）②「剪贴板」（不参考剪贴板）
-    /// ③「屏幕」（不参考屏幕）。
-    ///
-    /// 宽度从 `NotchSupport.notionNoteButtonSizes` 取 —— 与控制器接点击用的矩形**同一个数**，
-    /// 两边各写一份必然漂（这一条在这个仓库里已经踩过：画的位置和点的位置差 71pt）。
-    @ViewBuilder
-    private var notionNoteButtons: some View {
-        // 从右到左排：取消在最右（挨着刘海），屏幕在最左。
-        HStack(spacing: NotchSupport.notionNoteButtonSpacing) {
-            if recorder.showsScreenButton {
-                slotButton(index: 2, title: "屏幕", systemImage: "display",
-                           tint: Color(red: 0.95, green: 0.42, blue: 0.40),
-                           help: "不参考屏幕内容") {
-                    recorder.cancelNotionScreenReference()
-                }
-            }
-            if recorder.showsClipboardButton {
-                slotButton(index: 1, title: "剪贴板", systemImage: "doc.on.clipboard",
-                           tint: Color(red: 0.95, green: 0.42, blue: 0.40),
-                           help: "不参考剪贴板内容，这一场照旧存成笔记") {
-                    recorder.cancelNotionClipboardReference()
-                }
-            }
-            slotButton(index: 0,
-                       title: recorder.notionNoteSaved ? "已保存"
-                            : (recorder.isSavingNotionNote ? "保存中" : "取消"),
-                       systemImage: recorder.notionNoteSaved ? "checkmark"
-                            : (recorder.isSavingNotionNote ? "arrow.triangle.2.circlepath" : "xmark"),
-                       tint: recorder.notionNoteSaved ? DS.Colors.success
-                            : Color(red: 0.95, green: 0.42, blue: 0.40),
-                       help: recorder.notionNoteSaved ? "打开那一页" : "取消这条笔记（不点就会存进 Notion）") {
-                recorder.handleNotionNoteButtonTap()
-            }
-        }
-    }
-
-    /// 一格按钮：宽度与高度都取自 `NotchSupport` 里那份尺寸表。
-    private func slotButton(index: Int, title: String, systemImage: String, tint: Color,
-                            help: String, action: @escaping () -> Void) -> some View {
-        let size = NotchSupport.notionNoteButtonSizes[index]
-        return Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage).font(.system(size: 10.5, weight: .semibold))
-                Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-            }
-            .foregroundColor(tint)
-            .frame(width: size.width, height: size.height)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.black.opacity(0.78))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(tint.opacity(0.6), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(help)
     }
 
     private var band: some View {

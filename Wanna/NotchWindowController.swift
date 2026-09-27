@@ -315,6 +315,9 @@ final class NotchWindowController {
                 notchCenterXInWindow: NotchSupport.notchBandCenterXInExpandedWindow(on: screen) ?? 0,
                 wingBandWidth: NotchSupport.restingWingBandWidth(on: screen),
                 restingPillWidth: NotchSupport.restingPillWidth(on: screen),
+                // 刘海左侧那几颗「Notion 笔记」按钮怎么摆 —— 同一个理由（只有这里手里有
+                // `NSScreen`）。见 `NotchSupport.notionNoteButtonPlacement`。
+                notionNoteButtonPlacement: NotchSupport.notionNoteButtonPlacement(on: screen),
                 // 展开态的骨架画好了 → 揭遮罩、放重内容。捕获 `screen` 而不是
                 // `presence`：此刻 presence 还没建出来（它要等下面的 NSHostingView），
                 // 而这句闭包只会在之后被调用，那时按屏查表就行。
@@ -784,15 +787,18 @@ final class NotchWindowController {
         // 用户 2026-09-26：「现在录音的时候，如果窗口隐藏，录音刘海右侧的按钮是可以被点击的…
         // 但窗口打开的情况下，它也应该可以被点击。现在是不可以被点击的。刘海左侧，在窗口打开的
         // 时候，也应该能被点击。」
-        // **「Notion 笔记」那颗按钮**：与两翼同一个理由（画在点击穿透的面板里）——
+        // **「Notion 笔记」那几颗按钮**：与两翼同一个理由（画在点击穿透的面板里）——
         // 命中的矩形由 `NotchSupport` 从屏幕坐标算，和视图那一处是同一份算术。
+        //
+        // 状态来自 `NotionNoteSession.shared`（2026-09-27 从录音搬到主 Agent 之后）：
+        // 它现在只在**主 Agent 说话期间**跑检测，录音那条路一段都不剩。
         if let presence = screenPresences.first(where: { $0.screen.frame.contains(clickLocation) }) {
-            let recorder = LongFormRecorderController.shared
+            let notionSession = NotionNoteSession.shared
             // ① 取消（最靠近刘海那颗，也是总开关）② 剪贴板 ③ 屏幕 —— 顺序与视图一致。
             let slots: [(shown: Bool, index: Int, action: () -> Void)] = [
-                (recorder.showsNotionNoteButtons, 0, { recorder.handleNotionNoteButtonTap() }),
-                (recorder.showsClipboardButton, 1, { recorder.cancelNotionClipboardReference() }),
-                (recorder.showsScreenButton, 2, { recorder.cancelNotionScreenReference() }),
+                (notionSession.showsPrimaryButton, 0, { notionSession.handleNotionNoteButtonTap() }),
+                (notionSession.showsClipboardButton, 1, { notionSession.cancelNotionClipboardReference() }),
+                (notionSession.showsScreenButton, 2, { notionSession.cancelNotionScreenReference() }),
             ]
             for slot in slots where slot.shown {
                 if let frame = NotchSupport.notionNoteButtonFrame(on: presence.screen,

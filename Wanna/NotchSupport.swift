@@ -402,6 +402,41 @@ nonisolated enum NotchSupport {
         return CGRect(x: rightEdge - size.width, y: top, width: size.width, height: size.height)
     }
 
+    /// **那几颗按钮在视图里怎么摆** —— 由上面那个屏幕矩形**相减**得到，不是另写一份几何。
+    ///
+    /// 2026-09-27 搬家时新增：按钮原来画在录音带那块面板里（从右边缘推 `1.5 × bandWidth + 10`），
+    /// 现在画在**刘海面板**里（静止态那块窗口，展开态那条状态带），父视图能拿到的只有
+    /// 窗口自己的尺寸和"刘海中心在窗口里的 x"。所以这里把三种摆法都算出来给它们：
+    ///
+    /// · `trailingInsetFromRestingPanel` —— 画在**静止 pill 那块窗口**里时，按钮那一行离
+    ///   面板右缘多远（配合 `.overlay(alignment: .topTrailing)`）。
+    /// · `topInsetFromScreenTop` —— 离**屏幕顶边**多远。静止窗口和展开窗口的顶边都是屏幕顶边，
+    ///   所以两种形态共用这一个数。
+    /// · `trailingOffsetFromNotchCenter` —— 按钮的右边缘离**刘海中心**多远（往左为正）。
+    ///   展开态那条状态带手里只有"刘海中心在展开窗口里的 x"，用的就是它。
+    ///
+    /// **为什么不让视图自己去算**：几何只该有一处。视图那边每多一行乘加，就多一次"画在这、
+    /// 点在那"的机会 —— 这个仓库为这件事被打过三次（D13/D20），所以这里是纯粹的减法。
+    struct NotionNoteButtonPlacement {
+        let trailingInsetFromRestingPanel: CGFloat
+        let topInsetFromScreenTop: CGFloat
+        let trailingOffsetFromNotchCenter: CGFloat
+    }
+
+    static func notionNoteButtonPlacement(on screen: NSScreen) -> NotionNoteButtonPlacement? {
+        guard let restingPanel = restingWindowFrame(on: screen),
+              let notch = notchRect(on: screen),
+              let firstButton = notionNoteButtonFrame(on: screen, indexFromTrailingEdge: 0) else {
+            return nil
+        }
+        let notchCenterX = screen.frame.minX + notch.midX
+        return NotionNoteButtonPlacement(
+            trailingInsetFromRestingPanel: restingPanel.maxX - firstButton.maxX,
+            topInsetFromScreenTop: screen.frame.maxY - firstButton.maxY,
+            trailingOffsetFromNotchCenter: notchCenterX - firstButton.maxX
+        )
+    }
+
     static func recordingWingFrames(on screen: NSScreen) -> (leading: CGRect, trailing: CGRect)? {
         guard let notch = notchRect(on: screen) else { return nil }
         let top = screen.frame.maxY

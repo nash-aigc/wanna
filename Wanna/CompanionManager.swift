@@ -1904,6 +1904,11 @@ final class CompanionManager: ObservableObject {
                     ? true
                     : appSettings.sendsTranscriptImmediatelyOnRelease
 
+                // **这一轮说话的 Notion 检测从这里开始**（2026-09-27 从录音搬过来）：
+                // 按下说话键 = 一轮新的话，检测表（2 秒一次、之后每 3 秒）从这一刻起跑。
+                // 它放在起录音之前 —— 说话期间每一句实时转写都会被喂进去（见下面那个回调）。
+                NotionNoteSession.shared.beginListening()
+
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
                     updateDraftText: { [weak self] partialTranscript in
@@ -1911,6 +1916,10 @@ final class CompanionManager: ObservableObject {
                         // 关键词就截，不等句子说完。必须放在波形开关的 guard
                         // 之前——波形的开关只管要不要显示文字，不管截不截屏。
                         self?.handleInterimTranscriptForScreenDetection(partialTranscript)
+                        // **同一句实时转写也喂给 Notion 检测** —— 它是另一件事
+                        //（上面那个函数第一行就按「说到屏幕立即截屏」的开关 return 了，
+                        // 而 Notion 有它自己的总闸），所以不能塞进那个函数里。
+                        self?.noteNotionLiveTranscript(partialTranscript)
                         // The waveform is the default UI; the words are optional.
                         // Leaving this empty is what keeps the overlay waveform-only,
                         // which is why the setting needs no other support.
@@ -1998,8 +2007,18 @@ final class CompanionManager: ObservableObject {
         guard !trimmedTranscript.isEmpty else {
             // Nothing was heard. With confirmation on, anything already waiting
             // stays waiting; with it off there is nothing to do either way.
+            //
+            // 「没听到话」也意味着这一轮的 Notion 检测到此为止：表要停、状态要清 ——
+            // 只 `endListening()` 的话，这一轮检测到的按钮会**一直留在刘海上**（下一次
+            // 按键才被重置），而这一轮根本没有东西可以存。判出来的结果直接丢掉。
+            _ = NotionNoteSession.shared.consumeTurnDecision()
             return
         }
+
+        // **「存成一条 Notion 笔记」那条路在这里分岔**（2026-09-27 从录音搬过来）。
+        // 说话期间命中过关键词，这一轮就到此为止 —— 不再往下走（不截图、不问模型），
+        // 或者按用户点的那颗取消键直接作废。三种去向与取消语义见 `NotionNoteSession`。
+        guard !consumeNotionNoteTurnIfNeeded(transcript: trimmedTranscript) else { return }
 
         if sendsImmediately {
             pendingConfirmationTranscript = nil
@@ -2520,6 +2539,9 @@ final class CompanionManager: ObservableObject {
         guard !buddyDictationManager.isDictationInProgress else { return }
 
         screenKeywordDetector.reset()
+        // **连续追问这条窗口开了，Notion 检测也跟着起表**（2026-09-27 从录音搬过来）。
+        // 窗口里每一句的实时转写从 `onTranscriptUpdate` 喂进来。
+        NotionNoteSession.shared.beginListening()
         Task { [weak self] in
             guard let self else { return }
             await self.buddyDictationManager.startContinuousListening(
@@ -2531,6 +2553,8 @@ final class CompanionManager: ObservableObject {
                 },
                 onTranscriptUpdate: { [weak self] interimTranscriptText in
                     self?.handleInterimTranscriptForScreenDetection(interimTranscriptText)
+                    // 同上：连续追问的实时转写也喂给 Notion 检测。
+                    self?.noteNotionLiveTranscript(interimTranscriptText)
                 },
                 onUtteranceFinalized: { [weak self] finalTranscriptText in
                     self?.submitFollowUpQuestion(finalTranscriptText)
@@ -2539,6 +2563,9 @@ final class CompanionManager: ObservableObject {
                     // 对话页面这边：太短就是不回答（那是刻意设计，语气词不该变成新问题），
                     // 但至少留一行日志，别像语音聊天那样静默丢弃。
                     print("🎙️ 对话页面：这个问题太短，没有发送（\(droppedText)）")
+                    // 这一句被丢掉了，所以这一轮的 Notion 判定也作废（可能已经长出按钮了）——
+                    // 但**窗口还开着**，所以重新起表，让窗口里的**下一句**照样有检测。
+                    NotionNoteSession.shared.beginListening()
                 }
             )
             guard self.buddyDictationManager.isContinuousListening else { return }
@@ -2619,6 +2646,8 @@ final class CompanionManager: ObservableObject {
     private func endContinuousListeningWindow(reason: String) {
         continuousListeningWindowTask?.cancel()
         continuousListeningWindowTask = nil
+        // 窗口关了，Notion 那张检测表也跟着停 —— 它只在这条窗口活着的时候有意义。
+        NotionNoteSession.shared.endListening()
         print("🎙️ BuddyDictationManager: continuous listening window closing (\(reason)); playback \(bailianTTSClient.isPlaying ? "still active" : "idle")")
         buddyDictationManager.endContinuousListening()
         if voiceState == .listening {
@@ -2658,6 +2687,48 @@ final class CompanionManager: ObservableObject {
         print("📸 Companion: heard 屏幕 — capturing the screen immediately")
         Task { [weak self] in
             await self?.capturePendingPreScreenshots(reason: "screen keyword")
+        }
+    }
+
+    // MARK: - 「存成一条 Notion 笔记」那条路（2026-09-27 从录音搬过来）
+
+    /// 说话期间的实时转写喂给 `NotionNoteSession` —— 它每隔几秒看一次「开头 / 末尾那 100 字
+    /// 里有没有关键词」，命中就在刘海左侧长出那几颗按钮。
+    ///
+    /// **它和上面那个「说到屏幕立即截屏」是两件事**，所以不塞进同一个函数：那一个第一行就按
+    /// 它自己的设置 return 了，而 Notion 有另一个总闸（设置 → 录音 → 「存成 Notion 笔记」）。
+    private func noteNotionLiveTranscript(_ interimTranscriptText: String) {
+        NotionNoteSession.shared.noteLiveTranscript(interimTranscriptText)
+    }
+
+    /// **这一轮说话说完了，它该怎么走。** 返回 `true` = 到此为止，别送进对话管线。
+    ///
+    /// 三种去向与那一条**只在这条路上成立**的取消语义，全部写在 `NotionNoteSession` 的
+    /// 类型注释里。这里只说最要紧的一句：
+    ///
+    /// ⚠️ **主 Agent 上点「取消」= 这一轮什么都不发**（不截图、不问模型、也不写 Notion），
+    /// 而录音那条点取消 = **按普通录音走**（照旧存一场录音，只是不写 Notion）。
+    /// **这是两条路唯一一处语义不同**，以后很容易被"统一"掉 —— 而统一之后无论倒向哪一边，
+    /// 都会有一边变成"用户明明否掉了，东西还是发出去了"。
+    private func consumeNotionNoteTurnIfNeeded(transcript: String) -> Bool {
+        let notionSession = NotionNoteSession.shared
+        switch notionSession.consumeTurnDecision() {
+        case .none:
+            return false
+
+        case .saveNote:
+            print("📝 主 Agent：这一轮存成一条 Notion 笔记，不进对话管线")
+            Task {
+                await notionSession.saveNote(rawText: transcript)
+            }
+            return true
+
+        case .cancelled:
+            // 用户点了「取消」：不发出去。转写照打一行 —— 这是这一轮唯一留下的痕迹
+            //（接线图第 4 条「每一轮都保留音频」还没接，那条落地之后这里会多一份本地录音）。
+            print("📝 主 Agent：用户取消了这条笔记，这一轮什么都不发（转写见下行）")
+            print("📝 被取消的这一轮转写：\(transcript)")
+            return true
         }
     }
 
@@ -2707,6 +2778,15 @@ final class CompanionManager: ObservableObject {
     private func submitFollowUpQuestion(_ finalTranscriptText: String) {
         let trimmedTranscriptText = finalTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscriptText.isEmpty else { return }
+
+        // 与按住说话那条完全相同的一道岔：命中关键词就存成笔记（或按取消作废），
+        // 不进对话管线。见 `NotionNoteSession`。
+        guard !consumeNotionNoteTurnIfNeeded(transcript: trimmedTranscriptText) else { return }
+
+        // **这一句没走那条路，那就把表重新起上** —— 连续追问是"一句接一句"的，
+        // 而 `consumeTurnDecision()` 是消费型的（判完就把状态清了），不重新起表的话，
+        // 用户在这个窗口里说的**第二句**就没有任何检测了。
+        NotionNoteSession.shared.beginListening()
 
         print("🗣️ Companion: follow-up question from continuous listening: \(trimmedTranscriptText)")
         lastTranscript = trimmedTranscriptText

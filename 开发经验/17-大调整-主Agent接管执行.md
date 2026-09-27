@@ -1,4 +1,4 @@
-# 17 · 大调整：主 Agent 快捷键接管「执行」，录音回归纯录音（2026-09-27 设计，**尚未实施**）
+# 17 · 大调整：主 Agent 快捷键接管「执行」，录音回归纯录音（2026-09-27 设计；**第 5 条已实施**，见文末）
 
 > 用户的原话概括：**录音快捷键就只做"录下来、转写、润色"这一件事，做到极致；主 Agent 快捷键
 > 本质是一个执行类的 Agent，那就让它真正具备执行能力** —— 于是 Notion 那套（关键词、参考材料、
@@ -6,6 +6,9 @@
 >
 > 「**不要重写代码，你只需要去把那个里边的模型替换一下**」「相关的部分或者主要的部分都已经设计完了，
 > 那么现在就只差一个接线的问题」—— 所以这一篇是**接线图**，不是重新设计。
+>
+> **进度**：第 1 步（抽字幕共用视图）与**第 5 条（Notion 搬去主 Agent）已实施**；
+> 第 1～4 条还没做。第 5 条的实测结果、以及**没验到什么**，写在文末《第 5 条已实施》一节。
 
 ## 两个快捷键现在各是什么
 
@@ -99,3 +102,96 @@
   与录音那条的分寸不同：录音那条取消之后是"照常存一场录音"，主 Agent 这条取消之后
   **这一轮不进对话管线**（不截图、不问模型），但**本地那条录音照留** —— 两处都要有东西留下来，
   这是同一条原则。
+
+---
+
+## 第 5 条已实施（2026-09-27，同一天下午）
+
+**做了什么，一句话：Notion 那整套从 `LongFormRecorderController` 里整块搬出来、接到主 Agent 的
+快捷键上；录音那边一段都不剩。** 没有重写任何逻辑 —— 每一处都是"原样搬"，代码里连注释都跟着走。
+
+### 搬成了三个文件
+
+| 文件 | 搬了什么（**一行逻辑都没改**） |
+|---|---|
+| `Wanna/NotionNoteDetector.swift`（241 行） | `nonisolated enum`：`transcriptMentions` / `fuzzyContains` / `editDistance` / `transcriptMentionCount` / `parseNotionNoteReply` / `richBlocks` / `spans` / `notionColor` / `notionNoteTitle` + `edgeCharacterCount = 100`。**不碰网络、不碰 UI、不碰设置**，所以能脱离整个 App 单独编译跑 |
+| `Wanna/NotionNoteSession.swift`（406 行） | `@MainActor ObservableObject` 单例（形状照 `AgentActivityBoard.shared`）：那 8 个 `@Published` 状态、2 秒一次之后每 3 秒的检测表、参考材料截图、三颗按钮的动作、`saveNote`（模型整理 → `NotionNoteClient` 写入）。**只有两处改动**：日志从 `publishDiagnostic` 改成注入的 `log`（那两样输出属于录音页）；转写来源从"读控制器自己的 `transcriptPlainText + livePartialText`"改成喂进来的 `noteLiveTranscript` |
+| `Wanna/NotionNoteButtonRow.swift`（90 行） | 那三颗按钮的"画"，从 `NotchRecordingOverlay.notionNoteButtons` 原样搬来 |
+
+### 接线点（主 Agent 的语音路径）
+
+- **起表**：按下说话键（`pendingKeyboardShortcutStartTask` 里）、连续追问窗口打开时（`armContinuousListeningWindow`）。
+- **喂转写**：按下说话那条的 `updateDraftText` 与连续追问的 `onTranscriptUpdate`，各调一次
+  `noteNotionLiveTranscript`。**刻意不塞进 `handleInterimTranscriptForScreenDetection`** ——
+  那个函数第一行就按「说到屏幕立即截屏」的开关 `return`，而 Notion 有它自己的总闸。
+- **收尾分岔**：`handleFinalTranscript` 与 `submitFollowUpQuestion` 在把转写送进管线之前都过一次
+  `consumeNotionNoteTurnIfNeeded`。它是**消费型**的（判完就清干净），所以随后的打字提问不会
+  捡到这一轮的残留；连续追问里判成 `.none` 会**重新起表**，否则窗口里说的第二句没有任何检测。
+- **停表**：`handleFinalTranscript` 的空转写早退、`endContinuousListeningWindow`。
+
+### 那三颗按钮：几何没动，画的位置换了
+
+点仍然是 `handleGlobalClick` 里那三个 slot、读的仍然是 `NotchSupport.notionNoteButtonFrame`
+（**这两处按要求一行没改**）；改的只是"画"从**录音带那块面板**搬进了**刘海面板**
+（静止 pill 与展开态那条状态带各一处 `NotionNoteButtonAnchor`）。
+
+两者靠**相减**发生关系、不另写一份几何：`NotchSupport.notionNoteButtonPlacement(on:)` 由
+`notionNoteButtonFrame` 与 `restingWindowFrame` 直接相减得出三个偏移（静止面板的 trailing inset、
+离屏幕顶边的距离、离刘海中心的偏移）。摆法是"零尺寸锚点 + 把那一行以 `.overlay(alignment: .trailing)`
+挂上去"：`.position` 定的是**中心**，而按钮按**右边缘**定位，所以锚点的 x 就是那个偏移，
+不必知道此刻有几颗、有多宽。
+
+那一行 `.allowsHitTesting(false)` 是必须的：静止态面板 `ignoresMouseEvents = true`，本来收不到点击；
+**但展开态面板是收事件的** —— 少了这一行，同一个动作会被 SwiftUI 按钮和全局监听各触发一次
+（"打开那一页"会开出两个标签页）。
+
+### 取消语义（**两条路唯一一处不同**）
+
+- 录音那条点「取消」= **按普通录音走**（照常存一场录音，只是不写 Notion）。
+- 主 Agent 这条点「取消」= **这一轮什么都不发**（不截图、不问模型、也不写 Notion）。
+
+这里没有"照常"可退 —— 退回去就是拿用户已经否掉的东西去问模型、去写一页云端笔记。
+两处都要留下东西（同一条原则）：录音那条留下录音；主 Agent 这条本该留下本地那条录音，
+**但第 4 条「每一轮都保留音频」还没接**，所以今天这条只做到"不发出去"，
+被取消的那一轮转写只在日志里留一行。
+
+### 验收：跑了什么、量到什么
+
+**① 录音不再触发 Notion —— 过了（有一条前提）**
+
+- 在**带探针的构建**上跑真录音（⌥C 开始、⌥C 停止，14.0 秒、有真实输入样本）；
+- 探针打在 `NotionNoteSession.beginListening()` 与 `checkKeywords()` 上 —— 整场录音期间
+  **这两行一次都没出现**（这套东西**只能**从 `beginListening()` 被 arm，所以"没被 arm"
+  就等于"检测根本没跑"）；
+- Notion 那一页的顶层子块 **61 → 61**（没写进去）；
+- 录制中的截图里刘海左侧没有那几颗按钮。
+
+⚠️ **前提（如实记）**：**没能把关键词真正喂进录音转写**。这台机器上音箱放出来的声音进不了麦克风 ——
+`say` / `afplay -v 4`（音量 38% 与 75% 都试过）录到的峰值一直是房间底噪（0.04 上下），
+所以这几场录音的转写都是空的。因此"没有按钮"这条**靠的是上面那条结构性证据**（检测从未被 arm），
+不是"转写里有词却没触发"。真实语音这条路上，这一条**没验到**。
+
+**② 主 Agent 那条路：检测与那颗按钮 —— 过了**
+
+拿不到真实语音，所以按接线图允许的做法用了一个临时探针（`/tmp/wanna-notion-probe-on` 存在时才跑，
+做完已删、已标注 `TEMP PROBE (remove before commit)`）把「说话期间的实时转写」直接喂进
+`NotionNoteSession`：**检测循环、状态发布、按钮的绘制与点击全是真的，只有那句转写是注入的。**
+
+- 真的检测循环：`checkKeywords()` 按 2 秒 → 3 秒的节奏在跑，约 2 秒后 `showsNotionNoteButtons = true`、
+  `noteWasDetectedThisTurn = true`；
+- **画的和点的逐点重合**：算出来的命中矩形是 AppKit `(622.5, 1086.0, 52×30)`（y 向上），
+  同一块屏的 AX 树里那颗按钮是 `(622, 1, 52×30)`（y 向下）—— 高度 1117 一点不差地翻过来是同一个矩形；
+- **点它真的走通**：在 (622,1,52×30) 上合成一次点击 → `shows` 变 false（按钮收掉）、`取消` 变 true；
+- **两种判定都验了**：没点那次 `consumeTurnDecision()` = **`saveNote`**；点过取消那次 = **`cancelled`**；
+- **收尾入口真的拦得住**：带着关键词的转写在"已取消"状态下走 `handleFinalTranscript` →
+  **会话条目数 2 → 2**（没进对话管线），`voiceState` 没停在 processing。
+
+**没验到的**：`.saveNote` 的**执行**那一步（模型整理 + 写 Notion）没有在主 Agent 这条路上真跑过 ——
+它会往用户的页面上写一条测试笔记，我不该留下那个。判定值验到了，执行没验。
+
+### 顺带留下的两处别扭（不是错，是没做）
+
+1. **设置页那一节没搬**：设置 → 录音 → 「Notion 笔记」现在配的是**主 Agent** 的行为。
+   搬它意味着动设置页的信息架构，不在"只搬第 5 条"的范围里。
+2. **`NotchWindowController.swift:618` 有一行别人留下的 `// TEMP PROBE (remove before commit)` 注释**
+   （来自 `f83da84`，底下并没有探针代码）。不是这次留下的，也没顺手删。

@@ -219,4 +219,70 @@ struct WannaTests {
         board.finishTask(agentID, status: .doneVerified)
     }
 
+    // MARK: - 「Notion 笔记」从录音搬到主 Agent（2026-09-27）
+    //
+    // 搬的这一下有两处**只能靠断言钉住**的东西：① 关键词匹配的分寸（用户给的四句真实
+    // 转写就是判据，`开发经验/09-实测数据.md` 19.3 那张表）；② 那几颗按钮画在哪 —— 它从
+    // "录音带那块面板从右边缘推"改成了"刘海面板按 `NotionNoteButtonPlacement` 摆"，
+    // 而 `handleGlobalClick` 那三个 slot 命中的还是同一个屏幕矩形。
+
+    /// **关键词匹配：该中的中、该不中的不中**（数据来自用户 2026-09-27 给的真实转写）。
+    @Test func notionKeywordMatchingFollowsTheMeasuredTable() {
+        let keywords = ["保存一条笔记"]
+        // 三句该中：「保存一点笔记」差 1、「把这一条笔记」差 2。
+        for transcript in ["保存一条笔记", "保存一点笔记", "把这一条笔记"] {
+            #expect(NotionNoteDetector.transcriptMentions(keywords, in: transcript,
+                                                          edgeCharacterCount: 100),
+                    "「\(transcript)」应该命中")
+        }
+        // 「耳朵有点笔记」**刻意不中**：6 个字错 4 个，接住它就得把阈值放到会撞日常句子的程度
+        //（要它中，正确做法是把它本身加进关键词列表）。
+        #expect(!NotionNoteDetector.transcriptMentions(keywords, in: "耳朵有点笔记",
+                                                       edgeCharacterCount: 100),
+                "「耳朵有点笔记」不该命中 —— 放宽到能接住它就会误报")
+        // 反例：4 字关键词容错只能是 1（容错 2 就是 50%，实测立刻误报这两句）。
+        for transcript in ["我今天记了很多笔记", "这个项目的笔记还没有整理", "保存一下这个文件"] {
+            #expect(!NotionNoteDetector.transcriptMentions(["保存笔记"], in: transcript,
+                                                           edgeCharacterCount: 100),
+                    "「\(transcript)」不该命中")
+        }
+        // 「只在开头/末尾那 100 字里找」：中间出现不算。
+        let longBody = String(repeating: "这是一段正文。", count: 40)
+        #expect(NotionNoteDetector.transcriptMentions(["保存一条笔记"],
+                                                      in: "保存一条笔记" + longBody,
+                                                      edgeCharacterCount: 100))
+        #expect(!NotionNoteDetector.transcriptMentions(["保存一条笔记"],
+                                                       in: longBody + "保存一条笔记" + longBody,
+                                                       edgeCharacterCount: 100))
+    }
+
+    /// **那几颗按钮：画的和点的必须是同一个屏幕矩形。**
+    ///
+    /// 2026-09-27 搬家时，按钮的"画"从录音带那块面板（从右边缘推 `1.5 × bandWidth + 10`）
+    /// 改成刘海面板（静止态那块窗口 / 展开态那条状态带）按 `NotionNoteButtonPlacement` 摆。
+    /// 三个偏移全部由 `notionNoteButtonFrame` **相减**得到，这条断言把这件事回推一遍：
+    /// 每一个偏移都必须落回同一个矩形 —— 差一个点，屏幕上就是"看着在那、点不到"。
+    @Test func notionNoteButtonPlacementAgreesWithTheHitRect() throws {
+        guard let screen = NSScreen.main, NotchSupport.hasNotch(screen) else { return }
+        let firstButton = try #require(NotchSupport.notionNoteButtonFrame(on: screen,
+                                                                         indexFromTrailingEdge: 0))
+        let placement = try #require(NotchSupport.notionNoteButtonPlacement(on: screen))
+        let restingPanel = try #require(NotchSupport.restingWindowFrame(on: screen))
+        let notchCenterX = try #require(NotchSupport.notchRect(on: screen)).midX + screen.frame.minX
+
+        // ① 静止态：面板右缘往左退 `trailingInsetFromRestingPanel` = 按钮的右边缘。
+        #expect(abs((restingPanel.maxX - placement.trailingInsetFromRestingPanel)
+                    - firstButton.maxX) < 0.5)
+        // ② 两种形态共用"离屏幕顶边多远"（静止窗口和展开窗口的顶边都是屏幕顶边）。
+        #expect(abs((screen.frame.maxY - placement.topInsetFromScreenTop)
+                    - firstButton.maxY) < 0.5)
+        // ③ 展开态：刘海中心往左退 `trailingOffsetFromNotchCenter` 也是同一个右边缘。
+        #expect(abs((notchCenterX - placement.trailingOffsetFromNotchCenter)
+                    - firstButton.maxX) < 0.5)
+        // ④ 静止窗口仍然居中在刘海上 —— 视图用的就是"窗口宽 ÷ 2 = 刘海中心"。
+        #expect(abs((restingPanel.minX + restingPanel.width / 2) - notchCenterX) < 0.5)
+        // ⑤ 它确实在刘海**左侧**、且在左翼之外（用户要的位置，也是不挡住两翼动画的位置）。
+        #expect(firstButton.maxX <= notchCenterX - NotchSupport.leadingWingWidth)
+    }
+
 }
