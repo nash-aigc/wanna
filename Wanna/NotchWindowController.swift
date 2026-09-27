@@ -615,7 +615,6 @@ final class NotchWindowController {
 
     private func handleGlobalClick(at clickLocation: NSPoint,
                                   from event: NSEvent) {
-        // TEMP PROBE (remove before commit)
         // **全局监听送来的、落在我自己“正在收点击的面板”上的那一下，交给本地监听处理。**
         //
         // 实测（2026-09-26 晚，录音两翼）：同一次点击，两个监听都收到了 ——
