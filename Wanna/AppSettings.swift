@@ -507,6 +507,17 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// being generated. The app previously never showed text at all.
     var showsResponseText: Bool = false
 
+    /// **主 Agent 说话时的「任务方向看板」**（2026-09-27）：鼠标右上角那块板的总开关。
+    ///
+    /// 关掉之后：面板不出现、3 秒一次那次请求也不发 —— 一行都不做（不是"只是不显示"）。
+    var directionBoardEnabled: Bool = true
+
+    /// 看板的六个方向短语与它们的关键词（`DirectionBoardConfiguration`）。
+    ///
+    /// 用户 2026-09-27：「做成设置页可改」。默认那六个短语是他点名的那一套；
+    /// 关键词按**按钮**存（不是按行）—— 一行两个短语，一份关键词没法回答"该点亮哪一个"。
+    var directionBoard: DirectionBoardConfiguration = .default
+
     /// How long the answer bubble stays up *after* the spoken answer finishes
     /// playing, before it is cleared.
     ///
@@ -1558,6 +1569,8 @@ nonisolated extension AppSettings {
         case launchesAtLogin
         case opensPanelOnLaunch
         case showsResponseText
+        case directionBoardEnabled
+        case directionBoard
         case answerBubbleLingerSeconds
         case cursorPresenceMode
         case cursorShapeStyle
@@ -1687,6 +1700,10 @@ nonisolated extension AppSettings {
         launchesAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchesAtLogin) ?? defaults.launchesAtLogin
         opensPanelOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .opensPanelOnLaunch) ?? defaults.opensPanelOnLaunch
         showsResponseText = try container.decodeIfPresent(Bool.self, forKey: .showsResponseText) ?? defaults.showsResponseText
+        directionBoardEnabled = try container.decodeIfPresent(Bool.self, forKey: .directionBoardEnabled) ?? defaults.directionBoardEnabled
+        directionBoard = DirectionBoardConfiguration.validated(
+            try container.decodeIfPresent(DirectionBoardConfiguration.self, forKey: .directionBoard)
+                ?? defaults.directionBoard)
         answerBubbleLingerSeconds = try container.decodeIfPresent(Double.self, forKey: .answerBubbleLingerSeconds) ?? defaults.answerBubbleLingerSeconds
         cursorPresenceMode = try container.decodeIfPresent(CursorPresenceMode.self, forKey: .cursorPresenceMode) ?? defaults.cursorPresenceMode
         cursorShapeStyle = try container.decodeIfPresent(CursorShapeStyle.self, forKey: .cursorShapeStyle) ?? defaults.cursorShapeStyle

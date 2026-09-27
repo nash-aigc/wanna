@@ -185,10 +185,16 @@ struct DirectionBoardTests {
 
     // MARK: - 屏幕上写什么 = 发出去的是什么
 
-    @Test func displayTextPrefersTheLocalMatch() throws {
+    /// 预设命中时**以预设为准**（用户原话：「以用户提前预设的为准」）；没命中才让 AI 的短语占第一格。
+    @Test func displayTextPrefersPresetThenTheModelLabel() throws {
         let localMatch = DirectionBoardConfiguration.match(in: "帮我圈一下这里", configuration: configuration)
-        #expect(configuration.displayText(rowIndex: 1, localMatch: localMatch, modelLabel: "操作电脑") == "圈出来")
-        #expect(configuration.displayText(rowIndex: 2, localMatch: localMatch, modelLabel: "操作电脑") == "操作电脑")
-        #expect(configuration.displayText(rowIndex: 2, localMatch: localMatch, modelLabel: "  ") == nil)
+        // 命中的那一行：整行都是预设，AI 写什么都不算。
+        #expect(configuration.displayText(rowIndex: 1, columnIndex: 0, localMatch: localMatch, modelLabel: "操作电脑") == "指给我看")
+        #expect(configuration.displayText(rowIndex: 1, columnIndex: 1, localMatch: localMatch, modelLabel: "操作电脑") == "圈出来")
+        // 没命中的那一行：第一格显示 AI 的短语，第二格仍然是预设。
+        #expect(configuration.displayText(rowIndex: 2, columnIndex: 0, localMatch: localMatch, modelLabel: "整理这段文字") == "整理这段文字")
+        #expect(configuration.displayText(rowIndex: 2, columnIndex: 1, localMatch: localMatch, modelLabel: "整理这段文字") == "派个 Agent 去做")
+        // 没命中、AI 也说「无」：回落预设。
+        #expect(configuration.displayText(rowIndex: 2, columnIndex: 0, localMatch: localMatch, modelLabel: "  ") == "操作电脑")
     }
 }

@@ -2430,6 +2430,17 @@ final class CompanionManager: ObservableObject {
     /// This applies to a user-edited base too: the editor is for the base prompt, so
     /// 回答长度 and 补充指令 keep working on top of whatever they wrote. Anything else
     /// would make those two settings silently dead the moment the editor was touched.
+    /// 看板那次请求用的系统提示词 —— **与主 Agent 逐字相同的正文**，后面追加一节
+    /// 「怎么把理解结果写成看板要的格式」。
+    ///
+    /// 用户 2026-09-27：「提示词：与主 Agent 提示词完全相同，以保证 100% 模拟主 Agent 的思考方式；
+    /// 额外追加一条提示词，规定如何将理解结果转换为标签形式展示」。
+    ///
+    /// ⚠️ 这一节**只加在看板那次请求上**，真正回答用户的那一轮不带它。
+    static func directionBoardSystemPrompt(for settings: AppSettings) -> String {
+        companionSystemPrompt(for: settings) + "\n\n" + DirectionBoardPrompt.roleInstruction
+    }
+
     private static func companionSystemPrompt(for settings: AppSettings) -> String {
         let trimmedCustomPrompt = settings.customSystemPrompt?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -2718,7 +2729,11 @@ final class CompanionManager: ObservableObject {
     ///
     /// 失效回落是刻意的：卡片上存的是一个字符串，而设置页可以把一个服务商整个删掉。
     /// 那时候该发生的是"这张卡片回到默认模型"，不是"这张卡片再也问不了问题"。
-    private func visionRoleOverride(forCardID cardID: String) -> ResolvedModelRole? {
+    /// **这张卡片自己选的那个 🧠**（`AppSettings.cardVisionModelOverride`）。
+    ///
+    /// `static` 是因为看板（`DirectionBoardSession`）也要用它 —— 看板那次请求必须与**这一轮真正
+    /// 发出去的模型**一致（用户：「模型：与主 Agent 使用同一模型」），而两个地方各写一遍必然漂。
+    static func visionRoleOverride(forCardID cardID: String) -> ResolvedModelRole? {
         guard let rawOverride = AppSettingsStore.snapshot().cardVisionModelOverride(forCardID: cardID) else {
             return nil
         }
@@ -3513,7 +3528,7 @@ final class CompanionManager: ObservableObject {
                         conversationSummary: compressedHistorySummary,
                         userPrompt: userPromptForThisTurn,
                         // **这张卡片自己选的 AI**（没选过就是 nil = 跟设置里全局那份）。
-                        roleOverride: visionRoleOverride(forCardID: turnSessionID.uuidString),
+                        roleOverride: Self.visionRoleOverride(forCardID: turnSessionID.uuidString),
                         onTextChunk: { [weak self] accumulatedText in
                             // The vision client hands over the whole accumulated answer,
                             // not just the new piece. Assigning it (rather than appending)

@@ -200,19 +200,26 @@ extension DirectionBoardConfiguration {
         return DirectionBoardConfiguration(rows: rows)
     }
 
-    /// 第 `rowIndex` 行现在该显示什么文字：本地命中了就用那个按钮的固定短语，否则用 AI 生成的标签，
-    /// 两者都没有就空着（视图那一格画成暗的）。
+    /// **这一格现在显示什么文字** —— 视图、AX 断言与"要写进提示词的标签"读的都是它。
     ///
-    /// **一个地方算**：视图、AX 断言与"要写进提示词的标签"读的是同一个函数，
-    /// 所以不会出现"屏幕上写着 A、发出去的却是 B"。
+    /// 规则（用户 2026-09-27 定，逐字）：
+    /// > 如果用户预设的内容没有匹配到，就让 AI 生成；如果用户关键词已经匹配，就显示用户匹配的内容。
+    /// > 因为用户可能会说「保存到 Notion 什么什么页面」，AI 可能识别不了，所以**以用户提前预设的为准**；
+    /// > 如果没有预设，就让 AI 生成。
+    ///
+    /// 展开成三条：
+    /// 1. 这一行**本地命中了** → 整行都用预设短语（命中的那一格高亮）—— 预设优先，AI 不许覆盖；
+    /// 2. 没命中 → **第一格**显示 AI 生成的短语（≤12 字），**第二格**仍然是预设（他随时可以点它）；
+    /// 3. 没命中、AI 也说「无」 → 两格都是预设，谁都不高亮。
     nonisolated func displayText(rowIndex: Int,
+                                 columnIndex: Int,
                                  localMatch: Match?,
                                  modelLabel: String?) -> String? {
-        guard rowIndex < rows.count else { return nil }
-        if let localMatch, localMatch.rowIndex == rowIndex {
-            return localMatch.button.presetText
-        }
+        guard rowIndex < rows.count, columnIndex < rows[rowIndex].buttons.count else { return nil }
+        let presetText = rows[rowIndex].buttons[columnIndex].presetText
+        if let localMatch, localMatch.rowIndex == rowIndex { return presetText }
+        guard columnIndex == 0 else { return presetText }
         let trimmed = modelLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
+        return trimmed.isEmpty ? presetText : trimmed
     }
 }
