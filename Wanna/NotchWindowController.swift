@@ -123,6 +123,15 @@ final class NotchPanelModel: ObservableObject {
     /// `NotchListeningTranscriptPanelController` 按 `syncListeningTranscriptPanel()`
     /// 显示，那一个读的就是这里 —— 两处共用一个属性，所以不会出现「字幕在、角还是圆的」
     /// 或者反过来（那两种都会让接缝重新露出空隙）。
+    /// **相位被强制按在 idle 上**（2026-09-27，ESC 打断"没瞬间消失"）。
+    ///
+    /// `forceActivityPhaseIdle()` 只把当前这一刻置 idle —— 而 ESC 落在"用户正在说话"时
+    /// **录音还在收尾**（`isFinalizingTranscript` / `voiceState == .listening`），
+    /// 下一次 `refreshActivityPhase()` 立刻又按 `voiceState` 算回 Listening，
+    /// 于是界面上"没消失"。这一个标志让它在**这一轮真的结束之前**一直保持 idle。
+    /// 由 `CompanionManager` 在 ESC 打断听的时候置上，在这一轮收尾/下一次按下时清掉。
+    var isActivityPhaseHeldAtIdle: Bool = false
+
     var notchBandSitsAboveTranscriptLine: Bool {
         activityPhase == .listening && !isFullscreenSuppressed
     }
@@ -1887,7 +1896,32 @@ final class NotchWindowController {
         panelModel.activityPhase = panelModel.externalSessionOverride ?? .idle
     }
 
+    /// ESC 打断那一下：把相位按在 idle 上，直到这一轮真的结束。
+    func holdActivityPhaseAtIdle() {
+        panelModel.isActivityPhaseHeldAtIdle = true
+        activityPhaseHoldTask?.cancel()
+        activityPhaseHoldTask = nil
+        panelModel.activityPhase = .idle
+        syncListeningTranscriptPanel()
+    }
+
+    /// 松开那个"按在 idle 上"（这一轮收尾了，或者用户又按了一次快捷键开始新一轮）。
+    func releaseActivityPhaseIdleHold() {
+        guard panelModel.isActivityPhaseHeldAtIdle else { return }
+        panelModel.isActivityPhaseHeldAtIdle = false
+        refreshActivityPhase()
+    }
+
     private func refreshActivityPhase() {
+        // 被 ESC 按在 idle 上：**这一轮结束之前不许再按 voiceState 算回来**
+        //（用户 2026-09-27：「用户说话的过程中间，用户按住 ESC，他没有瞬间消失」）。
+        if panelModel.isActivityPhaseHeldAtIdle {
+            activityPhaseHoldTask?.cancel()
+            activityPhaseHoldTask = nil
+            panelModel.activityPhase = .idle
+            syncListeningTranscriptPanel()
+            return
+        }
         let derivedPhase = panelModel.externalSessionOverride
             ?? (isDictationFinalizing
                 ? .transcribing

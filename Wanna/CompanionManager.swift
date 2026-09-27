@@ -1779,10 +1779,11 @@ final class CompanionManager: ObservableObject {
     /// ESC 落在「正在听」那一刻：**中断录音、录音照存、什么都不发**。
     private func cancelTurnByEscapeWhileListening() {
         turnCancelledByEscape = true
-        // **界面立刻收掉，不许转成 Thinking 挂在那儿**（用户 2026-09-27：「界面应该瞬间消失，
-        // 但现在还有一个 thinking 的东西没有取消」）：`forceActivityPhaseIdle()` 是这个仓库里
-        // 「显式停止立刻生效」的唯一收口（相位里那个 2.5 秒的 hold 就是它绕过的）。
-        notchWindowController?.forceActivityPhaseIdle()
+        // **界面立刻收掉，而且这一轮结束之前别再冒出来**（用户两遍：「界面应该瞬间消失」/
+        // 「用户说话的过程中间按住 ESC，他没有瞬间消失」）。`forceActivityPhaseIdle()` 只按
+        // 这一刻 —— 而此刻录音还在收尾（`voiceState` 还是 listening），下一次相位计算立刻又把它
+        // 算回 Listening。所以这里用 `holdActivityPhaseAtIdle()`：一直按到这一轮真的结束。
+        notchWindowController?.holdActivityPhaseAtIdle()
         if buddyDictationManager.isContinuousListening {
             endContinuousListeningWindow(reason: "user pressed escape")
             return
@@ -1959,6 +1960,7 @@ final class CompanionManager: ObservableObject {
 
             // 新的一轮，ESC 标志清零（上一轮如果没走到收尾，别把它带到这一轮上来）。
             turnCancelledByEscape = false
+            notchWindowController?.releaseActivityPhaseIdleHold()
             // **一次全新的按下 = 开一个新周期**（用户 2026-09-27：「从第一次按快捷键到最后一轮
             // AI 回复结束」）。在连续监听窗口里续着说的那种按下**不算**新周期 —— 它属于当前这个。
             if !buddyDictationManager.isContinuousListening {
@@ -2206,6 +2208,8 @@ final class CompanionManager: ObservableObject {
         // 不该顺手往 Notion 里写一页笔记。
         if turnCancelledByEscape {
             turnCancelledByEscape = false
+            // 这一轮到此结束：松开"按在 idle 上"（下一次按下会重新算相位）。
+            notchWindowController?.releaseActivityPhaseIdleHold()
             print("⏹️ ESC 打断：这一轮的录音已留存，什么都不发")
             pendingConfirmationTranscript = nil
             liveTranscriptText = ""
@@ -3295,6 +3299,15 @@ final class CompanionManager: ObservableObject {
                 let turnSessionTitle = turnTargetSession.title
                 var unexecutedActionCountFromPreviousStep = 0
 
+                /// **这一轮"任务"是不是已经动过手了**（派活、或者执行过动作）。
+                ///
+                /// 用它把**鼠标右下角那张卡片**与"任务执行过程"隔开：用户 2026-09-27
+                /// 「**不要在鼠标右下角显示内容**……它显示的是**整个任务**……关键是 Agent 的
+                /// 任务回复之后的这个结果，**不应该显示用户提示词**」—— 任务一旦开始执行，
+                /// 中间每一步的模型输出（计划、复述用户的话、"我先看看…"）都不该进那张卡片，
+                /// 卡片只留**最后那份结果**（由本轮收尾那次 settle 赋值写入）。
+                var hasStartedExecutingTaskWork = false
+
                 /// 这条任务里**已经拒过一次「没写名字的点击」**。
                 ///
                 /// 一条任务只拒一次：第一次拒是教学（让模型看到「你没写名字，所以
@@ -3489,6 +3502,10 @@ final class CompanionManager: ObservableObject {
                             }
 
                             guard showsResponseText else { return }
+                            // **任务一旦开始执行，中间步骤就不进鼠标旁那张卡片了** ——
+                            // 那张卡片只留最后的结果（收尾时 settle 会写进去）。见本循环
+                            // 上面 `hasStartedExecutingTaskWork` 的注释。
+                            guard !hasStartedExecutingTaskWork else { return }
                             self?.streamingAnswerText = displayText
                         }
                     )
@@ -3519,6 +3536,7 @@ final class CompanionManager: ObservableObject {
                             cycleID: turnCycleID,
                             sessionID: turnSessionID.uuidString,
                             sessionTitle: turnSessionTitle)
+                        hasStartedExecutingTaskWork = true
                         AgentActivityBoard.shared.appendStep(
                             "交给\(role.displayName) agent 去做", to: ephemeralAgentID!)
                         AgentActivityBoard.shared.appendToolCall(
@@ -3722,6 +3740,7 @@ final class CompanionManager: ObservableObject {
                     if let firstAction = parseResult.actions.first, !Task.isCancelled {
                         // **执行了动作 = 也是一个任务**（不一定要派活）。用户问
                         // 「帮我点一下」时主 agent 可能自己就把标签写了。
+                        hasStartedExecutingTaskWork = true
                         if ephemeralAgentID == nil {
                             ephemeralAgentID = AgentActivityBoard.shared.beginTask(
                             request: transcript,

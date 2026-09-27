@@ -145,15 +145,19 @@ struct NotchListeningTranscriptView: View {
         NotchSupport.leadingWingWidth + notchWidth + NotchSupport.trailingWingWidth
     }
 
-    /// **展开过程中**这一行的宽度：`刘海 + 两翼之和 × 进度`。
+    /// 这一行的宽度 —— **从第一帧就是整条，不做宽度动画**。
     ///
-    /// 与刘海那条黑带的宽度动画**是同一个式子**（`NotchSupport.revealedListeningBandWidth`），
-    /// 所以从第一帧到最后一帧，两块的左右边缘都重合 —— 过程中不会露出缝。
-    /// 进度 0 时它只有刘海那么宽（黑压黑，看不见），进度 1 时就是整条。
-    private var revealedLineWidth: CGFloat {
-        NotchSupport.revealedListeningBandWidth(notchWidth: notchWidth,
-                                                revealProgress: model.bandRevealProgress)
-    }
+    /// 用户 2026-09-27（第二次报同一件事）：「用户按快捷键的时候，那个按钮它的中间有一个空白，
+    /// 你到现在也没有修复这个问题……**直接把那个图形重新画一下**……中间的部分不应该出现这样
+    /// 一个空白区域。」他给的底线是：**任何一帧都不允许出现能透出桌面的区域**。
+    ///
+    /// 前两版都是"让这一行跟着那条带子一起长"（同一个进度值、同一个式子，量到每侧 ≤2px）——
+    /// 但那是**时序对齐**，只要两块有任何一个环节不同拍（窗口层级、动画事务、相位晚一轮），
+    /// 桌面就会从那里透出来。**不做动画就没有这个自由度**：这一行从第一帧起就铺满整条宽度，
+    /// 上面那条黑带再怎么长，下面永远有一块黑接着 —— 结构上不可能露出桌面 ✓。
+    /// 这与用户允许的"退一步直接显示"一致（"如果不可以的话，你就直接让它直接显示出来也行"），
+    /// 而**黑带自己的展开动画照旧**（动的是它，不是这一行）。
+    private var revealedLineWidth: CGFloat { bandWidth }
 
     var body: some View {
         VStack(spacing: 0) {
