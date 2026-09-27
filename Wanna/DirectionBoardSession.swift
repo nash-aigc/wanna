@@ -103,7 +103,9 @@ final class DirectionBoardSession: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         for (index, answer) in recentCornerAnswers.enumerated() {
-            let label = index == 0 ? "最近一次" : "倒数第\(TurnReferenceMaterials.chineseNumber(index + 1))次"
+            // 用户 2026-09-27 深夜点名要的标法：「**一定要标清楚前一轮、两轮、三轮、四轮、五轮**
+            // 分别是什么，一定要告诉 AI 上一轮的内容是什么，让它判断跟上一个内容有没有关系」。
+            let label = index == 0 ? "上一轮" : "上\(TurnReferenceMaterials.chineseNumber(index + 1))轮"
             lines.append("【\(label)｜\(formatter.string(from: answer.shownAt))】\(answer.text)")
         }
         let spokenAfter: String
@@ -297,6 +299,15 @@ final class DirectionBoardSession: ObservableObject {
     /// 它取代了原来分开的两份（`recentReadings` 三轮理解 + `recentCornerAnswers` 三条答案）——
     /// 那两份在提示词里是**两段各说各的**，而他要的是"一轮 = 问 + 答"这件事本身。
     private var recentTurns: [(question: String, answer: String, at: Date)] = []
+
+    /// **到目前为止整理出来的那张需求图**（累积的）。
+    ///
+    /// 用户 2026-09-27 深夜把这张卡片的职责说死了：「屏幕卡片右上角的卡片，它显示的脑图是把用户
+    /// 之前问过的**所有问题**，无论是**连续的还是间断的**，只要是在**实时模式下没有停止**，
+    /// 都会**统一记录**……把这些需求梳理出来，**无论它们有没有关系**，都梳理出它们的逻辑关系」。
+    /// 所以它不能每轮重画：**上一轮那张图要原样带下去，让模型在它上面并新内容** ——
+    /// 这也是"一次实时会话里他到底在做什么"唯一的载体。
+    private var accumulatedMindMap = ""
     /// 保留几轮（用户点名 **5**）。
     static let rememberedTurnCount = 5
 
@@ -446,6 +457,9 @@ final class DirectionBoardSession: ObservableObject {
         if let cycleID, cycleID != currentCycleID {
             cancelledForThisCycle = false
             previousRoundItems = []
+            // **一次实时会话 = 一张图**（用户：「只要是在实时模式下没有停止，都会统一记录」）——
+            // 所以换了一次大循环（＝又按了一次快捷键）就从空白重新开始整理。
+            accumulatedMindMap = ""
         }
         currentCycleID = cycleID
         refreshCancellationState()
@@ -870,6 +884,12 @@ final class DirectionBoardSession: ObservableObject {
                     print("🧭 方向看板：答案预览 = \(answer.prefix(60))")
                 }
 
+                // **把这一轮那张图存成"到目前为止的汇总"**（下一轮在它上面继续并）。
+                if let mindMap = self.understandingLines.first(where: { $0.label == "细节" })?.value,
+                   !mindMap.isEmpty {
+                    self.accumulatedMindMap = mindMap
+                }
+
                 // **疑问那一行是"常驻"的**：把这一轮的值记下来，下一轮带着它去问模型
                 //（它只删已解决的、加新的，不许换一批重说）。
                 if let questions = self.understandingLines.first(where: { $0.label == "疑问" })?.value,
@@ -920,6 +940,7 @@ final class DirectionBoardSession: ObservableObject {
             newQuestion: newQuestion,
             previousRoundItems: previousRoundItems,
             previousTurnsText: previousTurnsPromptBlock(),
+            accumulatedMindMap: accumulatedMindMap.isEmpty ? nil : accumulatedMindMap,
             referenceMaterials: TurnReferenceCollector.shared.promptBlock(),
             previousQuestions: pendingQuestionsPromptBlock())
         do {

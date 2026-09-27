@@ -634,4 +634,27 @@ struct DirectionBoardTests {
         // 顺序：新问题在最后（模型最后读到的是这一轮要做的事）。
         #expect(prompt.hasSuffix("北京在哪"))
     }
+
+    /// **两张卡片分工不同**（用户 2026-09-27 深夜）：右上角那张图**统筹全部** ——
+    /// 之前问过的所有问题，连续的和跳跃的，都整理进去，看的是"用户到底在做什么"；
+    /// 右下角那一条**只答当前这一轮**。所以"没关系就别提之前"那条只约束答案，不约束那张图。
+    @Test func theMindMapAccumulatesEveryQuestion() throws {
+        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+            directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
+            looksAtTheScreen: true)
+        #expect(systemPrompt.contains("统一记录"))
+        #expect(systemPrompt.contains("无论它们有没有关系"))
+        // 他给的那个反例：先 A 后一串 B，不许拿 A 当标准套后面所有的问题。
+        #expect(systemPrompt.contains("不要因为"))
+        #expect(systemPrompt.contains("两张卡片分工不同"))
+
+        // 请求里要带上"到目前为止那张图"，并明确要求在它上面继续、别推倒重来。
+        let prompt = DirectionBoardPrompt.understandingUserPrompt(
+            newQuestion: "行业 B 的第二个问题",
+            previousRoundItems: [],
+            accumulatedMindMap: "├─ 行业 A\n└─ 行业 B")
+        #expect(prompt.contains("这是到目前为止所有问题的汇总"))
+        #expect(prompt.contains("行业 A"))
+        #expect(prompt.contains("在它上面继续"))
+    }
 }
