@@ -35,7 +35,8 @@ nonisolated enum WannaMCPTools {
          pressKeyDeclaration, scrollDeclaration, openAppDeclaration, readScreenDeclaration,
          setValueDeclaration, pressAXDeclaration, setSelectedDeclaration,
          pointDeclaration, drawDeclaration,
-         drawFigureDeclaration, spawnAgentDeclaration, sendAgentDeclaration]
+         drawFigureDeclaration, spawnAgentDeclaration, sendAgentDeclaration,
+         listSkillsDeclaration, readFileDeclaration, writeFileDeclaration]
     }
 
     /// 坐标参数的措辞，七处重复所以抽出来 —— 它必须**逐字一致**，
@@ -267,6 +268,9 @@ nonisolated enum WannaMCPTools {
             .setValue(try string(arguments, "value"), at: try coordinate(arguments)), arguments)
         case "press_ax": return try await run(
             .pressAccessibility(at: try coordinate(arguments)), arguments)
+        case "list_skills": return try await listSkills()
+        case "read_file": return try await readFile(arguments: arguments)
+        case "write_file": return try await writeFile(arguments: arguments)
         case "draw_figure": return try await run(.runFigureAgent(task: try string(arguments, "task")),
                                                  arguments)
         case "spawn_agent": return try await spawnAgent(arguments: arguments)
@@ -576,6 +580,110 @@ nonisolated enum WannaMCPTools {
             named: try string(arguments, "name"),
             turnText: try string(arguments, "message"))
         return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    // MARK: 技能清单 + 文件读写（2026-09-29 加）
+
+    // **为什么需要这三个**：那 11 个技能现在对 Python 是隐形的 ——
+    // 它们是磁盘上的 markdown 文件，而 Python 手上没有任何读文件的工具，
+    // 于是"这类事怎么做"的专业方法论它一份都用不上。
+    //
+    // ⚠️ 这里**没有照搬旧的 `[SKILL:]` 机制**（清单常驻提示词 + 用到时把正文拉进来）。
+    // 那套是给"写标签的模型"设计的；Python 本来就能调工具，**读个文件再正常不过** ——
+    // 同样的能力，两个工具就够，不用再造一套机制。
+
+    private static var listSkillsDeclaration: [String: Any] {
+        [
+            "name": "list_skills",
+            "description": """
+                列出 Wanna 手上有哪些**技能**（每个技能是一份"这类事怎么做"的方法论）。\n\
+                **动手做一件不熟的事之前先看一眼这个** —— 里面很可能有一份正好讲这件事怎么做。\n\
+                看到合适的就用 `read_file` 把它的正文读出来照着做。
+                """,
+            "inputSchema": ["type": "object", "properties": [String: Any](), "required": [String]()],
+        ]
+    }
+
+    private static var readFileDeclaration: [String: Any] {
+        [
+            "name": "read_file",
+            "description": """
+                读一个文本文件。也可以**只读某一段**（给 offset 和 limit），
+                用于读大文件时先看一部分。\n\
+                路径要**绝对路径**（`~` 开头也行）。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "绝对路径（`~` 开头也可以）。"],
+                    "offset": ["type": "integer", "description": "从第几行开始读（1 起）。不传 = 从头。"],
+                    "limit": ["type": "integer", "description": "读多少行。不传 = 默认 400 行。"],
+                ],
+                "required": ["path"],
+            ],
+        ]
+    }
+
+    private static var writeFileDeclaration: [String: Any] {
+        [
+            "name": "write_file",
+            "description": """
+                把内容写进一个文件（**会覆盖原有内容**）。目录不存在会先建好。\n\
+                用户明确要你写/改某个文件时才用 —— **不要自己顺手改他的文件**。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "绝对路径（`~` 开头也可以）。"],
+                    "content": ["type": "string", "description": "写进去的完整内容。"],
+                ],
+                "required": ["path", "content"],
+            ],
+        ]
+    }
+
+    private static func expandPath(_ raw: String) -> String {
+        (raw as NSString).expandingTildeInPath
+    }
+
+    private static func listSkills() async throws -> [String: Any] {
+        let skills = SkillCatalog.allSkills()
+        let lines = skills.map { "· \($0.name) —— \($0.description)" }
+        let text = skills.isEmpty
+            ? "现在一个技能都没有（技能目录：\(SkillCatalog.skillsRootPath)）。"
+            : "共 \(skills.count) 个技能（用 read_file 读正文）：\n" + lines.joined(separator: "\n")
+        return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    private static func readFile(arguments: [String: Any]) async throws -> [String: Any] {
+        let path = expandPath(try string(arguments, "path"))
+        guard let data = FileManager.default.contents(atPath: path),
+              let text = String(data: data, encoding: .utf8) else {
+            throw MCPToolError.failed("读不了这个文件：\(path)（不存在，或者不是文本）")
+        }
+        let all = text.components(separatedBy: .newlines)
+        let offset = max(1, (arguments["offset"] as? Int) ?? 1)
+        let limit = (arguments["limit"] as? Int) ?? 400
+        let slice = Array(all.dropFirst(offset - 1).prefix(limit))
+        let header = "文件：\(path)（共 \(all.count) 行，这是第 \(offset) 行起 \(slice.count) 行）"
+        return ["content": [["type": "text", "text": header + "\n\n" + slice.joined(separator: "\n")]],
+                "isError": false]
+    }
+
+    private static func writeFile(arguments: [String: Any]) async throws -> [String: Any] {
+        let path = expandPath(try string(arguments, "path"))
+        let content = (arguments["content"] as? String) ?? ""
+        let url = URL(fileURLWithPath: path)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try content.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            throw MCPToolError.failed("写不进去：\(path) —— \(error.localizedDescription)")
+        }
+        MainFlowDiagnostics.log("📝 MCP write_file → \(path)")
+        return ["content": [["type": "text", "text": "写好了：\(path)（\(content.count) 字）"]],
+                "isError": false]
     }
 
     // MARK: 参数取值（缺了就抛，别用默认值蒙混）
