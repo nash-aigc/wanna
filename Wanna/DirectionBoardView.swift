@@ -499,9 +499,9 @@ private struct ReferenceTagFlowLayout: Layout {
         // 我们的卡片本来就是**透明面板**画在桌面上，所以 `ultraThinMaterial` 取到的
         // 就是"它身后的桌面" ✓。只作用在这一列 ✓，其他三块保持实底 ✓。
         .background(.ultraThinMaterial)
-        // **整棵树常显，但横杠高度是定死的** —— 超出的部分在这里裁掉（`clipped` 不参与布局，
-        // 所以卡片不会被顶高 ✓）。用户担心的"全显示高度不够"就是指这个 ✓。
-        .clipped()
+        // **高度 = 这份清单本身有多少条**（用户 2026-09-28：「harness 高度固定，
+        // 因为它来自**文件内容**」）—— 所以**不裁、不撑高**：内容多高它就多高 ✓，
+        // 卡片的整体高度由它和右边"问题"那一列**取高者**决定 ✓。
         .animation(.easeOut(duration: 0.25), value: summary)
     }
 
@@ -631,6 +631,8 @@ private struct ReferenceTagFlowLayout: Layout {
         }
         .padding(.horizontal, Self.horizontalPadding)
         .padding(.vertical, Self.mapVerticalPadding)
+            // **高度 = 用户问过多少**（用户 2026-09-28：「问题 = 来自用户问题，**随时变化高度**」），
+            // 只挂一个屏幕上限（菜单栏以下 × 70%），不做定高 ✓。
             .frame(maxHeight: Self.maximumMapHeight, alignment: .topLeading)
             .clipped()
     }
