@@ -157,8 +157,10 @@ struct DirectionBoardView: View {
         session.isCollapsed
             ? AnyShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
             : AnyShape(DirectionBoardHollowShape(
-                notchLeadingInset: Self.harnessColumnWidth,
-                notchTrailingInset: Self.questionColumnWidth,
+                // 凹口 = **补充｜矛盾 的下方**（左起 0、右到右列开始处）✓ ——
+                // 回复卡就落在这里 ✓；右侧那条长竖列一直通到底 ✓。
+                notchLeadingInset: 0,
+                notchTrailingInset: Self.questionColumnWidth + Self.harnessColumnWidth,
                 notchTopInset: Self.barHeight))
     }
 
@@ -392,14 +394,22 @@ private struct ReferenceTagFlowLayout: Layout {
     /// 右下角那张 AI 回复卡就嵌进**凹口**里（横杠在上、竖条在右，中间留一点距离）。
     private var sevenCard: some View {
         HStack(alignment: .top, spacing: 0) {
-            // **左：harness**（用户 2026-09-28：窄、够显示一行字就行；磨砂玻璃；整条高）
-            harnessColumn
-                .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
-            // **中：补充 ｜ 矛盾**（大语言模型那两块）+ 参考标签（保持原位）
+            // **左（上）：补充 ｜ 矛盾** —— 回复卡落在它**下面**的空处 ✓（用户 2026-09-28 的原话：
+            // 「卡片右上角分别是（补充｜矛盾），在回复卡片的上面」）。
             barColumn
-            // **右：问题**（那棵脑图）—— 整条高
-            mindMapColumn
-                .frame(width: Self.questionColumnWidth, alignment: .topLeading)
+            // **右侧一整条长竖列：用户问题 ｜ harness** ✓（他：「右侧是【很长的竖列】（用户问题｜haness）」）。
+            HStack(alignment: .top, spacing: 0) {
+                mindMapColumn
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                Rectangle()
+                    .fill(theme.textColor.opacity(0.22))
+                    .frame(width: 1)
+                    .padding(.vertical, 2)
+                harnessColumn
+                    .padding(.leading, 8)
+                    .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
+            }
+            .frame(width: Self.questionColumnWidth + Self.harnessColumnWidth, alignment: .topLeading)
         }
     }
 
