@@ -184,8 +184,8 @@ body.mode-canvas .msg:nth-child(1) { top: 16px; left: 8%; transform: rotate(-2de
 body.mode-canvas .msg:nth-child(2) { top: 40px; left: 44%; transform: rotate(1.5deg); }
 body.mode-canvas .msg:nth-child(3) { top: 210px; left: 16%; transform: rotate(1deg); }
 body.mode-canvas .msg:nth-child(4) { top: 240px; left: 55%; transform: rotate(-1deg); }
-body.mode-canvas .msg:nth-child(5) { top: 420px; left: 8%; transform: rotate(.5deg); }
-body.mode-canvas .msg:nth-child(6) { top: 430px; left: 46%; transform: rotate(-1.5deg); }
+body.mode-canvas .msg:nth-child(5) { top: 332px; left: 8%; transform: rotate(.5deg); }
+body.mode-canvas .msg:nth-child(6) { top: 336px; left: 46%; transform: rotate(-1.5deg); }
 body.mode-canvas .msg .meta { opacity: .6; }
 
 /* 命令面板变体：输入条加大 */
@@ -213,6 +213,12 @@ body.mode-keyboard .kbd-hint { display: block; }
 [data-theme="bento"] .composer { border-top-color: #1D1D21; }
 [data-theme="bento"] .notch-strip { background: transparent; }
 [data-theme="bento"] .notch-strip .notch-bar { background: #0C0C0E; }
+/* bento 对话列较窄：压缩密度，保证 585px 舞台内消息完整 */
+[data-theme="bento"] .win-body { grid-template-columns: 190px 1fr 140px; overflow: hidden; }
+[data-theme="bento"] .content-col { min-height: 0; }
+[data-theme="bento"] .chat-area { gap: 7px; }
+[data-theme="bento"] .msg .bubble { font-size: 11px; line-height: 1.5; padding: 7px 10px; }
+[data-theme="bento"] .msg .meta { margin-top: 2px; font-size: 9.5px; }
 
 /* ---------- A2 · 单列对话流：去侧栏，一条纵流 ---------- */
 [data-theme="singlecol"] #stage { background: #08080A; }
