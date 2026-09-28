@@ -142,7 +142,12 @@ struct DirectionBoardView: View {
         // 他之前要删的那条"最左边细线"是**凹口的左壁** ✗，而现在的形状 `notchLeadingInset: 0`
         // 让凹口从 x=0 起（左壁根本不存在 ✓），所以这圈边不会再长出那条线 ✓ —— 两头都满足 ✓。
         .overlay(
-            currentOutlineShape
+            // 描边用**去掉左边那一段**的那条路径 ✓（用户：「你把那道线变成透明」）
+            AnyShape(DirectionBoardHollowShape(
+                notchLeadingInset: 0,
+                notchTrailingInset: Self.questionColumnWidth + Self.harnessColumnWidth,
+                notchTopInset: Self.barHeight,
+                drawsLeftEdge: false))
                 // 被按住不发 → 告警色呼吸；**折叠着 → 绿色**（用户：「折叠后卡片边缘自动变成绿色，
                 // 便于用户快速在桌面上看到其位置」）；其余用主题边框 ✓。
                 .stroke(borderTint, lineWidth: borderWidth)
@@ -902,6 +907,11 @@ struct DirectionBoardHollowShape: Shape {
     var notchTopInset: CGFloat
     var cornerRadius: CGFloat = AnswerCardView.cardCornerRadius
 
+    /// **要不要画"左边那一竖段"**：
+    ///   · 填充（底色）→ `true` ✓（否则像 2026-09-28 那次一样**卡片少一块** ✗，用户当场看出「裁剪坏了」）；
+    ///   · 描边（那圈线）→ `false` ✓（用户要的就是"这条线透明、看不见" ✓）。
+    var drawsLeftEdge: Bool = true
+
     func path(in rect: CGRect) -> Path {
         let radius = max(0, min(cornerRadius, min(rect.width, rect.height) / 2))
         let notchLeft = rect.minX + notchLeadingInset
@@ -909,15 +919,14 @@ struct DirectionBoardHollowShape: Shape {
         let notchTop = rect.minY + notchTopInset
         var path = Path()
 
-        // ⚠️ **左边那条竖线不画**（用户 2026-09-28：「你把那道线变成透明，那不就看不到了？
-        // ……你直接把这部分给我变得透明的……为什么非要显示出这个颜色呢？」）——
-        // 所以这一条路径**从左上圆角起笔**（不是从左下角），**到凹口的左上角收笔**，
-        // 中间**没有"左边的竖段"** ✓。整块仍然是一张卡片 ✓、圆角照旧 ✓，
-        // 只是那条"延伸到没有内容的地方"的线不存在了 ✓。
-        _ = notchLeft   // 凹口左边界 = 0（不画左壁），这里显式忽略
+        // 左边那一竖段：**填充要它**（否则卡片缺一块 ✗），**描边不要它** ✓（用户要那条线看不见 ✓）。
+        if drawsLeftEdge {
+            path.move(to: CGPoint(x: rect.minX, y: notchTop))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+        }
 
-        // 起笔：左上圆角的上端
-        path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
+        // 左上圆角（圆的 ✓）
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + radius))
         // 左上圆角（这一段是圆的 ✓）
         path.addArc(center: CGPoint(x: rect.minX + radius, y: rect.minY + radius),
                     radius: radius, startAngle: .degrees(270), endAngle: .degrees(180), clockwise: true)
