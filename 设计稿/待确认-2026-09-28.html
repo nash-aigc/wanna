@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>待确认 · 2026-09-28</title>
+<style>
+  :root{
+    --bg:#050506; --surface:#0C0C0E; --surface2:#18181C; --border:#2A2A2E;
+    --text:#F2F2F4; --dim:#B9B9C2; --faint:#8A8A93;
+    --accent:#0A84FF; --green:#4ADE80; --amber:#FBBF24; --red:#F87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.7 -apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:48px 24px 96px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.01em}
+  .sub{color:var(--faint);font-size:13.5px;margin-bottom:28px}
+  .lead{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+        padding:16px 18px;color:var(--dim);font-size:14px;margin-bottom:34px}
+  .lead b{color:var(--text)}
+  .item{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+        padding:20px 22px;margin-bottom:20px}
+  .item h2{font-size:17px;margin:0 0 4px}
+  .item .why{color:var(--faint);font-size:13px;margin-bottom:16px}
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .opt{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .opt.now{border-color:rgba(74,222,128,.45)}
+  .opt h3{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .tag{font-size:11px;padding:2px 7px;border-radius:5px;font-weight:600;letter-spacing:.02em}
+  .tag.now{background:rgba(74,222,128,.16);color:var(--green);border:1px solid rgba(74,222,128,.4)}
+  .tag.alt{background:rgba(251,191,36,.14);color:var(--amber);border:1px solid rgba(251,191,36,.35)}
+  .opt p{margin:0 0 8px;color:var(--dim);font-size:13.5px}
+  .opt .cost{color:var(--faint);font-size:12.5px;margin:0}
+  .opt .cost b{color:var(--dim)}
+  code{background:#000;border:1px solid var(--border);border-radius:5px;
+       padding:1px 6px;font-size:12.5px;color:var(--dim)}
+  .reply{margin-top:36px;background:var(--surface);border:1px solid var(--border);
+         border-radius:12px;padding:18px 20px;font-size:14px;color:var(--dim)}
+  .reply b{color:var(--text)}
+  .reply ol{margin:10px 0 0;padding-left:20px}
+  .reply li{margin:4px 0}
+  footer{margin-top:26px;color:var(--faint);font-size:12.5px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>待确认 · 2026-09-28</h1>
+  <div class="sub">Wanna · 6 件我没把握的事 · 你回编号就行</div>
+
+  <div class="lead">
+    这些是**现在屏幕上真实生效**的做法（绿色那一栏），以及**另一种可能更合你意**的做法（黄色那一栏）。
+    <b>我没有擅自改任何一件</b> —— 你点个头或者点另一栏，我再动代码。
+    （这条规矩刚写进 <code>CLAUDE.md</code> §0.3：不确定的事，做对比页让你选，不许擅自调整。）
+  </div>
+
+  <!-- 1 -->
+  <div class="item">
+    <h2>① 看板的横杠有多高</h2>
+    <div class="why">矛盾那一块预留 10 行；横杠现在 180pt 装得下约 8 行，多的会被裁掉。</div>
+    <div class="opts">
+      <div class="opt now">
+        <h3>A 保持 180 <span class="tag now">现在</span></h3>
+        <p>横杠矮、卡片显得紧凑；参考那一行刚好钉在横杠下沿。</p>
+        <p class="cost"><b>代价：</b>矛盾写满 10 行时，最后约 2 行看不见（会被裁掉）。</p>
+      </div>
+      <div class="opt">
+        <h3>B 抬到 224 <span class="tag alt">备选</span></h3>
+        <p>10 行矛盾全部看得见，一行都不裁。</p>
+        <p class="cost"><b>代价：</b>横杠高 44pt（你 9-28 说过"太高没有意义"，所以我没动）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="item">
+    <h2>② 参考那一行，点亮哪一份</h2>
+    <div class="why">那一行现在是一条：无边框、白细线分隔、其中一段底色点亮成绿色。</div>
+    <div class="opts">
+      <div class="opt now">
+        <h3>A 点亮"最新拿到的那一份" <span class="tag now">现在</span></h3>
+        <p>你刚说"参考屏幕"截的第二张，那一段是绿的 —— 表示"模型现在主要在看它"。</p>
+        <p class="cost"><b>代价：</b>只有一份参考时，它也是绿的（看着像"被选中"）。</p>
+      </div>
+      <div class="opt">
+        <h3>B 全部不点亮，只把字变亮 <span class="tag alt">备选</span></h3>
+        <p>一条里所有段样式一致，靠文字深浅表示有无。</p>
+        <p class="cost"><b>代价：</b>看不出"哪一份是这次的重点"。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="item">
+    <h2>③ 启动完成那一下要不要 <code>✓</code></h2>
+    <div class="why">按下快捷键 → 左翼 <code>Starting</code> + 右翼绿色呼吸 → 引擎真热了之后……</div>
+    <div class="opts">
+      <div class="opt now">
+        <h3>A 亮 0.6 秒的 <code>✓</code> 再进 Listening <span class="tag now">现在</span></h3>
+        <p>告诉你"引擎真的好了"（不是猜时间）。</p>
+        <p class="cost"><b>代价：</b>0.6 秒的一闪（我还没在真机上截到过它）。</p>
+      </div>
+      <div class="opt">
+        <h3>B 不要 ✓，热了直接进 Listening <span class="tag alt">备选</span></h3>
+        <p>呼吸一停就切青绿的 Listening，交接更干净。</p>
+        <p class="cost"><b>代价：</b>少一个"好了"的明确信号。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4 -->
+  <div class="item">
+    <h2>④ 右下角卡片什么时候分条换行</h2>
+    <div class="why">你说过「让他换行他都去堆叠起来」，现在改成：说了才分条。</div>
+    <div class="opts">
+      <div class="opt now">
+        <h3>A 你说"换行 / 分条 / 一行一条"时才分 <span class="tag now">现在</span></h3>
+        <p>平时正常写成连贯短段落，不硬拆。</p>
+        <p class="cost"><b>代价：</b>你不说的话，长回答还是一整段。</p>
+      </div>
+      <div class="opt">
+        <h3>B 只要内容是"多项"，默认就一条一行 <span class="tag alt">备选</span></h3>
+        <p>列举类的回答永远竖着排，更好读。</p>
+        <p class="cost"><b>代价：</b>有些本该连贯说完的话会被拆成行。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5 -->
+  <div class="item">
+    <h2>⑤ 看板右列那棵 harness 树</h2>
+    <div class="why">最右那一列（执行前 / 执行中 / 执行后…）现在怎么写。</div>
+    <div class="opts">
+      <div class="opt now">
+        <h3>A 整棵树常显，命中的用白色 <span class="tag now">现在</span></h3>
+        <p>你一眼能看到"它这套工程里有哪些环节"，命中的亮起来。</p>
+        <p class="cost"><b>代价：</b>没命中时那一列也是一片灰字，占地方。</p>
+      </div>
+      <div class="opt">
+        <h3>B 只显示命中的 <span class="tag alt">备选</span></h3>
+        <p>那一列更短更干净。</p>
+        <p class="cost"><b>代价：</b>看不到全貌（你 9-28 明确要过"全部显示"）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="item">
+    <h2>⑥ "同一个问题失败 5 次"之后，我该怎么停手</h2>
+    <div class="why">你 9-28 口述的规矩，我写进了 CLAUDE.md；但"停手"要停到什么程度，得你定。</div>
+    <div class="opts">
+      <div class="opt now">
+        <h3>A 开新会话（我自己清空上下文）+ 换思路，然后继续做 <span class="tag now">现在</span></h3>
+        <p>不停工：换个角度重来，做完照常交付。</p>
+        <p class="cost"><b>代价：</b>新会话里我会丢掉这次对话的细节（但需求/开发经验都在文件里）。</p>
+      </div>
+      <div class="opt">
+        <h3>B 停手，先来问你 <span class="tag alt">备选</span></h3>
+        <p>把"我卡在哪、试过什么、两条候选路"讲清楚，等你拍板。</p>
+        <p class="cost"><b>代价：</b>要等你回话才能往下走。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="reply">
+    <b>怎么回我：</b>直接说编号 + 字母就行，例如「1B、3A、6B，其余照现在」。<br>
+    某一项你有第三种做法，也直接讲 —— <b>需求以你说的为准</b>，不是我猜的。
+    <ol>
+      <li>① 横杠高度：A 保持 180 / B 抬到 224</li>
+      <li>② 参考行点亮：A 最新那份 / B 都不点亮</li>
+      <li>③ 启动 ✓ ：A 保留 0.6 秒 / B 不要</li>
+      <li>④ 换行：A 说了才分条 / B 多项默认分条</li>
+      <li>⑤ harness 树：A 整棵常显 / B 只显示命中的</li>
+      <li>⑥ 失败 5 次：A 换思路继续 / B 停下来问你</li>
+    </ol>
+  </div>
+
+  <footer>Wanna · 设计稿/待确认-2026-09-28.html · 生成于 2026-09-28</footer>
+</div>
+</body>
+</html>
