@@ -122,52 +122,55 @@ final class PythonAgentRunner {
         // 没有报错、没有超时、没有完成 —— 因为两边都在等对方。
         // 所以用 `Task.detached` 把它挪出主 actor：阻塞一个后台线程是廉价的，
         // 阻塞主线程是致命的。
-        let readingTask = Task.detached(priority: .userInitiated) { () -> (String?, String?, Int) in
-            var finalText: String?
-            var failure: String?
-            var stepCount = 0
-            let reader = PipeLineReader(stdoutPipe.fileHandleForReading)
-            while let line = reader.nextLine() {
-                guard let data = line.data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let type = object["type"] as? String else { continue }
+        // stdout → 一行一个 JSON。
+        //
+        // ⚠️⚠️ **必须用事件驱动的读法，不能用阻塞式读循环**（2026-09-29 实测，两版才对）：
+        //
+        // **第一版**：在主线程上 `while let line = reader.nextLine()`（内部是
+        // `availableData` + `read`，会阻塞）。而 Python 要连的 Wanna MCP 服务端，
+        // 工具处理**也跑在主线程上** → 两边互相等 → 死锁。实测：日志停在
+        // `[wanna-agent] 任务：…` 之后什么都不发生，2 分 11 秒后才以一个 ExceptionGroup 收场。
+        //
+        // **第二版（也错）**：把它包进 `Task.detached`。**没有用** —— `sample` 3 秒，
+        // 主线程 1892/1892 个样本仍然停在 `PipeLineReader.nextLine() → read`：
+        // 因为这个工程编译时开着 **`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`**，
+        // 那个闭包**连同它捕获的局部变量一起被推成 MainActor 隔离**，于是照样跑在主线程。
+        //
+        // **第三版（这一版）**：`readabilityHandler` —— 由 Foundation 在**它自己的后台队列**
+        // 上回调，天生不阻塞、也不受默认隔离影响。收尾靠 `terminationHandler`。
+        let shared = PythonTurnCollector(onProgress: onProgress)
 
-                switch type {
-                case "step":
-                    stepCount += 1
-                    if let tool = object["tool"] as? String {
-                        onProgress("\(tool)…")
-                    } else if let result = object["result"] as? String {
-                        onProgress(String(result.prefix(120)))
-                    }
-                case "final":
-                    finalText = (object["text"] as? String) ?? ""
-                case "error":
-                    failure = (object["text"] as? String) ?? "未知错误"
-                default:
-                    break
-                }
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
             }
-            process.waitUntilExit()
-            return (finalText, failure, stepCount)
+            shared.ingest(data)
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { handle.readabilityHandler = nil; return }
+            if let text = String(data: data, encoding: .utf8) {
+                MainFlowDiagnostics.log("🐍 \(text.trimmingCharacters(in: .newlines))")
+            }
         }
 
-        // 用户按 ESC 打断时，**必须真的停掉子进程** —— 否则一个在后台点鼠标的进程
-        // 会继续操控用户的电脑。`terminate()` 会让 stdout 断流，上面那个读循环随即结束。
-        let outcome = await withTaskCancellationHandler {
-            (try? await readingTask.value) ?? (nil, nil, 0)
-        } onCancel: {
-            process.terminate()
+        let collected: PythonTurnCollector.Outcome = await withCheckedContinuation { continuation in
+            shared.attach(continuation: continuation)
+            process.terminationHandler = { _ in shared.finishOnExit() }
         }
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
 
         if Task.isCancelled { throw CancellationError() }
-        if let failure = outcome.1 { throw PythonAgentError.agentFailed(failure) }
-        guard let finalText = outcome.0, !finalText.isEmpty else {
+        if let failure = collected.failure { throw PythonAgentError.agentFailed(failure) }
+        guard let finalText = collected.finalText, !finalText.isEmpty else {
             throw PythonAgentError.noAnswer(exitCode: process.terminationStatus)
         }
 
-        MainFlowDiagnostics.log("🐍 决策大脑完成 · \(outcome.2) 步 · \(finalText.prefix(80))")
-        return TurnResult(finalText: finalText, stepCount: outcome.2)
+        MainFlowDiagnostics.log("🐍 决策大脑完成 · \(collected.stepCount) 步 · \(finalText.prefix(80))")
+        return TurnResult(finalText: finalText, stepCount: collected.stepCount)
     }
 }
 
@@ -224,5 +227,93 @@ private final class PipeLineReader {
             }
             buffer.append(chunk)
         }
+    }
+}
+
+// MARK: - 收集 Python 的输出（**绝不能是 MainActor**）
+
+/// 把 Python 子进程的输出攒起来，解析成进度与最终答复。
+///
+/// ⚠️ **这个类必须是 `nonisolated` 的。** 这个工程编译时开着
+/// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` —— 不写 `nonisolated` 的话，
+/// 它的每个方法都会被推成 MainActor 隔离，于是 `readabilityHandler` 的回调
+/// （本该跑在 Foundation 的后台队列上）**又会跳回主线程**，死锁原样复现。
+/// 这不是理论：第一版 `Task.detached` 就是这么栽的，`sample` 抓到的
+/// 1892/1892 个主线程样本全停在阻塞读上。
+///
+/// 线程安全靠一把 `NSLock`：回调在 Foundation 的队列上，`finishOnExit` 在
+/// `terminationHandler` 的队列上，两者可能同时来。
+nonisolated final class PythonTurnCollector {
+
+    struct Outcome {
+        let finalText: String?
+        let failure: String?
+        let stepCount: Int
+    }
+
+    private let onProgress: (String) -> Void
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var finalText: String?
+    private var failure: String?
+    private var stepCount = 0
+    private var continuation: CheckedContinuation<Outcome, Never>?
+    private var didResume = false
+
+    init(onProgress: @escaping (String) -> Void) {
+        self.onProgress = onProgress
+    }
+
+    func attach(continuation: CheckedContinuation<Outcome, Never>) {
+        lock.lock(); defer { lock.unlock() }
+        self.continuation = continuation
+    }
+
+    /// 从管道来的一块数据 —— 攒行、解析、回调进度。
+    func ingest(_ data: Data) {
+        var lines: [String] = []
+        lock.lock()
+        buffer.append(data)
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let lineData = buffer[buffer.startIndex..<newline]
+            buffer.removeSubrange(buffer.startIndex...newline)
+            if let line = String(data: lineData, encoding: .utf8) { lines.append(line) }
+        }
+        lock.unlock()
+
+        for line in lines { parse(line) }
+    }
+
+    private func parse(_ line: String) {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = object["type"] as? String else { return }
+
+        switch type {
+        case "step":
+            var note: String?
+            lock.lock()
+            stepCount += 1
+            lock.unlock()
+            if let tool = object["tool"] as? String { note = "\(tool)…" }
+            else if let result = object["result"] as? String { note = String(result.prefix(120)) }
+            if let note { onProgress(note) }
+        case "final":
+            lock.lock(); finalText = (object["text"] as? String) ?? ""; lock.unlock()
+        case "error":
+            lock.lock(); failure = (object["text"] as? String) ?? "未知错误"; lock.unlock()
+        default:
+            break
+        }
+    }
+
+    /// 进程退出 —— 收尾并放行等待方（幂等，两个来源都可能先到）。
+    func finishOnExit() {
+        lock.lock()
+        guard !didResume, let continuation else { lock.unlock(); return }
+        didResume = true
+        let outcome = Outcome(finalText: finalText, failure: failure, stepCount: stepCount)
+        lock.unlock()
+        continuation.resume(returning: outcome)
     }
 }
