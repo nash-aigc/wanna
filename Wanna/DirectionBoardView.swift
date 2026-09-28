@@ -104,6 +104,12 @@ struct DirectionBoardView: View {
     /// **右列（问题 / 那棵脑图）有多宽** —— 它内容长（30 个问题就是 30 行），需要宽一点。
     static let questionColumnWidth: CGFloat = 360
 
+    /// 四列的标题（用户 2026-09-28 对照稿子指出：真机一个标题都没有 ✗）。
+    static let harnessColumnTitle = "harness"
+    static let supplementColumnTitle = "补充"
+    static let conflictColumnTitle = "矛盾"
+    static let questionListColumnTitle = "问题"
+
     /// 编号那一列有多宽（「第三个方向」里的 3）。
     private static let numberColumnWidth: CGFloat = 18
 
@@ -475,6 +481,11 @@ private struct ReferenceTagFlowLayout: Layout {
         }
 
         return VStack(alignment: .leading, spacing: 2) {
+            // **列标题**（用户 2026-09-28：稿子里四列都有标题，真机一个都没有 ✗）
+            Text(Self.harnessColumnTitle)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textColor.opacity(0.75))
+                .padding(.bottom, 4)
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 Text(line.text)
                     .font(.system(size: 11, design: .monospaced))
@@ -506,10 +517,11 @@ private struct ReferenceTagFlowLayout: Layout {
     private var recommendationColumn: some View {
         let value = session.recommendationText.trimmingCharacters(in: .whitespacesAndNewlines)
         return VStack(alignment: .leading, spacing: 2) {
+            // **空着也画标题**（对上稿子 ✓）；内容为空时下面什么都不写（极简逻辑 ✓）。
+            Text(Self.supplementColumnTitle)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textColor.opacity(0.75))
             if !value.isEmpty {
-                Text("推荐")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.textColor)
                 Text(value)
                     .font(.system(size: 11))
                     .foregroundStyle(DS.Colors.success)
@@ -604,16 +616,21 @@ private struct ReferenceTagFlowLayout: Layout {
     /// 后来的几版又调整过位置，当前以 `sevenCard` 里那句为准（**左 harness ｜ 中 补充|矛盾 ｜ 右 问题**）。
     private var mindMapColumn: some View {
         let value = session.understandingLines.first { $0.label == Self.mindMapLabel }?.value ?? ""
-        return Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .id(value)
-            .transition(.opacity)
-            .animation(.easeOut(duration: 0.28), value: value)
-            .padding(.horizontal, Self.horizontalPadding)
-            .padding(.vertical, Self.mapVerticalPadding)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(Self.questionListColumnTitle)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textColor.opacity(0.75))
+            Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .id(value)
+                .transition(.opacity)
+                .animation(.easeOut(duration: 0.28), value: value)
+        }
+        .padding(.horizontal, Self.horizontalPadding)
+        .padding(.vertical, Self.mapVerticalPadding)
             .frame(maxHeight: Self.maximumMapHeight, alignment: .topLeading)
             .clipped()
     }
@@ -622,6 +639,10 @@ private struct ReferenceTagFlowLayout: Layout {
         let value = session.understandingLines.first { $0.label == DirectionBoardPrompt.questionLabel }?.value ?? ""
         let lines = Self.questionTexts(from: value)
         return VStack(alignment: .leading, spacing: 3) {
+            Text(Self.conflictColumnTitle)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textColor.opacity(0.75))
+                .padding(.bottom, 2)
             if lines.isEmpty {
                 Text(Self.emptyValuePlaceholder)
                     .font(.system(size: 12))
