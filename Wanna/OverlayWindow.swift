@@ -670,7 +670,13 @@ struct BlueCursorView: View {
     ///   · 再各留 12 的气口 → **(224, −18)** ✓。
     ///
     /// 看板**不在屏上**时仍用老的 (12, 32) ✓（那时没有凹口可落）✓。
-    private static let conversationBubbleAnchorOffsetInsideBoard = CGSize(width: 224, height: -18)
+    /// **看板在屏上时：回复卡落在「补充｜矛盾」那一块的下面**（用户 2026-09-28 的图：
+    /// 左上一块矮的（补充｜矛盾）、它下面就是回复卡；右侧那条长竖列不被压 ✗）。
+    ///
+    /// 数字来源（都是量出来的）：看板左上角 = 鼠标 + (12, −210)（顶边在鼠标上方
+    /// 横杠高 180 + 30 ✓）；"补充｜矛盾"那块的下沿 = 再往下 180 → 鼠标 + (12, −30)；
+    /// 再留 12 的气口 → **(24, −18)** ✓。
+    private static let conversationBubbleAnchorOffsetInsideBoard = CGSize(width: 24, height: -18)
 
     /// 看板开着 → 落进凹口；没开 → 老位置。
     private var bubbleAnchorOffset: CGSize {
