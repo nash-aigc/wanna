@@ -253,6 +253,11 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
         guard !isCancelled else { return }
         connectionGeneration += 1
         let myGeneration = connectionGeneration
+        // 连上这一条就写一行（第几代 + 第几次重连）。用户报「打断几次之后就不回复我了」，
+        // 而当时能查的只有"定稿 0 字"这一个结果 ✗ —— 中间"连接死了几次、重连了几次、
+        // 最后放弃了"全在 stdout 上，而他的 App 是双击启动的、stdout 进不了任何地方。
+        MainFlowDiagnostics.log("🎙️ 识别：连接第 \(myGeneration) 代建立"
+                                + (connectionRecoveryAttempts > 0 ? "（本句第 \(connectionRecoveryAttempts) 次重连）" : ""))
 
         let newClient = VolcengineRealtimeASRClient(configuration: configuration,
                                                     urlSession: sharedURLSession)
@@ -318,6 +323,9 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
         connectionRecoveryAttempts = 0
         hasRequestedFinalTranscript = false
         hasDeliveredFinalTranscript = false
+        // 每一句一条**新连接**（见上面那段注释）。连接本身在 `connectFreshClient()` 里
+        // 记一行（那里才拿得到准确的代次）—— 这一行只说明"这一句开始了"。
+        MainFlowDiagnostics.log("🎙️ 识别：这一句开始（重建连接）")
         connectFreshClient()
     }
 
@@ -448,6 +456,12 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
     private func handleConnectionLoss(message: String) {
         guard !hasRequestedFinalTranscript, !hasDeliveredFinalTranscript, !isCancelled else { return }
         guard connectionRecoveryAttempts < Self.maximumConnectionRecoveryAttempts else {
+            // **放弃之前必须留一行能查的证据**（2026-09-28）：用户报「打断几次之后就不回复我了」，
+            // 而那一次的症状是"他明明大声说了（麦克风峰值 0.634），定稿却是 0 字"✗ ——
+            // 这条 `print` 走 stdout，而用户的实例是双击启动的，**stdout 进不了任何地方** ✗，
+            // 所以那条路当时一个字都没留下。诊断日志是唯一在他机器上真能查到的地方。
+            MainFlowDiagnostics.log("🎙️ 识别：连接已重连 \(connectionRecoveryAttempts) 次仍未恢复，"
+                                    + "放弃这一句（已认出 \(bestAvailableTranscriptText().count) 字）—— \(message)")
             failSession(message: message)
             return
         }
@@ -455,6 +469,9 @@ private final class VolcengineTranscriptionSession: NSObject, BuddyStreamingTran
         let recognizedSoFar = bestAvailableTranscriptText()
         print("🎙️ 豆包识别：连接出问题（\(message)），第 \(connectionRecoveryAttempts) 次重连接着听"
               + (recognizedSoFar.isEmpty ? "（还没有认出来的字）" : "（保住已认出的 \(recognizedSoFar.count) 字）"))
+        MainFlowDiagnostics.log("🎙️ 识别：连接出问题（\(message)），第 \(connectionRecoveryAttempts)/"
+                                + "\(Self.maximumConnectionRecoveryAttempts) 次重连"
+                                + (recognizedSoFar.isEmpty ? "（还没有认出来的字）" : "（保住已认出的 \(recognizedSoFar.count) 字）"))
         sealCurrentTranscriptAsPrefix()
         client?.cancel()
         client = nil

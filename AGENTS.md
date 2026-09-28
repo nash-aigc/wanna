@@ -316,16 +316,22 @@ The shortcut's double identity while the bot is speaking is two separate questio
 
 One audio engine serves playback, continuous listening AND push-to-talk recording (`BuddyDictationManager`'s own `audioEngine` is fallback-only) — the one-audio-path rule, and the reason a session's FIRST question is fast: the ~2 s voice-processing IO reconfiguration starts when the recording does, while the user is still speaking. A new recording ends an open listening window first (on one engine the recording's tap replaces the window's, and the window's ASR session would turn the recording into a second question).
 
-**That same ~2 s is also why「从实时模式转到 agent 模式要 5 秒」，而那一次它落在了应答那一刻（2026-09-28 修）。**
+**That same ~2 s is also why「从实时模式转到 agent 模式要 5 秒」—— 它是真的，但它落在了应答那一刻，
+而"提交时预热引擎"那一版当天就被撤回了（2026-09-28）。**
 Measured with five timestamped stages in the pipeline (`MainFlowDiagnostics` 的开始截屏 / 截屏完成 /
-请求已发出 / 模型第一个字 / **出声**): before the fix `🔊 VoicePlaybackEngine: engine started` and the
-first audio were **the same millisecond** — every reply paid the VPIO reconfiguration at the moment the
-user was waiting for sound. `sendTranscriptToVisionChatWithScreenshot` now warms the shared engine the
-moment the turn is submitted (`Task { await warmUpEngine.warmUpForVoiceChat() }`, the same idempotent
-call 回答开播 already made), so it overlaps the screenshot and the network round-trip.
-**第一个字 → 出声：2.50 s → 0.93 / 0.99 / 1.21 s**（三次），**提交 → 出声：4.01 s → 2.21 / 2.84 s**。
-The residual 0.72–2.9 s is the model's own first token — network, not our code; see
-`开发经验/09-实测数据.md` §二十三 and `开发经验/20` 9.69.
+请求已发出 / 模型第一个字 / **出声**): `🔊 VoicePlaybackEngine: engine started` and the first audio were
+**the same millisecond** — every reply pays the VPIO reconfiguration at the moment the user is waiting
+for sound, and 第一个字 → 出声 is **2.50 s**. The obvious fix — warm the shared engine at submit
+(`Task { await warmUpEngine.warmUpForVoiceChat() }`) — **made things worse and is gone**:
+**`VoicePlaybackEngine` is `@MainActor`, so `Task { }` changed the ordering but not the executor** —
+it blocked the main thread (~1 s, measured as 「提交一轮 → 开始截屏」 = 0.93–1.33 s on the press path
+against **0.00 s** on the follow-up path where the engine is already warm) **and** its VPIO
+reconfiguration killed the follow-up window's capture, so a loudly-spoken sentence produced
+**0 字** — the user's two reports that day (「打断之后不再是瞬间回复」/「打断几次之后就卡了」) are both
+that one line. The comment left at that call site says outright not to add it back.
+**To actually reclaim the 2.5 s the engine start has to move off the main actor** — the class is
+`@MainActor`, so wrapping a `Task` around it is not that. See `开发经验/10-踩过的坑.md` D42 and
+`开发经验/20` 9.69 补.
 
 The cost of the held engine is the user's own setting and says so in its description: the app stays in macOS's communication-app class, other audio is ducked at `.min`, and the microphone route stays open.
 
@@ -1679,7 +1685,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `scripts/listening-stop-check.sh` | ~120 | **「手动退出之后，那个 30 秒追问窗口到底关没关」—— 一条能自己跑的检查**（2026-09-28 新建，为 D41 那个 bug）。走完整条真实流程（合成识别器 + 他真正在用的快捷键），然后断言四件事：A 回答念完后窗口**真的**武装了（否则是空跑）/ B 手动退出后窗口关掉 / C **之后 10 秒不许自己武装回来**（修之前它 30 毫秒就回来）/ D 麦克风 tap 撤掉了。参数 `1` = 再按一次快捷键、`2` = 按 ESC —— **两条路各跑一次就分出了好坏**：修之前快捷键那条全绿、ESC 那条当场红，从红到定位到那一行 `print` 只读了一次日志。判据全部取自日志（"continuous listening started" / "ended"），不猜时间点。 |
 | `AudioInputDeviceCatalog.swift` | ~213 | 输入设备的清单与身份：列出所有**真有输入声道**的设备（**聚合体一律不列** —— 它的声道数会随成员变，变到某个形态就是纯静音，选它等于把修掉的故障装回去），每条带 UID / 声道数 / 是否系统默认 / 是否虚拟。设置页那个下拉和录音绑设备读的是同一份真相，所以不会出现「设置页说有、录音说没有」。另有一个查进程的口子 `processesCurrentlyCapturingInput()`（`kAudioHardwarePropertyProcessObjectList` + `kAudioProcessPropertyIsRunningInput`，macOS 14.2+）：**此刻正在开麦的 App** —— 全零故障里「谁占着麦克风」是用户唯一能立刻行动的信息，实测那段时间唯一为真的就是第三方听写软件 `闪电说`。 |
 | `LongFormRecorderController.swift` | ~2600 | 长录音的编排器 + **「重新转写」**（把落盘的 `.wav` 重新喂给同一个识别器，5 倍实时；节奏与两条分寸见上面 长录音 那节）。它和语音管线**零共享** —— 自己的 `AVAudioEngine`（`BuddyDictationManager` 只有一份连续监听窗口，共用必然串台）、自己的状态、自己的快捷键。音频 tap 每 ~100ms 出一块，重采样到 16kHz 单声道 PCM16 之后**一份落盘、一份上行**（同一个缓冲，所以 `.wav` 里的字节就是发给服务端的字节，可原样重放复现一次识别）。3 小时不断靠四条腿：`recordingRotationMinutes`（默认 20 分钟，在**静音处**换连接）、**间隔两倍的硬上限**（连续说话没有停顿的用户也要换，否则连接无限跑）、断线重连、以及接缝的**重叠重喂 + 毫秒时间戳去重**（`RecentAudioRing` 留最近 8 秒，重连时先喂回去，`seamSuppressionMilliseconds` 把重喂那段回来的文字按服务端时间戳丢掉 —— 用时间戳不用文本，因为重喂的段会被重新识别、用词不同）。转写结束后按「自定义风格」重写一遍（`polishIfConfigured`），**没勾选任何风格也没勾截图时一步都不走**，原文直接就是最终内容。`polishScreenshotJPEG` 在**停止那一刻**抓 —— 晚几百毫秒屏幕上就可能换了样。`cancellationGeneration` 是取消的闸门：润色正卡在网络请求里时取消是从另一个入口按下来的，两者不在同一条任务链上，代次是唯一能跨入口说的「这件事作废了」。`transcriptPlainText` 与 `livePartialText` 都**只追加**，`marqueeText` 由两者拼成 —— 位移是 `可用宽度 − 文字宽度`，**文字一旦变短就会向右跳**，而 `liveTranscriptLine`（尾巴 `suffix(90)` + 当前段）每定稿一次就变短。**采集挂在一队候选设备上**（`inputDeviceCandidates(for:)`：用户选定的 → 系统默认 → 其余真设备），看门狗发现「连续 90 块**精确全零**」就 `switchToNextCandidateDevice()` 换下一个、同一场接着录；换不动了才收尾并说明是谁占着麦克风 —— 见上面第五条腿。**2026-09-27：「录音 → Notion 笔记」那一整节（关键词检测 / 参考材料 / 那几颗按钮 / 保存）从这个文件里整块删掉，搬去了 `NotionNoteSession` —— 这里现在一段 Notion 代码都没有，录音只剩「录 → 转写 → 润色 → 落盘 → 剪贴板」。** |
-| `VolcengineTranscriptionProvider.swift` | ~425 | **主 Agent 那条路的识别：豆包（火山引擎）。** 把 `VolcengineRealtimeASRClient` 包成一个符合 `BuddyTranscriptionProvider` 协议的 provider，与百炼那个并列 —— 音频管线、VAD、连续监听、打断一行没动，换的只是「音频送给谁」。配置读「录音」页那一套（同一个火山账号、同一份密钥；「听」页的识别语言因此只作用于百炼，那里写明了）。**两处与录音那条路不同，都是实测逼出来的**（见 `开发经验/09-实测数据.md` 二十）：**不发末包**（这条路末包不回定稿，两次都等满 2.04 秒兜底且回来的文字与实时文字一字不差），改成盯「文字不再变长」（连续 0.4 秒没变就交，收尾 2.04 → 0.40 秒）；`beginNextUtterance` **重连**而不是复用连接（复用会让上一句「定稿晚到」的那一帧落进下一句的累积，而按时间戳做水位又会吃掉「按了发送之后继续说」的半句 —— 重连干净，握手期间音频在 URLSession 里排队不丢）。**第三处不同是 2026-09-27 加的：连接死掉不结束这一场录音**（`handleConnectionLoss`）—— 长录音那条自己会 `reconnect()`，所以同一条看门狗在那边误报一次只是换条连接；这条路原来把连接死亡当致命错误，于是「按住键沉默思考」触发看门狗 15 秒判死 → 整场录音被取消 → 用户说的话一个字都没提交（见 `开发经验/10-踩过的坑.md` D21）。现在：**一句还没定稿时连接死掉就重连**（上限 3 次），已经认出来的字冻成 `sealedTranscriptPrefix` 拼在最前面（新连接的时间轴从零重计，留在同一个按毫秒索引的字典里会被同键覆盖）。
+| `VolcengineTranscriptionProvider.swift` | ~425 | **主 Agent 那条路的识别：豆包（火山引擎）。** 把 `VolcengineRealtimeASRClient` 包成一个符合 `BuddyTranscriptionProvider` 协议的 provider，与百炼那个并列 —— 音频管线、VAD、连续监听、打断一行没动，换的只是「音频送给谁」。配置读「录音」页那一套（同一个火山账号、同一份密钥；「听」页的识别语言因此只作用于百炼，那里写明了）。**两处与录音那条路不同，都是实测逼出来的**（见 `开发经验/09-实测数据.md` 二十）：**不发末包**（这条路末包不回定稿，两次都等满 2.04 秒兜底且回来的文字与实时文字一字不差），改成盯「文字不再变长」（连续 0.4 秒没变就交，收尾 2.04 → 0.40 秒）；`beginNextUtterance` **重连**而不是复用连接（复用会让上一句「定稿晚到」的那一帧落进下一句的累积，而按时间戳做水位又会吃掉「按了发送之后继续说」的半句 —— 重连干净，握手期间音频在 URLSession 里排队不丢）。**第三处不同是 2026-09-27 加的：连接死掉不结束这一场录音**（`handleConnectionLoss`）—— 长录音那条自己会 `reconnect()`，所以同一条看门狗在那边误报一次只是换条连接；这条路原来把连接死亡当致命错误，于是「按住键沉默思考」触发看门狗 15 秒判死 → 整场录音被取消 → 用户说的话一个字都没提交（见 `开发经验/10-踩过的坑.md` D21）。现在：**一句还没定稿时连接死掉就重连**（上限 3 次），已经认出来的字冻成 `sealedTranscriptPrefix` 拼在最前面（新连接的时间轴从零重计，留在同一个按毫秒索引的字典里会被同键覆盖）。 **同一天又给这三处各补了一行诊断日志**（`beginNextUtterance` / `connectFreshClient` / `handleConnectionLoss` 的两条路，含**重连预算用尽要放弃**那一条）：它们原来只有 `print`，而用户的 App 是双击启动的 —— **stdout 进不了任何地方**，于是「用户大声说了话（麦克风峰值 0.634）、定稿却是 0 字」那一次在现场**一个字都查不到**。见 `开发经验/20` 9.70。
 | `VolcengineRealtimeASRClient.swift` | ~450 | 豆包流式识别的 WebSocket 客户端。**可以注入一条共用的 `URLSession`**（`init(configuration:urlSession:)`，不注入时行为与从前一字不差、自己建自己销毁）—— 主 Agent 那条路每句话一条连接，自建就成了仓规 E3 那条坑，所以它注入一条长命的并共用；注入的那条**永不被 invalidate**（归调用方所有）。**四条实测出来的硬约束**（2026-09-25，真服务）：`result_type` 必须是 `"single"`（默认的 `"full"` 每帧回**整场累积**文本，实测 28.6 秒时每帧已 ~150 字且线性增长，3 小时是它的 377 倍）；`compression: none` 服务端接受（省掉手写 gzip 外壳 —— Foundation 的 `.zlib` 出的是裸 deflate，实测 `73 74 1c 05`）；**末包一发出服务端立刻关连接**，所以长录音中途绝不能发；跨重连的判重必须**按文本**不能按时间戳（新连接的时间轴从零重计，按时间戳比会丢真实内容、留重复）。`finishAndAwaitFinalResult` 的定稿回调由**定稿到达**触发，超时只作兜底 —— 原来它是 `asyncAfter(timeout)` 到点才回调，于是每次停止都白等满 4 秒，和说了两个字还是两百个字无关。 |
 | `VolcengineASRFrame.swift` | ~195 | 豆包识别的二进制帧编解码。**只有纯函数**：没有网络、没有状态、没有并发，所以能脱离整个 App 单独编译运行 —— 一个探针就能把每一帧验到底。帧结构是「≥4 字节可变 header + payload 长度 + payload」，header 描述消息类型 / 序列化方式 / 压缩。 |
 | `RecordingAudioWriter.swift` | ~186 | 边录边写的 WAV 落盘器。3 小时 = 345MB，攒在内存里必然出事，所以开文件时先写 44 字节占位头、之后每来一块追加一块、停止时 seek 回开头回填两个长度字段。`appendingToExistingFile` 是「挂断后继续录、内容追加」的地基 —— `createFile` 在文件已存在时是**截断**，直接复用会把上一段录音抹掉且不报错。 |
