@@ -57,14 +57,24 @@ final class PythonAgentRunner {
     /// ⚠️ **现在指向仓库外那个开发目录**（`~/Documents/SuperAgent/WannaAgent`）。
     /// 打包进 `.app` 那一步做完之后，这里要换成 bundle 内的运行时 ——
     /// 见 `改造方案-Agent框架迁移.md` 阶段 2。
+    ///
+    /// **2026-09-29：决策大脑已经搬进仓库**（`<仓库>/WannaAgent/`），所以这两个路径
+    /// 从**仓库根**推导（`WorkspaceDirectory.rootURL`），不再写死绝对路径 ——
+    /// 仓库挪地方、换机器都不会断。
+    ///
+    /// ⚠️ 那个 venv **不要用 `git` 管**（97MB，而且 `.venv/bin/pip` 这类脚本里写死了
+    /// 建它时的绝对路径 —— 搬一次就得重建）。仓库里有 `WannaAgent/requirements.txt`，
+    /// 重建就一句 `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`。
     static var pythonExecutablePath: String {
         ProcessInfo.processInfo.environment["WANNA_AGENT_PYTHON"]
-            ?? (NSHomeDirectory() + "/Documents/SuperAgent/WannaAgent/.venv/bin/python")
+            ?? WorkspaceDirectory.rootURL
+                .appendingPathComponent("WannaAgent/.venv/bin/python").path
     }
 
     static var agentScriptPath: String {
         ProcessInfo.processInfo.environment["WANNA_AGENT_SCRIPT"]
-            ?? (NSHomeDirectory() + "/Documents/SuperAgent/WannaAgent/wanna_agent.py")
+            ?? WorkspaceDirectory.rootURL
+                .appendingPathComponent("WannaAgent/wanna_agent.py").path
     }
 
     static var isConfigured: Bool {

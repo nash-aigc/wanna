@@ -1,0 +1,9 @@
+# 依赖目录：97MB，而且可以用 `pip install -r requirements.txt` 重建
+.venv/
+
+# 密钥：绝不进版本库（本仓既有规矩，同 BailianSecrets.plist）
+.deepseek_key
+.firecrawl_key
+
+# 测试时留下的截图，不是源码
+wanna-mcp-screenshot.jpg
