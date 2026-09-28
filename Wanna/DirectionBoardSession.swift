@@ -590,6 +590,20 @@ final class DirectionBoardSession: ObservableObject {
     }
 
     /// 识别文本更新：本地关键词立刻匹配（免费），Jev 的概率随后到。
+    /// **Harness 工程：用户这句话命中了哪些能力**（2026-09-28）。
+    ///
+    /// 纯代码匹配（`HarnessCapabilityMatcher`），**不叫 JEV、不联网、不异步** ——
+    /// 用户的原话：「只要你能代码做匹配到了，然后你再在右上角渲染出来就可以了」。
+    /// 卡片**只画命中的**（没命中的不画 —— 全画高度不够），阶段名在"整段命中"时也变绿。
+    @Published private(set) var matchedHarness = HarnessMatchSummary()
+
+    /// 清单只在启动时读一次（它是**内容**，不是状态 —— 改文件重启后生效，
+    /// 与其它设置文件同一个约定 ✓）。
+    private let harnessCatalog = HarnessCapabilityMatcher.loadCatalog()
+
+    /// 卡片渲染要读清单本身（哪一组、哪一阶段、叫什么）—— 只暴露读，改还是改文件 ✓。
+    var harnessCatalogForDisplay: HarnessCapabilityCatalog { harnessCatalog }
+
     func noteLiveTranscript(_ transcriptText: String) {
         guard isListening else { return }
         // **agent 模式下这一整条都不跑**（用户：「代码也不需要运行」）——
@@ -602,6 +616,9 @@ final class DirectionBoardSession: ObservableObject {
         latestTranscript = transcriptText
         latestTranscriptUpdateAt = Date()
         noteUserSpeakingNow()
+        // **Harness 匹配**：每次转写更新都重算一遍（纯本地、几微秒，不值得做增量）。
+        matchedHarness = HarnessCapabilityMatcher.match(transcript: transcriptText,
+                                                        catalog: harnessCatalog)
         // ⚠️ 参考材料的采集**不在这里**：截图与那三类关键词归 `TurnReferenceCollector`
         //（2026-09-27 用户把参考材料扩成三类之后，它成了主 Agent 与看板**共用**的东西 ——
         //  主 Agent 那一轮的提示词、看板这一轮的请求、卡片上那排标签，读的都是它）。
@@ -1274,6 +1291,8 @@ final class DirectionBoardSession: ObservableObject {
     /// ⚠️ **固定状态（`TaskDirectionPins.json`）不动** —— 用户选的是「一直保留到他说取消」，
     /// 所以这里一个字都不写（这也是它没有临时文件的原因）。
     func endBigRound(reason: String = "追问窗口关闭") {
+        // 一大轮结束 = 回到"从来没有过"（与看板那几行同一条规矩）。
+        matchedHarness = HarnessMatchSummary()
         requestTask?.cancel()
         requestTask = nil
         cadenceTimer?.invalidate()

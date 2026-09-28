@@ -94,6 +94,10 @@ struct DirectionBoardView: View {
     private static let referenceTagRowHeight: CGFloat =
         CGFloat(referenceTagRowLines) * 17 + CGFloat(referenceTagRowLines - 1) * 4
 
+    /// **左列（Harness 树）有多宽** —— 横杠总宽 360 去掉这条与右边的矛盾列。
+    /// 用户 2026-09-28 把左列定成"提示词工程"，右边留给矛盾，中间一条细线。
+    static let harnessColumnWidth: CGFloat = 150
+
     /// 编号那一列有多宽（「第三个方向」里的 3）。
     private static let numberColumnWidth: CGFloat = 18
 
@@ -392,20 +396,83 @@ private struct ReferenceTagFlowLayout: Layout {
     /// ⚠️ **底部那一行按钮（折叠 / 执行 / 取消）整行注释掉了**（用户：「什么折叠呀、执行啊、
     /// 这些取消啊，**全都删掉，全都注释掉**」）—— 看板现在是**纯展示**的：执行走 ⌥⏎、
     /// 退出走 ESC、取消走「取消任务看板」那句话。按钮的实现都留着（见 `actionRow` 的注释）。
+    /// 横杠：**左 提示词工程（Harness）｜ 右 矛盾**，中间一条细线（用户 2026-09-28：
+    /// 「它其实跟这个矛盾，它们两个是**分成两列**的，中间你可以画一条细线」）。
+    ///
+    /// ⚠️ 底下原来那行「3 个方向格」（`optionRow`）**不画了**（用户：「最下面这个之前的什么、
+    /// 对于工具的这些选项……给我清掉，换成全新的这个内容」）—— 换成左边这一列 Harness 树 ✓。
+    /// `optionRow` 的实现留在下面（没有删），想放回来只要在这一列后面加一句 `optionRow` ✓。
     private var barColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
-            questionLines
-                .padding(.horizontal, Self.horizontalPadding)
-                .padding(.top, Self.barTopPadding)
+            HStack(alignment: .top, spacing: 0) {
+                harnessColumn
+                    .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
+                // 那条细线：两列之间，上下留一点气口，不与文字齐头齐尾。
+                Rectangle()
+                    .fill(theme.textColor.opacity(0.22))
+                    .frame(width: 1)
+                    .padding(.vertical, 2)
+                questionLines
+                    .padding(.leading, 10)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .padding(.horizontal, Self.horizontalPadding)
+            .padding(.top, Self.barTopPadding)
             Spacer(minLength: 8)
             referenceTagRow
                 .padding(.horizontal, Self.horizontalPadding)
-            optionRow
         }
         .frame(width: Self.barWidth, height: Self.barHeight, alignment: .topLeading)
         // ⚠️ **横杠与竖条之间那条分割线删掉了**（用户 2026-09-28：「把**分隔线删除**，
         // 这样视觉效果（右上角的卡片）**就是一个整体**」）—— 现在那一整块是同一个面，
         // 只靠**7 字形自己的轮廓**把凹口划出来（见 `DirectionBoardSevenShape`）。
+    }
+
+    /// **左列：Harness 工程树**（只画**命中**的 ✓ —— 用户：「如果用户的内容没有匹配到的话，
+    /// 你就不显示，因为如果完全显示的话，可能这个高度就不够了」）。
+    ///
+    /// 三级：**阶段（执行前/中/后）→ 组（提示词 / 执行与工具 …）→ 条目（角色 / 约束 …）**。
+    /// 颜色按用户 2026-09-28 的原话分两档：
+    ///   · **条目**命中了 → **绿**（它只有命中才会被画 ✓）；
+    ///   · **阶段名与组名**平时是**白**的，**一整个分支全命中**时也变绿 ✓
+    ///     （「如果某一个分支下用户全都考虑了，那么整个这个执行前这个字它也高亮」）。
+    private var harnessColumn: some View {
+        let summary = session.matchedHarness
+        let catalog = session.harnessCatalogForDisplay
+        return VStack(alignment: .leading, spacing: 2) {
+            ForEach(catalog.phases, id: \.self) { phase in
+                let groupsInPhase = catalog.groups.filter {
+                    $0.phase == phase && !summary.matchedKeywords(inGroup: $0.id).isEmpty
+                }
+                if !groupsInPhase.isEmpty {
+                    Text(phase)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(summary.fullyMatchedPhases.contains(phase)
+                                         ? DS.Colors.success : theme.textColor)
+                        .padding(.top, 2)
+                    ForEach(groupsInPhase) { group in
+                        let matched = summary.matchedKeywords(inGroup: group.id)
+                        let isWholeGroupMatched = matched.count == group.items.count && !group.items.isEmpty
+                        Text(group.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(isWholeGroupMatched ? DS.Colors.success
+                                                                 : theme.textColor.opacity(0.85))
+                            .padding(.leading, 2)
+                        ForEach(group.items.filter { matched.contains($0.keyword) }) { item in
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text("·").font(.system(size: 11))
+                                Text(item.keyword).font(.system(size: 11))
+                            }
+                            .foregroundStyle(DS.Colors.success)
+                            .padding(.leading, 8)
+                            .id(item.keyword)
+                            .transition(.opacity.combined(with: .offset(y: 4)))
+                        }
+                    }
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: summary)
     }
 
     /// **最下面那一行：模型筛出来的 3 个方向**（用户 2026-09-28：「最多 4 个……多了不要，
