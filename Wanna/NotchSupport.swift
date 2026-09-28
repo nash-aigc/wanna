@@ -834,7 +834,7 @@ nonisolated enum NotchSupport {
     ///（卡窄一点时缝更大 —— 卡的宽度随内容变，这是它唯一能保证的下限）。
     nonisolated static let directionBoardBarCardClearance: CGFloat = 20
     nonisolated static var directionBoardBarWidth: CGFloat {
-        answerCardMaximumWidth + directionBoardBarCardClearance   // 360 → 250（见下）
+        directionBoardColumnWidth + directionBoardBarCardClearance   // 260（看板自己的基准，与回复卡无关 ✓）
     }
     /// 横杠的高度 —— **定值**（行的集合恒定、每行预留固定行数，卡片高度因此不晃）。
     ///
@@ -844,12 +844,14 @@ nonisolated enum NotchSupport {
     /// 右下角那张 AI 回复卡的最大宽度 —— **7 字形那条竖条与它同宽**（用户 2026-09-28：
     /// 「竖向这个宽度其实跟右下角卡片的宽度应该设置为一样的」）。
     /// 两者是同一个数，所以放在一处：`OverlayWindow` 与看板都读它，改一个不会只改到一半。
-    nonisolated static let answerCardMaximumWidth: CGFloat = 240
-    // ⚠️ 340 → 240（约 −30%）：用户 2026-09-28「宽度我觉得应该再缩小个 30%，你现在太宽了，没有意义」。
-    // 看板的横杠宽与"问题/harness"两列的宽都从这个数派生 ✓，所以改一处三处跟着动 ✓。
+    nonisolated static let answerCardMaximumWidth: CGFloat = 340
 
-    /// 7 的**竖条**（那条脑图）宽 —— 就是回复卡的宽度。
-    nonisolated static var directionBoardMapWidth: CGFloat { answerCardMaximumWidth }
+    // ⚠️ **看板自己的宽度基准 —— 与回复卡分开**（2026-09-28 我犯过一次错 ✗：
+    // 把"缩 30%"改在了 `answerCardMaximumWidth` 上，结果**回复卡的宽度也被缩了** ✗，
+    // 用户当场发现：「回复的卡片宽度你缩小了吧」。看板要窄、回复卡不能动，所以拆成两个数 ✓。
+    nonisolated static let directionBoardColumnWidth: CGFloat = 240
+
+    nonisolated static var directionBoardMapWidth: CGFloat { directionBoardColumnWidth }
     /// 横杠下沿离鼠标 30pt：横杠整条在鼠标**上方**，回复卡在鼠标**下方**，两者不打架。
     nonisolated static let directionBoardBarClearance: CGFloat = 30
     /// 折叠态（只剩那颗折叠钮）时，顶边离鼠标 12pt —— 展开态那条 254pt 的偏移对小卡片没有意义。
