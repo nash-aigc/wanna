@@ -387,7 +387,7 @@ final class CompanionManager: ObservableObject {
                                 sendsScreenshot: deliversScreenshot,
                                 announcesUserQuestion: announcesUserQuestion,
                                 speaksEvenWhenMuted: speaksEvenWhenMuted)
-        case .claudeCode, .review:
+        case .claudeCode:
             guard let agentID = UUID(uuidString: cardID) else { return }
             agentSessionManager.sendTurn(text,
                                          to: agentID,

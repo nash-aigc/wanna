@@ -581,7 +581,7 @@ final class VoiceChatController: ObservableObject {
                     cardTitle = session.title
                     turns = CardChatContextAssembler.turns(fromConversationEntries: session.entries)
                 }
-            case .claudeCode, .review:
+            case .claudeCode:
                 if let agent = AgentSessionStore.allAgents().first(where: { $0.id == entityID }) {
                     cardTitle = agent.name
                     turns = CardChatContextAssembler.turns(fromAgentTranscript: agent.transcript)
@@ -615,7 +615,7 @@ final class VoiceChatController: ObservableObject {
                                       into: &rebuilt)
                 }
             }
-        case .claudeCode, .review:
+        case .claudeCode:
             if let agent = AgentSessionStore.allAgents().first(where: { $0.id == entityID }) {
                 for entry in agent.transcript where entry.kind != .toolActivity {
                     let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -775,7 +775,7 @@ final class VoiceChatController: ObservableObject {
                                          displayResponse: trimmedAnswer,
                                          recordedWithActionTags: true),
                 targetSessionID: entityID)
-        case .claudeCode, .review:
+        case .claudeCode:
             AgentSessionStore.appendTranscriptEntry(
                 AgentTranscriptEntry(kind: .userMessage, text: question),
                 targetAgentID: entityID)

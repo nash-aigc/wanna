@@ -109,9 +109,7 @@ struct NotchSheetRootView: View {
         guard agentSessionManager.selectedSidebarSection == .agents else { return .mainLoop }
         // 复盘 agent 也是一个 `AgentSession`，但它的默认模式与 Claude Code 一样是文本，
         // 所以这个区分只影响"记的是哪张卡片的模式"，不影响默认值。
-        return agentSessionManager.selectedAgent?.name == AgentCardModel.reviewAgentName
-            ? .review
-            : .claudeCode
+        return .claudeCode
     }
 
     /// 右列现在属于哪张卡片（= 背后那条会话 / 代理记录的 uuidString，与卡片区同一个键）。

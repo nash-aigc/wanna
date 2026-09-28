@@ -609,7 +609,7 @@ struct HomeSpaceSidebarView: View {
         case .mainLoop:
             renamingSessionID = entityID
             renamingAgentID = nil
-        case .claudeCode, .review:
+        case .claudeCode:
             renamingAgentID = entityID
             renamingSessionID = nil
         }
@@ -1228,7 +1228,6 @@ struct HomeSpaceSidebarRailView: View {
         switch kind {
         case .mainLoop: return "bubble.left.and.bubble.right.fill"
         case .claudeCode: return "terminal.fill"
-        case .review: return "chart.line.uptrend.xyaxis"
         }
     }
 
@@ -1236,7 +1235,6 @@ struct HomeSpaceSidebarRailView: View {
         switch kind {
         case .mainLoop: return DS.Colors.accent
         case .claudeCode: return Color(red: 0.55, green: 0.78, blue: 0.55)
-        case .review: return DS.Colors.warning
         }
     }
 

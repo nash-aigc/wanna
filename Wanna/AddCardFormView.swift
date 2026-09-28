@@ -69,7 +69,7 @@ struct AddCardFormView: View {
         switch draftKind {
         case .mainLoop:
             return hasTitle
-        case .claudeCode, .review:
+        case .claudeCode:
             return hasTitle && !draftFolderPath.isEmpty
         }
     }
@@ -353,7 +353,7 @@ struct AddCardFormView: View {
         switch draftKind {
         case .mainLoop:
             createMainAgent(trimmedTitle, draftModelChoiceID)
-        case .claudeCode, .review:
+        case .claudeCode:
             createClaudeCodeAgent(trimmedTitle, draftFolderPath, draftClaudeModelAlias)
         }
         dismissAction()

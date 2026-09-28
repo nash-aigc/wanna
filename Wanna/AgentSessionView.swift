@@ -191,7 +191,7 @@ struct AgentSessionView: View {
     /// 只是把它摞在自己的 `agentHeader` 上面，并**带上让开刘海的那段顶边距**（下面
     /// 那行页头因此不再自己 pad 一次）。
     private func cardChatModeBar(_ agent: AgentSession) -> some View {
-        let cardKind: CardKind = agent.name == AgentCardModel.reviewAgentName ? .review : .claudeCode
+        let cardKind: CardKind = .claudeCode
         return CardChatModeBar(cardID: agent.id.uuidString,
                                cardKind: cardKind,
                                preferences: cardChatPreferences)
@@ -585,9 +585,11 @@ struct AgentSessionView: View {
     /// Three lines at rest, 30% of the content column when expanded — the
     /// user's own figure for the 展开 button.
     /// 这一页是不是复盘 agent（权限栏只对它出现）。
-    private var isReviewAgent: Bool {
-        agentSessionManager.selectedAgent?.name == AgentCardModel.reviewAgentName
-    }
+    ///
+    /// **2026-09-29 起恒为 false** —— 复盘已按用户要求改成技能（`skills/复盘/`），
+    /// 不再有叫「复盘」的 agent。留着这个属性是为了让调用点不用一起改；
+    /// 那一栏 UI 现在永远不会出现。
+    private var isReviewAgent: Bool { false }
 
     /// **权限栏**：指令文件夹（固定勾、不可改）+ Wanna 权限（默认关 → 开时出读/写）。
     ///
@@ -746,7 +748,7 @@ struct AgentSessionView: View {
     /// 这张卡片此刻的模式（不从卡片进来时是 nil）。
     private var currentCardChatMode: CardChatMode? {
         guard let agent = agentSessionManager.selectedAgent else { return nil }
-        let cardKind: CardKind = agent.name == AgentCardModel.reviewAgentName ? .review : .claudeCode
+        let cardKind: CardKind = .claudeCode
         return cardChatPreferences.mode(forCardID: agent.id.uuidString, kind: cardKind)
     }
 

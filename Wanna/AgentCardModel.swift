@@ -160,7 +160,7 @@ final class AgentCardModel: ObservableObject {
         // 打开它的路在 `openReviewAgent(...)`。
         //
         // ③ Claude Code 卡片：代理名册（兜底接手过的任务会出现在这里）。
-        for agent in AgentSessionStore.allAgents() where agent.name != Self.reviewAgentName {
+        for agent in AgentSessionStore.allAgents() {
             let cardID = agent.id.uuidString
             built.append(Card(id: "\(CardKind.claudeCode.rawValue):\(cardID)",
                               kind: .claudeCode,
@@ -202,8 +202,6 @@ final class AgentCardModel: ObservableObject {
     }
 
     /// 复盘 agent 的名字与文件夹 —— **一处定义**，卡片区和以后那个权限界面都读它。
-    static let reviewAgentName = "复盘"
-    static var reviewAgentFolderPath: String { WorkspaceDirectory.reviewsURL.path }
 
     /// 打开复盘 agent（没有就先建一个，幂等）。
     ///
@@ -214,11 +212,10 @@ final class AgentCardModel: ObservableObject {
         // 那个文件夹）。用户点进来的这一下是最合适的时机 —— 比定时刷新省，也比让他
         // 自己想到"先跑一次复盘"可靠。
         ReviewRunner.writeExecutionHistoryFile()
-        let existing = AgentSessionStore.allAgents().first { $0.name == Self.reviewAgentName }
-        let agent = existing ?? AgentSessionStore.createAgent(
-            name: Self.reviewAgentName,
-            projectFolderPath: Self.reviewAgentFolderPath)
-        agentSessionManager.selectAgent(agent.id)
+        // **复盘已经不是一张 agent 卡片了**（2026-09-29 用户：「复盘转换成技能，
+        // 不要把它做成 agent」）。它现在是 `skills/复盘/` 那个技能，主循环自己读
+        // `Wanna复盘/` 里的材料回答 —— 所以这里只剩"把原料刷新一遍"，
+        // 材料仍然要新鲜，技能读的正是它。
         agentSessionManager.selectedSidebarSection = .agents
     }
 
@@ -359,7 +356,7 @@ final class AgentCardModel: ObservableObject {
                 sessionsModel.selectSession(sessionID)
             }
             agentSessionManager.selectedSidebarSection = .conversations
-        case .claudeCode, .review:
+        case .claudeCode:
             if let agentID = UUID(uuidString: card.entityID) {
                 agentSessionManager.selectAgent(agentID)
             }

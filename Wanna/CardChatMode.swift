@@ -114,7 +114,7 @@ nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identi
     static func defaultMode(for cardKind: CardKind) -> CardChatMode {
         switch cardKind {
         case .mainLoop: return .imageText
-        case .claudeCode, .review: return .text
+        case .claudeCode: return .text
         }
     }
 }

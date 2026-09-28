@@ -138,7 +138,7 @@ final class CardChatPreferenceModel: ObservableObject {
                                       displayName: "默认角色",
                                       promptText: promptText,
                                       source: .agentPreset)
-        case .claudeCode, .review:
+        case .claudeCode:
             return CardChatRoleChoice(id: "agentPreset",
                                       displayName: "默认角色",
                                       promptText: "",

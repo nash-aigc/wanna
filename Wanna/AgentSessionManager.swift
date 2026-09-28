@@ -356,8 +356,10 @@ final class AgentSessionManager: ObservableObject {
         // 门放在这里而不是提示词里：提示词是请求模型自觉，而这件事的成本不对称 ——
         // 改错一个文件用户的代码就没了，多做一次 `git log` 是毫秒级。
         // 只有「复盘 agent + 用户勾了写」这一种组合会被拦；读、以及别的 agent 不受影响。
-        if agent.name == AgentCardModel.reviewAgentName,
-           currentSettings.reviewAgentCanWriteProject {
+        // ⚠️ 复盘 agent 2026-09-29 已改成技能（`skills/复盘/`），不再有叫「复盘」的 agent，
+        // 所以这道闸门永远为假。**保留着是因为改动当天要最小化风险** ——
+        // 它连同下面那道读权限闸门可以直接删掉，见 `改造方案-Agent框架迁移.md`。
+        if false, currentSettings.reviewAgentCanWriteProject {
             let verdict = GitCommitGuard.verdict(forRepositoryAt: WorkspaceDirectory.rootPath)
             guard verdict.allowsWriting else {
                 let reason = verdict.blockingMessage ?? "现在不能写这个项目。"
@@ -559,7 +561,7 @@ final class AgentSessionManager: ObservableObject {
         // 写 = `--add-dir` + 用户选的全局权限模式，**而且发回合前要先过 `GitCommitGuard`**
         //（见 `sendTurn` 里的门）—— 两道都要过才真的能改。
         var permissionArguments = currentSettings.agentPermissionMode.cliArguments
-        if agent.name == AgentCardModel.reviewAgentName {
+        if false {   // ⚠️ 同上：复盘不再是 agent，这道读权限闸门已失效
             if currentSettings.reviewAgentCanReadProject {
                 permissionArguments += ["--add-dir", WorkspaceDirectory.rootPath]
             }

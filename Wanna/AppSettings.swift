@@ -690,7 +690,7 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 它是这个 agent 存在的意义，所以**固定开着、用户改不了** —— 用户的原话是
     /// 「第一个权限就是指令文件夹权限，这个是默认的，然后也是不可以被修改的，
     /// 它就是一直是勾选的状态」。因此它不存成设置，只有一个常量（见
-    /// `AgentCardModel.reviewAgentFolderPath`）。
+    /// `Wanna复盘/` 那个固定文件夹）。
 
     /// **Wanna 权限：能不能读当前这个项目**（用户：「另外一个权限叫 Wanna 权限，
     /// 就是当前这个软件或者这个项目的整个路径」）。默认**关闭** —— 涉及整个软件，
