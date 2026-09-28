@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>两块小圆角框（效果确认）</title>
+<style>
+  body{margin:0;background:#0b0b0d;color:#f2f2f4;
+       font:13px/1.7 -apple-system,"PingFang SC",sans-serif;padding:26px}
+  h1{font-size:15px;margin:0 0 6px}
+  .sub{color:#8a8a93;font-size:12px;margin:0 0 18px}
+  .stage{position:relative;width:900px;height:520px}
+  /* 左边那块：矮的圆角框（只有 补充｜矛盾）*/
+  .left{position:absolute;left:0;top:0;width:340px;height:130px;
+        background:#141417;border:1px solid #3a3a42;border-radius:14px;
+        display:flex}
+  /* 右边那块：高的圆角框（问题｜harness）*/
+  .right{position:absolute;left:360px;top:0;width:380px;height:500px;
+         background:#141417;border:1px solid #3a3a42;border-radius:14px;
+         display:flex}
+  .cell{flex:1;padding:12px 14px;overflow:hidden}
+  .cell:first-child{border-right:1px solid #2a2a2f}
+  .t{font-size:12px;font-weight:600;color:#8a8a93;margin-bottom:6px}
+  pre{margin:0;font:10.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;white-space:pre}
+  .u{color:#4d4d55}
+  .note{position:absolute;left:0;top:160px;color:#4ade80;font-size:12px}
+</style>
+<h1>效果确认：两块各自的小圆角框（左边矮、右边高）</h1>
+<p class="sub">左边那块**只有内容那么高** ✓ —— 它下面**没有线** ✗（那条"延伸到没有内容的地方"的线消失了 ✓）；
+右边那块高、包住 `问题 ｜ harness` ✓。四个角都是圆的 ✓。</p>
+
+<div class="stage">
+  <div class="left">
+    <div class="cell"><div class="t">补充</div><div style="color:#4d4d55;font-size:11px">（空）</div></div>
+    <div class="cell"><div class="t">矛盾</div><div style="color:#4d4d55">—</div></div>
+  </div>
+
+  <div class="right">
+    <div class="cell">
+      <div class="t">问题</div>
+      <pre>关于氛围
+└─ 看看当时的氛围属于什么样的效果
+关于任务
+└─ 看一下我刚才任务完成了没有</pre>
+    </div>
+    <div class="cell">
+      <div class="t">harness</div>
+      <pre><span class="u">执行前
+├─ 提示词
+│  ├─ 角色
+│  └─ 任务
+├─ 上下文与记忆
+└─ 模型与连接
+执行中
+├─ 执行与工具
+└─ 自动化与编排
+执行后
+└─ 验收与可观测</span></pre>
+    </div>
+  </div>
+
+  <div class="note">↑ 左边这块**到这儿就结束了** ✓（它下面空着、没有任何线 ✓）</div>
+</div>

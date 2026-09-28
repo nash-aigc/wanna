@@ -909,26 +909,30 @@ struct DirectionBoardHollowShape: Shape {
         let notchTop = rect.minY + notchTopInset
         var path = Path()
 
-        // 从左下角出发，逆时针一圈（外圈的上/左/右 + 底边两小段 + 凹口的三条边）。
-        path.move(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+        // ⚠️ **左边那条竖线不画**（用户 2026-09-28：「你把那道线变成透明，那不就看不到了？
+        // ……你直接把这部分给我变得透明的……为什么非要显示出这个颜色呢？」）——
+        // 所以这一条路径**从左上圆角起笔**（不是从左下角），**到凹口的左上角收笔**，
+        // 中间**没有"左边的竖段"** ✓。整块仍然是一张卡片 ✓、圆角照旧 ✓，
+        // 只是那条"延伸到没有内容的地方"的线不存在了 ✓。
+        _ = notchLeft   // 凹口左边界 = 0（不画左壁），这里显式忽略
+
+        // 起笔：左上圆角的上端
+        path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
+        // 左上圆角（这一段是圆的 ✓）
         path.addArc(center: CGPoint(x: rect.minX + radius, y: rect.minY + radius),
-                    radius: radius, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+                    radius: radius, startAngle: .degrees(270), endAngle: .degrees(180), clockwise: true)
+        // 上边 → 右上圆角
         path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
         path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.minY + radius),
                     radius: radius, startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
+        // 右边 → 右下圆角
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
         path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
                     radius: radius, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-        // 底边：只画右段 → 进凹口 → 绕过凹口顶 → 出凹口 → 底边左段
+        // 下边只画右半段 → 进凹口 → 绕过凹口顶 → 收笔（**左边不画** ✓）
         path.addLine(to: CGPoint(x: notchRight, y: rect.maxY))
         path.addLine(to: CGPoint(x: notchRight, y: notchTop))
         path.addLine(to: CGPoint(x: notchLeft, y: notchTop))
-        path.addLine(to: CGPoint(x: notchLeft, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-        path.addArc(center: CGPoint(x: rect.minX + radius, y: rect.maxY - radius),
-                    radius: radius, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
-        path.closeSubpath()
         return path
     }
 }
