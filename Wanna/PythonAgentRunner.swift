@@ -109,49 +109,65 @@ final class PythonAgentRunner {
             }
         }
 
-        // stdout → 一行一个 JSON。这里**边读边回调**，所以"做到哪了"是实时的。
-        var finalText: String?
-        var failure: String?
-        var stepCount = 0
+        // stdout → 一行一个 JSON。
+        //
+        // ⚠️⚠️ **这段必须跑在主线程之外，否则整个系统死锁**（2026-09-29 实测踩到）：
+        //
+        // 它是**阻塞式**读管道（`availableData` 要等数据），而 Python 那边做的事是
+        // "连 Wanna 的 MCP 服务端 → 调工具"。而 **MCP 工具的处理跑在主线程上**
+        // （`WannaMCPServer` 是 `@MainActor`，工具实现要碰 App 内部）。
+        // 于是：主线程在这里等 Python ↔ Python 在等主线程处理它的工具调用 → 死锁。
+        //
+        // 症状是**看起来什么都没发生**：日志停在 `[wanna-agent] 任务：…` 之后，
+        // 没有报错、没有超时、没有完成 —— 因为两边都在等对方。
+        // 所以用 `Task.detached` 把它挪出主 actor：阻塞一个后台线程是廉价的，
+        // 阻塞主线程是致命的。
+        let readingTask = Task.detached(priority: .userInitiated) { () -> (String?, String?, Int) in
+            var finalText: String?
+            var failure: String?
+            var stepCount = 0
+            let reader = PipeLineReader(stdoutPipe.fileHandleForReading)
+            while let line = reader.nextLine() {
+                guard let data = line.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let type = object["type"] as? String else { continue }
 
-        let stdoutReader = PipeLineReader(stdoutPipe.fileHandleForReading)
-        while let line = stdoutReader.nextLine() {
-            // 用户按下 ESC 打断时，这里要立刻停手 —— 否则子进程会继续操控用户的电脑。
-            if Task.isCancelled {
-                process.terminate()
-                throw CancellationError()
-            }
-            guard let data = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let type = object["type"] as? String else { continue }
-
-            switch type {
-            case "step":
-                stepCount += 1
-                if let tool = object["tool"] as? String {
-                    onProgress("\(tool)…")
-                } else if let result = object["result"] as? String {
-                    onProgress(String(result.prefix(120)))
+                switch type {
+                case "step":
+                    stepCount += 1
+                    if let tool = object["tool"] as? String {
+                        onProgress("\(tool)…")
+                    } else if let result = object["result"] as? String {
+                        onProgress(String(result.prefix(120)))
+                    }
+                case "final":
+                    finalText = (object["text"] as? String) ?? ""
+                case "error":
+                    failure = (object["text"] as? String) ?? "未知错误"
+                default:
+                    break
                 }
-            case "final":
-                finalText = (object["text"] as? String) ?? ""
-            case "error":
-                failure = (object["text"] as? String) ?? "未知错误"
-            default:
-                break
             }
+            process.waitUntilExit()
+            return (finalText, failure, stepCount)
         }
 
-        process.waitUntilExit()
+        // 用户按 ESC 打断时，**必须真的停掉子进程** —— 否则一个在后台点鼠标的进程
+        // 会继续操控用户的电脑。`terminate()` 会让 stdout 断流，上面那个读循环随即结束。
+        let outcome = await withTaskCancellationHandler {
+            (try? await readingTask.value) ?? (nil, nil, 0)
+        } onCancel: {
+            process.terminate()
+        }
 
         if Task.isCancelled { throw CancellationError() }
-        if let failure { throw PythonAgentError.agentFailed(failure) }
-        guard let finalText, !finalText.isEmpty else {
+        if let failure = outcome.1 { throw PythonAgentError.agentFailed(failure) }
+        guard let finalText = outcome.0, !finalText.isEmpty else {
             throw PythonAgentError.noAnswer(exitCode: process.terminationStatus)
         }
 
-        MainFlowDiagnostics.log("🐍 决策大脑完成 · \(stepCount) 步 · \(finalText.prefix(80))")
-        return TurnResult(finalText: finalText, stepCount: stepCount)
+        MainFlowDiagnostics.log("🐍 决策大脑完成 · \(outcome.2) 步 · \(finalText.prefix(80))")
+        return TurnResult(finalText: finalText, stepCount: outcome.2)
     }
 }
 
