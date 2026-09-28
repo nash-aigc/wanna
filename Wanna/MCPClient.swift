@@ -94,8 +94,16 @@ nonisolated final class MCPClient {
     // MARK: - 起进程与握手
 
     /// 起来并握手。已经起来就什么都不做。
+    /// MCP 那条链的日志。**在这之前它一条都不打**（2026-09-28 实测：两个日志全量搜过，
+    /// 零条 MCP 记录）—— 所以"这个 App 到底有没有成功用过一次 MCP"以前无从判断，
+    /// 而两次子 agent 派活都失败、失败原因也查不出来，都卡在这上面。
+    private func log(_ line: String) {
+        SoundEffectPlayer.appendToDiagnosticLog("🔌 MCP[\(config.name)] \(line)")
+    }
+
     func start() async throws {
         if isStarted { return }
+        log("开始启动（命令 \(config.command)）")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 do { try self.launchOnQueue() } catch {
@@ -116,12 +124,15 @@ nonisolated final class MCPClient {
         ])
         notify(method: "notifications/initialized")
         isStarted = true
+        log("握手完成 ✓")
     }
 
     private func launchOnQueue() throws {
         guard let executable = Self.resolveExecutable(config.command) else {
+            log("✗ 找不到可执行文件 \(config.command)")
             throw Failure.cannotLaunch("找不到可执行文件 `\(config.command)`")
         }
+        log("可执行文件 = \(executable)")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = config.args
@@ -250,6 +261,7 @@ nonisolated final class MCPClient {
     /// 图片要变成 `image_url` 部件递进请求体，那是另一条路；而把它当字符串塞进去
     /// 只会让模型看到一坨 base64。
     func callTool(name: String, arguments: [String: Any]) async throws -> String {
+        log("调用工具 \(name)")
         try await start()
         let result = try await request(method: "tools/call",
                                        params: ["name": name, "arguments": arguments])

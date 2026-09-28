@@ -60,9 +60,9 @@ nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identi
     var helpText: String {
         switch self {
         case .text:
-            return "只发文字，不截屏。用这个 Agent 的全部能力（工具、MCP、子 agent）"
+            return "只发文字，不截屏。用这个 Agent 的全部能力（工具、MCP、技能）"
         case .imageText:
-            return "带上屏幕截图提问，用这个 Agent 的全部能力（工具、MCP、子 agent）"
+            return "带上屏幕截图提问，用这个 Agent 的全部能力（工具、MCP、技能）"
         case .voice:
             return "语音对话：只把这段会话记录和一个角色当上下文，不执行任务"
         case .video:

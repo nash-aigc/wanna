@@ -128,7 +128,15 @@ final class MCPRegistry {
         guard let client = client(forServerNamed: server) else {
             throw MCPClient.Failure.cannotLaunch("没有配过名为 `\(server)` 的 MCP 服务器")
         }
-        return try await client.callTool(name: tool, arguments: arguments)
+        SoundEffectPlayer.appendToDiagnosticLog("🔌 MCP[调用] 服务器=\(server) 工具=\(tool)")
+        do {
+            let result = try await client.callTool(name: tool, arguments: arguments)
+            SoundEffectPlayer.appendToDiagnosticLog("🔌 MCP[调用] ✓ 工具=\(tool) 返回 \(result.count) 字")
+            return result
+        } catch {
+            SoundEffectPlayer.appendToDiagnosticLog("🔌 MCP[调用] ✗ 工具=\(tool) 失败：\(error)")
+            throw error
+        }
     }
 
     func shutdownAll() {

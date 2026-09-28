@@ -494,6 +494,11 @@ final class AgentActivityBoard: ObservableObject {
     func recordFailure(_ reason: String, forTaskID agentID: String) {
         guard let index = agents.firstIndex(where: { $0.id == agentID }) else { return }
         agents[index].failureReason = reason
+        // **失败必须能在日志里看见**（2026-09-28）。在此之前"为什么没做成"只在内存里，
+        // 任务一结束就没了 —— 用户屏幕上一个红点，谁都不知道原因，查也查不了。
+        // 这一行是那条链上唯一能回答"为什么"的证据。
+        SoundEffectPlayer.appendToDiagnosticLog(
+            "临时 agent \(agentID) 失败原因：\(reason.prefix(300))")
         let failedAgent = agents[index]
         FinishedTaskStore.shared.record(failedAgent)
     }

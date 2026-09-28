@@ -1112,6 +1112,13 @@ struct GeneralSettingsView: View {
                 }
                 SettingsCardRowDivider()
                 SettingsRow(
+                    label: "允许调用工具库",
+                    description: "点开之后模型可以跑工具目录（tools/manifest.json）里那些写好的命令，比如联网搜索。和「允许操作电脑」分开：那一条是「在你眼前动你的机器」，这一条是「让机器跑一段脚本」，风险不一样。关掉时它会明说被拒了，不会装作做过。"
+                ) {
+                    SettingsSwitch(isOn: generalSettingsViewModel.allowsToolLibraryBinding)
+                }
+                SettingsCardRowDivider()
+                SettingsRow(
                     label: "输入方式",
                     description: "模型往输入框里放文字用哪种方式。打字：一个字一个字敲进去，不碰你的剪贴板，但换行要一行一行按回车，长文会慢。粘贴：整段放进剪贴板按一次 ⌘V，快、换行和表格一次到位，用完半秒后把剪贴板还给你。"
                 ) {

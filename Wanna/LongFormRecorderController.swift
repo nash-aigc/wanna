@@ -2259,6 +2259,20 @@ final class LongFormRecorderController: ObservableObject {
 
         let settings = AppSettingsStore.snapshot()
         let transcript = transcriptWriter
+
+        // ⚠️ **收尾前必须把"还没定稿的那一句"也落下去**（2026-09-28 实测的数据丢失）。
+        //
+        // 那场 34.2 秒的录音：服务端回了 **45 段**、实时行上有 **363 字**，然后一帧包被
+        // 截断（`帧解析失败：payload 声明 152 字节，实际只有 46 字节`），连接断了 ——
+        // 于是**没有任何一段变成 definite** → 磁盘上一个字都没有 → `录音结束：0 字` ✗✗
+        // 用户说的整整 34 秒，一个字都没留下。
+        //
+        // 而写盘器里**本来就有**这个出口（`commitLiveLineAsUnfinished`，注释写着
+        // 「用户说到一半连接断了，那句还停在 `liveLineText` 里…让用户至少能在文件里
+        // 看到自己说过什么」）—— 它只被**重连**那条路调过，**收尾这条路漏了** ✗。
+        // 收尾比重连更需要它：重连后面还有机会，收尾是最后一次机会。
+        transcript?.commitLiveLineAsUnfinished()
+
         let text = transcript?.readFullTextFromDisk() ?? ""
 
         try? audioWriter?.finalize()

@@ -1147,6 +1147,19 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// user asks for paste.
     var textEntryMethod: TextEntryMethod = .typeCharacters
 
+    /// 「允许调用工具库」—— 让模型跑 `tools/manifest.json` 里那些工具（`[RUN:工具名:参数]`）。
+    ///
+    /// **和「允许操作电脑」分开，这是刻意的**（用户 2026-09-24 定的，见
+    /// `开发经验/Agent施工/细节/06-工具库与MCP.md` §九）：点鼠标是"在用户眼前动他的机器"，
+    /// 而跑一个写好的脚本是"让机器算点东西"——风险模型不同，所以闸门不同。
+    ///
+    /// 关掉时 `[RUN:]` 仍然被解析，然后**被丢弃并回一句话**（同 `allowsComputerControl`
+    /// 的规矩：不能静默什么都不做 —— 那和"标签没被认出来"长得一模一样）。
+    ///
+    /// `Bool?` 按本仓 E1 规矩：**加这一条之前写下的设置文件仍然要能解码**
+    /// （合成的 `Codable` 遇到缺键会抛，于是老文件会整个读不出来）。nil 当开。
+    var allowsToolLibrary: Bool? = true
+
     // MARK: - 快捷键
 
     /// Raw value of a `BuddyPushToTalkShortcut.ShortcutOption`. Stored as a
@@ -1787,6 +1800,7 @@ nonisolated extension AppSettings {
         case enablesNotchPresence
         case allowsComputerControl
         case allowsKeyboardControl
+        case allowsToolLibrary
         case textEntryMethod
         case pushToTalkShortcutRawValue
         case customPushToTalkShortcut
@@ -1967,6 +1981,7 @@ nonisolated extension AppSettings {
         // silently fall back to defaults for the user's entire configuration.
         allowsComputerControl = try container.decodeIfPresent(Bool.self, forKey: .allowsComputerControl) ?? defaults.allowsComputerControl
         allowsKeyboardControl = try container.decodeIfPresent(Bool.self, forKey: .allowsKeyboardControl) ?? defaults.allowsKeyboardControl
+        allowsToolLibrary = try container.decodeIfPresent(Bool.self, forKey: .allowsToolLibrary) ?? defaults.allowsToolLibrary
         textEntryMethod = try container.decodeIfPresent(TextEntryMethod.self, forKey: .textEntryMethod) ?? defaults.textEntryMethod
         pushToTalkShortcutRawValue = try container.decodeIfPresent(String.self, forKey: .pushToTalkShortcutRawValue) ?? defaults.pushToTalkShortcutRawValue
         customPushToTalkShortcut = try container.decodeIfPresent(RecordedKeyboardShortcut.self, forKey: .customPushToTalkShortcut) ?? defaults.customPushToTalkShortcut

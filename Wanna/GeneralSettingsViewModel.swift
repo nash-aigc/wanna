@@ -212,9 +212,21 @@ final class GeneralSettingsViewModel: ObservableObject {
         )
     }
 
+    /// 「允许调用工具库」那一行的绑定。
+    ///
+    /// 它和别的行不同：存储是 `Bool?`（本仓 E1 规矩 —— **加这一条之前写下的设置文件
+    /// 仍然要能解码**，合成的 `Codable` 遇到缺键会抛，于是老文件会整个读不出来），
+    /// 而 `SettingsSwitch` 要的是 `Binding<Bool>`。这一层就是那个转换，
+    /// **只此一处**：免得每个读它的地方各写一遍 `?? true`，哪天默认值改了一处漏一处。
+    var allowsToolLibraryBinding: Binding<Bool> {
+        Binding(
+            get: { [weak self] in self?.draftSettings.allowsToolLibrary ?? true },
+            set: { [weak self] newValue in self?.draftSettings.allowsToolLibrary = newValue }
+        )
+    }
+
     /// 「听」页那一栏当前选中的识别模型（来自**模型配置**，不是 AppSettings）。
-    var currentRecognitionModelID: String {
-        ModelConfigurationStore.snapshot().status(of: .transcription).resolvedRole?.modelID ?? ""
+    var currentRecognitionModelID: String {        ModelConfigurationStore.snapshot().status(of: .transcription).resolvedRole?.modelID ?? ""
     }
 
     /// 换识别模型。写的是 `ModelConfiguration.json` 里那个 provider 的

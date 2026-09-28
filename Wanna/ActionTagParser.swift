@@ -154,32 +154,33 @@ nonisolated struct ActionParseResult: Sendable {
     /// handed to `AgentSessionManager` directly, the way `shapeRequests` are
     /// handed to the annotation manager.
     let agentRequests: [AgentDispatchRequest]
-    /// 主 agent 把这件事派给了哪个 sub agent（`[AGENT:图形]`）。
+    /// 每一个 `[SKILL:技能名]` —— 把那个技能的正文拉进这一轮。
     ///
-    /// **和 `agentRequests` 是两件不同的事**，别混：那个是把活交给 Wanna 常驻的
-    /// Claude Code 会话（后台、跨轮次、有名单）；这个是主 agent 把**这一轮**的活交给
-    /// 三个 sub agent 之一，它当场跑完、结果回到这一轮的循环里。
+    /// **不进 `actions`**：拉一份方法论不碰屏幕，不该触发「截图 → 续写」那个循环 ——
+    /// 和 MCP、工具目录同一个理由。它当场把正文拼进上下文，模型下一轮照着做。
     ///
-    /// 同样**不进 `actions`**：派活本身不碰屏幕，不该触发「截图 → 续写」那个循环。
-    let subAgentRequest: SubAgentRole?
-    /// `[AGENT:名字:要做什么]` 里那个「要做什么」。
-    ///
-    /// **它是子 agent 那一轮的用户消息。** 没有它，子 agent 拿到的是**同一句用户原话**，
-    /// 得自己再猜一遍主 agent 想让它干什么 —— 而「主 agent 决定做什么」这件事实际上
-    /// 就等于没有被决定。官方把任务放在调用里（`Agent(subagent_type, prompt)`），
-    /// 并且明说子 agent 就靠这个 prompt 拿全部信息。
-    ///
-    /// nil = 模型没写任务，调用方回落。
-    let subAgentTask: String?
+    /// **2026-09-28 架构调整**：这里原来放的是 `subAgentRequest`（主 agent 把活派给三个
+    /// sub agent 之一）。那一层整个删掉了 —— **每个子 agent 各自变成一个技能**
+    /// （`Wanna/SkillCatalog.swift`），主 agent 常驻只拿到一行描述，要用正文才写这个标签。
+    let skillRequests: [SkillNameRequest]
     /// 每一个 `[MCP:服务器.工具:{json}]`。
     ///
     /// **不进 `actions`**：一次 MCP 调用不碰屏幕，不该触发「截图 → 续写」那个循环 ——
     /// 和派活、图形板同一个理由。它当场跑完，结果作为一个数据块回给模型。
     ///
-    /// **归执行 agent。** MCP 是「跑脚本 / 调工具」那一类能力（方案 §06 §一），
-    /// 图形和文本 agent 都没有。判定在调用处，不在这里 —— 解析器只该回答
-    /// 「模型写了什么」，不该回答「它有没有资格」。
+    /// 判定（允不允许调）在调用处，不在这里 —— 解析器只该回答「模型写了什么」，
+    /// 不该回答「它有没有资格」。
     let mcpRequests: [MCPToolRequest]
+    /// 每一个 `[RUN:工具名:参数]`。
+    ///
+    /// **和 `mcpRequests` 是同一档、不同来源**：两个都不碰屏幕、都不进 `actions`、
+    /// 都当场跑完把结果作为数据块回给模型。区别只在"工具住在哪"——
+    /// MCP 的工具住在一个子进程里、靠 `tools/list` 现问；目录里的工具住在
+    /// `tools/manifest.json` 里、是一条**写死的 argv**。
+    ///
+    /// **模型只能挑目录里有的**（方案 §07：模型只做选择，永远不生成命令），
+    /// 挑不到就如实说"没有这个工具"，不做相似度匹配。
+    let toolRunRequests: [ToolRunRequest]
     /// Every [SVG_BOARD:…] tag, in the order the model wrote them — figures
     /// for the user's eyes, drawn on screen next to a named element. Deliberately NOT in
     /// `actions`: a board touches no screen state, so it must not enter the
@@ -194,9 +195,9 @@ nonisolated struct ActionParseResult: Sendable {
         actions: [CompanionAction],
         shapeRequests: [AnnotationShapeRequest] = [],
         agentRequests: [AgentDispatchRequest] = [],
-        subAgentRequest: SubAgentRole? = nil,
-        subAgentTask: String? = nil,
         mcpRequests: [MCPToolRequest] = [],
+        toolRunRequests: [ToolRunRequest] = [],
+        skillRequests: [SkillNameRequest] = [],
         figureBoardRequests: [FigureBoardRequest] = []
     ) {
         self.spokenText = spokenText
@@ -204,9 +205,9 @@ nonisolated struct ActionParseResult: Sendable {
         self.actions = actions
         self.shapeRequests = shapeRequests
         self.agentRequests = agentRequests
-        self.subAgentRequest = subAgentRequest
-        self.subAgentTask = subAgentTask
         self.mcpRequests = mcpRequests
+        self.toolRunRequests = toolRunRequests
+        self.skillRequests = skillRequests
         self.figureBoardRequests = figureBoardRequests
     }
 }
@@ -236,23 +237,23 @@ nonisolated struct MCPToolRequest: Sendable, Equatable {
     let argumentsJSON: String
 }
 
-/// 主 agent 写了 `[AGENT:谁]` 但那个名字认不出来时，记一次。
+/// 一次 `[RUN:工具名:参数]` —— 模型要从**工具目录**里挑一条工具来跑。
 ///
-/// **不能静默丢掉。** 丢掉的后果和「模型根本没派活」在日志里长得一模一样 ——
-/// 而这两件事的修法完全不同（一个是提示词里名字写错了，一个是目录没讲清）。
-/// 只记最后一个，因为这个类型是 `nonisolated`，而它服务的是一条诊断日志。
-nonisolated enum UnknownSubAgentName {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var lastSeen: String?
+/// `argumentText` 是参数那一整段**原文**，一个字都不动：怎么把这段文本对到工具声明的
+/// 那几个参数上，是 `ToolCatalog.resolvedArgv` 的事（它才知道那条工具声明了几个参数）。
+/// 解析器只回答「模型写了什么」——**和 `MCPToolRequest` 同一条分工**。
+nonisolated struct ToolRunRequest: Sendable, Equatable {
+    let toolName: String
+    let argumentText: String
+}
 
-    static func record(_ name: String) {
-        lock.lock(); lastSeen = name; lock.unlock()
-    }
-
-    static func consume() -> String? {
-        lock.lock(); defer { lock.unlock() }
-        let value = lastSeen; lastSeen = nil; return value
-    }
+/// 一次 `[SKILL:技能名]` —— 把那个技能的正文拉进这一轮。
+///
+/// 只带一个名字：正文由 `SkillCatalog` 现读（技能文件改了，下一次调用就是新的，
+/// 不需要重启）。**解析器不碰文件系统** —— 它只依赖 Foundation + CoreGraphics、
+/// 能脱离 App 单独跑，那是它的立身之本。
+nonisolated struct SkillNameRequest: Sendable, Equatable {
+    let skillName: String
 }
 
 /// One [AGENT_SPAWN:…] or [AGENT_SEND:…] tag: the model asking the voice
@@ -358,28 +359,25 @@ nonisolated enum ActionTagParser {
     /// Capture groups: same as `agentSpawnPattern`.
     private static let agentSendPattern = #"\[AGENT_SEND:\s*([^:\]]+?)\s*:\s*([^\]]*?)\s*\]"#
 
-    /// `[AGENT:图形]` — 主 agent 说「这件事归它」。
+
+    /// `[RUN:工具名:参数]` —— 用**工具目录**（`tools/manifest.json`）里的那条工具。
     ///
-    /// **和上面两条不会撞**：它们在 `AGENT` 后面跟的是 `_SPAWN` / `_SEND`，
-    /// 而这一条要求紧跟一个冒号。
+    /// 捕获组：1 = 工具名（名字或别名），2 = 参数那一段原文。
     ///
-    /// Capture groups: 1 = sub agent 的名字（图形 / 执行 / 文本）。
-    /// `[AGENT:名字]` 或 `[AGENT:名字:要做什么]`。
+    /// 分隔用**第一个** `:`，所以参数里可以有冒号（URL、`key:value` 都能过）；
+    /// ⚠️ **但参数里不能有 `]`** —— 它会被当成标签结束。这是有意的取舍：
+    /// 让参数里带 `]` 就要引入括号配对，而配对在散文里没有可靠的判据
+    /// （`[` 常常只是半个方括号）。模型要查带 `]` 的东西时换个说法就行。
+    private static let toolRunPattern = #"\[RUN:\s*([^:\]]+?)\s*:\s*([^\]]*)\]"#
+
+    /// `[SKILL:技能名]` —— 把那个技能的正文拉进这一轮。
     ///
-    /// **第二个参数是 2026-09-26 加的，而且它不是便利。** 加之前这个标签**只能装「谁」**，
-    /// 而主 agent 想说的话里大部分是「做什么」。实测（`ConversationSessions.json`，
-    /// 「帮我点一下计算器里的 7」那一轮）主 agent 的回复是：
+    /// **2026-09-28 架构调整后的新标签。** 三个 sub agent 没有了，它们各自变成一个技能
+    /// （`~/Documents/SuperAgent/APP/Design/wanna/skills/<名字>/SKILL.md`），
+    /// 主 agent 常驻只拿到一行描述，要用正文时才写这个标签 —— 见 `SkillCatalog`。
     ///
-    ///     我不能自己去点，得派执行 agent 去按。
-    ///     我正在让执行 agent 在计算器里点那个 7。
-    ///
-    /// **两句话都在讲派活，一个标签都没有。** 日志排除了「写了没认出」：那条路径会打
-    /// 「认不出的 agent 名字」，而它没有出现。所以模型是把整件事写进了散文 ——
-    /// 一个只能写「执行」、写不下「在计算器里点 7」的标签，对它要表达的内容来说太窄了。
-    ///
-    /// 官方那一边是 `Agent(subagent_type, prompt)`：**名字和任务都是调用的参数**，所以
-    /// 子 agent 不必回头猜。这里补上的是同一件事。
-    private static let subAgentPattern = #"\[AGENT:\s*([^\]:]+?)\s*(?::([^\]]*))?\]"#
+    /// 捕获组：1 = 技能名（名字里不能有 `]`，和别的标签同一条取舍）。
+    private static let skillPattern = #"\[SKILL:\s*([^\]]+?)\s*\]"#
 
     // MARK: - MCP 标签的扫描
 
@@ -471,8 +469,8 @@ nonisolated enum ActionTagParser {
         var actions: [CompanionAction] = []
         var shapeRequests: [AnnotationShapeRequest] = []
         var agentRequests: [AgentDispatchRequest] = []
-        var subAgentRequest: SubAgentRole?
-        var subAgentTask: String?
+        var toolRunRequests: [ToolRunRequest] = []
+        var skillRequests: [SkillNameRequest] = []
         var mcpRequests: [MCPToolRequest] = []
         var figureBoardRequests: [FigureBoardRequest] = []
 
@@ -678,28 +676,21 @@ nonisolated enum ActionTagParser {
 
         mcpRequests = Self.scanMCPRequests(in: responseText, claimTagRange: claimTagRange)
 
-        forEachMatch(in: responseText, pattern: subAgentPattern) { match, tagRange in
+        forEachMatch(in: responseText, pattern: toolRunPattern) { match, tagRange in
             guard claimTagRange(tagRange) else { return }
-            guard let rawName = capture(1, of: match, in: responseText) else { return }
-            // **认不出是谁就当没写过这个标签。** 猜一个最近的（比如把「图形大师」
-            // 猜成图形）比不派更危险：派错会把「帮我点登录」交给只会画图的 agent，
-            // 而它照样会回一句听起来合理的答复。方案 §02 那句「宁可自己答错，
-            // 不可派错活」在代码里就落在这一行。
-            guard let role = SubAgentRole(named: rawName) else {
-                UnknownSubAgentName.record(rawName)
-                return
-            }
-            // 只认第一个：一句话派两件事，第二件没人接，而屏幕上会显示一个
-            // 「已派活」的错觉。
-            if subAgentRequest == nil {
-                subAgentRequest = role
-                // 任务写在标签里就带过去；没写就是 nil，由调用方决定回落到什么
-                // （今天是用户原话）。**不在这里编一个默认值** —— 解析器只该回答
-                // 「模型写了什么」。
-                let rawTask = capture(2, of: match, in: responseText)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                subAgentTask = (rawTask?.isEmpty == false) ? rawTask : nil
-            }
+            guard let rawToolName = capture(1, of: match, in: responseText) else { return }
+            let toolName = rawToolName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !toolName.isEmpty else { return }
+            let argumentText = capture(2, of: match, in: responseText) ?? ""
+            toolRunRequests.append(ToolRunRequest(toolName: toolName, argumentText: argumentText))
+        }
+
+        forEachMatch(in: responseText, pattern: skillPattern) { match, tagRange in
+            guard claimTagRange(tagRange) else { return }
+            guard let rawSkillName = capture(1, of: match, in: responseText) else { return }
+            let skillName = rawSkillName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !skillName.isEmpty else { return }
+            skillRequests.append(SkillNameRequest(skillName: skillName))
         }
 
         forEachMatch(in: responseText, pattern: agentSpawnPattern) { match, tagRange in
@@ -731,9 +722,9 @@ nonisolated enum ActionTagParser {
             actions: actions,
             shapeRequests: shapeRequests,
             agentRequests: agentRequests,
-            subAgentRequest: subAgentRequest,
-            subAgentTask: subAgentTask,
             mcpRequests: mcpRequests,
+            toolRunRequests: toolRunRequests,
+            skillRequests: skillRequests,
             figureBoardRequests: figureBoardRequests
         )
     }
