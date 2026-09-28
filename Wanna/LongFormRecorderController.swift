@@ -2256,17 +2256,17 @@ final class LongFormRecorderController: ObservableObject {
     /// 但保险起见还是显式取一次并激活：用户可能在录音期间手动切过窗口，那他想
     /// 粘到的就是切过去的那个。
     private func pasteIntoFrontmostApplication(_ textToPaste: String) {
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        let ownBundleID = Bundle.main.bundleIdentifier
-        if let frontmost, frontmost.bundleIdentifier != ownBundleID {
-            frontmost.activate()
-        }
-        // 给目标 App 一点时间接受激活，否则按键会发给还在前台的我们。
+        // **落点由 `MacosUseController` 一处决定**（2026-09-28 收敛过来的）：
+        // 它记住"用户刚才在用的那个 App"、把它拉回前台并**等到它真的在前台**，
+        // 然后按控件类型选路（原生文本控件 → AX；Electron / 终端那一类 → 合成 ⌘V）。
+        //
+        // 这一版之前这里读的是 `NSWorkspace.shared.frontmostApplication` ✗ —— 而粘贴那一刻
+        // 前台很可能**就是我们自己**（录音带面板展开时 `makeKey()`、而收起时从来不 `resignKey()`），
+        // 于是守卫 `frontmost.bundleIdentifier != ownBundleID` 不成立 → **连激活都不做** ✗ →
+        // 那一发粘进我们自己的窗口，用户那边什么都没有、还不报错。
+        // 用户的原话就是「录音完成也无法粘贴到光标位置」（而某些原生编辑器里能粘）。
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            // **直接把最终文本传进去**，不再回读剪贴板 —— 回读的那一版在剪贴板没被
-            // 写过时会粘出上一次的东西，而那正是这个 bug 藏了这么久的原因。
-            let didSend = MacosUseController.pasteKeepingClipboard(textToPaste)
+            let didSend = await MacosUseController.pasteKeepingClipboard(textToPaste)
             publishDiagnostic(didSend ? "已执行粘贴" : "粘贴未送出（可能缺辅助功能权限）")
         }
     }

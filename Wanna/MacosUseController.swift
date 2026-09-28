@@ -630,23 +630,134 @@ enum MacosUseController {
     /// 返回是否真的把按键送出去了。**不抛错**：粘贴是收尾动作，它失败不该让
     /// 「停止录音」这件事也跟着失败 —— 音频和文本那时已经落盘了。
     @discardableResult
-    static func pasteKeepingClipboard(_ textToPaste: String) -> Bool {
+    static func pasteKeepingClipboard(_ textToPaste: String,
+                                      preferredTarget: NSRunningApplication? = nil) async -> Bool {
+        // **先把它拉回前台，并等到它真的在前台**（用户 2026-09-28 的原话：
+        // 「是不是可以先将之前的窗口重新激活，然后粘贴呢」—— 是，而且这一步是必需的）。
+        //
+        // 为什么"当时的前台 App"不能用：那一刻前台很可能**就是我们自己**
+        //（刘海面板 / 录音带面板成为 key window 的窗口期），
+        // 而合成 ⌘V 只会落到**当前活跃 App** 手里 —— 于是它粘进了我们自己的窗口，
+        // 用户那边什么都没有，还不报错。所以这里用**"他刚才在用的那个"**（见
+        // `lastUserFacingApplication`），而不是"现在是谁"。
         guard let pasteKeyCode = mapKeyNameToKeyCode("v") else { return false }
+        let targetApplication = preferredTarget ?? lastUserFacingApplication
+
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToPaste, forType: .string)
-        // **先走 Accessibility**（本进程唯一真的能落地的一条路 —— 证据见下面那个函数），
-        // 只有它失败（聚焦的不是文本区、或那个 App 不接受 AX 写入）才退回合成 ⌘V。
-        // 顺序不能反：合成那一发在本进程里进不去，而"先发 ⌘V 再用 AX"会在能落地的地方粘两次。
+
+        if let targetApplication, !targetApplication.isActive {
+            targetApplication.activate(from: .current, options: [])
+            // 窗口服务器切换前台要几十毫秒；立刻发 ⌘V 会仍然落在我们自己手里。
+            // 轮询而不是固定 sleep：能落就立刻落，落不了最多等这么久。
+            for _ in 0..<10 {
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    == targetApplication.processIdentifier { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+
+        // **让目标 App 自己执行「粘贴」—— 按它的菜单 Edit ▸ 粘贴。**（2026-09-28 实测定下来的）
+        //
+        // 三条路的实测结果（同一天、同一批目标）：
+        //   · 往聚焦元素写 `kAXSelectedTextAttribute` —— **原生文本控件**（Zed / TextEdit）有效 ✓，
+        //     但**终端 / Electron 编辑器 / 网页输入框**上**回报 `success` 却什么都没做** ✗，
+        //     而且"按控件角色选路"也救不了：终端的角色同样是 `AXTextArea` ✗。
+        //   · 本进程合成 ⌘V（以及裸字符）—— **落不到前台 App** ✗（2026-09-28 复核仍然如此：
+        //     `活跃 App=Safari`、`Wanna isActive=false`、辅助功能=true，发出去什么也没发生）。
+        //   · **按它的菜单「粘贴」（`kAXPressAction`）—— 成 ✓**：实测 Safari 的网页文本框里
+        //     `MENU-PASTE-测试文本-123` 原样落了进去（19 字，读回核对 ✓）。
+        //     它两个优点兼有：是 **AX 动作**（不需要合成按键），执行者是**目标 App 自己**
+        //     （走它自己的粘贴实现 —— 终端、Electron、网页编辑器都认）。
+        //
+        // 菜单找不到、或那一项是灰的（有些 App 在没有聚焦编辑器时会把「粘贴」置灰）→
+        // 退回 AX 写入（原生文本控件那条路）；再不行才退回合成 ⌘V（今天它落不了地，但它是最后一手）。
+        if pressPasteMenuItem(in: targetApplication) {
+            MainFlowDiagnostics.log("⌨️ 粘贴：已让「\(targetApplication?.localizedName ?? "未知")」"
+                                    + "自己执行菜单粘贴（\(textToPaste.count) 字）")
+            return true
+        }
         if insertTextAtCaretUsingAccessibility(textToPaste) {
-            MainFlowDiagnostics.log("⌨️ 看板：走 Accessibility 把 \(textToPaste.count) 字插到了光标处")
+            MainFlowDiagnostics.log("⌨️ 粘贴：菜单那条没成，改走 Accessibility 插入 \(textToPaste.count) 字")
             return true
         }
         do {
             try pressKey(keyCode: pasteKeyCode, flags: modifierFlag(named: "cmd") ?? [])
+            MainFlowDiagnostics.log("⌨️ 粘贴：只剩合成 ⌘V 这一手了（今天实测它落不了地）")
             return true
         } catch {
             NSLog("[MacosUse] 粘贴失败：\(error)")
             return false
+        }
+    }
+
+    /// 让**目标 App 自己**执行菜单里的「粘贴」——纯 AX 动作，不合成任何按键。
+    ///
+    /// 为什么这是首选：它是唯一一条**在终端 / Electron / 网页输入框上都成立**的路
+    /// （见 `pasteKeepingClipboard` 里那张实测表）。判据用 `kAXEnabledAttribute`：
+    /// 有些 App 在没有聚焦编辑器时会把「粘贴」置灰，灰的那一项按下去什么都不会发生，
+    /// 那就该让调用方去试下一条路，而不是把这一次粘贴耗在一项按不动的菜单上。
+    static func pressPasteMenuItem(in application: NSRunningApplication?) -> Bool {
+        guard let application else { return false }
+        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+        func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+            return value
+        }
+        guard let menuBarValue = attribute(appElement, kAXMenuBarAttribute as String) else { return false }
+        let menuBar = menuBarValue as! AXUIElement
+
+        // 中英文界面都认；「粘贴并匹配样式」是同一件事的另一种口味，也接住。
+        let pasteTitles: Set<String> = ["粘贴", "Paste", "粘贴并匹配样式", "Paste and Match Style"]
+        var foundItem: AXUIElement?
+        func scan(_ element: AXUIElement, depth: Int) {
+            guard depth <= 4, foundItem == nil else { return }
+            let children = (attribute(element, kAXChildrenAttribute as String) as? [AXUIElement]) ?? []
+            for child in children {
+                let title = (attribute(child, kAXTitleAttribute as String) as? String) ?? ""
+                if pasteTitles.contains(title) { foundItem = child; return }
+                scan(child, depth: depth + 1)
+                if foundItem != nil { return }
+            }
+        }
+        scan(menuBar, depth: 1)
+
+        guard let pasteItem = foundItem else { return false }
+        if let enabled = attribute(pasteItem, kAXEnabledAttribute as String) as? Bool, !enabled { return false }
+        return AXUIElementPerformAction(pasteItem, kAXPressAction as CFString) == .success
+    }
+
+    /// **用户刚才在用的那个 App**（不是"现在是谁"）。
+    ///
+    /// 记它的理由见 `pasteKeepingClipboard`：粘贴那一刻的前台很可能**是我们自己**
+    ///（我们的面板成为 key window / 我们被激活），拿"当前前台"当落点就会粘进我们自己的窗口 ✗。
+    /// 观察者是懒安装的，只在这一条路上用到；`bundleIdentifier` 与我们相同的**一律不记**，
+    /// 所以它永远是"最后一个非 Wanna 的前台 App"。
+    static var lastUserFacingApplication: NSRunningApplication? {
+        installLastUserFacingApplicationObserverIfNeeded()
+        return _lastUserFacingApplication
+    }
+
+    private static var _lastUserFacingApplication: NSRunningApplication?
+    private static var lastUserFacingApplicationObserver: NSObjectProtocol?
+
+    private static func installLastUserFacingApplicationObserverIfNeeded() {
+        guard lastUserFacingApplicationObserver == nil else { return }
+        let ourBundleIdentifier = Bundle.main.bundleIdentifier
+        _lastUserFacingApplication = NSWorkspace.shared.frontmostApplication
+        if _lastUserFacingApplication?.bundleIdentifier == ourBundleIdentifier {
+            _lastUserFacingApplication = nil
+        }
+        lastUserFacingApplicationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let activated = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication else { return }
+            guard activated.bundleIdentifier != ourBundleIdentifier else { return }
+            _lastUserFacingApplication = activated
         }
     }
 

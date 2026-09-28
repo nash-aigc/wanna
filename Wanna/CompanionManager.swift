@@ -651,12 +651,11 @@ final class CompanionManager: ObservableObject {
         handleEscapeKeyPressed()
         let targetApp = lastUserFacingApplication
         Task { @MainActor in
-            if let targetApp, !targetApp.isActive {
-                targetApp.activate(from: .current, options: [])
-                // 窗口服务器切换前台要几十毫秒 —— 立刻发 ⌘V 会仍然落在我们自己手里。
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            let didSendPasteKeystroke = MacosUseController.pasteKeepingClipboard(text)
+            // **拉回前台 + 等待 + 选路，都在 `pasteKeepingClipboard` 一处**（2026-09-28 收敛）：
+            // 它按控件类型决定走 AX 还是合成 ⌘V —— Notion / Orca 那类 Electron 编辑器
+            // **对 AX 写入回报 success 却什么都不做** ✗，只有真正的 ⌘V 才粘得进去。
+            let didSendPasteKeystroke = await MacosUseController.pasteKeepingClipboard(
+                text, preferredTarget: targetApp)
             // 这一行要能回答"⌘V 到底落到了谁手里"：真实的**当前活跃 App**（不是我们记的那个）、
             // 我们自己是不是 active、有没有 key window、以及**辅助功能权限在不在** ——
             // 没有那个权限时 `CGEvent.post` 不报错也不落地（系统静默丢弃）。

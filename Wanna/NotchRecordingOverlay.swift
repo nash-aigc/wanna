@@ -1098,7 +1098,18 @@ final class NotchRecordingOverlayController {
                 // 用户的要求：「里面的内容可以用户输入，不一定非要转写之后才能输入，
                 // 用户可以直接先粘贴一些提示词或文本」。不主动 makeKey 的话，用户得
                 // 先点一下编辑区才能粘贴 —— 而他会以为「这里不能输入」。
-                if isExpanded { self.panels.first?.makeKey() }
+                //
+                // ⚠️ **收起时必须把 key 交还回去**（2026-09-28，配合同一天的粘贴改动）：
+                // `makeKey()` 只写在展开这一支，而收起那一路从来没有 `resignKey()` ✗ ——
+                // 于是"展开过一次"之后，Wanna 一直握着 key window，
+                // 后续那些**合成 ⌘V 的粘贴就落进我们自己的窗口**：用户看到的是
+                // 「录音完成粘不进光标位置」，而某些原生编辑器里又能粘 ✗。
+                // 判据只有一句：这个面板不该在收起状态下还占着 key。
+                if isExpanded {
+                    self.panels.first?.makeKey()
+                } else if self.panels.first?.isKeyWindow == true {
+                    self.panels.first?.resignKey()
+                }
             }
     }
 
