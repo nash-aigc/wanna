@@ -834,7 +834,9 @@ nonisolated enum NotchSupport {
     ///（卡窄一点时缝更大 —— 卡的宽度随内容变，这是它唯一能保证的下限）。
     nonisolated static let directionBoardBarCardClearance: CGFloat = 20
     nonisolated static var directionBoardBarWidth: CGFloat {
-        directionBoardColumnWidth + directionBoardBarCardClearance   // 260（看板自己的基准，与回复卡无关 ✓）
+        // **用户 2026-09-28：「补充跟矛盾这两列的宽度总和应该跟回复卡的宽度一致」** ✓
+        // 所以这里直接用回复卡的宽度（340），不再加 clearance ✓。
+        answerCardMaximumWidth
     }
     /// 横杠的高度 —— **定值**（行的集合恒定、每行预留固定行数，卡片高度因此不晃）。
     ///
