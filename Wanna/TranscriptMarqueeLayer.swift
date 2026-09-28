@@ -194,10 +194,14 @@ final class TranscriptMarqueeLayer: CALayer {
     /// 文本或尺寸变了：更新文字层，并立刻重设一次动画。
     func refresh(animated: Bool = true) {
         updateTextLayerContents()
-        if animated { retargetAnimation() } else { snapToRestingPosition() }
+        if animated { retargetAnimation() } else { settleAtCurrentPosition() }
     }
 
+    private var lastRenderedText: String?
+
     private func updateTextLayerContents() {
+        guard lastRenderedText != feed.displayedText else { return }
+        lastRenderedText = feed.displayedText
         let lineHeight = ceil(feed.font.ascender - feed.font.descender + feed.font.leading)
         textLayer.string = NSAttributedString(
             string: feed.displayedText,
@@ -214,31 +218,96 @@ final class TranscriptMarqueeLayer: CALayer {
 
     private func retargetAnimation() {
         guard bounds.width > 0 else { return }
-        updateTextLayerContents()
 
         let now = CACurrentMediaTime()
         let elapsed = max(0.001, now - lastRetargetAt)
         lastRetargetAt = now
 
-        // ① 真实显示位置：**问渲染服务器**，主线程卡顿期间它一直在走。
-        //    模型值在动画进行中是"目标"不是"当前位置"，拿它当起点会让画面回跳。
-        let renderedX = presentationX()
+        // ① 真实显示位置：**问渲染服务器**。模型值在动画进行中是"目标"，不是"当前位置"。
+        let current = presentationX()
 
-        // ② 把渲染位置同步回字符索引（幂等）——两侧因此永远不会累积误差。
-        let consumedPoints = bounds.width - feed.totalWidth - renderedX
-        feed.syncScroll(toConsumedPoints: consumedPoints)
+        // ② **权威状态跟随渲染**：先把它对齐到"现在真正在哪"。
+        //
+        //    ⚠️ **符号不能错**。位置是 `x = 视宽 − 总宽 + 已消费`，所以
+        //    `已消费 = x + 总宽 − 视宽`。第一版把这一条写反了（`视宽 − 总宽 − x`），
+        //    算出来是个大负数 → 索引被钳到 0、目标变成垃圾 → 屏幕上就是用户报的"乱跳"。
+        feed.syncScroll(toConsumedPoints: current + feed.totalWidth - bounds.width)
 
-        // ③ 调度：这一窗该滚多快。
+        // ③ 这一窗怎么滚。
         let pending = feed.pendingPoints(viewWidth: bounds.width)
         switch scheduler.tick(pendingPoints: pending, viewWidth: bounds.width,
                               elapsedSeconds: elapsed) {
         case .idle:
-            snapToRestingPosition()
+            settleAtCurrentPosition()
         case .jumpToEnd:
             jumpToEnd()
-        case .scroll(_, let points):
-            animateScroll(byPoints: points)
+        case .scroll(let speed, _):
+            // ④ **预测 horizon 秒后的位置，动画就走到那里** —— 时长与距离同源，
+            //    速度恰好等于 `speed`。
+            //
+            //    ⚠️ **第一版这里是分开算的**：状态按 `elapsed`（0.1 秒）前进、动画却按
+            //    `horizon`（0.25 秒）走 → 状态永远跑在画面**前面**，下一次重设又从画面
+            //    把状态拉回来 → 每 0.1 秒对不上一次 = **10Hz 的左右晃**
+            //    （用户报的「高频的闪、左右晃动」）。现在只保留一条：
+            //    **状态是预测点的结果**，不是"再往前走一格"。
+            let leftEnd = bounds.width - feed.totalWidth      // 全部滚出去时的 x
+            let rightEnd = max(0, leftEnd)                    // 贴住末尾时的 x
+            let predicted = min(max(current + speed * CGFloat(horizon), leftEnd), rightEnd)
+            guard abs(predicted - current) > 0.05 else {
+                settleAtCurrentPosition()
+                return
+            }
+            animateSliding(from: current, to: predicted, duration: horizon)
+            feed.syncScroll(toConsumedPoints: predicted + feed.totalWidth - bounds.width)
         }
+    }
+
+    /// 没有排队量：**停在原地**（而不是"瞬移到最后对齐的位置"）。
+    ///
+    /// 第一版这里调的是 `snapToRestingPosition()` —— 它会去掉动画、把位置**直接设成**末尾
+    /// 对齐的位置，而那时动画可能正跑在半路 → 一次可见的瞬移；下一次有字到达再动，
+    /// 于是「停一下、跳一下」交替出现。
+    ///
+    /// 唯一的例外是**没有动画在跑**时的一次性对齐（短文本的右对齐、或收尾差的那一点点）——
+    /// 那时候屏幕上本来就没有运动，瞬移看不见。
+    private func settleAtCurrentPosition() {
+        let current = presentationX()
+        let rightEnd = max(0, bounds.width - feed.totalWidth)
+        let hasAnimation = textLayer.animation(forKey: "scroll") != nil
+
+        if !hasAnimation, abs(current - rightEnd) > 0.5 {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            textLayer.transform = CATransform3DMakeTranslation(rightEnd, 0, 0)
+            CATransaction.commit()
+            feed.syncScroll(toConsumedPoints: rightEnd + feed.totalWidth - bounds.width)
+            return
+        }
+        guard hasAnimation else { return }
+        textLayer.removeAnimation(forKey: "scroll")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        textLayer.transform = CATransform3DMakeTranslation(current, 0, 0)
+        CATransaction.commit()
+    }
+
+    /// 从 `from` 线性滑到 `to`，耗时 `duration` —— **线性 = 等速**。
+    private func animateSliding(from: CGFloat, to: CGFloat, duration: CFTimeInterval) {
+        let animation = CABasicAnimation(keyPath: "transform.translation.x")
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = duration
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        animation.isRemovedOnCompletion = false
+        animation.fillMode = .forwards
+        animation.beginTime = CACurrentMediaTime()
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)   // 模型值直接落到终点，不额外补隐式动画
+        textLayer.removeAnimation(forKey: "scroll")   // 替换，不是叠加
+        textLayer.add(animation, forKey: "scroll")
+        textLayer.transform = CATransform3DMakeTranslation(to, 0, 0)
+        CATransaction.commit()
     }
 
     /// 文字层当前的**呈现位置**（渲染服务器上的真实 x）。没有动画在跑时回落到模型值。
@@ -247,49 +316,6 @@ final class TranscriptMarqueeLayer: CALayer {
             return presented.transform.m41
         }
         return textLayer.transform.m41
-    }
-
-    /// 滚 `points` 个 pt：一段线性动画，`horizon` 秒内走完。
-    private func animateScroll(byPoints points: CGFloat) {
-        guard points > 0.01 else { return }
-        let from = presentationX()
-        // ④ 位置由**权威状态**现算，不由"上一个位置 + 本窗位移"累积 ——
-        //    这正是"主线程卡多久都不漂"的原因。
-        feed.advanceScroll(byPoints: points)
-        let target = feed.contentOffsetX(viewWidth: bounds.width)
-        // 不要冲过终点（越过之后会回弹，那也是一眼能看出来的抖动）。
-        let resting = max(0, bounds.width - feed.totalWidth)
-        let to = max(min(target, from), resting)
-
-        guard abs(to - from) > 0.05 else { return }
-
-        let animation = CABasicAnimation(keyPath: "transform.translation.x")
-        animation.fromValue = from
-        animation.toValue = to
-        animation.duration = horizon
-        // **线性 = 等速**（Core Animation 里唯一的写法）。
-        animation.timingFunction = CAMediaTimingFunction(name: .linear)
-        animation.isRemovedOnCompletion = false
-        animation.fillMode = .forwards
-        animation.beginTime = CACurrentMediaTime()
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)   // 模型值直接落到终点，不额外补一段隐式动画
-        textLayer.add(animation, forKey: "scroll")
-        textLayer.transform = CATransform3DMakeTranslation(to, 0, 0)
-        CATransaction.commit()
-    }
-
-    /// 停在它该停的地方（已追上 / 没有任何可滚的）。
-    private func snapToRestingPosition() {
-        let resting = feed.contentOffsetX(viewWidth: bounds.width)
-        guard abs(presentationX() - resting) > 0.05 || textLayer.animation(forKey: "scroll") != nil
-        else { return }
-        textLayer.removeAnimation(forKey: "scroll")
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        textLayer.transform = CATransform3DMakeTranslation(resting, 0, 0)
-        CATransaction.commit()
     }
 
     /// 硬快进兜底：排队超过两屏时放弃连续，直接跳到末尾。
