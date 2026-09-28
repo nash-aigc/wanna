@@ -143,17 +143,23 @@ struct DirectionBoardView: View {
         // 让凹口从 x=0 起（左壁根本不存在 ✓），所以这圈边不会再长出那条线 ✓ —— 两头都满足 ✓。
         .overlay(
             // 描边用**去掉左边那一段**的那条路径 ✓（用户：「你把那道线变成透明」）
-            AnyShape(DirectionBoardHollowShape(
-                notchLeadingInset: 0,
-                notchTrailingInset: Self.questionColumnWidth + Self.harnessColumnWidth,
-                notchTopInset: Self.barHeight,
-                drawsLeftEdge: false))
+            // 左边那条线用「盖住」的办法去掉（用户的原话：「你把那道线变成透明……你直接把这部分
+            // 给我变得透明的」）—— 不再做路径手术 ✗（那次把填充切坏了 ✗），改成描边照常画、
+            // 再用一块卡片底色的窄条盖住左边那一段 ✓。
+            currentOutlineShape
                 // 被按住不发 → 告警色呼吸；**折叠着 → 绿色**（用户：「折叠后卡片边缘自动变成绿色，
                 // 便于用户快速在桌面上看到其位置」）；其余用主题边框 ✓。
                 .stroke(borderTint, lineWidth: borderWidth)
                 .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
                 .animation(.easeInOut(duration: 0.25), value: session.isCollapsed)
         )
+        .overlay(alignment: .topLeading) {
+            Rectangle()
+                .fill(DS.Colors.surface2)
+                .frame(width: 2.5)
+                .padding(.top, Self.barHeight)
+                .allowsHitTesting(false)
+        }
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
         .contentShape(Rectangle())
         .onTapGesture { onCardTapped() }
@@ -907,10 +913,6 @@ struct DirectionBoardHollowShape: Shape {
     var notchTopInset: CGFloat
     var cornerRadius: CGFloat = AnswerCardView.cardCornerRadius
 
-    /// **要不要画"左边那一竖段"**：
-    ///   · 填充（底色）→ `true` ✓（否则像 2026-09-28 那次一样**卡片少一块** ✗，用户当场看出「裁剪坏了」）；
-    ///   · 描边（那圈线）→ `false` ✓（用户要的就是"这条线透明、看不见" ✓）。
-    var drawsLeftEdge: Bool = true
 
     func path(in rect: CGRect) -> Path {
         let radius = max(0, min(cornerRadius, min(rect.width, rect.height) / 2))
@@ -918,30 +920,27 @@ struct DirectionBoardHollowShape: Shape {
         let notchRight = max(notchLeft, rect.maxX - notchTrailingInset)
         let notchTop = rect.minY + notchTopInset
         var path = Path()
-
-        // 左边那一竖段：**填充要它**（否则卡片缺一块 ✗），**描边不要它** ✓（用户要那条线看不见 ✓）。
-        if drawsLeftEdge {
-            path.move(to: CGPoint(x: rect.minX, y: notchTop))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
-        }
-
-        // 左上圆角（圆的 ✓）
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY + radius))
-        // 左上圆角（这一段是圆的 ✓）
+        // **一条闭合路径**（今天早上验证过能用的那一版）—— 不要在这里做"少画一段"的手术 ✗：
+        // 2026-09-28 我试过一次，路径里出现两个 `move` → 两个子路径 → 配 even-odd 填充互相抵消，
+        // 卡片被切坏（用户当场看出来：「高度上是切的，竖直上也是斜的」）。
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
         path.addArc(center: CGPoint(x: rect.minX + radius, y: rect.minY + radius),
-                    radius: radius, startAngle: .degrees(270), endAngle: .degrees(180), clockwise: true)
-        // 上边 → 右上圆角
+                    radius: radius, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
         path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
         path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.minY + radius),
                     radius: radius, startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
-        // 右边 → 右下圆角
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
         path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
                     radius: radius, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-        // 下边只画右半段 → 进凹口 → 绕过凹口顶 → 收笔（**左边不画** ✓）
         path.addLine(to: CGPoint(x: notchRight, y: rect.maxY))
         path.addLine(to: CGPoint(x: notchRight, y: notchTop))
         path.addLine(to: CGPoint(x: notchLeft, y: notchTop))
+        path.addLine(to: CGPoint(x: notchLeft, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addArc(center: CGPoint(x: rect.minX + radius, y: rect.maxY - radius),
+                    radius: radius, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        path.closeSubpath()
         return path
     }
 }
