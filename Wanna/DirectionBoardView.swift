@@ -408,22 +408,14 @@ private struct ReferenceTagFlowLayout: Layout {
     private var barColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
-                // 左：**推荐 ｜ 矛盾**（两块都是大语言模型生成的，用户 2026-09-28 的红框图）
-                recommendationColumn
-                    .frame(width: Self.recommendationColumnWidth, alignment: .topLeading)
-                Rectangle()
-                    .fill(theme.textColor.opacity(0.22))
-                    .frame(width: 1)
-                    .padding(.vertical, 2)
-                questionLines
-                    .padding(.leading, 8)
+                // 左：**用户问题**（= 那棵脑图；用户 2026-09-28 纠正：左侧是用户问题）
+                mindMapColumn
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 Rectangle()
                     .fill(theme.textColor.opacity(0.22))
                     .frame(width: 1)
                     .padding(.vertical, 2)
-                // 右：**Harness**（JEV/代码匹配那一块）——移到最右（用户：「最右侧这部分显示
-                // 所有的这个 Harness 工程里面的整个结构」）。
+                // 右：**Harness**（他原话：「右侧=harness」）
                 harnessColumn
                     .padding(.leading, 8)
                     .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
@@ -588,7 +580,33 @@ private struct ReferenceTagFlowLayout: Layout {
     static let optionSlots = 3
 
     /// **7 的那一竖**：整条脑图（不画标题），宽度与右下角回复卡相同。
+    /// **竖条：推荐 ｜ 矛盾**（两块并排，合起来正好是**右下角那张卡片的宽度** ——
+    /// 用户 2026-09-28：「（补充、矛盾）占据的宽度 = 右下角卡片的宽度」✓，
+    /// 而这条竖条本来就是按回复卡的宽度做的 ✓）。
+    ///
+    /// 两块都是大语言模型生成的：左边是"推荐用户再补点什么"，右边是"矛盾"。
+    /// 脑图（用户问题）这一版**搬去了横杠左侧** ✓，所以这里腾出来给它俩。
     private var mapColumn: some View {
+        HStack(alignment: .top, spacing: 0) {
+            recommendationColumn
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            Rectangle()
+                .fill(theme.textColor.opacity(0.22))
+                .frame(width: 1)
+                .padding(.vertical, 2)
+            questionLines
+                .padding(.leading, 8)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .padding(.horizontal, Self.horizontalPadding)
+        .padding(.vertical, Self.mapVerticalPadding)
+        .frame(width: Self.mapWidth, alignment: .topLeading)
+        .frame(maxHeight: Self.maximumMapHeight, alignment: .topLeading)
+        .clipped()
+    }
+
+    /// **用户问题**：横杠左侧那一列 —— 就是原来竖条里那棵脑图（内容一字未改 ✓）。
+    private var mindMapColumn: some View {
         let value = session.understandingLines.first { $0.label == Self.mindMapLabel }?.value ?? ""
         return Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
             .font(.system(size: 12, design: .monospaced))
@@ -598,22 +616,8 @@ private struct ReferenceTagFlowLayout: Layout {
             .id(value)
             .transition(.opacity)
             .animation(.easeOut(duration: 0.28), value: value)
-            .padding(.horizontal, Self.horizontalPadding)
-            .padding(.vertical, Self.mapVerticalPadding)
-            .frame(width: Self.mapWidth, alignment: .topLeading)
-            // **能长多长由屏幕决定**（上限 = 菜单栏以下 × 70%），超了就在下面截断。
-            //
-            // ⚠️ **这里不能加 `maxHeight: .infinity`**（第一版加了，实测面板恒为横杠的 224 高）：
-            // 那会让竖条变成"可伸缩的子视图"，于是 HStack 的高度只由**横杠**决定，
-            // 脑图再多也被裁在 224 里 —— 而 "7 的竖条一直往下长" 正是这个形状的意义。
-            // 去掉之后高度由内容自己撑（上限只挂在屏幕上），HStack 取两者较大的那个。
-            .frame(maxHeight: Self.maximumMapHeight, alignment: .topLeading)
-            .clipped()
     }
 
-    /// **左侧那几条问题**（原「矛盾」）：**不画标签**，每行以 `?：` 开头
-    ///（用户 2026-09-28：「也不需要写"矛盾"，只需要在**每一行的开头写一个问号，就一个问号**，
-    /// 然后冒号右边是那些内容，让用户知道这是个问题」）。
     private var questionLines: some View {
         let value = session.understandingLines.first { $0.label == DirectionBoardPrompt.questionLabel }?.value ?? ""
         let lines = Self.questionTexts(from: value)
