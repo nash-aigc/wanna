@@ -370,24 +370,6 @@ struct GeneralSettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            SettingsGroupLabel("皮肤")
-            SettingsCard {
-                SettingsRow(
-                    label: "窗口皮肤",
-                    description: "「深色」是默认那一套，与增加皮肤之前**逐字相同**。"
-                        + "「玻璃拟态」把侧栏、内容列、卡片、气泡、输入框换成半透明白的分层 + 细白边，"
-                        + "观感是磨砂玻璃 —— 但**窗口本身仍然完全不透明**，不会透出桌面。\n"
-                        + "切换立刻生效，不需要重启。"
-                ) {
-                    SettingsSegmentedPicker(
-                        selection: generalSettingsViewModel.binding(\.windowSkinRawValue),
-                        options: WindowSkin.allCases.map {
-                            SettingsPickerOption(label: $0.displayName, value: $0.rawValue)
-                        }
-                    )
-                }
-            }
-
             SettingsGroupLabel("窗口样式")
             SettingsCard {
                 SettingsRow(
