@@ -98,8 +98,7 @@ struct SmoothRevealedTranscriptText: View {
         let shown = String(text.dropFirst(windowStart))
         // **文字右边缘永远钉在这一行的右端**，随着字变多向左长 ——
         // 用户的要求：「无论是第一个字还是第二个字，永远都是从右向左移动」。
-        let measuredWidth = widthCache.width(of: shown)
-        let targetOffset = availableWidth - measuredWidth
+        // （位移在下面那两处 `onChange` 里算：它们要按**新**文字算，不能拿 `shown`。）
 
         Text(shown.isEmpty ? " " : shown)
             .font(.system(size: Self.fontSize, weight: .medium))
@@ -139,11 +138,62 @@ struct SmoothRevealedTranscriptText: View {
                     return
                 }
                 let shownNow = String(newText.dropFirst(windowStart))
-                withAnimation(.linear(duration: duration)) {
-                    slideOffset = availableWidth - widthCache.width(of: shownNow)
+                let newOffset = availableWidth - widthCache.width(of: shownNow)
+                withAnimation(.linear(duration: Self.cappedSlideDuration(
+                    duration, distance: abs(newOffset - slideOffset)))) {
+                    slideOffset = newOffset
                 }
             }
     }
+
+    /// **给这一行的移动速度封顶** —— 2026-09-28 用户报「忽快忽慢」时加的。
+    ///
+    /// ## 用户的原话（它把这件事说得很准）
+    ///
+    /// > 「它不是平滑的滚动……有的时候我是说一个字，有时候是说一堆字连续的。
+    /// > 如果我一次一个字一个字地去说，他就非常平衡；但是如果很多字的话，他就不平衡。
+    /// > 能不能有一种方法，就是说牺牲一点什么显示效果……让他能够去无论右侧有多少个
+    /// > 需要加载出来，它都去。我不知道他是不是在追求一个把用户当前说的内容实时地
+    /// > 显示在这个窗口上，那如果字数非常多的话，他只能去加速显示，才能够让用户看到
+    /// > 实时的效果。还是说你有一定的方法能够让他无论用户说的语速快还是慢……都能够
+    /// > 很平滑地、很顺畅地去从头向尾移动，现在就是忽快忽慢。」
+    ///
+    /// ## 根因
+    ///
+    /// 改之前只有一条公式：**时长 = 距上一条结果的间隔 × 1.2**（0.06…0.6 夹住）。
+    /// 而**距离**由"这一批来了多少字"决定 —— 两者互相独立，于是：
+    ///
+    /// · 一次 1 个字（14.88pt）÷ 0.36s ≈ **41 pt/s** ← 用户说"非常平衡"的就是它；
+    /// · 一次 20 个字（298pt）÷ 同一个 0.36s ≈ **828 pt/s** ← 同一个动作快 20 倍。
+    ///
+    /// 所以"忽快忽慢"不是渲染问题，是**这条公式本身把距离和时长解耦了**。
+    ///
+    /// ## 改法：不是加速，是**封顶**
+    ///
+    /// `时长 = max(间隔 × 1.2, 距离 ÷ 最高速度)` ——
+    /// 距离小的时候仍是原来那一条（**一个字一个字的手感一个字都不变**）；
+    /// 距离大到会把速度顶穿时，由速度上限说了算，多出来的距离**换成更长的时间**。
+    ///
+    /// **代价是它可能暂时落后于最新内容**（最新的字在右边缘外排队，慢慢滚进来）——
+    /// 这一点用户明确接受：「牺牲一点什么显示效果」。反过来，如果为了"实时"而加速，
+    /// 得到的正是他报的这个毛病，所以两条路只能选一条，选平滑。
+    ///
+    /// ## 上限为什么是 74 pt/s
+    ///
+    /// 「每秒 5 个汉字 × 一个汉字的宽度」：正常说话 4–6 字/秒，所以这个速度**跟得上
+    /// 正常说话**（正常说的时候看不见落后），而一次涌来 20 个字时它不会被带飞。
+    /// 一个汉字的 advance 是本仓实测值 **14.883268pt**（纯中文，等宽字体）。
+    ///
+    /// ⚠️ **这是一个可以调的数**：嫌它落后太多就调大，嫌涌出时还是快就调小。
+    /// 调之前先看 `MainFlowDiagnostics` 那一行 `📊 这一秒：… 新增 N 字` —— 那是
+    /// "用户说话时到底每秒进来多少字"的实测值，用它校准，别靠感觉。
+    static func cappedSlideDuration(_ baseDuration: Double, distance: CGFloat) -> Double {
+        let speedLimited = Double(distance) / Double(maximumSlidePointsPerSecond)
+        return max(baseDuration, speedLimited)
+    }
+
+    /// 这一行移动的最高速度（pt/秒）—— 见 `cappedSlideDuration` 的文档注释。
+    private static let maximumSlidePointsPerSecond: CGFloat = 74
 
     /// 这一段的动画时长 = **距上一条结果的实际间隔**（夹在 0.06…0.6 之间）。
     ///

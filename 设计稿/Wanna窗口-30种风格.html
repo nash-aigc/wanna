@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wanna 窗口 · 30 种风格切换器</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23050506'/%3E%3Cpath d='M6 16h20' stroke='%230A84FF' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%230A84FF'/%3E%3C/svg%3E">
+<style>
+/* ============================================================
+   页面外壳：工具性中性深色，让窗口预览成为唯一主角
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  background: #0B0B0D;
+  color: #D7D7DE;
+  min-height: 100vh;
+}
+::selection { background: #0A84FF55; }
+
+.page-head {
+  position: sticky; top: 0; z-index: 50;
+  background: #101014ee; backdrop-filter: blur(14px);
+  border-bottom: 1px solid #1D1D21;
+  padding: 12px 20px 0;
+}
+.page-head h1 {
+  font-size: 17px; font-weight: 650; letter-spacing: .5px; color: #F2F2F4;
+  display: flex; align-items: baseline; gap: 10px;
+}
+.page-head h1 small { font-size: 12px; font-weight: 400; color: #8A8A93; }
+.family-row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; padding-bottom: 10px; }
+.family-btn {
+  border: 1px solid #26262C; background: #17171B; color: #B9B9C2;
+  font-size: 12px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.family-btn:hover { background: #1E1E24; color: #F2F2F4; }
+.family-btn.active { background: #0A84FF1F; border-color: #0A84FF88; color: #6CB8FF; }
+.theme-row { display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 12px; }
+.theme-btn {
+  border: 1px solid #1D1D21; background: #121216; color: #9A9AA3;
+  font-size: 11.5px; padding: 4px 9px; border-radius: 6px; cursor: pointer;
+  transition: all .12s; white-space: nowrap;
+}
+.theme-btn:hover { color: #F2F2F4; border-color: #3A3A42; }
+.theme-btn.active { background: #0A84FF; border-color: #0A84FF; color: #fff; font-weight: 600; }
+
+/* ============================================================
+   舞台：模拟 Wanna 展开面板
+   宽 = 侧栏207 + 分隔线1 + 内容列565 = 773px（等比还原）
+   ============================================================ */
+.stage-wrap { display: flex; justify-content: center; padding: 28px 16px 10px; }
+#stage {
+  width: 773px; max-width: 100%;
+  height: 585px;
+  border-radius: 14px; overflow: hidden;
+  position: relative;
+  box-shadow: 0 24px 70px rgba(0,0,0,.55), 0 4px 18px rgba(0,0,0,.35);
+  transition: background .35s;
+}
+/* —— 顶部刘海带：32px 刘海 + 32px 转写条 —— */
+.notch-strip { position: absolute; top: 0; left: 0; right: 0; height: 64px; z-index: 30; }
+.notch-strip .notch-bar {
+  height: 32px; background: #050506; display: flex; align-items: center; justify-content: center;
+}
+.notch-strip .notch-bar .hw-notch {
+  width: 190px; height: 28px; background: #000; border-radius: 0 0 16px 16px; flex-shrink: 0;
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,.06);
+}
+.notch-strip .transcript-row {
+  height: 32px; background: #18181C; display: flex; align-items: center;
+  padding: 0 14px; gap: 8px; font-size: 11px; color: #8A8A93; border-bottom: 1px solid #1D1D21;
+}
+.notch-strip .transcript-row .wave {
+  width: 46px; height: 14px; opacity: .8;
+  background: linear-gradient(180deg,#0A84FF,#7A5CFF);
+  border-radius: 2px;
+}
+.notch-strip .transcript-row .t-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* —— 主体：侧栏 + 分隔线 + 内容列 —— */
+.win-body { position: absolute; top: 64px; left: 0; right: 0; bottom: 0; display: flex; }
+.sidebar { width: 207px; flex-shrink: 0; padding: 10px 8px; overflow: hidden; display: flex; flex-direction: column; gap: 8px; }
+.side-divider { width: 1px; flex-shrink: 0; }
+.content-col { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 0 12px; }
+/* 侧栏小组件 */
+.sb-top { display: flex; gap: 4px; }
+.sb-chip { flex: 1; font-size: 11px; padding: 5px 0; text-align: center; border-radius: 7px; cursor: pointer; }
+.sb-card { border-radius: 12px; padding: 10px 10px 8px; cursor: pointer; }
+.sb-card .card-title { font-size: 12.5px; font-weight: 600; line-height: 1.35; }
+.sb-card .card-sub { font-size: 10.5px; margin-top: 3px; opacity: .72; display: flex; gap: 6px; align-items: center; }
+.sb-card .card-tag { font-size: 9px; padding: 1px 6px; border-radius: 5px; }
+.sb-fold { font-size: 11px; opacity: .7; padding: 4px 2px; cursor: pointer; }
+/* 内容列 · 模式行 */
+.mode-row { height: 34px; display: flex; align-items: center; gap: 5px; border-bottom: 1px solid; flex-shrink: 0; }
+.mode-chip { font-size: 11.5px; padding: 4px 10px; border-radius: 7px; cursor: pointer; }
+.mode-chip.call { margin-left: 2px; }
+.mode-spacer { flex: 1; }
+.mode-right { font-size: 11px; opacity: .75; display: flex; gap: 6px; align-items: center; }
+.mode-right span { padding: 3px 7px; border-radius: 6px; cursor: pointer; }
+/* 内容列 · 对话区 */
+.chat-area { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 12px; padding: 12px 2px; }
+.msg { max-width: 88%; display: flex; gap: 8px; }
+.msg .bubble { padding: 9px 13px; font-size: 12.5px; line-height: 1.65; border-radius: 12px; }
+.msg .meta { font-size: 10px; opacity: .55; display: flex; gap: 6px; align-items: center; margin-top: 4px; white-space: nowrap; }
+.msg.user { align-self: flex-end; flex-direction: column; align-items: flex-end; }
+.msg.ai { align-self: flex-start; }
+.msg.ai .bubble { border-radius: 12px 12px 12px 4px; }
+.msg.user .bubble { border-radius: 12px 12px 4px 12px; }
+/* 内容列 · 输入条 */
+.composer { border-top: 1px solid; padding: 8px 2px 12px; flex-shrink: 0; }
+.composer .c-top { display: flex; gap: 5px; align-items: center; font-size: 11px; margin-bottom: 6px; }
+.composer .c-btn { padding: 3px 9px; border-radius: 6px; cursor: pointer; opacity: .85; }
+.composer .c-btn.toggle-on { font-weight: 600; }
+.composer .c-right { margin-left: auto; display: flex; gap: 5px; align-items: center; }
+.composer .c-input {
+  border-radius: 10px; padding: 9px 13px; font-size: 12.5px; color: #B9B9C2; cursor: text;
+}
+/* 风格说明条 */
+.theme-note {
+  max-width: 773px; margin: 6px auto 0; padding: 10px 14px; font-size: 12px;
+  color: #9A9AA3; background: #101014; border: 1px solid #1D1D21; border-radius: 10px; line-height: 1.7;
+}
+.theme-note b { color: #E8E8EC; }
+.page-foot { text-align: center; padding: 14px; font-size: 11px; color: #5A5A63; }
+
+/* ============================================================
+   结构变体（JS 按风格切换 body class）
+   ============================================================ */
+body.mode-singlecol .sidebar { display: none; }
+body.mode-singlecol .side-divider { display: none; }
+body.mode-purechat .sidebar, body.mode-purechat .side-divider { display: none; }
+body.mode-purechat .mode-row { display: none; }
+body.mode-command .sidebar { display: none; }
+body.mode-command .side-divider { display: none; }
+body.mode-cardwall .sidebar { display: none; }
+body.mode-cardwall .side-divider { display: none; }
+body.mode-canvas .sidebar, body.mode-canvas .side-divider { display: none; }
+
+/* 看板变体：内容列顶部监控条 + 侧栏指标化 */
+.dash-strip { display: none; }
+body.mode-dashboard .dash-strip { display: flex; }
+.dash-strip {
+  gap: 8px; padding: 8px 2px; border-bottom: 1px solid; margin-bottom: 2px; flex-shrink: 0;
+}
+.dash-item { font-size: 11px; padding: 5px 10px; border-radius: 8px; display: flex; gap: 7px; align-items: center; }
+.dash-item .dot { width: 8px; height: 8px; border-radius: 50%; }
+.dash-item .val { font-weight: 700; font-size: 13px; }
+
+/* IDE 变体：右侧活动监视器 */
+.ide-panel { display: none; }
+body.mode-ide .ide-panel { display: flex; }
+.ide-panel {
+  width: 178px; flex-shrink: 0; border-left: 1px solid; padding: 10px; flex-direction: column; gap: 8px; overflow: hidden;
+}
+.ide-panel .ide-title { font-size: 10.5px; opacity: .6; letter-spacing: .5px; }
+.ide-line { font-size: 10px; font-family: "SF Mono", Menlo, monospace; opacity: .8; line-height: 1.6; }
+.ide-line.ok { opacity: .95; }
+.ide-line.err { color: #FF6369; }
+
+/* 时间线变体：对话区变时间轴 */
+body.mode-timeline .chat-area { position: relative; }
+body.mode-timeline .chat-area::before {
+  content: ""; position: absolute; left: 76px; top: 8px; bottom: 8px; width: 2px;
+  background: linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,.05));
+}
+body.mode-timeline .msg { position: relative; max-width: none; display: grid; grid-template-columns: 58px 1fr; gap: 18px; }
+body.mode-timeline .msg .tl-time { font-size: 10px; text-align: right; padding-top: 10px; opacity: .6; }
+body.mode-timeline .msg .tl-dot { position: absolute; left: 70px; top: 13px; width: 12px; height: 12px; border-radius: 50%; background: currentColor; }
+body.mode-timeline .msg.user, body.mode-timeline .msg.ai { align-self: stretch; align-items: initial; }
+body.mode-timeline .msg .meta { margin-top: 3px; }
+/* 时间线需要额外注入时间列，由 JS 生成 */
+
+/* 卡片墙变体 */
+body.mode-cardwall .chat-area { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+body.mode-cardwall .msg { max-width: none; align-self: stretch; }
+body.mode-cardwall .msg .bubble { min-height: 72px; }
+body.mode-cardwall .msg.user, body.mode-cardwall .msg.ai { align-items: initial; flex-direction: column; }
+
+/* 画布变体：卡片自由漂浮 */
+body.mode-canvas .chat-area { position: relative; }
+body.mode-canvas .msg { position: absolute; max-width: 300px; }
+body.mode-canvas .msg:nth-child(1) { top: 16px; left: 8%; transform: rotate(-2deg); }
+body.mode-canvas .msg:nth-child(2) { top: 40px; left: 44%; transform: rotate(1.5deg); }
+body.mode-canvas .msg:nth-child(3) { top: 210px; left: 16%; transform: rotate(1deg); }
+body.mode-canvas .msg:nth-child(4) { top: 240px; left: 55%; transform: rotate(-1deg); }
+body.mode-canvas .msg:nth-child(5) { top: 420px; left: 8%; transform: rotate(.5deg); }
+body.mode-canvas .msg:nth-child(6) { top: 430px; left: 46%; transform: rotate(-1.5deg); }
+body.mode-canvas .msg .meta { opacity: .6; }
+
+/* 命令面板变体：输入条加大 */
+body.mode-command .composer { border-top: 2px solid; }
+body.mode-command .c-input { font-size: 14px; padding: 12px 15px; }
+body.mode-command .c-input::before { content: "› "; }
+
+/* 键盘优先变体：显示编号 */
+body.mode-keyboard .sb-card .card-title::before, body.mode-keyboard .sb-fold::before { content: ""; }
+body.mode-keyboard .kbd-hint { display: block; }
+.kbd-hint { display: none; font-size: 9.5px; font-family: "SF Mono", Menlo, monospace; opacity: .5; margin-top: 2px; }
+
+/* ============================================================
+   30 套风格主题 —— 每套 = 结构级差异（布局/字体/材质/形状/动效）
+   ============================================================ */
+
+/* ---------- A1 · Bento 网格：分栏→模块化活网格 ---------- */
+[data-theme="bento"] #stage { background: #0C0C0E; }
+[data-theme="bento"] .win-body { display: grid; grid-template-columns: 200px 1fr 150px; grid-template-rows: 1fr 120px; gap: 8px; padding: 8px; }
+[data-theme="bento"] .sidebar { width: auto; grid-column: 1; grid-row: 1 / span 2; background: #101014; border-radius: 12px; padding: 10px; }
+[data-theme="bento"] .side-divider { display: none; }
+[data-theme="bento"] .content-col { grid-column: 2; grid-row: 1 / span 2; background: #101014; border-radius: 12px; padding: 8px 12px; }
+[data-theme="bento"] .dash-strip { display: flex; grid-column: 3; grid-row: 1; background: #101014; border-radius: 12px; border-bottom: none; flex-direction: column; }
+[data-theme="bento"] .dash-item { border-radius: 10px; background: #18181C; }
+[data-theme="bento"] .composer { border-top-color: #1D1D21; }
+[data-theme="bento"] .notch-strip { background: transparent; }
+[data-theme="bento"] .notch-strip .notch-bar { background: #0C0C0E; }
+
+/* ---------- A2 · 单列对话流：去侧栏，一条纵流 ---------- */
+[data-theme="singlecol"] #stage { background: #08080A; }
+[data-theme="singlecol"] .notch-strip { background: transparent; }
+[data-theme="singlecol"] .notch-strip .notch-bar { background: #08080A; }
+[data-theme="singlecol"] .content-col { padding: 0 44px; }
+[data-theme="singlecol"] .mode-row { border-bottom-color: #1D1D21; justify-content: center; }
+[data-theme="singlecol"] .mode-chip { border-radius: 99px; padding: 4px 14px; }
+[data-theme="singlecol"] .msg { max-width: 78%; }
+[data-theme="singlecol"] .composer { border-top-color: #1D1D21; }
+
+/* ---------- A3 · 数据看板：对话页→实时仪表盘 ---------- */
+[data-theme="dashboard"] #stage { background: #0A0B0D; }
+[data-theme="dashboard"] .sidebar { background: #0F1115; border-radius: 10px; }
+[data-theme="dashboard"] .sb-card { border-radius: 8px; background: #15181E; border: 1px solid #23262E; }
+[data-theme="dashboard"] .content-col { background: #0A0B0D; }
+[data-theme="dashboard"] .dash-strip { border-bottom-color: #1E2229; }
+[data-theme="dashboard"] .dash-item { background: #12151B; border: 1px solid #23262E; }
+[data-theme="dashboard"] .dash-item .dot { box-shadow: 0 0 8px currentColor; }
+[data-theme="dashboard"] .chat-area { gap: 8px; }
+[data-theme="dashboard"] .msg { max-width: 92%; }
+[data-theme="dashboard"] .msg .bubble { border-radius: 6px; font-size: 12px; }
+[data-theme="dashboard"] .mode-row { border-bottom-color: #1E2229; }
+[data-theme="dashboard"] .composer { border-top-color: #1E2229; }
+
+/* ---------- A4 · 时间线：双栏→同轴时间线 ---------- */
+[data-theme="timeline"] #stage { background: #0B0B0E; }
+[data-theme="timeline"] .sidebar { background: #101014; }
+[data-theme="timeline"] .content-col { padding: 0 18px; }
+[data-theme="timeline"] .mode-row { border-bottom-color: #1D1D21; }
+[data-theme="timeline"] .msg .bubble { border-radius: 8px; }
+[data-theme="timeline"] .composer { border-top-color: #1D1D21; }
+
+/* ---------- A5 · IDE 多窗格 ---------- */
+[data-theme="ide"] #stage { background: #0D0F12; }
+[data-theme="ide"] .sidebar { width: 220px; background: #111318; border-right: 1px solid #1E2229; padding: 0; }
+[data-theme="ide"] .sb-top, [data-theme="ide"] .sb-fold { margin: 8px; }
+[data-theme="ide"] .sb-card { border-radius: 6px; background: #151820; border: 1px solid #232731; margin: 0 8px 6px; }
+[data-theme="ide"] .side-divider { background: #1E2229; }
+[data-theme="ide"] .content-col { padding: 0 14px; }
+[data-theme="ide"] .mode-row { border-bottom-color: #1E2229; }
+[data-theme="ide"] .ide-panel { border-left-color: #1E2229; background: #111318; }
+[data-theme="ide"] .msg .bubble { border-radius: 6px; font-size: 12px; }
+[data-theme="ide"] .composer { border-top-color: #1E2229; }
+
+/* ---------- A6 · 无限画布 ---------- */
+[data-theme="canvas"] #stage { background: #0E0D0F; }
+[data-theme="canvas"] .content-col { background:
+  radial-gradient(circle at 20% 30%, #1A1A24 1px, transparent 1.5px),
+  radial-gradient(circle at 80% 60%, #1A1A24 1px, transparent 1.5px), #0E0D0F;
+  background-size: 34px 34px; }
+[data-theme="canvas"] .mode-row { border-bottom-color: #23232C; }
+[data-theme="canvas"] .msg .bubble { border: 1px solid #2A2A34; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+[data-theme="canvas"] .composer { border-top-color: #23232C; }
+
+/* ---------- B1 · 杂志编辑风 ---------- */
+[data-theme="editorial"] #stage { background: #F4F1EA; }
+[data-theme="editorial"] .win-body, [data-theme="editorial"] .content-col { background: #F4F1EA; }
+[data-theme="editorial"] .sidebar { background: #EAE6DC; border-right: 1px solid #D8D2C4; padding: 12px 10px; }
+[data-theme="editorial"] .sb-card { background: #FBF9F4; border: 1px solid #DDD6C8; border-radius: 4px; box-shadow: none; }
+[data-theme="editorial"] .sb-card .card-title { font-family: Georgia, "Songti SC", serif; font-size: 14px; }
+[data-theme="editorial"] .sb-chip { border-radius: 3px; font-family: Georgia, serif; font-size: 12px; }
+[data-theme="editorial"] .side-divider { background: #D8D2C4; }
+[data-theme="editorial"] .mode-row { border-bottom: 2px solid #2B2B28; }
+[data-theme="editorial"] .mode-chip { border-radius: 0; font-family: Georgia, serif; font-size: 13px; color: #55523C; }
+[data-theme="editorial"] .mode-chip.active { background: #2B2B28; color: #F4F1EA; }
+[data-theme="editorial"] .msg .bubble { background: #FBF9F4; color: #2B2B28; border: 1px solid #E3DCCD; border-radius: 4px; font-size: 13px; line-height: 1.8; }
+[data-theme="editorial"] .msg.user .bubble { background: #2B2B28; color: #F4F1EA; }
+[data-theme="editorial"] .msg .meta { color: #8C846F; }
+[data-theme="editorial"] .composer { border-top: 1px solid #D8D2C4; }
+[data-theme="editorial"] .c-input { background: #FBF9F4; border: 1px solid #D8D2C4; border-radius: 4px; color: #55523C; }
+[data-theme="editorial"] .c-btn { font-family: Georgia, serif; font-size: 12px; }
+[data-theme="editorial"] .notch-strip .notch-bar { background: #2B2B28; }
+[data-theme="editorial"] .notch-strip .transcript-row { background: #EAE6DC; border-bottom: 1px solid #D8D2C4; color: #6E6852; }
+
+/* ---------- B2 · 巨型展示字 ---------- */
+[data-theme="display"] #stage { background: #09090B; }
+[data-theme="display"] .sidebar { background: #0D0D10; }
+[data-theme="display"] .sb-card { border-radius: 0; border-left: 3px solid #fff; background: transparent; }
+[data-theme="display"] .sb-card .card-title { font-size: 15px; font-weight: 800; letter-spacing: -0.5px; }
+[data-theme="display"] .content-col { padding-top: 8px; }
+[data-theme="display"] .mode-row { height: 44px; border-bottom: 1px solid #1D1D21; }
+[data-theme="display"] .mode-chip { font-size: 15px; font-weight: 700; letter-spacing: .5px; border-radius: 0; padding: 6px 14px; }
+[data-theme="display"] .msg .bubble { font-size: 15px; line-height: 1.7; font-weight: 400; }
+[data-theme="display"] .msg.user .bubble { font-weight: 600; }
+[data-theme="display"] .composer .c-input { font-size: 14px; border-radius: 0; border: 1px solid #222; }
+
+/* ---------- B3 · 全大写动能 ---------- */
+[data-theme="uppercase"] #stage { background: #0A0A0C; }
+[data-theme="uppercase"] .sidebar { background: #0D0D10; }
+[data-theme="uppercase"] .sb-chip { text-transform: uppercase; letter-spacing: 2px; font-size: 10px; font-weight: 700; }
+[data-theme="uppercase"] .sb-card { border-radius: 0; background: transparent; border-bottom: 2px solid #24242B; }
+[data-theme="uppercase"] .sb-card .card-title { text-transform: uppercase; letter-spacing: 1.5px; font-size: 12px; }
+[data-theme="uppercase"] .mode-row { border-bottom: 3px solid #0A84FF; }
+[data-theme="uppercase"] .mode-chip { text-transform: uppercase; letter-spacing: 2px; font-size: 10.5px; font-weight: 800; border-radius: 0; }
+[data-theme="uppercase"] .msg .bubble { border-radius: 0; border-left: 4px solid rgba(10,132,255,.5); }
+[data-theme="uppercase"] .msg.user .bubble { border-left-color: transparent; border-right: 4px solid rgba(10,132,255,.5); }
+[data-theme="uppercase"] .composer { border-top: 3px solid #24242B; }
+[data-theme="uppercase"] .c-btn { text-transform: uppercase; letter-spacing: 1px; font-size: 9.5px; font-weight: 700; }
+
+/* ---------- B4 · 终端等宽 ---------- */
+[data-theme="mono"] #stage { background: #0C0C0C; }
+[data-theme="mono"] .win-body, [data-theme="mono"] .content-col, [data-theme="mono"] .sidebar { background: #0C0C0C; font-family: "SF Mono", Menlo, Consolas, monospace; }
+[data-theme="mono"] .sb-chip { border-radius: 0; font-size: 11px; }
+[data-theme="mono"] .sb-card { border-radius: 0; background: #111; border: 1px solid #222; }
+[data-theme="mono"] .sb-card .card-title { font-size: 11.5px; }
+[data-theme="mono"] .mode-row { border-bottom: 1px solid #222; }
+[data-theme="mono"] .mode-chip { border-radius: 0; font-size: 11px; }
+[data-theme="mono"] .msg { max-width: 100%; }
+[data-theme="mono"] .msg .bubble { background: transparent; border-radius: 0; font-family: "SF Mono", Menlo, monospace; font-size: 12px; padding: 6px 10px; border-left: 2px solid #333; }
+[data-theme="mono"] .msg.user .bubble { border-left-color: #0A84FF; }
+[data-theme="mono"] .msg .meta { font-family: "SF Mono", Menlo, monospace; }
+[data-theme="mono"] .composer { border-top: 1px solid #222; }
+[data-theme="mono"] .c-input { background: #0E0E0E; border: 1px solid #2A2A2A; border-radius: 0; font-family: "SF Mono", Menlo, monospace; }
+[data-theme="mono"] .c-input::before { content: "> "; color: #0A84FF; }
+
+/* ---------- B5 · 蓝图工程图 ---------- */
+[data-theme="blueprint"] #stage { background: #E8EDF3; }
+[data-theme="blueprint"] .win-body, [data-theme="blueprint"] .content-col { background:
+  linear-gradient(rgba(26,84,158,.08) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(26,84,158,.08) 1px, transparent 1px),
+  linear-gradient(rgba(26,84,158,.05) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(26,84,158,.05) 1px, transparent 1px), #E8EDF3;
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px; }
+[data-theme="blueprint"] .sidebar { background: rgba(216,226,238,.85); border: 2px solid #1A549E; border-radius: 0; }
+[data-theme="blueprint"] .sb-chip { border-radius: 0; border: 1px solid #1A549E; font-family: "SF Mono", Menlo, monospace; font-size: 10px; color: #1A549E; }
+[data-theme="blueprint"] .sb-card { border-radius: 0; background: #E8EDF3; border: 1.5px solid #1A549E; }
+[data-theme="blueprint"] .sb-card .card-title { font-family: "SF Mono", Menlo, monospace; color: #10355F; font-size: 11px; }
+[data-theme="blueprint"] .side-divider { background: #1A549E; }
+[data-theme="blueprint"] .mode-row { border-bottom: 1.5px dashed #1A549E; }
+[data-theme="blueprint"] .mode-chip { border-radius: 0; border: 1px solid #1A549E; font-family: "SF Mono", Menlo, monospace; font-size: 10.5px; color: #10355F; }
+[data-theme="blueprint"] .msg .bubble { background: rgba(255,255,255,.6); border: 1.5px solid #1A549E; border-radius: 0; color: #10355F; font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
+[data-theme="blueprint"] .msg.user .bubble { background: #1A549E; color: #E8EDF3; }
+[data-theme="blueprint"] .msg .meta { color: #4A6C93; }
+[data-theme="blueprint"] .composer { border-top: 1.5px dashed #1A549E; }
+[data-theme="blueprint"] .c-input { background: rgba(255,255,255,.7); border: 1.5px solid #1A549E; border-radius: 0; color: #10355F; font-family: "SF Mono", Menlo, monospace; }
+[data-theme="blueprint"] .notch-strip .notch-bar { background: #1A549E; }
+[data-theme="blueprint"] .notch-strip .transcript-row { background: #D8E2EE; border-bottom: 1px solid #1A549E; color: #10355F; }
+
+/* ============ 风格 CSS 占位：B 余下 / C / D / E / F 家族在此追加 ============ */
+/* <!-- STYLE_TAIL --> */
+
+/* ============================================================
+   动效：默认给窗口内部轻微过渡；主题各自覆盖
+   ============================================================ */
+#stage, .win-body, .sidebar, .content-col, .sb-card, .msg .bubble, .mode-chip, .c-input, .composer, .dash-item {
+  transition: background .35s, border-color .35s, color .35s, border-radius .35s, box-shadow .35s, font-size .35s;
+}
+/* spring：弹性反馈 */
+[data-theme="spring"] .mode-chip { transition: transform .28s cubic-bezier(.34,1.56,.64,1); }
+[data-theme="spring"] .mode-chip:hover { transform: scale(1.1); }
+[data-theme="spring"] .sb-card { transition: transform .3s cubic-bezier(.34,1.56,.64,1), background .2s; }
+[data-theme="spring"] .sb-card:hover { transform: scale(1.03) translateY(-2px); }
+[data-theme="spring"] .c-btn { transition: transform .25s cubic-bezier(.34,1.56,.64,1); }
+[data-theme="spring"] .c-btn:hover { transform: scale(1.12); }
+[data-theme="spring"] .msg .bubble { transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
+[data-theme="spring"] .msg:hover .bubble { transform: scale(1.015); }
+
+/* cinematic：切换时内容层镜头感（JS 加 .reveal 类） */
+[data-theme="cinematic"] .win-body { perspective: 900px; }
+[data-theme="cinematic"] .content-col, [data-theme="cinematic"] .sidebar { transform-origin: center; }
+[data-theme="cinematic"].revealing .content-col { animation: lens-in .6s cubic-bezier(.22,.9,.3,1) both; }
+[data-theme="cinematic"].revealing .sidebar { animation: lens-in .6s .08s cubic-bezier(.22,.9,.3,1) both; }
+@keyframes lens-in {
+  from { opacity: 0; transform: scale(.965) translateZ(-60px); filter: blur(6px); }
+  to { opacity: 1; transform: scale(1) translateZ(0); filter: blur(0); }
+}
+
+/* restrained：最短反馈，其余全静 */
+[data-theme="restrained"] * { transition: background .08s linear, color .08s linear, border-color .08s linear !important; }
+[data-theme="restrained"] .mode-chip { transition: background .08s linear, color .08s linear !important; }
+[data-theme="restrained"] #stage, [data-theme="restrained"] .win-body { transition: background .12s linear; }
+
+/* ============================================================
+   风格家族色彩标签
+   ============================================================ */
+.family-a { --fc: #4ECDC4; } .family-b { --fc: #FF6B6B; } .family-c { --fc: #FFD93D; }
+.family-d { --fc: #6BCB77; } .family-e { --fc: #4D96FF; } .family-f { --fc: #B983FF; }
+</style>
+</head>
+<body data-theme="bento" class="">
+
+<div class="page-head">
+  <h1>Wanna 窗口 · 30 种风格切换器 <small>同一窗口布局 · 六大家族 · 结构级差异（非换色）</small></h1>
+  <div class="family-row" id="familyRow"></div>
+  <div class="theme-row" id="themeRow"></div>
+</div>
+
+<div class="stage-wrap">
+  <div id="stage" data-theme="bento">
+
+    <!-- 顶部刘海带 -->
+    <div class="notch-strip">
+      <div class="notch-bar"><div class="hw-notch"></div></div>
+      <div class="transcript-row"><span class="wave"></span><span class="t-text">正在听 · 按住 ⌃⌥ 说话</span></div>
+    </div>
+
+    <!-- 主体 -->
+    <div class="win-body">
+
+      <!-- 侧栏 -->
+      <div class="sidebar" id="sidebar">
+        <div class="sb-top">
+          <span class="sb-chip">设置</span><span class="sb-chip">历史</span><span class="sb-chip">添加</span>
+        </div>
+        <div class="sb-top">
+          <span class="sb-chip">角色</span><span class="sb-chip">复盘</span><span class="sb-chip">录音</span>
+        </div>
+        <div class="sb-card card-main">
+          <div class="card-title">测我贴进来的那几张...</div>
+          <div class="card-sub"><span class="card-tag">主循环</span><span>进行中</span></div>
+          <div class="kbd-hint">⌘1</div>
+        </div>
+        <div class="sb-card card-cc">
+          <div class="card-title">Wanna</div>
+          <div class="card-sub"><span class="card-tag">Claude</span><span>待命</span></div>
+          <div class="kbd-hint">⌘2</div>
+        </div>
+        <div class="sb-fold">历史任务 3</div>
+        <div class="sb-fold">已归档</div>
+      </div>
+
+      <!-- 分隔线 -->
+      <div class="side-divider"></div>
+
+      <!-- 内容列 -->
+      <div class="content-col" id="contentCol">
+
+        <!-- 模式行 -->
+        <div class="mode-row">
+          <span class="mode-chip">角色</span>
+          <span class="mode-chip active">文本</span>
+          <span class="mode-chip">图文</span>
+          <span class="mode-chip">语音</span>
+          <span class="mode-chip">视频</span>
+          <span class="mode-chip call">📞</span>
+          <span class="mode-spacer"></span>
+          <span class="mode-right"><span>音色</span><span>角色</span><span>展开</span></span>
+        </div>
+
+        <!-- 看板监控条（仅 dashboard 显示） -->
+        <div class="dash-strip" id="dashStrip">
+          <span class="dash-item"><span class="dot" style="color:#34D399"></span>主循环 <b class="val">进行中</b></span>
+          <span class="dash-item"><span class="dot" style="color:#0A84FF"></span>录音 <b class="val">12s</b></span>
+          <span class="dash-item"><span class="dot" style="color:#FFB224"></span>任务 <b class="val">3</b></span>
+          <span class="dash-item"><span class="dot" style="color:#E5484D"></span>失败 <b class="val">1</b></span>
+          <span class="dash-item"><span class="dot" style="color:#B9B9C2"></span>耗时 <b class="val">7s</b></span>
+        </div>
+
+        <!-- 对话区 -->
+        <div class="chat-area" id="chatArea">
+          <div class="msg user">
+            <div class="bubble">请用八句话详细讲讲 Wanna 都能做什么</div>
+            <div class="meta"><span>复制</span><span>16:13</span><span>3s</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">Wanna 是常驻在 Mac 刘海里的语音助手，你按住热键说话，它听完就用声音回你。</div>
+            <div class="meta"><span>复制</span><span>16:14</span><span>7s</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">它能一边听一边看你的屏幕，所以你说「我屏幕上这个是什么」、「帮我圈出那个按钮」，它都跟得上。</div>
+            <div class="meta"><span>复制</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">它还能直接动手操作你的电脑，点按钮、打字、开应用、读写文件、跑脚本，联网查东西也归它管。</div>
+            <div class="meta"><span>复制</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">碰到长活它会分给三个手下，画图的管屏幕标注，执行的管电脑动作和联网，写长文的专管文章报告翻译这类内容，最后合成一句话回给你。</div>
+            <div class="meta"><span>复制</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">它一直在后台待命，你不用切换窗口，听到什么说什么，说完它立刻开口，热的那一声基本半秒多就出来。</div>
+            <div class="meta"><span>复制</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">你和它的对话它都记着，隔几轮再回头问「刚才聊了什么」，它能一条条给你翻出来。</div>
+            <div class="meta"><span>复制</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">它还能帮你看懂你自己在跑的这些东西，屏幕左边这个 Orca 里的两路 Claude Code，哪条在做什么、结论是什么、卡在哪一步，它都能替你读出来。</div>
+            <div class="meta"><span>复制</span></div>
+          </div>
+          <div class="msg ai">
+            <div class="bubble">你自己写的东西它也接得住，Wanna 是 Swift 写的 macOS 应用，代码、单元测试、设计文档、界面逻辑，你贴过来它就能改能写。</div>
+            <div class="meta"><span>复制</span></div>
+          </div>
+        </div>
+
+        <!-- 输入条 -->
+        <div class="composer">
+          <div class="c-top">
+            <span class="c-btn toggle-on">连续对话</span>
+            <span class="c-btn">临时对话</span>
+            <span class="c-btn">新建</span>
+            <span class="c-btn">通话</span>
+            <span class="c-right"><span class="c-btn">声音</span><span class="c-btn">语速 7</span></span>
+          </div>
+          <div class="c-input">输入问题，回车发送...</div>
+        </div>
+      </div>
+
+      <!-- IDE 活动监视器（仅 ide 显示） -->
+      <div class="ide-panel" id="idePanel">
+        <div class="ide-title">ACTIVITY · 实时</div>
+        <div class="ide-line ok">› turn #12 ok</div>
+        <div class="ide-line">› tool: screenshot</div>
+        <div class="ide-line">› tool: read file</div>
+        <div class="ide-line">› TTS segment 4/5</div>
+        <div class="ide-line err">✗ task #3 failed</div>
+        <div class="ide-line">› agent spawned</div>
+        <div class="ide-line">› cost $0.042</div>
+        <div class="ide-title" style="margin-top:6px;">MODELS</div>
+        <div class="ide-line">qwen3-vl-plus</div>
+        <div class="ide-line">qwen-audio-tts</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="theme-note" id="themeNote"></div>
+<div class="page-foot">Wanna 设计稿 · 预览为示意，非实际 App 渲染</div>
+
+<script>
+/* ============================================================
+   30 套风格元数据 + 切换逻辑
+   ============================================================ */
+const FAMILIES = [
+  { id:"A", name:"A · 骨架重构", cls:"family-a" },
+  { id:"B", name:"B · 排版主导", cls:"family-b" },
+  { id:"C", name:"C · 材质与效果", cls:"family-c" },
+  { id:"D", name:"D · 主题氛围", cls:"family-d" },
+  { id:"E", name:"E · 交互范式", cls:"family-e" },
+  { id:"F", name:"F · 动效语言", cls:"family-f" }
+];
+
+const THEMES = [
+  { id:"bento",     n:"01 · Bento 网格",  fam:"A", layout:"",      note:"<b>结构</b>：左右分栏拆成模块化活网格（侧栏/对话/状态各占一格，无死区）。<b>材质</b>：独立圆角块。<b>适合</b>：一眼看出「这不是聊天软件，是工作台」。", base:true },
+  { id:"singlecol", n:"02 · 单列对话流",  fam:"A", layout:"singlecol", note:"<b>结构</b>：删掉侧栏，对话成为唯一纵流；会话切换收敛成顶部胶囊。<b>心智</b>：注意力只有一条线。<b>适合</b>：把窗口做「轻」的第一选择。" },
+  { id:"dashboard", n:"03 · 数据看板",    fam:"A", layout:"dashboard", note:"<b>结构</b>：内容区顶部加实时监控条（主循环/录音/任务/失败/耗时），对话降为面板之一。<b>适合</b>：你要「一眼看到整个系统在干嘛」。", dash:true },
+  { id:"timeline",  n:"04 · 时间线",      fam:"A", layout:"timeline", note:"<b>结构</b>：对话/任务/录音全部落到同一条纵向时间轴，按时间戳排。<b>组织逻辑</b>：从空间分区变成时间序列。" },
+  { id:"ide",       n:"05 · IDE 多窗格",  fam:"A", layout:"ide",      note:"<b>结构</b>：右侧多一块「活动监视器」（工具调用/模型/成本实时滚动），像 Cursor 的工作台。<b>适合</b>：重度多任务。" },
+  { id:"canvas",    n:"06 · 无限画布",    fam:"A", layout:"canvas",   note:"<b>结构</b>：内容卡片自由漂浮在点阵画布上，带旋转与错落。<b>暗示</b>：窗口是空间，不是纸张。" },
+
+  { id:"editorial", n:"07 · 杂志编辑风",  fam:"B", layout:"",         note:"<b>结构</b>：衬线标题 + 栏式排版 + 墨线分隔，对话像杂志专栏。<b>字体</b>：Georgia/宋体承担信息层级。<b>适合</b>：想要安静的高级感。" },
+  { id:"display",   n:"08 · 巨型展示字",  fam:"B", layout:"",         note:"<b>结构</b>：字号落差拉到 6 档以上，模式行加高加粗，标题加大。<b>哲学</b>：信息密度降低，每个字都有重量。" },
+  { id:"uppercase", n:"09 · 全大写动能",  fam:"B", layout:"",         note:"<b>结构</b>：全大写 + 宽字距 + 色带分隔 + 描边式选中。<b>腔调</b>：从「对话」变成「广播」。" },
+  { id:"mono",      n:"10 · 终端等宽",    fam:"B", layout:"",         note:"<b>结构</b>：全等宽字体，对话变成日志流，输入框带 &gt; 提示符。<b>哲学</b>：图形界面退回命令行精神。" },
+  { id:"blueprint", n:"11 · 蓝图工程图",  fam:"B", layout:"",         note:"<b>结构</b>：网格纸底 + 坐标标注 + 蓝色工程线，面板像图纸框。<b>世界观</b>：界面被工程化。" },
+
+  { id:"glass",     n:"12 · 玻璃拟态",    fam:"C", layout:"",         note:"<b>结构</b>：面板半透明 + 磨砂 + 发光细边，深度靠模糊分层。<b>注意</b>：真正落地需要桌面壁纸透出来。" },
+  { id:"neumorph",  n:"13 · 新拟态",      fam:"C", layout:"",         note:"<b>结构</b>：没有边框，同色系内/外阴影做浮雕：按钮凸起、输入框凹陷。<b>哲学</b>：界面是同一块材料雕刻出来的。" },
+  { id:"clay",      n:"14 · 黏土拟态",    fam:"C", layout:"",         note:"<b>结构</b>：圆鼓鼓的 3D 软块，高光 + 投影，像橡皮泥。<b>情绪</b>：亲和、玩具感，适合娱乐向。" },
+  { id:"brutal",    n:"15 · 粗野主义",    fam:"C", layout:"",         note:"<b>结构</b>：直角 + 粗边框 + 硬投影（无模糊）+ 高对比。<b>哲学</b>：故意粗糙，结构线全部外露。" },
+  { id:"neon",      n:"16 · 霓虹夜店",    fam:"C", layout:"",         note:"<b>结构</b>：近黑底 + 电光色描边/辉光，元素自身发光。<b>注意</b>：强调「亮度层次」而非彩色底。" },
+  { id:"paper",     n:"17 · 纸张印刷",    fam:"C", layout:"",         note:"<b>结构</b>：米白纸面 + 墨水色 + 衬线 + 印刷墨线。<b>世界观</b>：从屏幕发光回到纸墨反射——深色的另一极。" },
+  { id:"dithered",  n:"18 · 点阵像素",    fam:"C", layout:"",         note:"<b>结构</b>：抖动点阵渲染 + 限色板，连续矢量感消失。<b>情绪</b>：复古印刷颗粒。" },
+
+  { id:"hud",       n:"19 · 科幻 HUD",    fam:"D", layout:"",         note:"<b>结构</b>：角标框 + 扫描线 + 六边形网格 + 仪表刻度，像飞行头盔界面。<b>世界观</b>：从办公桌到驾驶舱。" },
+  { id:"luxury",    n:"20 · 奢品极简",    fam:"D", layout:"",         note:"<b>结构</b>：超大留白 + 发丝线 + 小号衬线标签 + 内容居中。<b>哲学</b>：每个元素都像展品。" },
+  { id:"cafe",      n:"21 · 暖咖聊天室",  fam:"D", layout:"",         note:"<b>结构</b>：暖色纸感（米/杏/棕）+ 圆润卡片 + 聊天室横幅。<b>情绪</b>：从「专业」变「亲切」。" },
+  { id:"arcade",    n:"22 · 街机复古",    fam:"D", layout:"",         note:"<b>结构</b>：像素字 + 硬边色块 + 得分板式状态区 + 反色选中。<b>世界观</b>：界面是一台游戏机。" },
+  { id:"mediamag",  n:"23 · 科技媒体",    fam:"D", layout:"",         note:"<b>结构</b>：酸亮色 + 衬线展示字 + 故事砖卡片堆叠。<b>情绪</b>：界面像媒体首页，内容本身是视觉主体。" },
+
+  { id:"command",   n:"24 · 命令面板",    fam:"E", layout:"command",  note:"<b>结构</b>：窗口主体 = 常驻命令输入行 + 结果流，所有操作可打字完成。<b>哲学</b>：点按让位给「输入即操作」。" },
+  { id:"cardwall",  n:"25 · 卡片墙",      fam:"E", layout:"cardwall", note:"<b>结构</b>：对话变成两列平铺卡片，点哪张展开哪张。<b>哲学</b>：布局不是固定的，是由操作长出来的。" },
+  { id:"purechat",  n:"26 · 纯对话流",    fam:"E", layout:"purechat", note:"<b>结构</b>：无侧栏、无模式行、无工具，只有全宽气泡和输入框。<b>哲学</b>：功能全部退后，对话占满一切。" },
+  { id:"keyboard",  n:"27 · 键盘优先",    fam:"E", layout:"keyboard", note:"<b>结构</b>：会话/卡片带 ⌘1/⌘2 编号提示。<b>哲学</b>：鼠标只是辅助，速度来自快捷键。" },
+
+  { id:"spring",    n:"28 · 物理弹簧",    fam:"F", layout:"",         note:"<b>动效</b>：所有交互用 spring 回弹（按钮放大、卡片抬升、气泡微缩放）。<b>哲学</b>：运动时长 = 物体的质量感。" },
+  { id:"cinematic", n:"29 · 电影镜头",    fam:"F", layout:"",         note:"<b>动效</b>：切换风格时内容层做镜头推拉 + 轻微模糊分层入场。<b>哲学</b>：动效从「反馈」升级为「叙事」。" },
+  { id:"restrained",n:"30 · 克制微动效",  fam:"F", layout:"",         note:"<b>动效</b>：所有动画砍到 80–120ms 微反馈，其余全静。<b>哲学</b>：最好的动效是被感觉到而不是被注意到。" }
+];
+
+/* 家族/风格按钮 */
+const familyRow = document.getElementById("familyRow");
+const themeRow = document.getElementById("themeRow");
+const stage = document.getElementById("stage");
+const noteEl = document.getElementById("themeNote");
+let activeFamily = "A";
+
+function buildFamilyRow(){
+  familyRow.innerHTML = FAMILIES.map(f =>
+    `<button class="family-btn ${f.cls} ${f.id===activeFamily?"active":""}" data-fam="${f.id}">${f.name}</button>`
+  ).join("");
+  familyRow.querySelectorAll(".family-btn").forEach(b=>{
+    b.addEventListener("click", ()=>{ activeFamily = b.dataset.fam; buildFamilyRow(); buildThemeRow(); });
+  });
+}
+function buildThemeRow(){
+  themeRow.innerHTML = THEMES.filter(t=>t.fam===activeFamily).map(t =>
+    `<button class="theme-btn ${stage.dataset.theme===t.id?"active":""}" data-theme="${t.id}">${t.n}</button>`
+  ).join("");
+  themeRow.querySelectorAll(".theme-btn").forEach(b=>{
+    b.addEventListener("click", ()=>applyTheme(b.dataset.theme));
+  });
+}
+
+/* 应用风格：class + 结构变体 + 说明 */
+function applyTheme(id){
+  const t = THEMES.find(x=>x.id===id); if(!t) return;
+  stage.dataset.theme = id;
+  document.body.className = "";
+  if(t.layout) document.body.classList.add("mode-"+t.layout);
+  if(t.layout === "keyboard") document.body.classList.add("mode-keyboard");
+
+  /* 时间线：注入时间列 */
+  document.querySelectorAll(".msg .tl-time").forEach(e=>e.remove());
+  if(t.layout === "timeline"){
+    const times = ["16:13","16:14","16:14","16:15","16:16","16:16","16:17","16:18","16:19"];
+    document.querySelectorAll(".msg").forEach((m,i)=>{
+      const span = document.createElement("span");
+      span.className = "tl-time"; span.textContent = times[i] || "16:2" + i;
+      m.insertBefore(span, m.firstChild);
+    });
+  }
+
+  /* 按钮高亮 */
+  document.querySelectorAll(".theme-btn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.theme === id);
+  });
+
+  /* 说明 */
+  noteEl.innerHTML = `<b>${t.n}</b>（${t.fam} 家族）　${t.note}`;
+
+  /* cinematic：触发镜头动画 */
+  if(id === "cinematic"){
+    document.body.classList.remove("revealing");
+    void stage.offsetWidth;
+    document.body.classList.add("revealing");
+    setTimeout(()=>document.body.classList.remove("revealing"), 700);
+  }
+
+  /* spring 家族高亮当前风格以展示回弹 */
+  if(id === "spring"){
+    const btn = document.querySelector(`.theme-btn[data-theme="spring"]`);
+    if(btn){ btn.style.transform = "scale(1.15)"; setTimeout(()=>btn.style.transform="", 250); }
+  }
+}
+
+/* 初始 */
+buildFamilyRow();
+buildThemeRow();
+applyTheme("bento");
+</script>
+</body>
+</html>
