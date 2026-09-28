@@ -103,7 +103,9 @@ nonisolated final class LongFormAudioCapture {
     /// 而时长完全正确（6.5 / 3.8 / 5.0 秒）。时长对说明 tap 在正常出帧，出的是零。
     /// 光看「有没有数据」分不出「没插麦克风」「没权限」「引擎拿不到设备」这三种，
     /// 所以这里分别记：块数、零块数、以及第一块的真实峰值。
-    private var receivedBufferCount = 0
+    /// 收到的音频块数。**给「录音自检」读**（2026-09-28）：
+    /// 「采到了没有」与「送出去了没有」是两件事，这一场到底有没有音频，只有它能回答。
+    private(set) var receivedBufferCount = 0
     private var silentBufferCount = 0
     /// **连续**零块。和累计是两件事：真正的录音里，说话间隙也会有零块，
     /// 而「一直零下去」只有一种解释。告警判据是这一个。
@@ -946,6 +948,15 @@ final class LongFormRecorderController: ObservableObject {
     private var cadenceLongestGapMilliseconds = 0
     private var lastCadenceSegmentAt: Date?
 
+    // MARK: - 每场录音的自检（2026-09-28）
+
+    /// 这一场一共收到几段识别结果、第一段什么时候到的。
+    ///
+    /// 这两个数加上采集块数与看门狗次数，就是 **[`recordingSelfCheckLine()`] 那一行的全部原料** ——
+    /// 而那一行是「录音坏了 AI 怎么知道」的答案：**不指望 AI 去知道，让 App 自己喊。**
+    private var deliveredSegmentCount = 0
+    private var firstSegmentArrivalAt: Date?
+
     /// 日志时间戳：**带毫秒**（`withFractionalSeconds`）。
     ///
     /// 复用同一个实例而不是每次 `ISO8601DateFormatter()` —— 后者每行都要建一个，
@@ -1419,6 +1430,9 @@ final class LongFormRecorderController: ObservableObject {
         cadenceCharacterCount = 0
         cadenceLongestGapMilliseconds = 0
         lastCadenceSegmentAt = nil
+        // 自检那两个数同理：不清的话上一场的「服务端回过 42 段」会把这场的故障盖掉。
+        deliveredSegmentCount = 0
+        firstSegmentArrivalAt = nil
     }
     /// 最近若干行诊断，设置页和排查时看。
     @Published private(set) var recentDiagnostics: [String] = []
@@ -1511,6 +1525,8 @@ final class LongFormRecorderController: ObservableObject {
     /// 它一定表现为「段数很少、最长间隔很长」。
     private func recordSegmentArrival(characterDelta: Int) {
         let now = Date()
+        if firstSegmentArrivalAt == nil { firstSegmentArrivalAt = now }
+        deliveredSegmentCount += 1
         if let last = lastCadenceSegmentAt {
             let gapMilliseconds = Int(now.timeIntervalSince(last) * 1000)
             if gapMilliseconds > cadenceLongestGapMilliseconds {
@@ -1541,6 +1557,62 @@ final class LongFormRecorderController: ObservableObject {
         cadenceSegmentCount = 0
         cadenceCharacterCount = 0
         cadenceLongestGapMilliseconds = 0
+    }
+
+    /// **这一场录音到底通没通 —— 一行，App 自己判、自己喊。**（2026-09-28）
+    ///
+    /// ## 为什么要有这一行
+    ///
+    /// 用户问的是一个真问题：「你的方法怎么样才能让 AI 知道他的修改已经让麦克风无法
+    /// 正常使用？如果他修改完之后没有读到什么程序，或者没有去读到这些文件，那他就不知道。」
+    ///
+    /// 答案不是"让 AI 记得去看"，而是**让机器自己说**：每场录音结束都判一次，
+    /// 判完写进日志。这样"录音坏了"这件事从此有一个**机器写的、不用人回想的判据**，
+    /// 而 `scripts/recording-health-check.sh` 与 `git pre-commit` 都读它。
+    ///
+    /// ## 判据是**两条，缺一不可**（D45 自己总结的）
+    ///
+    /// ⚠️ 「采到了」和「送出去了」是两件**可以同时一真一假**的事，实测撞过：
+    /// `🎤 音频：21 块/2.1s 峰值 0.127`（tap 在跳 ✓）**同时** `服务端 8 秒零包、
+    /// 45000081 Timeout waiting next packet`（音频没进识别会话 ✗）—— 只看第一条会
+    /// 判成"一切正常"。
+    ///
+    /// 所以：**块数 > 0 且 段数 == 0 = 故障**，这一条是这一行存在的全部理由。
+    ///
+    /// 纯函数：不读任何状态，只算这一行字 —— 所以能被 `WannaTests` 直接钉住。
+    ///（`nonisolated`：它不碰任何可变状态，测试才可以脱离主线程直接调它。）
+    nonisolated static func recordingSelfCheckLine(bufferCount: Int,
+                                       segmentCount: Int,
+                                       firstSegmentLatencySeconds: Double?,
+                                       watchdogFirings: Int,
+                                       characterCount: Int) -> String {
+        let detail = "采集 \(bufferCount) 块 · 服务端回 \(segmentCount) 段"
+            + (firstSegmentLatencySeconds.map { String(format: " · 首字 %.1fs", $0) } ?? "")
+            + " · 看门狗 \(watchdogFirings) 次"
+
+        // ① 一块音频都没有：设备没在交付采样（本仓 2026-09-26 那类故障）。
+        if bufferCount == 0 {
+            return "⚠️ 录音自检失败：**一块音频都没收到**（\(detail)）—— 这个设备没在交付采样。"
+        }
+        // ② 采到了、但服务端一段都没回 —— **音频没送到识别器**（D45 那一类，
+        //    它以前是看不见的：界面上一切正常，只是屏幕上不出字）。
+        if segmentCount == 0 {
+            return "⚠️ 录音自检失败：**采集正常、但服务端一段都没回**（\(detail)）"
+                + " —— 音频没送到识别器（不是麦克风的问题）。"
+        }
+        if characterCount == 0 {
+            return "⚠️ 录音自检失败：服务端回了 \(segmentCount) 段但**一个字都没有**（\(detail)）。"
+        }
+        // ③ 通了，但连接不稳或首字太慢 —— 不算失败，算"能用的边缘"，要看得见。
+        var warnings: [String] = []
+        if watchdogFirings > 0 { warnings.append("看门狗判死 \(watchdogFirings) 次") }
+        if let latency = firstSegmentLatencySeconds, latency > 5 {
+            warnings.append(String(format: "首字 %.1fs 偏慢", latency))
+        }
+        if !warnings.isEmpty {
+            return "⚠️ 录音自检：通了但有异常（\(detail)）—— \(warnings.joined(separator: "、"))。"
+        }
+        return "✅ 录音自检：\(detail)"
     }
 
     /// 音频线程与主线程之间的桥。`@MainActor` 的存储属性在实时线程上读不到，    /// 这两个 `nonisolated(unsafe)` 的引用就是那条通道；它们只在开始/结束时被
@@ -2208,6 +2280,21 @@ final class LongFormRecorderController: ObservableObject {
         inputGainWatchTimer?.invalidate()
         inputGainWatchTimer = nil
         publishDiagnostic("录音结束：\(text.count) 字，\(String(format: "%.1f", session?.recordedSeconds ?? 0)) 秒")
+
+        // **这一场到底通没通 —— 自己判、自己喊**（2026-09-28）。
+        //
+        // 放在「录音结束」之后、粘贴之前：它是**机器写的判据**，`scripts/recording-health-check.sh`
+        // 与 `git pre-commit` 都读这一行。判据为什么是这两条、以及它回答的是用户的哪个问题，
+        // 见 `recordingSelfCheckLine` 的文档注释。
+        let firstSegmentLatency = firstSegmentArrivalAt.flatMap { first in
+            startedAt.map { first.timeIntervalSince($0) }
+        }
+        publishDiagnostic(Self.recordingSelfCheckLine(
+            bufferCount: capture.receivedBufferCount,
+            segmentCount: deliveredSegmentCount,
+            firstSegmentLatencySeconds: firstSegmentLatency,
+            watchdogFirings: asrClient?.watchdogFiringCount ?? 0,
+            characterCount: text.count))
 
         // **一个字都没有的时候要说一声。**
         //

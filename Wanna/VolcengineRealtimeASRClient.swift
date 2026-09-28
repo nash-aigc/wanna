@@ -92,6 +92,12 @@ nonisolated final class VolcengineRealtimeASRClient {
     /// 重连后旧 socket 的迟到回包绝不能写进新一轮的转录。
     private var generation = 0
     private(set) var sentAudioByteCount: Int64 = 0
+    /// **看门狗一共判死了几次。** 给「录音自检」读 —— 它是"这条连接今天稳不稳"的唯一数字。
+    ///
+    /// 2026-09-28 之前这个数字只以日志行的形式存在，而日志行没人会去数：那次实测
+    /// 156 次判死里 137 次是静音误杀，直到把日志按「触发时的麦克风峰值」分组才看出来。
+    /// 有了这个计数器，一场录音稳不稳**当场**就有数。
+    private(set) var watchdogFiringCount = 0
     /// 上一次打过日志的段起点毫秒。只在它变化时打 —— 见 `publishSegment`。
     private var lastAnnouncedSegmentStartMilliseconds = -1
     /// 连接真正建立的时刻。`新段 @连接后 Ns` 里的 N 用它算。
@@ -396,6 +402,7 @@ nonisolated final class VolcengineRealtimeASRClient {
             // 所以"该发现的时候"依然是零延迟。
             guard let lastSpeech = self.lastInputSpeechAt,
                   Date().timeIntervalSince(lastSpeech) < 15 else { return }
+            self.watchdogFiringCount += 1
             self.publishDiagnostic("看门狗：已 \(Int(silence)) 秒没有任何回包（其间有说话），判定连接已死")
             self.publishState(.disconnected(reason: "连接无响应 \(Int(silence)) 秒"))
             self.teardownOnQueue(sendLastPacket: false, notify: false)

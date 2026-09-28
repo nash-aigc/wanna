@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# git pre-commit：**提交前强制跑录音健康检查。**
+#
+# 安装（`scripts/git-hooks/` 是版本控制里的真身，`.git/hooks/` 不进版本控制）：
+#
+#     cp scripts/git-hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# ## 为什么挂在这里
+#
+# 用户 2026-09-28 的问题：「怎么样才能让 AI 知道他的修改已经让麦克风无法正常使用？
+# 如果他修改完之后没有读到什么程序……那他就不知道。」
+#
+# 「提交」是这个项目改完代码的**必经一步**（CLAUDE.md 的流程以提交收尾），所以把它挂
+# 在这里，"检查录音还活着吗"就不再依赖任何人记得 —— **git 自己会拦**。
+#
+# ## ⚠️ 为什么**没有**把采集探针挂进来（2026-09-28 实测）
+#
+# 原本的设计是：碰到音频文件就加 `--probe`，真跑一次 `recording-capture-probe.swift`。
+# **实测当天发现它今天会假报失败，所以没挂。**
+#
+# 它第 ③ 步建的是 `AVAudioEngine`，复现的是「语音处理跑过之后，录音引擎声明
+# 44100Hz/2ch 而设备是 1ch」—— 而**长录音早就不用 `AVAudioEngine` 取流了**，
+# 它走 AUHAL（正是为了修好这一类，见 `开发经验/15-录音采集与设备自愈.md` §六）。
+# 所以那个 ❌ 测的是录音**已经不走的那条路**：挂进来就等于为一个不存在的问题
+# 拦住每一次提交 —— 那是"把好的判成坏"，比不判更坏。
+#
+# **谁该来修**：把探针第 ③ 步改成测 **AUHAL** 那条路（"语音处理跑过之后，
+# 新起的 AUHAL 采集照样拿到非零样本、格式与设备一致"），它才重新有资格当闸门。
+# 在那之前，这一层的判据只有下面那条 —— **App 自己写的自检行**。
+#
+# ## 两档力度
+#
+# · **任何提交**都跑一次快检查（读日志，<1 秒）：App 自己写的那一行自检若是 ⚠️，
+#   提交被拒 —— 免得"麦克风已经坏了，还接着提交二十笔别的改动"。
+# · **碰到音频相关文件**时把要求说清楚：这一档需要**最近真的有一场录音**才算验过；
+#   日志里没有自检行时脚本会打 `⚠️ 未验证`，按 CLAUDE.md 的规矩要**让用户录 30 秒**。
+#
+# 不要用 `git commit --no-verify` 绕过它。绕过的前提是你已经用别的方式证明了录音是好的，
+# 而这个仓库今天没有"别的方式"。
+#
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+CHECK="$ROOT/scripts/recording-health-check.sh"
+
+[ -x "$CHECK" ] || { echo "⚠️ 找不到 $CHECK，跳过录音健康检查。"; exit 0; }
+
+# 这次提交碰到的文件里，有没有"能影响录音"的
+AUDIO_PATTERN='VoicePlaybackEngine|BuddyDictationManager|LongFormRecorderController|VolcengineRealtimeASR|VolcengineASRFrame|RecordingAudioWriter|LongFormTranscriptWriter|AudioInputDeviceCatalog|RecordingPolish|SystemSpeakerMute|AudioInputDevice'
+touched="$(git diff --cached --name-only | grep -E "$AUDIO_PATTERN" || true)"
+
+if [ -n "$touched" ]; then
+    echo "── 这次提交动了音频相关的文件："
+    echo "$touched" | sed 's/^/     /'
+    echo '── 所以这一档要求「最近真的有一场录音」当判据（见 CLAUDE.md 那一节）'
+    echo
+fi
+
+exec "$CHECK"
