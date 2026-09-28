@@ -104,6 +104,10 @@ struct DirectionBoardView: View {
     /// **右列（问题 / 那棵脑图）有多宽** —— 它内容长（30 个问题就是 30 行），需要宽一点。
     static let questionColumnWidth: CGFloat = 360
 
+    /// **「口」下框那一条边有多厚** —— 洞的下边界到底部留这么多（薄薄一条 ✓，
+    /// 它的作用是让轮廓闭合，而不是装内容）。
+    static let hollowBottomEdgeHeight: CGFloat = 14
+
     /// 四列的标题（用户 2026-09-28 对照稿子指出：真机一个标题都没有 ✗）。
     static let harnessColumnTitle = "harness"
     static let supplementColumnTitle = "补充"
@@ -129,7 +133,10 @@ struct DirectionBoardView: View {
         }
         // 展开态：**7 字形**那一条轮廓（横杠 + 竖条）；折叠态：一个小圆角矩形。
         .background(AnswerCardView.cardBackground(theme: theme))
-        .clipShape(currentOutlineShape)
+        // ⚠️ **必须用 even-odd 规则**：外圈与洞是两个**同向**的子路径，
+        // 默认的 nonzero 会把洞内算成"在里面"（winding=2）→ 洞就被填实了 ✗。
+        // 用 eoFill 才是"口" ✓（洞内 winding 2 → 偶 → 挖掉 ✓）。
+        .clipShape(currentOutlineShape, style: FillStyle(eoFill: true))
         .overlay(
             currentOutlineShape
                 // 被按住不发 → 告警色呼吸；**折叠着 → 绿色**（用户：「折叠后卡片边缘自动变成绿色，
@@ -151,7 +158,11 @@ struct DirectionBoardView: View {
     private var currentOutlineShape: AnyShape {
         session.isCollapsed
             ? AnyShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
-            : AnyShape(DirectionBoardSevenShape(barWidth: Self.barWidth, barHeight: Self.barHeight))
+            : AnyShape(DirectionBoardHollowShape(
+                holeLeadingInset: Self.harnessColumnWidth,
+                holeTrailingInset: Self.questionColumnWidth,
+                holeTopInset: Self.barHeight,
+                holeBottomInset: Self.hollowBottomEdgeHeight))
     }
 
     private var borderTint: Color {
@@ -854,6 +865,42 @@ private struct ReferenceTagFlowLayout: Layout {
 /// ⚠️ **左上角那一段圆弧不能漏**（第一版漏了）：`closeSubpath()` 会从底左角直接连回起点，
 /// 左边缘于是成了**斜线** —— 屏幕上看就是"整个左边是畸形的梯形"
 ///（用户 2026-09-28 截图圈出来的正是它）。
+/// **卡片的轮廓：一个「口」字形**（用户 2026-09-28 定的形状）。
+///
+/// 原话是「卡片的形状不是 7，而是 **口** 字的形状」—— 也就是说：
+/// **外圈四边都在**（上、下、左、右闭合 ✓），**中间偏下挖掉一个方洞** ✓，
+/// 那个洞是**透明**的（透过它看到的是鼠标和回复卡 ✓），不是"画了一块空区" ✗。
+///
+/// 三列的排布决定了洞的位置：左列 harness（通到底 ✓）、右列问题（通到底 ✓）、
+/// 中列只画到 补充｜矛盾 下面为止 ✓ —— 所以洞 = **中列的下半部分** ✓。
+///
+/// 填充时必须用 **even-odd** 规则（`.fill(style: FillStyle(eoFill: true))`）✓，
+/// 否则洞会被一起填成实心 ✗。
+struct DirectionBoardHollowShape: Shape {
+    /// 洞的左边界（= 左列 harness 的宽度）
+    var holeLeadingInset: CGFloat
+    /// 洞的右边界（= 右列"问题"的宽度）
+    var holeTrailingInset: CGFloat
+    /// 洞的上边界（= 中列"补充｜矛盾"那块的高度）
+    var holeTopInset: CGFloat
+    /// 洞的下边界 —— 留出卡片下方那一条边（"口"的下框）
+    var holeBottomInset: CGFloat
+    var cornerRadius: CGFloat = AnswerCardView.cardCornerRadius
+
+    func path(in rect: CGRect) -> Path {
+        let radius = max(0, min(cornerRadius, min(rect.width, rect.height) / 2))
+        var path = Path(roundedRect: rect, cornerRadius: radius, style: .continuous)
+        let hole = CGRect(
+            x: rect.minX + holeLeadingInset,
+            y: rect.minY + holeTopInset,
+            width: max(0, rect.width - holeLeadingInset - holeTrailingInset),
+            height: max(0, rect.height - holeTopInset - holeBottomInset)
+        )
+        if hole.width > 0, hole.height > 0 { path.addRect(hole) }
+        return path
+    }
+}
+
 struct DirectionBoardSevenShape: Shape {
     /// 横杠（左半内容）的宽度 —— 竖条从这条线往右开始。
     var barWidth: CGFloat
