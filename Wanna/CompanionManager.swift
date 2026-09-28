@@ -1011,6 +1011,8 @@ final class CompanionManager: ObservableObject {
         // 只绑 127.0.0.1 + 令牌（`WannaMCPToken`），本机别的进程没那个文件就连不上。
         // 启不起来只记一行日志，**不拖累启动** —— 它是一个实验性能力，不是主链路。
         WannaMCPServer.shared.start()
+        // `point` / `draw` 两个 MCP 工具要碰界面状态（光标、画标），从这里拿实例。
+        Self.sharedForMCPTools = self
         // **⌘⏎ 粘贴的落点保障**（2026-09-28，「⌘⏎ 只是把内容放进了剪贴板，没有粘出去」的
         // 根治之一）：持续记下「最近一个不是 Wanna 的活跃 App」。合成的 ⌘V 只会落到
         // 当前活跃 App 的 key window —— 如果那一刻键盘停在我们自己身上（启动时 AppKit
@@ -5700,7 +5702,49 @@ final class CompanionManager: ObservableObject {
     /// Arrows, lines and curves stay on the model's points: they are
     /// directional strokes between two places, and snapping their endpoints
     /// to a frame would say something the model did not mean.
-    private func resolvedAnnotationMarks(
+    // MARK: - 给 MCP 工具用的两个入口（2026-09-29）
+
+    /// MCP 工具要碰界面状态时从这儿拿实例（`start()` 里登记）。
+    ///
+    /// `point` 和 `draw` 两件事原来只能由"模型在回复里写标签"触发，
+    /// 而换成 Python 之后它写的是 MCP 调用、不写标签 —— 用户说这两个是**刚需**，
+    /// 所以给它们各开一个工具，走的是**同一套解析与绘制代码**，不是另写一遍。
+
+    static weak var sharedForMCPTools: CompanionManager?
+
+    /// `point` 工具：把蓝光标飞过去指一个位置。
+    ///
+    /// ⚠️ 走的是和点击**完全相同**的那条三层解析链（`resolvedPointerLocation`
+    /// 内部就是 `resolvedClickPoint`）—— 所以"指的"和"点的"永远是同一个地方。
+    /// 这是本仓早就定下的规矩：两者若各走一套，必然出现"指得准、点得歪"。
+    func pointCursorForMCPTool(at coordinate: ModelReportedCoordinate,
+                               among screenCaptures: [CompanionScreenCapture]) async -> String {
+        guard let location = await MacosUseController.resolvedPointerLocation(
+            for: coordinate, among: screenCaptures) else {
+            return "没找到要指的那个位置，光标没有动。"
+        }
+        // **切到 idle 再设位置**：光标只在 idle 时可见，spinner 会把三角盖住，
+        // 那样飞过去的过程看不见（管线里那段注释写的就是这个）。
+        voiceState = .idle
+        detectedElementScreenLocation = location.appKitLocation
+        detectedElementDisplayFrame = location.displayFrame
+        MainFlowDiagnostics.log("🎯 MCP point → 「\(coordinate.elementLabel ?? "未命名")」")
+        return "光标已经飞过去指「\(coordinate.elementLabel ?? "那个位置")」了。"
+    }
+
+    /// `draw` 工具：在屏幕上画标（圈 / 箭头 / 直线 / 折线）。
+    func drawAnnotationsForMCPTool(_ requests: [AnnotationShapeRequest],
+                                   among screenCaptures: [CompanionScreenCapture]) async -> String {
+        let marks = await resolvedAnnotationMarks(
+            from: Array(requests.prefix(Self.maximumAnnotationShapesPerReply)),
+            among: screenCaptures)
+        screenAnnotationManager.show(marks)
+        MainFlowDiagnostics.log("🟢 MCP draw → \(marks.count) 个标记")
+        return marks.isEmpty ? "没有画出任何标记（形状参数没认出来）。"
+                             : "在屏幕上画了 \(marks.count) 个标记。"
+    }
+
+    func resolvedAnnotationMarks(
         from shapeRequests: [AnnotationShapeRequest],
         among screenCaptures: [CompanionScreenCapture]
     ) async -> [ScreenAnnotationMark] {

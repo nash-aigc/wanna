@@ -33,7 +33,8 @@ nonisolated enum WannaMCPTools {
     static func list() -> [[String: Any]] {
         [screenshotDeclaration, clickDeclaration, typeTextDeclaration,
          pressKeyDeclaration, scrollDeclaration, openAppDeclaration, readScreenDeclaration,
-         setValueDeclaration, pressAXDeclaration, setSelectedDeclaration]
+         setValueDeclaration, pressAXDeclaration, setSelectedDeclaration,
+         pointDeclaration, drawDeclaration]
     }
 
     /// 坐标参数的措辞，七处重复所以抽出来 —— 它必须**逐字一致**，
@@ -265,6 +266,8 @@ nonisolated enum WannaMCPTools {
             .setValue(try string(arguments, "value"), at: try coordinate(arguments)), arguments)
         case "press_ax": return try await run(
             .pressAccessibility(at: try coordinate(arguments)), arguments)
+        case "point": return try await point(arguments: arguments)
+        case "draw": return try await draw(arguments: arguments)
         case "set_selected": return try await run(
             .setSelected(at: try coordinate(arguments),
                          selected: (arguments["selected"] as? Bool) ?? true), arguments)
@@ -385,6 +388,105 @@ nonisolated enum WannaMCPTools {
     @MainActor
     private static func currentScreens() async throws -> [CompanionScreenCapture] {
         try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+    }
+
+    // MARK: 指向 与 画标（2026-09-29 加，用户说这两个是刚需）
+
+    // 这两件事原来只能由"模型在回复里写 `[POINT:]` / `[SHAPE:]` 标签"触发，
+    // 而换成 Python 决策大脑之后它调的是 MCP 工具、**不写标签** —— 所以它们
+    // 静默失效了。用户明确说「这两个我是刚需」，于是各给一个工具。
+    //
+    // 关键是**没有另写一套**：`point` 走的是和点击完全相同的那条三层解析链
+    // （`resolvedPointerLocation` 内部就是 `resolvedClickPoint`），
+    // `draw` 走的是管线里那条 `resolvedAnnotationMarks` → `screenAnnotationManager.show`。
+    // 各写一套必然出现"指得准、点得歪"，本仓早就吃过那个亏。
+
+    private static var pointDeclaration: [String: Any] {
+        var properties = coordinateProperties()
+        properties["label"] = [
+            "type": "string",
+            "description": "要指的那个控件的名字。**写它** —— 写了 Wanna 会去界面树里"
+                           + "按名字找真实位置；不写只能用你估的坐标，而估的坐标实测只有约 17% 准。",
+        ]
+        return [
+            "name": "point",
+            "description": """
+                让屏幕上那个**蓝色光标飞过去指一个位置**。\n\
+                这是用户能亲眼看见的动作 —— 他说「在哪里」「哪个按钮」「指给我看」这类话时用它。\n\
+                **不要无缘无故指**：用户没要求定位就别调，乱飞的光标对他是打扰。
+                """,
+            "inputSchema": ["type": "object", "properties": properties, "required": ["x", "y"]],
+        ]
+    }
+
+    private static var drawDeclaration: [String: Any] {
+        [
+            "name": "draw",
+            "description": """
+                在屏幕上**画标记**：圈出一块、画个箭头、连一条线。\n\
+                用户说「圈出来」「标一下」「画个箭头指过去」时用它。\n\
+                坐标同样是 **0–1000 网格**。circle 要两个点（先给圆心，再给圆周上一点，\
+                两点距离就是半径）；arrow / line 给两个点（起点、终点）。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "kind": ["type": "string", "enum": ["circle", "arrow", "line", "curve"],
+                             "description": "画什么形状。"],
+                    "points": [
+                        "type": "array",
+                        "description": "形状的顶点，按顺序。每个是 {\"x\": 0-1000, \"y\": 0-1000}。",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "x": ["type": "number", "description": "网格横坐标 0–1000。"],
+                                "y": ["type": "number", "description": "网格纵坐标 0–1000。"],
+                            ],
+                            "required": ["x", "y"],
+                        ],
+                    ],
+                    "label": ["type": "string",
+                              "description": "可选。写在图形旁边的小字，也是圈选时用来找控件的锚点。"],
+                    "screen": ["type": "integer", "description": "第几块屏幕（1 起）。不传 = 鼠标那块。"],
+                ],
+                "required": ["kind", "points"],
+            ],
+        ]
+    }
+
+    @MainActor
+    private static func point(arguments: [String: Any]) async throws -> [String: Any] {
+        guard let manager = CompanionManager.sharedForMCPTools else {
+            throw MCPToolError.failed("Wanna 还没准备好，光标没有动。")
+        }
+        let captures = try await currentScreens()
+        let text = await manager.pointCursorForMCPTool(at: try coordinate(arguments), among: captures)
+        return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    @MainActor
+    private static func draw(arguments: [String: Any]) async throws -> [String: Any] {
+        guard let manager = CompanionManager.sharedForMCPTools else {
+            throw MCPToolError.failed("Wanna 还没准备好，没有画。")
+        }
+        let kindName = try string(arguments, "kind")
+        guard let kind = AnnotationShapeKind(rawValue: kindName) else {
+            throw MCPToolError.failed("不认识的形状「\(kindName)」（可用：circle / arrow / line / curve）")
+        }
+        guard let rawPoints = arguments["points"] as? [[String: Any]], !rawPoints.isEmpty else {
+            throw MCPToolError.failed("points 是空的 —— 至少要一个点（坐标是 0–1000 网格）。")
+        }
+        let points: [CGPoint] = try rawPoints.map {
+            CGPoint(x: try number($0, "x"), y: try number($0, "y"))
+        }
+        let request = AnnotationShapeRequest(
+            kind: kind, points: points,
+            label: (arguments["label"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            displayLabel: nil,
+            screenNumber: arguments["screen"] as? Int)
+        let captures = try await currentScreens()
+        let text = await manager.drawAnnotationsForMCPTool([request], among: captures)
+        return ["content": [["type": "text", "text": text]], "isError": false]
     }
 
     // MARK: 参数取值（缺了就抛，别用默认值蒙混）
