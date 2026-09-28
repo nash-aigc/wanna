@@ -1005,6 +1005,12 @@ final class CompanionManager: ObservableObject {
         // 标签页问题时实测：应用跑了两分钟，日志文件仍然是 0 字节，而窗口里其实
         // 已经有输出。改成行缓冲后 `> 日志文件` 能实时看到，探针才真的能用。
         setvbuf(stdout, nil, _IOLBF, 0)
+
+        // **Wanna 自己的 MCP 服务端**（2026-09-28，`改造方案-Agent框架迁移.md` 阶段 1）。
+        // 把「手」（截图 / 点击 / 打字）用标准协议递出去，好让 Python agent 那一侧接上来。
+        // 只绑 127.0.0.1 + 令牌（`WannaMCPToken`），本机别的进程没那个文件就连不上。
+        // 启不起来只记一行日志，**不拖累启动** —— 它是一个实验性能力，不是主链路。
+        WannaMCPServer.shared.start()
         // **⌘⏎ 粘贴的落点保障**（2026-09-28，「⌘⏎ 只是把内容放进了剪贴板，没有粘出去」的
         // 根治之一）：持续记下「最近一个不是 Wanna 的活跃 App」。合成的 ⌘V 只会落到
         // 当前活跃 App 的 key window —— 如果那一刻键盘停在我们自己身上（启动时 AppKit
@@ -1529,6 +1535,8 @@ final class CompanionManager: ObservableObject {
                 // 主 Agent 那一轮录音（接线图第 4 条）如果还开着，把文件收干净 ——
                 // 不收的话头还停在那 44 字节的占位值上，那个 `.wav` 是打不开的。
                 AgentTurnRecorder.shared.finishOpenTurnForTermination()
+                // 把 MCP 服务端的监听收掉，别让端口在退出过程中还开着。
+                WannaMCPServer.shared.stop()
             }
         }
 
