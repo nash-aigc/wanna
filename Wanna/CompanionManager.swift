@@ -2435,6 +2435,34 @@ final class CompanionManager: ObservableObject {
                 // 松手会取消整个启动任务，那种情况下不该在历史里留一条 0 秒的空录音）。
                 AgentTurnRecorder.shared.armTurn()
 
+                // ⭐ **冷启动：先把播报引擎拉起来，起来之后再开麦**（2026-09-28，用户的设计 + 他拍板）。
+                //
+                // 他要的终极效果：「我说完话，**回复结果尽可能快**」。卡在那里的正是
+                // **第一次打开 VPIO（系统级回声消除）要 ~2 秒**（引擎自身只有 95ms）：
+                // 引擎冷时「模型第一个字 → 出声」= **2.50 秒** ✗；热着 = **0.93~1.21 秒** ✓。
+                //
+                // 他的办法：**在开麦之前就把这 2 秒付掉** ✓ —— 那一刻**我们还占着麦克风吗？没有** ✓，
+                // 所以引擎重配输入设备**伤不到任何东西** ✓。这也正是它与"按下就起、同时开麦"
+                // 那一版的根本区别（那一版会让录音通路断死 ✗，见 `开发经验/10` D44）。
+                //
+                // 代价（他明确接受，原话）：「我可以去在前面等都可以，甚至说我第一句话没读上都可以。」
+                // 引擎**已经热着**时一秒不等 ✓（`warmUpVoiceEngine()` 走"在跑就直接返回"那条 ✓）。
+                //
+                // 起来之后响一声轻的 —— 那是**"可以说话了"**的信号。
+                // （他要求"刘海给我一个动态效果告诉我引擎已启动"；刘海上的文字状态是紧接着的一小步，
+                //   见 `需求/03-引擎契约.md` §4。）
+                let engineBringUpBeganAt = Date()
+                await bailianTTSClient.warmUpVoiceEngine()
+                let engineBringUpSeconds = Date().timeIntervalSince(engineBringUpBeganAt)
+                if engineBringUpSeconds > 0.3 {
+                    SoundEffectPlayer.shared.play(.answerFinished)
+                }
+                // **开麦这件事本身也留一行**：引擎是刚预热完的还是本来就热着、等了多久。
+                // 这一行是"录音到底从哪一刻开始收东西"的唯一判据 —— 以后出问题第一时间看它。
+                MainFlowDiagnostics.log("🎙️ 开麦：引擎预热耗时 "
+                                        + String(format: "%.2f", engineBringUpSeconds) + " 秒"
+                                        + (engineBringUpSeconds > 0.3 ? "（冷启动，已响提示音）" : "（本来就热着）"))
+
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
                     updateDraftText: { [weak self] partialTranscript in
