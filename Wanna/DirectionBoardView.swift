@@ -139,27 +139,27 @@ struct DirectionBoardView: View {
         // 用 eoFill 才是"口" ✓（洞内 winding 2 → 偶 → 挖掉 ✓）。
         .clipShape(currentOutlineShape, style: FillStyle(eoFill: true))
         // ⚠️ **边框加回来了**（用户 2026-09-28：「加上圆角」）—— 圆角要靠这圈边才看得见 ✓。
-        // 他之前要删的那条"最左边细线"是**凹口的左壁** ✗，而现在的形状 `notchLeadingInset: 0`
-        // 让凹口从 x=0 起（左壁根本不存在 ✓），所以这圈边不会再长出那条线 ✓ —— 两头都满足 ✓。
         .overlay(
-            // 描边用**去掉左边那一段**的那条路径 ✓（用户：「你把那道线变成透明」）
-            // 左边那条线用「盖住」的办法去掉（用户的原话：「你把那道线变成透明……你直接把这部分
-            // 给我变得透明的」）—— 不再做路径手术 ✗（那次把填充切坏了 ✗），改成描边照常画、
-            // 再用一块卡片底色的窄条盖住左边那一段 ✓。
-            currentOutlineShape
+            // ⚠️ **描边用的路径与填充**只差一处：**不画凹口的左壁**（`currentStrokeShape`）。
+            //
+            // 那一竖段（横杠下沿 → 卡片下沿，正好是凹口的高度）画在**卡片的透明区里** ——
+            // 也就是用户桌面上，所以他看到的就是"凭空一条黑线"（2026-09-28 第六次指它）。
+            // 我试过三种改法：① 整圈边都不要 → 圆角也没了 ✗；② 拆成两张卡片 → 他说"拆开了" ✗；
+            // ③ **用一块卡片底色的窄条盖住它** ✗ —— 这一版是量出来错的：凹口里**没有卡片底色可还原**
+            //（那儿是透明的，透出来的是壁纸），不透明的一条色块盖上去**自己就变成了那条线**。
+            // 实测（用户截图 2×）：盖住的那条渲染成 rgb(11,11,15)，落在壁纸 rgb(21,174,207) 上，
+            // 宽 2.5pt、从横杠下沿一直拉到卡片下沿；它还一起吃到了卡片那层 `.shadow`，于是更像一条线 ✗。
+            //
+            // 现在的做法是**不画**（就是用户说的「你把那道线变成透明」）：开口路径走到凹口的左上角
+            // 就收笔，`closeSubpath` 不调用，所以它永远不会把两头连起来 —— 凹口里一个像素都不画 ✓，
+            // 而横杠那一侧的左边缘、圆角、上边、右边、下边、凹口的顶边与右壁照常 ✓。
+            currentStrokeShape
                 // 被按住不发 → 告警色呼吸；**折叠着 → 绿色**（用户：「折叠后卡片边缘自动变成绿色，
                 // 便于用户快速在桌面上看到其位置」）；其余用主题边框 ✓。
                 .stroke(borderTint, lineWidth: borderWidth)
                 .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
                 .animation(.easeInOut(duration: 0.25), value: session.isCollapsed)
         )
-        .overlay(alignment: .topLeading) {
-            Rectangle()
-                .fill(DS.Colors.surface2)
-                .frame(width: 2.5)
-                .padding(.top, Self.barHeight)
-                .allowsHitTesting(false)
-        }
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
         .contentShape(Rectangle())
         .onTapGesture { onCardTapped() }
@@ -169,8 +169,20 @@ struct DirectionBoardView: View {
         .onAppear { isBreathing = session.isUserSpeaking }
     }
 
-    /// 当前该用哪条轮廓：折叠态是小圆角矩形，展开态是 **7 字形**。
+    /// **填充（裁剪底色）**用哪条轮廓：折叠态是小圆角矩形，展开态是 **7 字形**（闭合路径）。
     private var currentOutlineShape: AnyShape {
+        boardOutlineShape(omitsNotchLeadingWall: false)
+    }
+
+    /// **描边（那圈边）**用哪条轮廓 —— 与填充**只差凹口的左壁那一段**。
+    ///
+    /// 两者必须分开：填充要的是**完整的卡片**（少一块就是用户 2026-09-28 圈出来的「裁剪坏了」✗），
+    /// 而描边要的是**凹口里一条线都不画** ✓（那一段画在桌面上，见上面 `.overlay` 里的注释）。
+    private var currentStrokeShape: AnyShape {
+        boardOutlineShape(omitsNotchLeadingWall: true)
+    }
+
+    private func boardOutlineShape(omitsNotchLeadingWall: Bool) -> AnyShape {
         session.isCollapsed
             ? AnyShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous))
             : AnyShape(DirectionBoardHollowShape(
@@ -178,7 +190,8 @@ struct DirectionBoardView: View {
                 // 回复卡就落在这里 ✓；右侧那条长竖列一直通到底 ✓。
                 notchLeadingInset: 0,
                 notchTrailingInset: Self.questionColumnWidth + Self.harnessColumnWidth,
-                notchTopInset: Self.barHeight))
+                notchTopInset: Self.barHeight,
+                omitsNotchLeadingWall: omitsNotchLeadingWall))
     }
 
     private var borderTint: Color {
@@ -913,16 +926,57 @@ struct DirectionBoardHollowShape: Shape {
     var notchTopInset: CGFloat
     var cornerRadius: CGFloat = AnswerCardView.cardCornerRadius
 
+    /// **描边时跳过凹口的左壁**（= 卡片最左边那一竖段，从凹口顶一直到卡片下沿）。
+    ///
+    /// 为什么要有这个开关：凹口那块在屏幕上是**透明的**（透出来的是用户桌面），
+    /// 而这条闭合路径的左边缘正好**从凹口里穿过去** —— 描边一画，桌面上就凭空多出一条黑线 ✗
+    ///（用户 2026-09-28 前后指了五次，第六次配着一张标了红框的截图：「黑色的线……他没有意义」）。
+    ///
+    /// `true` 时返回的是一条**开口**折线：从凹口左上角起笔、绕卡片一圈、回到它自己就收笔，
+    /// 中间**不经过凹口的左壁、也不画左下角那段圆弧与底边左边那一小段**（后两者同样落在凹口里 ✓）。
+    /// 开口路径不会被自动闭合，所以那一段是"根本不画"，而不是"画了再盖住" ✓
+    /// —— 盖是盖不住的：凹口里没有底色可还原（见 `DirectionBoardView` 里 `.overlay` 的注释）。
+    ///
+    /// `false`（填充/裁剪用）时返回原来那条**闭合**路径 —— 它必须完整，否则卡片会缺一块 ✗。
+    var omitsNotchLeadingWall: Bool = false
 
     func path(in rect: CGRect) -> Path {
         let radius = max(0, min(cornerRadius, min(rect.width, rect.height) / 2))
         let notchLeft = rect.minX + notchLeadingInset
         let notchRight = max(notchLeft, rect.maxX - notchTrailingInset)
         let notchTop = rect.minY + notchTopInset
+
+        if omitsNotchLeadingWall {
+            // **描边路径**：一个 `move`、一个开口子路径 ✓ —— 只有"填充"才怕多个 `move`
+            //（两个子路径配 even-odd 会互相抵消，2026-09-28 那次就是这样把卡片切坏的 ✗）。
+            var strokePath = Path()
+            strokePath.move(to: CGPoint(x: notchLeft, y: notchTop))
+            // 沿卡片的左边缘往上（这一段在横杠那一侧，压在卡片自己的底色上，是要画的 ✓）
+            strokePath.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+            strokePath.addArc(center: CGPoint(x: rect.minX + radius, y: rect.minY + radius),
+                              radius: radius, startAngle: .degrees(180), endAngle: .degrees(270),
+                              clockwise: false)
+            strokePath.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+            strokePath.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.minY + radius),
+                              radius: radius, startAngle: .degrees(270), endAngle: .degrees(360),
+                              clockwise: false)
+            strokePath.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+            strokePath.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
+                              radius: radius, startAngle: .degrees(0), endAngle: .degrees(90),
+                              clockwise: false)
+            strokePath.addLine(to: CGPoint(x: notchRight, y: rect.maxY))
+            strokePath.addLine(to: CGPoint(x: notchRight, y: notchTop))
+            strokePath.addLine(to: CGPoint(x: notchLeft, y: notchTop))
+            // **到此收笔**：没有 `closeSubpath`、也没有沿左壁下行的那一段 ✓
+            //（`notchLeadingInset` 是 0 时终点与起点重合，两条线在凹口左上角正常接上 ✓）。
+            return strokePath
+        }
+
         var path = Path()
         // **一条闭合路径**（今天早上验证过能用的那一版）—— 不要在这里做"少画一段"的手术 ✗：
         // 2026-09-28 我试过一次，路径里出现两个 `move` → 两个子路径 → 配 even-odd 填充互相抵消，
         // 卡片被切坏（用户当场看出来：「高度上是切的，竖直上也是斜的」）。
+        // 「不画那一段」的需求现在由上面的 `omitsNotchLeadingWall` 分支负责 ✓。
         path.move(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
         path.addArc(center: CGPoint(x: rect.minX + radius, y: rect.minY + radius),
