@@ -3097,10 +3097,15 @@ final class CompanionManager: ObservableObject {
         AgentTurnRecorder.shared.armTurn()
     }
 
-    /// Arms the continuous-listening window the moment an answer's playback
-    /// starts — the configured 计时起点. Called from both 播报方式 paths. When
-    /// the window is already open (a follow-up's own answer just started
-    /// speaking) it only re-arms the deadline.
+    /// **开窗**：回答开始出声那一刻就把麦克风接上 —— 因为这条窗口就是"打断"的耳朵，
+    /// 回答还在念的时候它必须已经开着。Called from both 播报方式 paths.
+    ///
+    /// ⚠️ **但用户要的"30 秒"不是从这一刻起算**（他 2026-09-28 说得很明确：
+    /// 「AI 语音播放完成……的那一秒开始，倒计时 30 秒」）—— 所以真正的计时起点在
+    /// `scheduleVoiceStateResetAfterPlayback` 里：**播完那一刻再调一次本函数**，
+    /// 把到期时间重新拨到 30 秒之后（窗口已开时这里只重排到期）。
+    /// 少了那一下，回答一长（念 40 秒），窗口就在它还念着的时候到期了 ——
+    /// 用户看到的「对话几轮之后它就不说话了」就是这个。
     private func armContinuousListeningWindow() {
         // 语音聊天会话进行中：这块麦克风不是我们的，别去碰。
         //
@@ -4997,6 +5002,21 @@ final class CompanionManager: ObservableObject {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }
+
+            // **回复念完了 —— 30 秒的倒计时从这一刻重新起算。**
+            //
+            // 用户 2026-09-28：「AI 语音播放完成、回复结果语音播放完成的那一秒开始，
+            // **倒计时 30 秒**……如果过程中用户说话了、或者打断它了，就进入一个全新的循环，
+            // 然后它继续回复用户，等回复完成那一秒开始**重新计时 30 秒**，一直这样循环」。
+            //
+            // ⚠️ **开窗仍在"开播那一刻"**（`armContinuousListeningWindow` 的两个调用点不动）——
+            // 那条窗口就是打断的耳朵，回答还在念的时候必须已经开着；这里做的是**把它的
+            // 到期时间重新拨到 30 秒之后**（`armContinuousListeningWindow` 在窗口已开时
+            // 只重排到期，见它自己的注释）。
+            //
+            // 用户报的「对话几轮之后它就不说话了」正是缺了这一下：回答念 40 秒的话，
+            // 30 秒的窗口在它还念着的时候就到期了，念完再说话已经没人听。
+            self.armContinuousListeningWindow()
 
             // Only the state this method owns. A newer turn has already set its
             // own, and overwriting that would retract a reply that is playing.

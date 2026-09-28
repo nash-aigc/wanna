@@ -814,7 +814,7 @@ struct GeneralSettingsView: View {
                 SettingsCardRowDivider()
                 SettingsRow(
                     label: "持续监听时间",
-                    description: "回答播报开始后，麦克风再开多久让你直接追问（不用按快捷键）。超时且没在说话就收工，回到按快捷键说话——引擎不受影响，仍然保持热着，所以之后按快捷键提问一样快。设为 0 表示回答播完就关麦：之后想说什么都听不见，只有按快捷键才听得见。"
+                    description: "回答**念完**之后，麦克风还开多久让你直接追问（不用按快捷键）——**倒计时从最后一句念完那一秒开始**，不是从开始念算；你每追问一轮，它答完就重新计一遍，所以可以一直连着问。超时且没在说话就收工，回到按快捷键说话（引擎保持热着，之后按快捷键一样快）。设为 0 表示念完就关麦：之后想说什么都听不见，只有按快捷键才听得见。"
                 ) {
                     SettingsStepper(
                         value: generalSettingsViewModel.binding(\.continuousListeningWindowSeconds),

@@ -578,6 +578,39 @@ struct DirectionBoardTests {
         #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
     }
 
+    /// **agent 模式下：看板不显示、那条链也不跑**（用户 2026-09-28）。
+    ///
+    /// 他的原话：「进入 Agent 模式后，**实时模式相关的任何东西都不显示，代码也不需要运行**，
+    /// 右上角的卡片应该不显示……因为 Agent 模式只有右下角一个卡片」
+    /// 「我记得**刚才偶尔有一次看到它显示了一下**，这是完全禁止的」。
+    ///
+    /// 那一次"显示一下"是这么来的：他打断 agent 时说的那句话落进了追问窗口，而窗口一武装
+    /// `isListening` 又会变 true —— 光看 `isListening` 就挡不住。所以另立一个旗标：
+    /// **问题交出去那一刻置上**（`consumeTurnDecision`，五条路唯一的收口），
+    /// **一次全新的按下 / 一大轮结束清掉**。
+    @Test func agentModeHidesTheBoardAndStopsItsWork() throws {
+        let session = DirectionBoardSession.shared
+        session.endBigRound(reason: "单测：先归零")
+        session.beginListening(cycleID: "cycle-A")
+        #expect(!session.isAgentModeActive)          // 实时模式：看板该显示
+        #expect(session.isListening)
+
+        // 交出去（= 按下第二次 / 静音到点自动发送）→ agent 模式。
+        _ = session.consumeTurnDecision()
+        #expect(session.isAgentModeActive)
+
+        // 追问窗口再武装（他打断 agent 说的那句话）—— isListening 又是 true，
+        // 但 agent 模式**不该**因此把看板放出来。
+        session.beginListening(cycleID: "cycle-A")   // 同一个大轮
+        #expect(session.isListening)
+        #expect(session.isAgentModeActive)           // ← 看板仍然不显示
+
+        // **一次全新的按下 = 新的大轮** → 回到实时模式。
+        session.beginListening(cycleID: "cycle-B")
+        #expect(!session.isAgentModeActive)
+        session.endBigRound(reason: "单测：收尾")
+    }
+
     /// **润色之后的文字里那些"模型自己加的空格"要收掉**（用户 2026-09-28 报的
     /// 「转写之后的文字**中间的间距特别大**」）。
     ///

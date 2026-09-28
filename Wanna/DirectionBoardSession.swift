@@ -592,6 +592,9 @@ final class DirectionBoardSession: ObservableObject {
     /// 识别文本更新：本地关键词立刻匹配（免费），Jev 的概率随后到。
     func noteLiveTranscript(_ transcriptText: String) {
         guard isListening else { return }
+        // **agent 模式下这一整条都不跑**（用户：「代码也不需要运行」）——
+        // 他打断 agent 说的那句话会落进追问窗口，但那不是"实时模式"。
+        guard !isAgentModeActive else { return }
         if DirectionBoardMatching.spokenCancelBoardRequested(in: transcriptText) {
             cancelForThisCycle()
             return
@@ -661,6 +664,8 @@ final class DirectionBoardSession: ObservableObject {
         typedInput = ""
         paragraph = ""
         displayedItems = []
+        // **交给 agent 了**：从这一刻起实时模式全部收摊（看板不显示、那条链也不跑）。
+        isAgentModeActive = true
         // ⚠️ **这里不收右下角的预览**（`previewAnswer` / `answerPreviewWriter` 都不动）：
         // 提交之后真答案要 1~2 秒才到，这一刻收掉的话卡片会先消失再冒出来 ——
         // 用户报的「显示了个回复，然后没过半秒钟它又显示了一个全新的回复」就是这个。
@@ -857,6 +862,8 @@ final class DirectionBoardSession: ObservableObject {
 
     private func requestIfTheTranscriptChanged() {
         guard !suppressesRequestsForSelfCheck else { return }
+        // 同上：agent 模式下不发任何请求（JEV / 梳理 / 截图全套都不跑）。
+        guard !isAgentModeActive else { return }
         refreshCancellationState()
         // 三道闸门没过也要留一行（每 3 秒最多一行，且只在"有话说"时才可能重复）——
         // 「看板不动了」到底是闸门没过、还是请求没回来，只有这一行能分辨。
@@ -1229,6 +1236,21 @@ final class DirectionBoardSession: ObservableObject {
     /// 那段"AI 怎么理解"：**只用方向清单 + 用户的话**（不再发主 Agent 那 5000 字提示词）。
     /// **一大轮结束**：清掉临时那份类型文件（用户：「临时文件在每一轮对话结束时清掉。
     /// 是每一大轮……中间可能有打断，这算一个轮，不算两轮」）。
+    /// **这一大轮已经交给 agent 了**（用户 2026-09-28：「进入 Agent 模式后，**实时模式相关的
+    /// 任何东西都不显示，代码也不需要运行**，右上角的卡片应该不显示……因为 Agent 模式只有
+    /// 右下角一个卡片」）。
+    ///
+    /// 什么时候置上：问题**交出去**那一刻（`consumeTurnDecision`，五条路唯一的收口）。
+    /// 什么时候清掉：**一次全新的按下**（`beginListening` 换了大轮）或一大轮结束（`endBigRound`）。
+    /// 用它挡两件事：**看板不再显示**（`NotchWindowController` 的判据）与
+    /// **看板那条链一个字都不跑**（`noteLiveTranscript` / `requestIfTheTranscriptChanged` ——
+    /// 他的原话是"代码也不需要运行"：没有 JEV、没有梳理、没有截图那一套）。
+    ///
+    /// ⚠️ 为什么不能只靠 `isListening`：追问窗口一武装（回答开播时），`isListening` 又会变 true，
+    /// 而他**在 agent 模式里打断**时说的那句话正落在这个窗口上 —— 光看 `isListening`
+    /// 就会让看板在他打断的那一瞬间冒出来（他报的「偶尔有一次看到它显示了一下」）。
+    private(set) var isAgentModeActive = false
+
     /// **一大轮结束（追问窗口关闭 / 任务完成 / 用户按 ESC 取消）：卡片回到"从来没有过"的状态。**
     ///
     /// 用户 2026-09-28 的原话：「**非常致命的问题**：用户按住主 Agent 的快捷键进入实时模式时，
@@ -1263,6 +1285,7 @@ final class DirectionBoardSession: ObservableObject {
         boardPreviewStreamingWriter?(false)
 
         currentCycleID = nil
+        isAgentModeActive = false
         accumulatedMindMap = ""
         spokenTranscript = []
         recentTurns = []

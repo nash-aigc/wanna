@@ -1895,7 +1895,13 @@ final class NotchWindowController {
         // 按下快捷键开始说话 → 起表；问题交给 agent（`consumeTurnDecision`）→ 停表。
         DirectionBoardPanelController.shared.sync(
             isVisible: panelModel.notchBandSitsAboveTranscriptLine
-                && DirectionBoardSession.shared.isListening,
+                && DirectionBoardSession.shared.isListening
+                // **agent 模式下一律不显示**（用户 2026-09-28 的原话：「进入 Agent 模式后，
+                // 实时模式相关的任何东西都不显示……因为 Agent 模式只有右下角一个卡片」）。
+                // 挡在 `isListening` 之外的那半句是必需的：他打断 agent 时说的那句话会落进
+                // 追问窗口，`isListening` 那时又是 true —— 只看它，看板就会在他打断的
+                // 那一瞬间冒出来。
+                && !DirectionBoardSession.shared.isAgentModeActive,
             isSheetExpanded: panelModel.isExpanded)
     }
 
