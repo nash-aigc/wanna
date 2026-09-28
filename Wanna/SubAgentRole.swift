@@ -91,10 +91,29 @@ extension SubAgentRole {
     var permissionFace: SubAgentPermissionFace {
         switch self {
         case .graphics:
-            // 只碰图形相关文件；不点击、不打字、不跑脚本 —— 它产出图形**数据**，
-            // 显示由 App 自己画（`ScreenAnnotationManager` / `FigureBoardController`）。
+            // **图形 agent 能点屏幕**（用户 2026-09-28：「删除这句话，让他能操作」）。
+            //
+            // 原来这里写的是「不点击、不打字、不跑脚本 —— 它产出图形**数据**，显示由
+            // App 自己画」。那句话与事实有两处对不上，用户看到之后决定删掉这条限制：
+            //
+            //  1. **它从来就不是一道闸。** `canActOnScreen` / `canRunScripts` 这两个
+            //     字段**只有定义、没有任何读者**（`git log -S` 证明从加进来那天起就没有），
+            //     真正被执行的只有 `fileAccessDecision` 那道**文件**闸。所以图形 agent
+            //     本来就点得动 —— 挡住它的不是这里，是它的技能正文里没教它怎么写点击标签。
+            //  2. **它的提示词早就假设它会点。** 那段「用户自己圈了一块」的说明里写着
+            //     「when you then point, click or draw a shape at it … prefer
+            //     [CLICK:x,y:exact string] over a coordinate guess」，例子那一段也写着
+            //     「帮我点一下发送 → point at it — and click it too if they asked you to click」。
+            //
+            // 所以这一改是**让声明与提示词一致**，并且同步在它那一段技能正文里补上了
+            // 点击标签的格式与规则（`graphicsAgentSkillPrompt` 的 "acting on screen"）——
+            // 只改这里的话一个字都不会变，因为这里根本没人读。
+            //
+            // **仍然不给它打字 / 按键 / 滚动 / 开 App**：它的活是"把东西指出来、圈出来"，
+            // 需要动手的那些（打字、开应用、跑脚本）归执行 agent。要放开这些，得改的是
+            // 它的技能正文，不是这个字段。
             return SubAgentPermissionFace(canReadFiles: true, canWriteFiles: true,
-                                          canActOnScreen: false, canRunScripts: false)
+                                          canActOnScreen: true, canRunScripts: false)
         case .execution:
             // 工具最多的那一个：动作、脚本、文件都归它。
             return SubAgentPermissionFace(canReadFiles: true, canWriteFiles: true,
