@@ -477,9 +477,25 @@ private struct ReferenceTagFlowLayout: Layout {
             }
             .padding(.horizontal, Self.horizontalPadding)
             .padding(.top, Self.barTopPadding)
-            Spacer(minLength: 8)
+            .padding(.bottom, Self.horizontalPadding)
+            // ⚠️ **这一块必须"限高 + 裁掉溢出"**（2026-09-28 踩到两次）：
+            // 上面那几块的自然高度是 12 + 矛盾 10 行(187) = 199，而横杠只有 **180** ——
+            // 差的那 44pt 会把**下面**的参考行整条推到横杠下沿之外，落进**透明的凹口**里，
+            // 再被卡片轮廓裁掉 ✗。用户看到的就是「参考那一行不见了」（他的原话：「应该是显示
+            // 参考内容的，**之前有，你给我删除了**」—— 其实是被挤出去了 ✗）。
+            //
+            // 高度写**算式**、不写 `.infinity`：`maxHeight: .infinity` 只是"允许它长"，
+            // **不会把已经比它高的内容压下去**（子视图的理想高度是它自己的下限 ✗）——
+            // 第一版就是这么改的，屏幕上纹丝不动，探针量那条带子依然是空的 ✗。
+            // 而 `.frame(height:)` 会把结果**夹**在这个数上（内容溢出，交给下面的 `clipped()` 裁）✓。
+            .frame(height: Self.barHeight - Self.referenceTagRowHeight, alignment: .topLeading)
+            .clipped()
             referenceTagRow
-                .padding(.horizontal, Self.horizontalPadding)
+                // **与下面那张 AI 回复卡同宽、且左边缘对齐**（用户 2026-09-28：「注意这个长，
+                // 这个宽度，要不然下面这个卡片的宽度应该是一样的才对」）—— 回复卡就是
+                // `answerCardMaximumWidth` 宽、左边缘与横杠左边缘在同一条竖线上 ✓，
+                // 所以这一行也取同一个数、不加左边距 ✓。
+                .frame(width: NotchSupport.answerCardMaximumWidth, alignment: .leading)
         }
         .frame(width: Self.barWidth, height: Self.barHeight, alignment: .topLeading)
         // ⚠️ **横杠与竖条之间那条分割线删掉了**（用户 2026-09-28：「把**分隔线删除**，
