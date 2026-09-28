@@ -872,7 +872,7 @@ struct GeneralSettingsView: View {
             SettingsCard {
                 SettingsRow(
                     label: "连接后让 AI 先打招呼",
-                    description: "连上之后由 AI 说第一句话。这也是你判断「真的通了」的唯一可听证据 —— 刘海上的「已连接」会等到那一句出声的那一刻才亮，不再是它接受了配置就亮。"
+                    description: "连上之后由 AI 说第一句话。这也是你判断「真的通了」的唯一可听证据 —— 刘海上的「已连接」会等到那一句出声的那一刻才亮，不再是它接受了配置就亮。**文本 / 图文那些通话也读这一条**：它接通之后同样在后台发一次这句提示词（不进对话界面），让你听得见它真的通了。"
                 ) {
                     SettingsSwitch(isOn: generalSettingsViewModel.binding(\.voiceChatGreetsOnConnect))
                 }

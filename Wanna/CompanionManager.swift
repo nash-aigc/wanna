@@ -305,7 +305,30 @@ final class CompanionManager: ObservableObject {
     func hangUpAnyActiveCall() {
         // **刘海右侧那颗电话是两条通话共用的挂断。** 只能有一条在跑（连续监听只有一份
         // 窗口），所以这里不需要判断"哪一个在通话" —— 两条都挂，没在跑的那条是空操作。
+        //
+        // ⚠️ **文本 / 图文那一通还必须把"正在说的那句话"也停掉**（用户 2026-09-28）。
+        //
+        // 两条通话的挂断在这一点上原本不对称，而用户听到的是同一件事：
+        //   · 语音 / 视频：`disconnectCurrentSession` 里 `cascadeEngine.stopEverything()` +
+        //     `duplexVoiceEngine.stop()` —— 声音当场断 ✓
+        //   · 文本 / 图文：那一轮回答走的是**本进程自己的语音管线**，挂断只关了麦克风，
+        //     正在合成 / 正在念的那一段继续念到底 ✗
+        //
+        // 实测（2026-09-28，真机）：点掉刘海那颗红电话之后日志里是
+        // `📞 文本通话结束` + `continuous listening ended`，紧接着
+        // `🔊 Bailian TTS: playing segment 4` / `segment 5` —— 屏幕上麦克风关了、
+        // 声音还在说。用户的原话：「点击挂断，正在播放的声音也必须停止」。
+        //
+        // 用 `interruptActiveResponse()` 而不是只 `stopPlayback()`：这个函数是**这个仓库
+        // 唯一一处"停止"**（停播报 + 取消这一轮 + 清气泡/绿圈/白板），而只停播报挡不住
+        // "还没开始播的那一轮" —— 回答还在生成，停掉播放器之后它照样会把后面的段落念出来。
+        // 它里面那条"任务在跑时只停播报、不杀任务"的既有规矩原样保留（任务只死在
+        // `cancelRunningJob()` 里）—— 挂断不该比 ESC 更狠。
+        let wasInTextCall = textCallController.isActive
         textCallController.stop()
+        if wasInTextCall {
+            interruptActiveResponse()
+        }
         voiceChatController.disconnectCurrentSession()
     }
 
@@ -319,6 +342,9 @@ final class CompanionManager: ObservableObject {
             dictationManager: buddyDictationManager,
             sendQuestion: { [weak self] text, cardID, cardKind in
                 self?.sendTextCallQuestion(text, cardID: cardID, cardKind: cardKind)
+            },
+            sendOpeningGreeting: { [weak self] cardID, cardKind in
+                self?.sendTextCallOpeningGreeting(cardID: cardID, cardKind: cardKind)
             },
             interruptActiveResponse: { [weak self] in
                 self?.interruptActiveResponse()
@@ -343,17 +369,73 @@ final class CompanionManager: ObservableObject {
     ///
     /// 截不截屏由卡片的模式决定（图文要截图、文本不要）——与用户在输入框里打字时
     /// 完全同一条判断，所以通话与手打不会有两套行为。
-    private func sendTextCallQuestion(_ text: String, cardID: String, cardKind: CardKind) {
+    ///
+    /// `announcesUserQuestion: false` = **这句话不是用户说的，是我们替他说的**
+    /// （目前只有接通后的开场招呼那一句），它不进对话界面、也不进对话记录 ——
+    /// 见 `sendTextCallOpeningGreeting`。
+    private func sendTextCallQuestion(_ text: String,
+                                      cardID: String,
+                                      cardKind: CardKind,
+                                      announcesUserQuestion: Bool = true,
+                                      speaksEvenWhenMuted: Bool = false,
+                                      sendsScreenshot: Bool? = nil) {
         let mode = AppSettingsStore.snapshot().cardChatMode(forCardID: cardID, kind: cardKind)
+        let deliversScreenshot = sendsScreenshot ?? mode.sendsScreenshot
         switch cardKind {
         case .mainLoop:
-            submitTypedQuestion(text, sendsScreenshot: mode.sendsScreenshot)
+            submitTypedQuestion(text,
+                                sendsScreenshot: deliversScreenshot,
+                                announcesUserQuestion: announcesUserQuestion,
+                                speaksEvenWhenMuted: speaksEvenWhenMuted)
         case .claudeCode, .review:
             guard let agentID = UUID(uuidString: cardID) else { return }
             agentSessionManager.sendTurn(text,
                                          to: agentID,
-                                         attachesScreenshot: mode.sendsScreenshot)
+                                         attachesScreenshot: deliversScreenshot)
         }
+    }
+
+    /// **文本 / 图文通话接通之后，后台替用户说第一句话**（用户 2026-09-28）。
+    ///
+    /// 他的原话：「点击通话后，后台自动发送提示词，让 AI 首先说话（说你好，其他不用说），
+    /// 你后台发送提示词就行。**不要显示在（窗口的对话界面中）**，目的 = 让用户知道，
+    /// 通话已经连接」，并且点了参照物：「参考（音频模式，如何实现让 AI 首先说话的方法）」。
+    ///
+    /// 所以它**逐字照搬语音聊天那条路**（`VoiceChatController` 里那一段）：
+    ///
+    ///   · 提示词读的是**同一个设置**（设置 → 语音聊天 → 连接：「连接后让 AI 先打招呼」
+    ///     ＋「第一句说什么」）—— 那是这个 App 里"接通了没有"的判据，两条通话是同一件事，
+    ///     各配一份必然漂；
+    ///   · 「不显示」用的是语音聊天同一个语义（那边叫 `announcesUserBubble: false`）：
+    ///     这里对应 `announcesUserQuestion: false`，它同时挡掉**用户气泡**和**那条对话记录**
+    ///     （历史里落一条孤立问答会把记录弄脏 —— 用户以为自己在记录里说过那句话）。
+    ///
+    /// **不带截图**：招呼是"听不听得到"的探针，不是内容。带上屏幕会多付一次 1MB 上传，
+    /// 而且模型很可能转去描述屏幕而不是说「你好」。
+    ///
+    /// **只认主循环那张卡片。** Claude Code 卡片走的是真的 `claude` 子进程：替一句
+    /// 「你好」起一个 CLI 回合要花几十秒和一份额度，而且它得往那张卡片的对话记录里写
+    /// 一行才拿得到回复（那条记录正是这个功能要避开的东西）。用户没要求那一侧，
+    /// 所以宁可不做，也不做一个半生不熟的版本。
+    private func sendTextCallOpeningGreeting(cardID: String, cardKind: CardKind) {
+        guard cardKind == .mainLoop else { return }
+        let settings = AppSettingsStore.snapshot()
+        guard settings.voiceChatGreetsOnConnect else { return }
+        let configuredGreeting = settings.voiceChatGreetingText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let greeting = configuredGreeting.isEmpty
+            ? AppSettings.defaultVoiceChatGreetingText
+            : configuredGreeting
+        print("📞 文本通话：接通后后台让 AI 先说一句（不进对话界面）")
+        sendTextCallQuestion(greeting,
+                             cardID: cardID,
+                             cardKind: cardKind,
+                             announcesUserQuestion: false,
+                             // **文本模式按定义就是静音**（`CardChatPreferenceModel.setMode`），
+                             // 而这句招呼的全部目的就是**被听见** —— 见
+                             // `sendTranscriptToVisionChatWithScreenshot` 里那段注释。
+                             speaksEvenWhenMuted: true,
+                             sendsScreenshot: false)
     }
 
     lazy var voiceChatController: VoiceChatController = {
@@ -3168,7 +3250,13 @@ final class CompanionManager: ObservableObject {
     /// question would interrupt it, since `sendTranscriptToVisionChat…`
     /// cancels the current task at its top.
     /// 键盘提问。`sendsScreenshot` 来自卡片的聊天模式（图文 = 带截图，文本 = 不带）。
-    func submitTypedQuestion(_ text: String, sendsScreenshot: Bool = true) {
+    /// `announcesUserQuestion: false` = 这句话**不是用户说的**（目前只有文本 / 图文通话
+    /// 接通后那句开场招呼），它不画用户气泡、也不落进对话记录 —— 见
+    /// `sendTextCallOpeningGreeting`。`speaksEvenWhenMuted` 同理，只服务那一句探针。
+    func submitTypedQuestion(_ text: String,
+                             sendsScreenshot: Bool = true,
+                             announcesUserQuestion: Bool = true,
+                             speaksEvenWhenMuted: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // 新的一轮开始了：松开 ESC 那次「按在 idle 上」（见 `handleFinalTranscript` 那段）。
@@ -3181,7 +3269,9 @@ final class CompanionManager: ObservableObject {
         //（用户 2026-09-28：「但是窗口中对话的时候，根据窗口中选择的模式继续就行」）。
         sendTranscriptToVisionChatWithScreenshot(transcript: trimmed,
                                                  sendsScreenshot: sendsScreenshot,
-                                                 comesFromTalkShortcut: false)
+                                                 comesFromTalkShortcut: false,
+                                                 announcesUserQuestion: announcesUserQuestion,
+                                                 speaksEvenWhenMuted: speaksEvenWhenMuted)
     }
 
     /// 当前主循环卡片这个模式**吃不吃图**（用户：「（文本、语音）都是只能保留文字，
@@ -3653,7 +3743,9 @@ final class CompanionManager: ObservableObject {
     private func sendTranscriptToVisionChatWithScreenshot(transcript: String,
                                                           sendsScreenshot: Bool = true,
                                                           userIntentTags: String? = nil,
-                                                          comesFromTalkShortcut: Bool) {
+                                                          comesFromTalkShortcut: Bool,
+                                                          announcesUserQuestion: Bool = true,
+                                                          speaksEvenWhenMuted: Bool = false) {
         // **模式的归一化放在这里，不能只放在"按下"那一下**：一轮实时对话中间用户可能去点了
         // 模式条，而这一轮最终发出去用的是磁盘上的模式。这条写在最前面，所以下面
         // `mainLoopChatModeCarriesImages` 读到的一定是刚归一化过的值 —— 两者同一拍，不可能分家。
@@ -3826,7 +3918,15 @@ final class CompanionManager: ObservableObject {
             // pipeline starts — a history entry is only written when the whole
             // turn finishes, and without this the question would not show in
             // the conversation until then.
-            pendingQuestionText = transcript
+            //
+            // **这一句不是用户说的就不画**（`announcesUserQuestion: false`，目前只有
+            // 文本 / 图文通话接通后那句开场招呼）。`NotchHomeView` 把"流式回答"那一条
+            // 也挂在这个值上（`pendingQuestionText != nil`），所以置空之后整轮——
+            // 问题与回答——都不出现在对话界面里，而声音照常念（用户要的就是这个：
+            // 「不要显示在（窗口的对话界面中），目的 = 让用户知道，通话已经连接」）。
+            if announcesUserQuestion {
+                pendingQuestionText = transcript
+            }
             liveJobProgressSteps = []
 
             // The finished turn's footer shows how long the job took, and the
@@ -3879,7 +3979,17 @@ final class CompanionManager: ObservableObject {
             var streamingSpeechSession: BailianTTSClient.StreamingSpeechSession?
             // **静音开关**（Ask 页的静音按钮 → AppSettings.voiceReplyMuted）：关时回复
             // 只显示文字、不合成不播放；文字照旧经 streamingAnswerText 上屏。
-            if appSettings.speechSpeakMode == .sentenceFastReply, !appSettings.voiceReplyMuted {
+            //
+            // **`speaksEvenWhenMuted` 绕过它**（用户 2026-09-28）：文本模式按定义就是静音
+            //（`CardChatPreferenceModel.setMode` 把 `voiceReplyMuted` 置真），而文本 / 图文
+            // 通话接通后那句招呼**必须出声** —— 它的全部目的就是"让用户知道，通话已经连接"，
+            // 不出声等于这个功能没做。实测（2026-09-28，真机）：图文模式招呼正常出声，
+            // 文本模式一声没有 —— 用户原话「文本模式，AI 没有首先说话（你好），图文 = 实现了」。
+            //
+            // 只对**我们自己那一句探针**开口子（整条路上只有开场招呼用它），不碰用户
+            // 在文本模式里要的"回答只显示文字"。
+            if appSettings.speechSpeakMode == .sentenceFastReply,
+               speaksEvenWhenMuted || !appSettings.voiceReplyMuted {
                 do {
                     // NOTE 2026-09-24: a `prepareForPlayback()` call stood here
                     // and was WORSE than useless — `beginStreamingSpeech()`
@@ -4711,7 +4821,12 @@ final class CompanionManager: ObservableObject {
                 // the model nothing and reads to the next request as "the assistant
                 // sometimes answers with silence" — true of a cancelled or failed
                 // request, and not something worth replaying.
-                if !combinedRawResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                //
+                // **`announcesUserQuestion: false` 的那一轮整条不落盘**（通话开场招呼）：
+                // 它不是一次问答，是"听不听得到"的探针。落一条进去的话，历史里会多出
+                // 一个没有问题的「你好」——而这条历史是会被当成真实对话回放给模型的。
+                if announcesUserQuestion,
+                   !combinedRawResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let newEntry = ConversationHistoryEntry(
                         userTranscript: transcript,
                         assistantResponse: combinedRawResponseText,
@@ -4786,7 +4901,7 @@ final class CompanionManager: ObservableObject {
                         // 中途静音走 `silenceActiveReplyAudio` → `stopPlayback` →
                         // `session.stop()` 置停它，之后这个 flush 是空转，尾巴那一段
                         // 不会被合成出来。所以这里不需要再加门禁。
-                    } else if !AppSettingsStore.snapshot().voiceReplyMuted {
+                    } else if speaksEvenWhenMuted || !AppSettingsStore.snapshot().voiceReplyMuted {
                         // **这里必须现读设置，不能用上面那份 snapshot。** 用户在整段
                         // 合成路径上点静音的唯一时机是回答文字还在流、合成还没开始的
                         // 这一段（2185 的 snapshot 到这一行隔着整个视觉请求），读
@@ -4878,8 +4993,9 @@ final class CompanionManager: ObservableObject {
                 // "INTERRUPTED BY USER" chip rather than dropped: whatever the
                 // job got done before the stop is the record of what happened.
                 // A turn that produced no reply at all is still not a turn (the
-                // same rule as the happy path).
-                if !combinedRawResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // same rule as the happy path) —— 开场招呼那一轮同样整条不落盘。
+                if announcesUserQuestion,
+                   !combinedRawResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let interruptedEntry = ConversationHistoryEntry(
                         userTranscript: transcript,
                         assistantResponse: combinedRawResponseText,

@@ -49,6 +49,14 @@ final class TextCallController: ObservableObject {
     /// （它同时认识主循环管线和 Claude Code 管线），这里不认识任何一条。
     private let sendQuestion: (String, String, CardKind) -> Void
 
+    /// **接通之后替用户说第一句话**（用户 2026-09-28：「点击通话后，后台自动发送提示词，
+    /// 让 AI 首先说话……目的 = 让用户知道，通话已经连接」）。
+    ///
+    /// 这里只负责**在正确的时刻说一声"接通了"**；说什么、要不要说、怎么做到"不进对话界面"，
+    /// 全在 `CompanionManager.sendTextCallOpeningGreeting` 里 —— 它才认识那套设置和
+    /// 两条卡片管线。控制器不认识提示词，也不认识"哪句话不该显示"。
+    private let sendOpeningGreeting: (String, CardKind) -> Void
+
     /// 打断当前这一轮（停播报 + 取消正在跑的那一次）。
     private let interruptActiveResponse: () -> Void
     /// 有没有一轮正在跑 / 正在念 —— 决定"用户开口了要不要先收掉"。
@@ -67,6 +75,7 @@ final class TextCallController: ObservableObject {
 
     init(dictationManager: BuddyDictationManager,
          sendQuestion: @escaping (String, String, CardKind) -> Void,
+         sendOpeningGreeting: @escaping (String, CardKind) -> Void,
          interruptActiveResponse: @escaping () -> Void,
          isResponseRunning: @escaping () -> Bool,
          setNotchOverride: @escaping (NotchActivityPhase?) -> Void,
@@ -74,6 +83,7 @@ final class TextCallController: ObservableObject {
          presentFailure: @escaping (String) -> Void) {
         self.dictationManager = dictationManager
         self.sendQuestion = sendQuestion
+        self.sendOpeningGreeting = sendOpeningGreeting
         self.interruptActiveResponse = interruptActiveResponse
         self.isResponseRunning = isResponseRunning
         self.setNotchOverride = setNotchOverride
@@ -134,6 +144,13 @@ final class TextCallController: ObservableObject {
         }
         print("📞 文本通话开始：卡片 \(cardID.prefix(8)) · 门槛 \(Self.minimumTranscriptCharacters) 字")
 
+        // **接通了就让 AI 先说一句**（用户 2026-09-28）。放在"窗口真的开起来了"之后 ——
+        // 这里才是"接通"的定义（与语音聊天把「Chatting」压在**第一段音频真的开始播**
+        // 那一刻是同一条规矩：能听见才算通）。
+        //
+        // 调用是同步的：那股管线在 `CompanionManager` 里自己起任务，这里不等它 ——
+        // 等的话这一句招呼的模型往返（1~3 秒）会卡住通话的启动路径。
+        sendOpeningGreeting(cardID, cardKind)
     }
 
     /// **听到一整句之后要做的事**（唯一一处）。
