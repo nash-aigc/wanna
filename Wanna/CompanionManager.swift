@@ -4277,93 +4277,31 @@ final class CompanionManager: ObservableObject {
                     //
                     // 现在的规矩：**配好就走 Python，没配好就如实报错**。宁可让它说
                     // "决策大脑没配好"，也不要让它偷偷换个脑子继续跑。
+                    // **这一轮的决策一律交给 Python**（2026-09-29 用户拍板：删掉另一条）。
+                    //
+                    // 这里原来是个二选一：设置开着走 Python、关掉走 Swift。那个开关连同
+                    // **整条 Swift 决策路径**一起删了 —— 按用户定的「极简优先」：
+                    // 留着一整套没人走的分支，只是让每读一次这段代码都要多想一层。
+                    //
+                    // 没配好就**如实报错，绝不静默退回**（理由见上一段注释）：
+                    // 静默退回会制造一条假路 —— Python 坏了悄悄换回 Swift，屏幕上没有
+                    // 任何区别，你以为在用新框架其实没有。
+                    //
+                    // 它回来的文字里**不会有动作标签**（活它自己干完了），所以下面那个
+                    // "一步一截图"的动作循环会自然地空转一轮就结束。
                     var fullResponseText = ""
-                    if (AppSettingsStore.snapshot().usesPythonDecisionBrain ?? true) {
-                        guard PythonAgentRunner.isConfigured else {
-                            throw PythonAgentError.notConfigured(
-                                python: PythonAgentRunner.pythonExecutablePath,
-                                script: PythonAgentRunner.agentScriptPath)
+                    guard PythonAgentRunner.isConfigured else {
+                        throw PythonAgentError.notConfigured(
+                            python: PythonAgentRunner.pythonExecutablePath,
+                            script: PythonAgentRunner.agentScriptPath)
+                    }
+                    MainFlowDiagnostics.log("🐍 这一轮的决策交给 Python（OpenAI Agents SDK）")
+                    fullResponseText = try await PythonAgentRunner.shared.runTurn(
+                        task: userPromptForThisTurn,
+                        onProgress: { [weak self] note in
+                            Task { @MainActor in self?.liveJobProgressSteps.append(note) }
                         }
-                        MainFlowDiagnostics.log("🐍 这一轮的决策交给 Python（OpenAI Agents SDK）")
-                        fullResponseText = try await PythonAgentRunner.shared.runTurn(
-                            task: userPromptForThisTurn,
-                            onProgress: { [weak self] note in
-                                Task { @MainActor in self?.liveJobProgressSteps.append(note) }
-                            }
-                        ).finalText
-                    } else {
-                    (fullResponseText, _) = try await visionChatAPI.analyzeImageStreaming(
-                        images: labeledImages,
-                        systemPrompt: Self.companionSystemPrompt(for: appSettings),
-                        conversationHistory: stepHistory,
-                        conversationSummary: compressedHistorySummary,
-                        userPrompt: userPromptForThisTurn,
-                        // **这张卡片自己选的 AI**（没选过就是 nil = 跟设置里全局那份）。
-                        roleOverride: Self.visionRoleOverride(forCardID: turnSessionID.uuidString),
-                        onTextChunk: { [weak self] accumulatedText in
-                            // **第一个字**是"模型开始回答"的时刻 —— 从提交到这一刻的差值
-                            // 就是"它想了多久"（用户 2026-09-28 问的"为什么要 5 秒"）。
-                            if accumulatedText.count <= 2 {
-                                MainFlowDiagnostics.log("⏱️ 环节：模型第一个字（\(accumulatedText.count) 字）")
-                            }
-                            // The vision client hands over the whole accumulated answer,
-                            // not just the new piece. Assigning it (rather than appending)
-                            // is what keeps the bubble from duplicating text.
-                            //
-                            // What the bubble is given is the TAG-STRIPPED text, not the
-                            // raw reply. It used to be the raw one, so the [POINT:…] tag
-                            // sat in the card while the reply streamed and then vanished
-                            // the instant the reply was parsed and read aloud — and the
-                            // characters behind it re-wrapped, because removing two
-                            // characters from a line is a different line break. The user
-                            // watched the first line go from eight characters to nine and
-                            // then to seven, and reported it twice as 「第一行文字在渲染
-                            // 时还是会出现字数变化…你还是没有固定」 (2026-09-23). The display
-                            // text is now a pure function of the reply so far, which makes
-                            // the end-of-stream assignment below a byte-for-byte no-op —
-                            // the re-wrap is impossible by construction rather than tuned
-                            // away. Delivered on the main actor, so no hop is needed here.
-                            let displayText = ActionTagParser.speakableTextFromStreamedReply(accumulatedText)
-
-                            if !announcedAnswerStart, !accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                announcedAnswerStart = true
-                                // The stream is live — the cursor-side answer card
-                                // may show its blurred writing tail from here on.
-                                self?.isAnswerStreamLive = true
-                                // 底部那行时间的取值点（用户 2026-09-25）：「只需要记录
-                                // 收到回复的那一秒，而不是完全回复完成的时间……这样卡片
-                                // 出现的第一秒，下面的时间就确定了」。它在这里取，而不是
-                                // 在回合结束时取 —— 回合结束才取值就意味着底部那一行要等
-                                // 整轮跑完才出现，卡片于是在那一刻被顶一下。
-                                self?.currentReplyReceivedAt = Date()
-                            }
-
-                            // 逐句快答: hand the tag-stripped cumulative text to the
-                            // speech session on every chunk, before the display guard —
-                            // the reply is spoken even when the bubble is turned off.
-                            // The session diffs internally, so feeding the whole
-                            // accumulated text is the contract.
-                            if let streamingSpeechSession {
-                                let speakableText = ActionTagParser.speakableTextFromStreamedReply(accumulatedText)
-                                streamingSpeechSession.feed(cumulativeSpeakableText: speakableText)
-                                // The echo filter compares mic transcripts
-                                // against exactly what is being read aloud.
-                                self?.spokenAnswerTextForEchoFilter = speakableText
-                            }
-
-                            guard showsResponseText else { return }
-                            // **任务一旦开始执行，中间步骤就不进鼠标旁那张卡片了** ——
-                            // 那张卡片只留最后的结果（收尾时 settle 会写进去）。见本循环
-                            // 上面 `hasStartedExecutingTaskWork` 的注释。
-                            guard !hasStartedExecutingTaskWork else { return }
-                            // **交接**：真答案的第一个字到达时把预览收掉 —— 两段文字落在同一张
-                            // 卡片上、中间不空一帧，用户看到的是"答案被补全了"而不是"又冒出一个回复"。
-                            self?.clearAnswerPreview()
-                            self?.streamingAnswerText = displayText
-                            MainFlowDiagnostics.stage("回答：正在流式上屏")
-                        }
-                    )
-                    }   // ← else（用 Python 时上面那段整个跳过）
+                    ).finalText
 
                     guard !Task.isCancelled else { return }
 

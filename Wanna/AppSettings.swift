@@ -1160,23 +1160,6 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// （合成的 `Codable` 遇到缺键会抛，于是老文件会整个读不出来）。nil 当开。
     var allowsToolLibrary: Bool? = true
 
-    // MARK: - 决策大脑（2026-09-29）
-
-    /// 「用 Python 决策大脑（OpenAI Agents SDK）」。
-    ///
-    /// 打开之后，这一轮的**决策**交给 `~/Documents/SuperAgent/WannaAgent/wanna_agent.py`：
-    /// 它用 OpenAI 的 Agents SDK 自己决定该干什么，再通过 MCP 调 Wanna 的手
-    /// （截图 / 点击 / 打字…）把活干完，最后交回一句话。
-    ///
-    /// **和「那套 Swift 循环」的关系**：两者是**同一轮的两种做法**，不是叠加。
-    /// 打开这个，Swift 那条链就只当外壳用（状态机、播报、历史、刘海），
-    /// 中间的"问模型要答案"换成问 Python。
-    ///
-    /// ⚠️ **默认开着，但没配好会自动退回 Swift 那条** —— 见 `PythonAgentRunner.isConfigured`。
-    /// 一台没装 Python 依赖的机器不该因为这一条就整轮不动。
-    ///
-    /// `Bool?` 按本仓 E1 规矩（老设置文件仍要能解码）。nil 当开。
-    var usesPythonDecisionBrain: Bool? = true
 
     // MARK: - 快捷键
 
@@ -1819,7 +1802,6 @@ nonisolated extension AppSettings {
         case allowsComputerControl
         case allowsKeyboardControl
         case allowsToolLibrary
-        case usesPythonDecisionBrain
         case textEntryMethod
         case pushToTalkShortcutRawValue
         case customPushToTalkShortcut
@@ -2001,7 +1983,6 @@ nonisolated extension AppSettings {
         allowsComputerControl = try container.decodeIfPresent(Bool.self, forKey: .allowsComputerControl) ?? defaults.allowsComputerControl
         allowsKeyboardControl = try container.decodeIfPresent(Bool.self, forKey: .allowsKeyboardControl) ?? defaults.allowsKeyboardControl
         allowsToolLibrary = try container.decodeIfPresent(Bool.self, forKey: .allowsToolLibrary) ?? defaults.allowsToolLibrary
-        usesPythonDecisionBrain = try container.decodeIfPresent(Bool.self, forKey: .usesPythonDecisionBrain) ?? defaults.usesPythonDecisionBrain
         textEntryMethod = try container.decodeIfPresent(TextEntryMethod.self, forKey: .textEntryMethod) ?? defaults.textEntryMethod
         pushToTalkShortcutRawValue = try container.decodeIfPresent(String.self, forKey: .pushToTalkShortcutRawValue) ?? defaults.pushToTalkShortcutRawValue
         customPushToTalkShortcut = try container.decodeIfPresent(RecordedKeyboardShortcut.self, forKey: .customPushToTalkShortcut) ?? defaults.customPushToTalkShortcut
