@@ -4256,7 +4256,36 @@ final class CompanionManager: ObservableObject {
 
                     var announcedAnswerStart = false
                     MainFlowDiagnostics.log("⏱️ 环节：请求已发出（图 \(labeledImages.count) 张）")
-                    var (fullResponseText, _) = try await visionChatAPI.analyzeImageStreaming(
+                    // ⭐ 2026-09-29：**这一轮的决策交给谁** —— 二选一，不是叠加。
+                    //
+                    // 打开「用 Python 决策大脑」之后，`wanna_agent.py` 用 OpenAI 的
+                    // Agents SDK 自己决定干什么、自己通过 MCP 调 Wanna 的手把活干完，
+                    // 最后交回一句话。下面的外壳（状态机 / 播报 / 历史 / 刘海）**一行没动** ——
+                    // 这正是"只换决策、不动外壳"的做法。
+                    //
+                    // 它回来的文字里**不会有动作标签**（活它自己干完了），所以下面那个
+                    // "一步一截图"的动作循环会自然地空转一轮就结束。
+                    //
+                    // ⚠️ **没配好就退回 Swift 那条**，并把原因写进诊断日志 ——
+                    // 一台没装 Python 依赖的机器不该因为这一条就整轮不动。
+                    var fullResponseText = ""
+                    var isUsingPythonDecisionBrain = false
+                    if (AppSettingsStore.snapshot().usesPythonDecisionBrain ?? true),
+                       PythonAgentRunner.isConfigured {
+                        isUsingPythonDecisionBrain = true
+                        MainFlowDiagnostics.log("🐍 这一轮的决策交给 Python（OpenAI Agents SDK）")
+                        fullResponseText = try await PythonAgentRunner.shared.runTurn(
+                            task: userPromptForThisTurn,
+                            onProgress: { [weak self] note in
+                                Task { @MainActor in self?.liveJobProgressSteps.append(note) }
+                            }
+                        ).finalText
+                    } else if (AppSettingsStore.snapshot().usesPythonDecisionBrain ?? true) {
+                        MainFlowDiagnostics.log("⚠️ 想用 Python 决策大脑但没配好，已退回 Swift 那条链")
+                    }
+
+                    if !isUsingPythonDecisionBrain {
+                    (fullResponseText, _) = try await visionChatAPI.analyzeImageStreaming(
                         images: labeledImages,
                         systemPrompt: Self.companionSystemPrompt(for: appSettings),
                         conversationHistory: stepHistory,
@@ -4327,6 +4356,7 @@ final class CompanionManager: ObservableObject {
                             MainFlowDiagnostics.stage("回答：正在流式上屏")
                         }
                     )
+                    }   // ← if !isUsingPythonDecisionBrain（用 Python 时上面那段整个跳过）
 
                     guard !Task.isCancelled else { return }
 
