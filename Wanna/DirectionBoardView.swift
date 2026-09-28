@@ -428,50 +428,67 @@ private struct ReferenceTagFlowLayout: Layout {
         // 只靠**7 字形自己的轮廓**把凹口划出来（见 `DirectionBoardSevenShape`）。
     }
 
-    /// **左列：Harness 工程树**（只画**命中**的 ✓ —— 用户：「如果用户的内容没有匹配到的话，
-    /// 你就不显示，因为如果完全显示的话，可能这个高度就不够了」）。
+    /// **左列：Harness 工程树** —— 与右边那棵脑图**同一种写法**（用户 2026-09-28：
+    /// 「左侧 harness 也写成右侧的树状图的格式，包含 `├─` `└─` 这样的符号，表明逻辑关系」）。
     ///
-    /// 三级：**阶段（执行前/中/后）→ 组（提示词 / 执行与工具 …）→ 条目（角色 / 约束 …）**。
-    /// 颜色按用户 2026-09-28 的原话分两档：
-    ///   · **条目**命中了 → **绿**（它只有命中才会被画 ✓）；
-    ///   · **阶段名与组名**平时是**白**的，**一整个分支全命中**时也变绿 ✓
-    ///     （「如果某一个分支下用户全都考虑了，那么整个这个执行前这个字它也高亮」）。
+    /// 所以这里也是一段**等宽字体**的树文本，层级靠 `├─` / `└─` / `│` 画出来：
+    ///
+    ///     执行前
+    ///     ├─ 提示词
+    ///     │  ├─ 任务
+    ///     │  └─ 约束
+    ///     └─ 上下文与记忆
+    ///        └─ 检索
+    ///
+    /// 只画**命中**的（用户：「没匹配到的话你就不显示，因为完全显示的话，可能这个高度就不够了」），
+    /// 所以树枝符号是**按真正画出来的东西**算的 —— 末项一律 `└─`，不是末项才有 `│` 往下去 ✓。
+    ///
+    /// 颜色两档（他的原话）：**条目命中 → 绿**；**阶段名与组名平时白、一整支全命中时也变绿**。
     private var harnessColumn: some View {
         let summary = session.matchedHarness
         let catalog = session.harnessCatalogForDisplay
-        return VStack(alignment: .leading, spacing: 2) {
-            ForEach(catalog.phases, id: \.self) { phase in
-                let groupsInPhase = catalog.groups.filter {
-                    $0.phase == phase && !summary.matchedKeywords(inGroup: $0.id).isEmpty
-                }
-                if !groupsInPhase.isEmpty {
-                    Text(phase)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(summary.fullyMatchedPhases.contains(phase)
-                                         ? DS.Colors.success : theme.textColor)
-                        .padding(.top, 2)
-                    ForEach(groupsInPhase) { group in
-                        let matched = summary.matchedKeywords(inGroup: group.id)
-                        let isWholeGroupMatched = matched.count == group.items.count && !group.items.isEmpty
-                        Text(group.title)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(isWholeGroupMatched ? DS.Colors.success
-                                                                 : theme.textColor.opacity(0.85))
-                            .padding(.leading, 2)
-                        ForEach(group.items.filter { matched.contains($0.keyword) }) { item in
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text("·").font(.system(size: 11))
-                                Text(item.keyword).font(.system(size: 11))
-                            }
-                            .foregroundStyle(DS.Colors.success)
-                            .padding(.leading, 8)
-                            .id(item.keyword)
-                            .transition(.opacity.combined(with: .offset(y: 4)))
-                        }
-                    }
+        var lines: [(text: String, isHighlighted: Bool, isBranch: Bool)] = []
+
+        // 只留下"真的有命中"的阶段，好算谁才是最后一个（末项画 └─）。
+        let phasesWithMatches = catalog.phases.filter { phase in
+            catalog.groups.contains { $0.phase == phase && !summary.matchedKeywords(inGroup: $0.id).isEmpty }
+        }
+
+        for (phaseIndex, phase) in phasesWithMatches.enumerated() {
+            let isLastPhase = phaseIndex == phasesWithMatches.count - 1
+            lines.append((phase, summary.fullyMatchedPhases.contains(phase), false))
+
+            let groupsInPhase = catalog.groups.filter {
+                $0.phase == phase && !summary.matchedKeywords(inGroup: $0.id).isEmpty
+            }
+            for (groupIndex, group) in groupsInPhase.enumerated() {
+                let isLastGroup = groupIndex == groupsInPhase.count - 1
+                let groupPrefix = isLastGroup ? "└─ " : "├─ "
+                let matched = summary.matchedKeywords(inGroup: group.id)
+                let wholeGroupMatched = !group.items.isEmpty && matched.count == group.items.count
+                lines.append((groupPrefix + group.title, wholeGroupMatched, true))
+
+                let matchedItems = group.items.filter { matched.contains($0.keyword) }
+                // 下面还有没有别的东西 → 决定这一层要不要画竖线 `│`。
+                let continuesBelow = !isLastGroup
+                for (itemIndex, item) in matchedItems.enumerated() {
+                    let isLastItem = itemIndex == matchedItems.count - 1
+                    let stem = isLastItem ? "└─ " : "├─ "
+                    let rail = continuesBelow ? "│  " : "   "
+                    lines.append((rail + stem + item.keyword, true, true))
                 }
             }
         }
+
+        return VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(line.text)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(line.isHighlighted ? DS.Colors.success : theme.textColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .animation(.easeOut(duration: 0.25), value: summary)
     }
 
