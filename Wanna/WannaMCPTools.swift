@@ -13,26 +13,39 @@
 //  ## 两种「瞄准方式」都要保留（用户 2026-09-28 拍板）
 //
 //  用户实测："macos-use 更准，截图有时候会截偏"，并要求**两种方式都留着**，
-//  放到整件事最后（方案阶段 4）由他自己测出用哪一个。所以 `click` 工具带一个
-//  `targeting` 参数：
+//  由他自己测出用哪一个。所以 `click` 带一个 `targeting` 参数：
 //
-//    - `auto`（默认）= 现在的行为：先按名字找、找不到再坐标吸附、还不行才用裸坐标
-//    - `by_name`       = 只走「按名字」，查不到就**如实报错**，绝不退到坐标
-//    - `by_coordinate` = **跳过按名字**，直接走坐标那条链（②吸附 → ③裸坐标）
+//    - `auto`（默认）= 加这个参数之前的全部行为：①按名字 → ②坐标吸附 → ③估算点
+//    - `by_name`       = **只走 ①**，查不到就**如实失败**，绝不退到坐标
+//    - `by_coordinate` = **跳过 ①**，直接走 ② → ③
 //
-//  ⚠️ **阶段 4 出结论之前，这三层一层都不许删。** 被测对象被删掉，测试就没有意义了。
+//  ⚠️ **出结论之前，这三层一层都不许删。** 被测对象被删掉，测试就没有意义了。
 //
 
 import Foundation
 
-/// 工具声明与分发。`nonisolated` 的纯声明 + `@MainActor` 的执行 —— 因为执行要碰 App 内部。
+/// 工具声明与分发。声明是 `nonisolated` 的纯数据；执行要碰 App 内部，所以是 `@MainActor`。
 nonisolated enum WannaMCPTools {
 
-    // MARK: 声明
+    // MARK: - 声明
 
     /// `tools/list` 的返回。形状照 MCP 规范：name / description / inputSchema。
     static func list() -> [[String: Any]] {
-        [screenshotDeclaration]
+        [screenshotDeclaration, clickDeclaration, typeTextDeclaration,
+         pressKeyDeclaration, scrollDeclaration, openAppDeclaration, readScreenDeclaration]
+    }
+
+    /// 坐标参数的措辞，七处重复所以抽出来 —— 它必须**逐字一致**，
+    /// 否则模型对同一套网格会读到两种说法。
+    private static let coordinateNote =
+        "坐标用 **0–1000 归一化网格**：(0,0) 左上角、(1000,1000) 右下角。不要换算成像素。"
+
+    private static func coordinateProperties() -> [String: Any] {
+        [
+            "x": ["type": "number", "description": "网格里的横坐标（0–1000）。\(coordinateNote)"],
+            "y": ["type": "number", "description": "网格里的纵坐标（0–1000）。"],
+            "screen": ["type": "integer", "description": "第几块屏幕（1 起）。不传 = 鼠标所在的那块。"],
+        ]
     }
 
     private static var screenshotDeclaration: [String: Any] {
@@ -44,30 +57,141 @@ nonisolated enum WannaMCPTools {
                 点某个位置时直接给这个网格里的 x/y 即可，不需要换算成像素。\
                 Wanna 自己的窗口会自动从截图里剔除，你看不到本应用自己的界面。
                 """,
-            // 参数按屏幕编号会用到；先留一个可选的 screen 便于将来按屏裁剪
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "screen": [
-                        "type": "integer",
-                        "description": "只截某一块屏幕（1 起）。不传 = 全部屏幕。",
-                    ],
+                    "screen": ["type": "integer",
+                               "description": "只截某一块屏幕（1 起）。不传 = 全部屏幕。"],
                 ],
                 "required": [String](),
             ],
         ]
     }
 
-    // MARK: 执行
+    private static var clickDeclaration: [String: Any] {
+        var properties = coordinateProperties()
+        properties["label"] = [
+            "type": "string",
+            "description": """
+                你要点的控件的**原文名字**（例如「7」「发送」「关闭」）。\
+                写了它 Wanna 会去界面树里按名字找那个控件的真实位置，比坐标准得多；\
+                不写就只能用你估的坐标，而估的坐标实测误差可达 ±25% 屏宽。**尽量写。**
+                """,
+        ]
+        properties["targeting"] = [
+            "type": "string",
+            "enum": ["auto", "by_name", "by_coordinate"],
+            "description": """
+                用哪种方式瞄准。默认 auto。
+                · auto = 先按名字找，找不到再按坐标吸附，还不行才用你估的坐标
+                · by_name = **只用名字**，找不到就如实失败（不会退到坐标）
+                · by_coordinate = **只用坐标**（跳过按名字）
+                这是在对比两种方式的准确率时才需要传，日常用 auto。
+                """,
+        ]
+        properties["kind"] = [
+            "type": "string", "enum": ["left", "right", "double"],
+            "description": "点击类型，默认 left。",
+        ]
+        return [
+            "name": "click",
+            "description": "在屏幕上点击一个位置。\(coordinateNote)",
+            "inputSchema": [
+                "type": "object",
+                "properties": properties,
+                "required": ["x", "y"],
+            ],
+        ]
+    }
+
+    private static var typeTextDeclaration: [String: Any] {
+        [
+            "name": "type_text",
+            "description": "把一段文字打进**当前聚焦**的输入框。要用之前先确保焦点在正确的位置。",
+            "inputSchema": [
+                "type": "object",
+                "properties": ["text": ["type": "string", "description": "要输入的文字。"]],
+                "required": ["text"],
+            ],
+        ]
+    }
+
+    private static var pressKeyDeclaration: [String: Any] {
+        [
+            "name": "press_key",
+            "description": "按一个键，可带修饰键（例如回车、Tab、Escape、上下左右）。",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "key": ["type": "string", "description": "键名，例如 return / tab / escape / up / a"],
+                    "modifiers": [
+                        "type": "array", "items": ["type": "string"],
+                        "description": "修饰键，可多选：command / shift / option / control",
+                    ],
+                ],
+                "required": ["key"],
+            ],
+        ]
+    }
+
+    private static var scrollDeclaration: [String: Any] {
+        var properties = coordinateProperties()
+        properties["x"] = ["type": "number", "description": "在哪个位置滚（网格 0–1000）。"]
+        properties["direction"] = ["type": "string", "enum": ["up", "down"],
+                                   "description": "往上还是往下滚。"]
+        properties["steps"] = ["type": "integer", "description": "滚几格，默认 3。"]
+        return [
+            "name": "scroll",
+            "description": "在一个位置滚动页面或列表。",
+            "inputSchema": [
+                "type": "object",
+                "properties": properties,
+                "required": ["x", "y", "direction"],
+            ],
+        ]
+    }
+
+    private static var openAppDeclaration: [String: Any] {
+        [
+            "name": "open_app",
+            "description": "打开或激活一个应用。**名字要用 bundle id**（例如 com.apple.calculator、"
+                           + "com.apple.finder）—— 传英文名会报「找不到应用」。",
+            "inputSchema": [
+                "type": "object",
+                "properties": ["name": ["type": "string", "description": "应用的 bundle id 或路径。"]],
+                "required": ["name"],
+            ],
+        ]
+    }
+
+    private static var readScreenDeclaration: [String: Any] {
+        [
+            "name": "read_screen",
+            "description": """
+                读当前**最前面那个应用**的界面树（有哪些按钮、输入框、文字，以及它们的真实位置）。\
+                在你打算点某个控件、但不确定它叫什么名字时，先用这个查。
+                """,
+            "inputSchema": ["type": "object", "properties": [String: Any](), "required": [String]()],
+        ]
+    }
+
+    // MARK: - 执行
 
     /// `tools/call` 的执行入口。抛出的错误会被服务端包成 `isError: true` 的结果。
     @MainActor
     static func call(name: String, arguments: [String: Any]) async throws -> [String: Any] {
         switch name {
-        case "screenshot":
-            return try await screenshot(arguments: arguments)
-        default:
-            throw MCPToolError.unknownTool(name)
+        case "screenshot": return try await screenshot(arguments: arguments)
+        case "click": return try await click(arguments: arguments)
+        case "type_text": return try await run(.typeText(try string(arguments, "text")), arguments)
+        case "press_key": return try await run(.pressKey(
+            keyName: try string(arguments, "key"),
+            modifierNames: (arguments["modifiers"] as? [String]) ?? []), arguments)
+        case "scroll": return try await scroll(arguments: arguments)
+        case "open_app": return try await run(.openApplication(named: try string(arguments, "name")),
+                                              arguments)
+        case "read_screen": return try await run(.readAccessibilityTree, arguments)
+        default: throw MCPToolError.unknownTool(name)
         }
     }
 
@@ -78,7 +202,6 @@ nonisolated enum WannaMCPTools {
         let captures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
         guard !captures.isEmpty else { throw MCPToolError.failed("没有截到任何屏幕") }
 
-        // 只要某一块屏时，按 1 起的编号过滤（与模型数屏幕的方式一致）。
         let wanted = arguments["screen"] as? Int
         let selected = wanted.map { number in
             captures.enumerated().filter { $0.offset + 1 == number }.map { $0.element }
@@ -109,6 +232,97 @@ nonisolated enum WannaMCPTools {
 
         content.insert(["type": "text", "text": summaryLines.joined(separator: "\n")], at: 0)
         return ["content": content, "isError": false]
+    }
+
+    // MARK: click
+
+    @MainActor
+    private static func click(arguments: [String: Any]) async throws -> [String: Any] {
+        let coordinate = ModelReportedCoordinate(
+            normalizedCoordinate: CGPoint(x: try number(arguments, "x"), y: try number(arguments, "y")),
+            elementLabel: (arguments["label"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            screenNumber: arguments["screen"] as? Int
+        )
+
+        // 瞄准方式：认不出来就退回 auto，并且**把这件事说出来**（不静默）。
+        let rawTargeting = arguments["targeting"] as? String
+        var targeting = ClickTargeting.auto
+        if let rawTargeting, let parsed = ClickTargeting(rawValue: rawTargeting) {
+            targeting = parsed
+        }
+
+        let action: CompanionAction
+        switch arguments["kind"] as? String {
+        case "right": action = .rightClick(at: coordinate)
+        case "double": action = .doubleClick(at: coordinate)
+        default: action = .click(at: coordinate)
+        }
+
+        let outcome = await MacosUseController.execute(action, among: try await currentScreens(),
+                                                       targeting: targeting)
+        var text = outcome.description
+        if let rawTargeting, ClickTargeting(rawValue: rawTargeting) == nil {
+            text = "（targeting 传的是「\(rawTargeting)」，认不出来，已按 auto 处理）\n" + text
+        }
+        return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    // MARK: scroll
+
+    @MainActor
+    private static func scroll(arguments: [String: Any]) async throws -> [String: Any] {
+        let coordinate = ModelReportedCoordinate(
+            normalizedCoordinate: CGPoint(x: try number(arguments, "x"), y: try number(arguments, "y")),
+            elementLabel: nil,
+            screenNumber: arguments["screen"] as? Int
+        )
+        let direction = ScrollDirection(rawValue: try string(arguments, "direction")) ?? .down
+        let steps = (arguments["steps"] as? Int) ?? 3
+        return try await run(.scroll(at: coordinate, direction: direction, amountInSteps: steps),
+                             arguments)
+    }
+
+    // MARK: 公共尾巴
+
+    /// 所有动作最后都走这里：执行 → 把结果原样回给调用方。
+    @MainActor
+    private static func run(_ action: CompanionAction, _ arguments: [String: Any]) async throws
+        -> [String: Any] {
+        let outcome = await MacosUseController.execute(action, among: try await currentScreens())
+        var content: [[String: Any]] = [["type": "text", "text": outcome.description]]
+        if let context = outcome.contextForNextTurn, !context.isEmpty {
+            content.append(["type": "text", "text": context])
+        }
+        return ["content": content, "isError": false]
+    }
+
+    /// **动作必须带一份当前屏幕的信息。**
+    ///
+    /// ⚠️ 这里踩过一次坑，记下来：`MacosUseController.screenCapture(for:among:)` 在
+    /// **空数组**上直接返回 nil（既没有 screenNumber 可查、也找不到 `isCursorScreen` 那块），
+    /// 于是 `resolvedClickPoint` 返回 nil → **每一个坐标类动作都会失败**，
+    /// 报的还是「找不到要操作的那块屏幕」这种看不出原因的错。
+    ///
+    /// 所以每个动作前都要拿一份 —— 但**只取屏幕信息**（尺寸 / 位置 / displayID），
+    /// 图片不会发给模型，那是 `screenshot` 工具自己的事。
+    @MainActor
+    private static func currentScreens() async throws -> [CompanionScreenCapture] {
+        try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+    }
+
+    // MARK: 参数取值（缺了就抛，别用默认值蒙混）
+
+    private static func string(_ arguments: [String: Any], _ key: String) throws -> String {
+        guard let value = arguments[key] as? String, !value.isEmpty else {
+            throw MCPToolError.failed("缺少参数「\(key)」")
+        }
+        return value
+    }
+
+    private static func number(_ arguments: [String: Any], _ key: String) throws -> Double {
+        if let value = arguments[key] as? Double { return value }
+        if let value = arguments[key] as? Int { return Double(value) }
+        throw MCPToolError.failed("缺少参数「\(key)」（或它不是数字）")
     }
 }
 

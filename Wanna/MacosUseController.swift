@@ -39,6 +39,27 @@ import AppKit
 import ApplicationServices
 import MacosUseSDK
 
+/// **用哪种方式瞄准一个点**（2026-09-28 加，用户拍板"两种都保留、由他测出用哪个"）。
+///
+/// 加这个参数的**唯一理由**是让两种方式可以被**分别调用**、从而能被对比 ——
+/// 见 `改造方案-Agent框架迁移.md` 阶段 4。默认 `.auto` = 加这个参数之前的全部行为，
+/// 所以既有调用方一个字节都不用改。
+nonisolated enum ClickTargeting: String, Sendable {
+    /// 现在的行为：① 按名字 → 找不到就 ② 坐标吸附 → 还不行就 ③ 用估算点。
+    case auto
+    /// **只走 ①**。名字没写、或按名字查不到 —— **如实失败，绝不退到坐标**。
+    /// 这一条存在的意义就是让"按名字"这条路可以被单独度量。
+    ///
+    /// ⚠️ rawValue 写成下划线是**故意的**：这个字符串是**线上格式**（MCP 工具的
+    /// `targeting` 参数、`inputSchema` 里声明的 enum 就是 `by_name`/`by_coordinate`）。
+    /// 第一版用了默认的驼峰 `byName`，结果 schema 说 `by_name`、代码认 `byName` ——
+    /// **参数静默失效、两次跑的都是 auto**，而工具还很贴心地回了一句"认不出来，已按 auto 处理"。
+    /// 那次对比测试因此**整整作废了一轮**（数字看起来还挺像回事）。两边必须字面一致。
+    case byName = "by_name"
+    /// **跳过 ①**，直接走 ②吸附 → ③估算点。让"看图说话"那条路可以被单独度量。
+    case byCoordinate = "by_coordinate"
+}
+
 /// What came of trying to perform an action.
 nonisolated struct ActionExecutionOutcome: Sendable {
     /// One short line for the panel — what was done, or why nothing was.
@@ -209,7 +230,8 @@ enum MacosUseController {
     static func execute(
         _ action: CompanionAction,
         among screenCaptures: [CompanionScreenCapture],
-        allowsUnnamedClick: Bool = true
+        allowsUnnamedClick: Bool = true,
+        targeting: ClickTargeting = .auto
     ) async -> ActionExecutionOutcome {
         let appSettings = AppSettingsStore.snapshot()
 
@@ -293,7 +315,8 @@ enum MacosUseController {
                 at: reportedCoordinate,
                 among: screenCaptures,
                 kind: .left,
-                allowsUnnamedClick: allowsUnnamedClick
+                allowsUnnamedClick: allowsUnnamedClick,
+                targeting: targeting
             )
 
         case .rightClick(let reportedCoordinate):
@@ -302,7 +325,8 @@ enum MacosUseController {
                 at: reportedCoordinate,
                 among: screenCaptures,
                 kind: .right,
-                allowsUnnamedClick: allowsUnnamedClick
+                allowsUnnamedClick: allowsUnnamedClick,
+                targeting: targeting
             )
 
         case .doubleClick(let reportedCoordinate):
@@ -311,7 +335,8 @@ enum MacosUseController {
                 at: reportedCoordinate,
                 among: screenCaptures,
                 kind: .double,
-                allowsUnnamedClick: allowsUnnamedClick
+                allowsUnnamedClick: allowsUnnamedClick,
+                targeting: targeting
             )
 
         case .scroll(let reportedCoordinate, let direction, let amountInSteps):
@@ -400,16 +425,22 @@ enum MacosUseController {
         at reportedCoordinate: ModelReportedCoordinate,
         among screenCaptures: [CompanionScreenCapture],
         kind: ClickKind,
-        allowsUnnamedClick: Bool
+        allowsUnnamedClick: Bool,
+        targeting: ClickTargeting
     ) async -> ActionExecutionOutcome {
         guard let resolution = await resolvedClickPoint(
             for: reportedCoordinate,
-            among: screenCaptures
+            among: screenCaptures,
+            targeting: targeting
         ) else {
-            return ActionExecutionOutcome(
-                description: "找不到要操作的那块屏幕，\(actionName)没有执行。",
-                contextForNextTurn: nil
-            )
+            // 失败原因要分开说 —— 「按名字查不到」和「没有那块屏幕」是两件事，
+            // 修法毫无共同点。`.byName` 模式下查不到名字就是**如实失败**，
+            // 这正是这个模式存在的意义（不能悄悄退到坐标，否则度量不出差别）。
+            let why = targeting == .byName
+                ? "按名字没有找到「\(reportedCoordinate.elementLabel ?? "")」，"
+                  + "这一次\(actionName)没有执行（当前是「只用名字」模式，不会退到坐标）。"
+                : "找不到要操作的那块屏幕，\(actionName)没有执行。"
+            return ActionExecutionOutcome(description: why, contextForNextTurn: nil)
         }
 
         // **没写名字的点击不许静默执行。**
@@ -992,7 +1023,8 @@ enum MacosUseController {
 
     private static func resolvedClickPoint(
         for reportedCoordinate: ModelReportedCoordinate,
-        among screenCaptures: [CompanionScreenCapture]
+        among screenCaptures: [CompanionScreenCapture],
+        targeting: ClickTargeting = .auto
     ) async -> ClickResolution? {
         guard let screenCapture = screenCapture(for: reportedCoordinate, among: screenCaptures) else {
             return nil
@@ -1007,7 +1039,11 @@ enum MacosUseController {
         // consulted — see `accessibilityElementFrame(matchingLabel:nearestTo:)` for
         // the measurements that made this the first thing tried rather than the
         // fallback.
-        if let elementLabel = reportedCoordinate.elementLabel, !elementLabel.isEmpty {
+        //
+        // `.byCoordinate` **跳过这一段** —— 那是"只度量看图说话"时要走的路，
+        // 名字解析一旦参与，量出来的就不是坐标那条路了。
+        if targeting != .byCoordinate,
+           let elementLabel = reportedCoordinate.elementLabel, !elementLabel.isEmpty {
             let namedFrame = await accessibilityElementFrame(
                 matchingLabel: elementLabel,
                 nearestTo: estimatedPoint
@@ -1023,6 +1059,15 @@ enum MacosUseController {
                 return ClickResolution(point: CGPoint(x: namedFrame.midX, y: namedFrame.midY),
                                        wasResolvedByName: true)
             }
+        }
+
+        // `.byName`：名字这条路没走通就**到此为止**，绝不退到坐标。
+        // 返回 nil 会让 `performClickAction` 报一句「按名字没找到」，而不是悄悄用估算点 ——
+        // 那正是这个模式要暴露的东西。
+        if targeting == .byName {
+            Self.noteClickResolution(label: reportedCoordinate.elementLabel, estimate: estimatedPoint,
+                                     named: nil, final: estimatedPoint, via: "只用名字·没找到（未退到坐标）")
+            return nil
         }
 
         // Off the main actor: an accessibility call is a synchronous round trip to
