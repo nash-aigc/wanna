@@ -401,12 +401,10 @@ private struct ReferenceTagFlowLayout: Layout {
             HStack(alignment: .top, spacing: 0) {
                 mindMapColumn
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                Rectangle()
-                    .fill(theme.textColor.opacity(0.22))
-                    .frame(width: 1)
-                    .padding(.vertical, 2)
+                // ⚠️ **两列之间那条细线删掉了**（用户 2026-09-28：「细线（删除吧）」）——
+                // 他要的是一整条**没有内部分隔**的长竖列 ✓。
                 harnessColumn
-                    .padding(.leading, 8)
+                    .padding(.leading, 12)
                     .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
             }
             .frame(width: Self.questionColumnWidth + Self.harnessColumnWidth, alignment: .topLeading)
@@ -513,10 +511,9 @@ private struct ReferenceTagFlowLayout: Layout {
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        // **磨砂玻璃**（用户 2026-09-28：「harness 磨砂玻璃，微透明效果」）——
-        // 我们的卡片本来就是**透明面板**画在桌面上，所以 `ultraThinMaterial` 取到的
-        // 就是"它身后的桌面" ✓。只作用在这一列 ✓，其他三块保持实底 ✓。
-        .background(.ultraThinMaterial)
+        // ⚠️ **磨砂去掉了**（用户 2026-09-28 后一条：「卡片阴影（保持为**其他部分的颜色一致**）」）
+        // —— 他先要过磨砂，看过真机之后改主意：这一列要和其余部分**长得一样** ✓。
+        // （要再要回来就加一句 `.background(.ultraThinMaterial)` ✓。）
         // **高度 = 这份清单本身有多少条**（用户 2026-09-28：「harness 高度固定，
         // 因为它来自**文件内容**」）—— 所以**不裁、不撑高**：内容多高它就多高 ✓，
         // 卡片的整体高度由它和右边"问题"那一列**取高者**决定 ✓。
