@@ -329,9 +329,15 @@ against **0.00 s** on the follow-up path where the engine is already warm) **and
 reconfiguration killed the follow-up window's capture, so a loudly-spoken sentence produced
 **0 字** — the user's two reports that day (「打断之后不再是瞬间回复」/「打断几次之后就卡了」) are both
 that one line. The comment left at that call site says outright not to add it back.
-**To actually reclaim the 2.5 s the engine start has to move off the main actor** — the class is
-`@MainActor`, so wrapping a `Task` around it is not that. See `开发经验/10-踩过的坑.md` D42 and
-`开发经验/20` 9.69 补.
+**The warm-up is back, and the 1 s was a lock, not the main actor** (same day, found with `sample`):
+the bring-up already runs on a detached task and *suspends* the main actor — the stall was the main
+thread **spinning on the engine's attach lock** inside `AVAudioPlayerNode.stop()`
+(`stopChunk → AVAudioPlayerNode.stop → AVAudioNodeImplBase::GetAttachAndEngineLock → nanosleep`,
+636 of 1269 main-thread samples in one cold submit), a lock the bring-up holds while it attaches
+nodes and reconfigures the IO. So the fix is not "don't warm it" — it is **`VoicePlaybackEngine.stopChunk()`
+skipping `playerNode.stop()` while `engineBringUpTask` is in flight** (the engine is provably not
+running then, so nothing is playing and `isChunkPlaying = false` still runs). Measured: 提交 → 开始截屏
+**1.136 s → 0.002 s**, with the warm-up kept. See `开发经验/10-踩过的坑.md` D42 补.
 
 The cost of the held engine is the user's own setting and says so in its description: the app stays in macOS's communication-app class, other audio is ducked at `.min`, and the microphone route stays open.
 

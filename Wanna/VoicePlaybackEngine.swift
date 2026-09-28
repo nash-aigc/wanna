@@ -923,14 +923,30 @@ final class VoicePlaybackEngine {
     /// Stops the current chunk immediately (interruption path). The engine
     /// itself keeps running — a listening tap may live on it.
     func stopChunk() {
-        // `playerNode.stop()` runs UNCONDITIONALLY. Skipping it while the engine
-        // is down leaves `isPlaying` stale-true, and `playWAVData` skips
-        // `play()` whenever it reads true — so the next reply schedules its
-        // buffer onto a node that never renders, and since the node is never
-        // recreated the state never clears on its own. Stopping a stopped node
-        // costs nothing; a stale `isPlaying` is permanent (found by the
-        // adversarial audit, 2026-09-24).
-        playerNode.stop()
+        // ⚠️⚠️ **引擎正在被拉起来的时候，不要碰 `playerNode`**（2026-09-28，`sample` 抓到的自旋）。
+        //
+        // `AVAudioPlayerNode.stop()` 要拿引擎的 **attach 锁**，而那把锁正握在 bring-up 手里
+        // （它要 `engine.attach` + 重配 IO）。两边一撞，主线程就在这把锁上自旋 ——
+        // 实测一次 1.1 秒，抓到的栈是：
+        //
+        //     stopPlayback → stopChunk → -[AVAudioPlayerNode stop]
+        //       → AVAudioNodeImplBase::GetAttachAndEngineLock() → nanosleep
+        //
+        // 而**这一刻引擎本来就没在跑** —— bring-up 的全部前提就是"它没在跑"
+        //（`ensureEngineStarted` 的第一句就是 `if isEngineStarted, engine.isRunning { return }`），
+        // 所以那一瞬间不可能有任何声音在播，这个 `stop()` 在效果上本来就是空操作。
+        // 跳过它不改变任何行为，只是不再去抢那把锁。
+        //
+        // 下面那句 `isChunkPlaying = false` **仍然无条件执行** —— 那条规矩见原本的注释，
+        // 它与引擎在不在跑无关。
+        if engineBringUpTask == nil {
+            playerNode.stop()
+        }
+        // `playerNode.stop()` 原来是 UNCONDITIONALLY 的，理由是：引擎停着时跳过它会让
+        // `isPlaying` 保持 true，而 `playWAVData` 只要读到 true 就跳过 `play()` ——
+        // 下一条回答于是排到一个永远不渲染的节点上，而且那状态自己不会清
+        //（2026-09-24 对抗式审计找到）。所以"跳过"只允许发生在**引擎正在被拉起来**这一刻，
+        // 而那一刻 `isChunkPlaying` 照样被下面这行清掉。
         isChunkPlaying = false
     }
 

@@ -3526,6 +3526,7 @@ final class CompanionManager: ObservableObject {
         MainFlowDiagnostics.log("▶️ 提交一轮：转写 \(transcript.count) 字"
                                 + "，截图=\(sendsScreenshot ? "要" : "不要")")
         MainFlowDiagnostics.stage("提交：抓截图")
+
         // ⚠️⚠️ **这里曾有一句"提交时预热共享引擎"，2026-09-28 当天就撤掉了 —— 别再把它加回来。**
         //
         // 当时的动机是对的：诊断打点显示「模型第一个字 +1.51s」→「出声 +4.01s」，而
@@ -3586,6 +3587,30 @@ final class CompanionManager: ObservableObject {
             currentResponseTask?.cancel()
         }
         bailianTTSClient.stopPlayback()
+
+        // **预热播报引擎 —— 位置在 `stopPlayback()` 之后，这一条是量出来的，不许换。**
+        //
+        // 为什么要在提交这一刻预热：修之前「模型第一个字 → 出声」实测 **2.50 秒**，
+        // 而 `🔊 VoicePlaybackEngine: engine started` 就出现在出声的同一毫秒 ——
+        // 那 ~2 秒是共享引擎（带回声消除那条）现拉起来时的 **VPIO 首次重配**。
+        // 提交之后到答案到达之间还有 1~2 秒（截屏 + 网络），正好够它起来。
+        //
+        // ⚠️ **为什么必须在 `stopPlayback()` 之后**（2026-09-28 第一次放错了地方，用户当天就报
+        // 「打断之后不再是瞬间回复」「打断几次就卡了」）：`sample` 抓到主线程整段卡在这一条栈上 ——
+        //
+        //     stopPlayback → VoicePlaybackEngine.stopChunk → -[AVAudioPlayerNode stop]
+        //       → AVAudioNodeImplBase::GetAttachAndEngineLock()   ← 拿不到锁
+        //         → nanosleep                                      ← 自旋等
+        //
+        // 而握着那把锁的正是刚被拉起来的 bring-up（它要 `engine.attach` + 重配 IO）。
+        // 预热排在前面 = 主线程自己把自己锁住 **1.1 秒**（实测「提交 → 开始截屏」1.0~1.3 秒，
+        // 引擎热着时 0.00 秒 —— 前提差的就是这一句的位置）。
+        //
+        // ⚠️ **另一条边界**：预热只在**引擎冷**的时候才有事可做，而引擎冷就意味着刚才没有播报过、
+        // 也就是说那个追问窗口不可能是开着的（窗口是"回答一开始播"武装的）—— 所以这一次 IO 重配
+        // 不会掐到任何正在进行的采集。这一条是"能不能在这里预热"的判据，别在别处照搬这一句。
+        let warmUpEngine = bailianTTSClient.voicePlaybackEngine
+        Task { await warmUpEngine.warmUpForVoiceChat() }
 
         responseTaskGeneration += 1
         let responseTaskGenerationAtStart = responseTaskGeneration
