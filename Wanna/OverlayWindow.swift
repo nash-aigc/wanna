@@ -676,7 +676,9 @@ struct BlueCursorView: View {
     /// 数字来源（都是量出来的）：看板左上角 = 鼠标 + (12, −210)（顶边在鼠标上方
     /// 横杠高 180 + 30 ✓）；"补充｜矛盾"那块的下沿 = 再往下 180 → 鼠标 + (12, −30)；
     /// 再留 12 的气口 → **(24, −18)** ✓。
-    private static let conversationBubbleAnchorOffsetInsideBoard = CGSize(width: 24, height: -18)
+    /// ⚠️ 2026-09-28 第二次调：用户「实时回复卡片，**往下移动一点**，在鼠标的**右下角**，
+    /// 而不是右侧」—— y 从 −18 改成 **+16**（落到鼠标下方 ✓，仍与看板左边缘对齐 ✓）。
+    private static let conversationBubbleAnchorOffsetInsideBoard = CGSize(width: 24, height: 16)
 
     /// 看板开着 → 落进凹口；没开 → 老位置。
     private var bubbleAnchorOffset: CGSize {
