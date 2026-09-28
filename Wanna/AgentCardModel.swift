@@ -157,7 +157,6 @@ final class AgentCardModel: ObservableObject {
         // **复盘 agent 不在这里**（用户 2026-09-26 的第二次调整：「复盘 agent 放在左侧
         // 下面（分割线上面）」）—— 它不是"跟随任务长的一条线"，而是一个固定的入口，
         // 与「角色」并排放在分割线上方。它仍然是同一个 `AgentSession`，
-        // 打开它的路在 `openReviewAgent(...)`。
         //
         // ③ Claude Code 卡片：代理名册（兜底接手过的任务会出现在这里）。
         for agent in AgentSessionStore.allAgents() {
@@ -203,21 +202,6 @@ final class AgentCardModel: ObservableObject {
 
     /// 复盘 agent 的名字与文件夹 —— **一处定义**，卡片区和以后那个权限界面都读它。
 
-    /// 打开复盘 agent（没有就先建一个，幂等）。
-    ///
-    /// 侧栏那一行读它，所以它同时承担"这个 agent 存在吗"和"切到它"两件事 ——
-    /// 用户点那一下必须真的进得去，哪怕这是第一次。
-    func openReviewAgent(agentSessionManager: AgentSessionManager) {
-        // **先把原料刷新一遍**：复盘 agent 的文件夹里应该有当下的执行历史（它读的就是
-        // 那个文件夹）。用户点进来的这一下是最合适的时机 —— 比定时刷新省，也比让他
-        // 自己想到"先跑一次复盘"可靠。
-        ReviewRunner.writeExecutionHistoryFile()
-        // **复盘已经不是一张 agent 卡片了**（2026-09-29 用户：「复盘转换成技能，
-        // 不要把它做成 agent」）。它现在是 `skills/复盘/` 那个技能，主循环自己读
-        // `Wanna复盘/` 里的材料回答 —— 所以这里只剩"把原料刷新一遍"，
-        // 材料仍然要新鲜，技能读的正是它。
-        agentSessionManager.selectedSidebarSection = .agents
-    }
 
     private func filtered(_ cards: [Card], query: String) -> [Card] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)

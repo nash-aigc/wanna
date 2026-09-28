@@ -238,11 +238,10 @@ struct HomeSpaceSidebarView: View {
                     openRoleSettingsAction()
                 }
                 TableVerticalRule()
-                sidebarTopButton(title: "复盘", isOn: false) {
-                    SoundEffectPlayer.shared.play(.notchRevealed)
-                    showsSettings = false
-                    cardModel.openReviewAgent(agentSessionManager: agentSessionManager)
-                }
+                // **「复盘」那颗按钮 2026-09-29 删掉了**（用户：「复盘转换成技能，
+                // 不要把它做成 agent」）。它原来调 `openReviewAgent` —— 而复盘已经没有
+                // agent 了，点下去什么都不会发生。按钮留着比删掉更坏：一个点了没反应的
+                // 按钮，用户会以为是自己点错了。
                 TableVerticalRule()
                 sidebarTopButton(title: "录音", isOn: false) {
                     SoundEffectPlayer.shared.play(.recordingEditorOpened)
@@ -1019,16 +1018,7 @@ struct HomeSpaceSidebarView: View {
                 openArchiveAction()
             }
 
-            NotchBarActionButton(
-                title: "复盘",
-                systemImage: "chart.line.uptrend.xyaxis",
-                isHighlighted: false,
-                help: "跟复盘 agent 聊：它读的是复盘文件夹里的材料"
-            ) {
-                SoundEffectPlayer.shared.play(.notchRevealed)
-                showsSettings = false
-                cardModel.openReviewAgent(agentSessionManager: agentSessionManager)
-            }
+            // 底排那颗「复盘」同样删掉了 —— 理由见上面顶排那处注释。
         }
         .padding(.horizontal, 10)
         .padding(.top, 8)
