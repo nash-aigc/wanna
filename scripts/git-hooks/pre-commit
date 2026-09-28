@@ -44,6 +44,51 @@ set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 CHECK="$ROOT/scripts/recording-health-check.sh"
 
+# ══════════════════════════════════════════════════════════════════════════
+# 闸门二：《项目全貌》必须同一次提交里更新（用户 2026-09-29 要求）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 用户原话：「【做成一个闸门，提交 git 前，必须修改】否则不能提交，
+# 目的让用户审核整体功能是否改变」。
+#
+# 为什么它必须挂在**机器**上：`全局框架/00-项目全貌.md` 是**给用户看的**
+# ——他在上面提修改方案、判断系统是什么样。它一过期，用户就**照着一张错的图做决定**。
+# 而"记得更新它"这件事，我今天（2026-09-29）刚写进 CLAUDE.md §0.7，
+# **然后立刻自己违反了两次** —— 靠自觉就是靠不住，所以挂到 git 上。
+#
+# 判据：**碰了功能文件**（Wanna/ 下的 .swift、WannaAgent/ 下的 .py），
+# 就必须**同时**提交 `全局框架/00-项目全貌.md`。
+#
+# 真遇到"改了文件但确实没改功能"（注释、typo）：用
+#     WANNA_SKIP_OVERVIEW_GATE=1 git commit ...
+# 显式跳过 —— **它是一次有意识的决定，不是默认路径**。
+OVERVIEW="全局框架/00-项目全貌.md"
+STAGED_FILES="$(git diff --cached --name-only)"
+FUNCTIONAL="$(echo "$STAGED_FILES" | grep -E '^(Wanna/.*\.swift|WannaAgent/.*\.py|WannaAgent/requirements\.txt)$' || true)"
+
+if [ -n "$FUNCTIONAL" ] && ! echo "$STAGED_FILES" | grep -qF "$OVERVIEW"; then
+    if [ "${WANNA_SKIP_OVERVIEW_GATE:-0}" != "1" ]; then
+        echo
+        echo "⛔ 提交被拒：改了功能，但《项目全貌》没跟着改。"
+        echo
+        echo "   这次碰到的功能文件："
+        echo "$FUNCTIONAL" | sed 's/^/     /'
+        echo
+        echo "   缺的那一份：$OVERVIEW"
+        echo
+        echo "   为什么拦：那一篇是**给用户看的**——他在上面判断系统是什么样、"
+        echo "   在上面提修改方案。它一过期，他就照着一张错的图做决定。"
+        echo
+        echo "   怎么过："
+        echo "     · 改了功能  → 把 $OVERVIEW 里对应那一节改掉，一起 git add"
+        echo "     · 确实没改功能（注释 / typo / 纯重构）→"
+        echo "         WANNA_SKIP_OVERVIEW_GATE=1 git commit ..."
+        echo
+        exit 1
+    fi
+    echo "⚠️ 跳过了《项目全貌》闸门（WANNA_SKIP_OVERVIEW_GATE=1）—— 请确认这次确实没改功能。"
+fi
+
 [ -x "$CHECK" ] || { echo "⚠️ 找不到 $CHECK，跳过录音健康检查。"; exit 0; }
 
 # 这次提交碰到的文件里，有没有"能影响录音"的
