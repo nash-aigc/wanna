@@ -1,0 +1,116 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>右上角卡片 · 需求与红线位置</title>
+<style>
+  :root{
+    --bg:#0b0b0d;--card:#141417;--line:#2a2a2f;--line2:#3a3a42;
+    --text:#f2f2f4;--dim:#8a8a93;--faint:#4d4d55;--red:#ff2d2d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.7 -apple-system,"PingFang SC",sans-serif;padding:26px 30px 60px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 22px}
+  h2{font-size:14px;margin:26px 0 10px;color:#fff}
+  ol,ul{margin:0 0 0 20px;padding:0}
+  li{margin:0 0 6px}
+  .k{color:#4ade80}
+  .no{color:#ff7b72}
+  .wrap{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;margin-top:6px}
+
+  /* ── 复现卡片（当前真机的样子）── */
+  .stage{position:relative;width:900px;height:600px;flex:0 0 auto}
+  .cardBg{position:absolute;inset:0;background:var(--card);border:1px solid var(--line);
+          border-radius:14px}
+  /* 红框：圈住"那条要删的细线"所在的那一整块 */
+  .redbox{position:absolute;left:300px;top:210px;width:150px;height:390px;
+          border:3px solid var(--red);border-radius:2px}
+  /* 那条细线本身 */
+  .thinLine{position:absolute;left:302px;top:212px;width:2px;height:386px;background:var(--red)}
+  .pointer{position:absolute;left:470px;top:300px;color:var(--red);font-size:14px;font-weight:600}
+
+  .cellPad{padding:12px 14px}
+  .colTitle{font-size:12px;font-weight:600;color:var(--dim);margin-bottom:8px}
+  pre{margin:0;font:10.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;white-space:pre}
+  .m{color:var(--text)}.u{color:var(--faint)}
+
+  /* 四列的分隔线（真机现在就长这样） */
+  .vline{position:absolute;top:0;bottom:0;width:1px;background:var(--line2)}
+  .hline{position:absolute;left:0;right:0;height:1px;background:var(--line2)}
+</style>
+
+<h1>右上角卡片 —— 你的需求（我复述）+ 红框里那条线在哪</h1>
+<p class="sub">这一页有两部分：<b>① 你这次说的需求（我按你说的写下来）</b>；
+<b>② 把当前真机复现出来，并把"要删的那条线"用红框圈出来</b> —— 你确认圈对了，我才动手。</p>
+
+<h2>① 你的需求（逐条）</h2>
+<ol>
+  <li><b>一共四列</b> ✓
+    <ul>
+      <li><b>上面两列</b>（在回复卡片的<b>上方</b>）：<span class="k">补充</span> ｜ <span class="k">矛盾</span></li>
+      <li><b>右边两条很长</b>：<span class="k">用户问题</span> ｜ <span class="k">harness</span></li>
+    </ul>
+  </li>
+  <li><b>右边那两条的特点不一样</b>：
+    <ul>
+      <li><b>最右的 harness：高度固定</b> ✓（它的内容来自文件，多少条是定的）</li>
+      <li><b>紧挨它的「用户问题」：高度不确定、可高可矮</b> ✓（你说的多它就长）</li>
+    </ul>
+    <span class="no">✗ 现状：两边都被我写成了固定高度 —— 这是错的。</span>
+  </li>
+  <li><b>宽度：整体缩小约 30%</b> ✓ <span class="no">✗ 现状：太宽了、没有意义。</span></li>
+  <li><b>不要那些没有意义的圆角</b>（我给它加了很多 ✗）。</li>
+  <li><b>「补充」和「矛盾」之间那条分割线：保留</b> ✓。</li>
+  <li><b>红框里那条细线：彻底删除</b> ✓ —— 已经说了四遍 ✗。</li>
+</ol>
+
+<h2>② 红框在哪里（我复现的真机卡片）</h2>
+<div class="wrap">
+  <div class="stage">
+    <div class="cardBg"></div>
+
+    <!-- 四列的分隔线（真机现在有这些）-->
+    <div class="vline" style="left:300px"></div>   <!-- 补充 | 矛盾 -->
+    <div class="vline" style="left:450px"></div>   <!-- 矛盾 | 用户问题 -->
+    <div class="hline" style="top:210px;left:0;width:300px"></div> <!-- 上面两块的下沿 -->
+    <div class="vline" style="left:750px"></div>   <!-- 用户问题 | harness -->
+
+    <!-- 内容 -->
+    <div class="cellPad" style="position:absolute;left:0;top:0;width:300px">
+      <div class="colTitle">补充</div>
+      <div style="color:var(--faint);font-size:11px">（空）</div>
+    </div>
+    <div class="cellPad" style="position:absolute;left:301px;top:0;width:149px">
+      <div class="colTitle">矛盾</div>
+      <div style="color:var(--faint)">—</div>
+    </div>
+    <div class="cellPad" style="position:absolute;left:451px;top:0;width:299px">
+      <div class="colTitle">问题</div>
+      <pre>今天
+└─ 看一下今天</pre>
+    </div>
+    <div class="cellPad" style="position:absolute;left:751px;top:0;width:149px">
+      <div class="colTitle">harness</div>
+      <pre><span class="u">执行前
+├─ 提示词
+│  ├─ 角色
+│  └─ 任务
+└─ 上下文与记忆
+执行中
+└─ 执行与工具</span></pre>
+    </div>
+
+    <!-- 红框 = 要删的那条细线所在的位置 -->
+    <div class="redbox"></div>
+    <div class="thinLine"></div>
+    <div class="pointer">← 红框里这条 <b>竖线</b>，<br>&nbsp;&nbsp;&nbsp;要<u>彻底删掉</u></div>
+  </div>
+
+  <div style="max-width:330px;font-size:13px;color:var(--dim)">
+    <p><b>红框的位置</b>：在<b>补充/矛盾 那两块的下方</b>、一直往下到卡片底部那一段；
+    框里的<b>竖线</b>就是那条要删的线 —— 它是"上一版那个凹口"的左壁残留下来的 ✗。</p>
+    <p>真机里它从 <b>矛盾 那一列的左边缘</b>往下走到底；我上一次以为删掉了，
+    其实删的是别处 ✗。</p>
+    <p><b>你确认一下</b>：红框圈对了吗？里面的线是这条吗？</p>
+  </div>
+</div>

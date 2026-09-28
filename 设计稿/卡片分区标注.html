@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>卡片分区标注 + 鼠标 + 细线</title>
+<style>
+  :root{--bg:#0b0b0d;--card:#141417;--text:#f2f2f4;--dim:#8a8a93;--faint:#4d4d55;
+        --red:#ff2d2d;--green:#4ade80;--blue:#0a84ff;--amber:#fbbf24}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.7 -apple-system,"PingFang SC",sans-serif;padding:24px 28px 50px}
+  h1{font-size:17px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 18px}
+
+  .stage{position:relative;width:1180px;height:560px;margin-bottom:20px}
+  /* 卡片本体（四列） */
+  .card{position:absolute;left:60px;top:0;right:0;bottom:0;background:var(--card);
+        border:1px solid #2a2a2f;border-radius:12px}
+  .col{position:absolute;top:0;bottom:0;border-right:1px solid #3a3a42}
+  .rowLine{position:absolute;left:60px;height:1px;background:#3a3a42}
+
+  .title{font-size:12px;font-weight:600;color:var(--dim);margin:12px 0 6px}
+  pre{margin:0;font:10.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;white-space:pre}
+  .u{color:var(--faint)}
+
+  /* 标注 */
+  .tag{position:absolute;color:#fff;font-size:12.5px;font-weight:600;
+       background:var(--red);padding:1px 7px;border-radius:4px;white-space:nowrap}
+  .tag.ok{background:var(--green);color:#06240f}
+  .tag.info{background:var(--blue)}
+  .arrow{position:absolute;color:var(--red);font-size:11px}
+  .ring{position:absolute;border:3px solid var(--red);border-radius:3px}
+</style>
+
+<h1>卡片分区标注：每个区域在哪 · 鼠标在哪 · 那条细线在哪</h1>
+<p class="sub">我按你这次的标注画的。**先看这张，确认我指的位置对不对**，再动手改。</p>
+
+<div class="stage">
+  <div class="card"></div>
+
+  <!-- 四列：① 补充 ② 矛盾（这两块在上、宽度固定且相等）③ 问题（可高可矮）④ harness（固定高度） -->
+  <div class="col" style="left:320px"></div>   <!-- 补充 | 矛盾 -->
+  <div class="col" style="left:480px"></div>   <!-- 矛盾 | 问题 -->
+  <div class="col" style="left:830px"></div>   <!-- 问题 | harness -->
+  <div class="rowLine" style="top:230px;width:420px"></div>  <!-- 上面两块的下沿 -->
+
+  <!-- ① 补充 -->
+  <div style="position:absolute;left:60px;top:0;width:260px">
+    <div class="title" style="margin-left:14px">补充</div>
+    <div style="margin-left:14px;color:var(--faint);font-size:11px">（空）</div>
+  </div>
+  <!-- ② 矛盾 -->
+  <div style="position:absolute;left:321px;top:0;width:159px">
+    <div class="title" style="margin-left:14px">矛盾</div>
+    <div style="margin-left:14px;color:var(--faint)">—</div>
+  </div>
+  <!-- ③ 问题（可高可矮） -->
+  <div style="position:absolute;left:481px;top:0;width:349px">
+    <div class="title" style="margin-left:14px">问题</div>
+    <pre style="margin-left:14px">今天
+└─ 看一下今天</pre>
+  </div>
+  <!-- ④ harness（固定高度） -->
+  <div style="position:absolute;left:831px;top:0;width:289px">
+    <div class="title" style="margin-left:14px">harness</div>
+    <pre style="margin-left:14px"><span class="u">执行前
+├─ 提示词
+│  ├─ 角色
+│  └─ 任务
+└─ 上下文与记忆
+执行中
+└─ 执行与工具
+执行后
+└─ 验收与可观测</span></pre>
+  </div>
+
+  <!-- 区域标注 -->
+  <div class="tag ok" style="left:110px;top:250px">① 补充（宽固定）</div>
+  <div class="tag ok" style="left:360px;top:250px">② 矛盾（宽=补充）</div>
+  <div class="tag info" style="left:600px;top:250px">③ 问题（高可变）</div>
+  <div class="tag ok" style="left:930px;top:250px">④ harness（高固定）</div>
+
+  <!-- 鼠标 -->
+  <div class="tag" style="left:0px;top:330px">◆ 鼠标</div>
+  <div class="arrow" style="left:0px;top:352px">↑ 就在这里</div>
+
+  <!-- 那条细线（用户指的位置：鼠标左侧那条竖线） -->
+  <div class="ring" style="left:56px;top:150px;width:12px;height:330px"></div>
+  <div class="tag" style="left:-4px;top:120px">细线（要删的那条）</div>
+  <div class="arrow" style="left:12px;top:140px">↓ 鼠标左侧这条竖边</div>
+
+  <!-- 回复卡（应该在鼠标右下角） -->
+  <div class="tag info" style="left:20px;top:410px">回复卡应该在鼠标右下角</div>
+  <div style="position:absolute;left:0;top:440px;width:200px;height:70px;
+              border:1px dashed var(--blue);border-radius:10px;
+              color:var(--blue);font-size:11px;padding:6px 8px">回复结果（鼠标右下角）</div>
+</div>
+
+<h2 style="font-size:14px;margin:8px 0 8px">四个区域（按你说的）</h2>
+<ol style="margin:0 0 0 20px">
+  <li><b>① 补充 ② 矛盾</b>：在上面、<b>宽度固定而且两者相同</b>，显示在<b>回复卡的上方</b> ✓</li>
+  <li><b>③ 问题</b>：右边第一条长条，<b>高度可变</b>（你说的多它会长）✓</li>
+  <li><b>④ harness</b>：最右，<b>高度固定</b>（内容来自文件）✓</li>
+  <li><b>鼠标</b>：在 ③ 那一带偏左的位置 ✓；<b>回复卡</b>要落在它<b>右下角</b> ✓</li>
+</ol>
+
+<h2 style="font-size:14px;margin:16px 0 8px">我理解你要删的</h2>
+<ul style="margin:0 0 0 20px">
+  <li><b>鼠标左侧那条竖线</b>（我标成红圈那条 ✓）—— <b>彻底删掉</b> ✓</li>
+  <li><b>问题那一列左右两条竖线</b> —— 也删 ✓（你红框写着"全部删除"）</li>
+</ul>
+<p class="sub" style="margin-top:14px">⚠️ 我确认一下：这两条删掉之后，
+<b>卡片就没有左边框和中间那些竖线了</b> —— 界面上只剩各列的文字 + 一条外框？
+还是<b>连外框也不要</b>？你回一句我就动手。</p>

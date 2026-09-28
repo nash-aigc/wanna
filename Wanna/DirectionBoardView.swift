@@ -425,10 +425,8 @@ private struct ReferenceTagFlowLayout: Layout {
                     .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius,
                                                style: .continuous))
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
-                    .stroke(borderTint, lineWidth: borderWidth)
-            )
+            // ⚠️ **边框不画了**（用户 2026-09-28：「细线，它出现在鼠标的左侧……彻底删除」
+            // —— 那条"卡片左边缘"就是这圈边框的左段 ✗）。只留底色 ✓，所以整块上没有任何线条 ✓。
     }
 
     /// **7 的那一横**（三段，从下往上）。
@@ -462,10 +460,8 @@ private struct ReferenceTagFlowLayout: Layout {
                 // **左上块：推荐 ｜ 矛盾**（用户 2026-09-28 手绘的排版：这一块在左上、矮）
                 recommendationColumn
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                Rectangle()
-                    .fill(theme.textColor.opacity(0.22))
-                    .frame(width: 1)
-                    .padding(.vertical, 2)
+                // ⚠️ **「补充 ｜ 矛盾」之间那条竖线也删掉了**（用户 2026-09-28 的红框：
+                // 「这条线，也要删除」）—— 两列宽度仍然固定且相等 ✓，只是不再画线 ✓。
                 questionLines
                     .padding(.leading, 8)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
