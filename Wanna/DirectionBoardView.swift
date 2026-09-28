@@ -94,7 +94,10 @@ struct DirectionBoardView: View {
     private static let referenceTagRowHeight: CGFloat =
         CGFloat(referenceTagRowLines) * 17 + CGFloat(referenceTagRowLines - 1) * 4
 
-    /// **左列（Harness 树）有多宽** —— 横杠总宽 360 去掉这条与右边的矛盾列。
+    /// **左列（推荐）有多宽** —— 它与矛盾并排在横杠左边（用户 2026-09-28 的红框图）。
+    static let recommendationColumnWidth: CGFloat = 96
+
+    /// **右列（Harness 树）有多宽** —— 横杠总宽 360 去掉这条与右边的矛盾列。
     /// 用户 2026-09-28 把左列定成"提示词工程"，右边留给矛盾，中间一条细线。
     static let harnessColumnWidth: CGFloat = 150
 
@@ -405,16 +408,25 @@ private struct ReferenceTagFlowLayout: Layout {
     private var barColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
-                harnessColumn
-                    .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
-                // 那条细线：两列之间，上下留一点气口，不与文字齐头齐尾。
+                // 左：**推荐 ｜ 矛盾**（两块都是大语言模型生成的，用户 2026-09-28 的红框图）
+                recommendationColumn
+                    .frame(width: Self.recommendationColumnWidth, alignment: .topLeading)
                 Rectangle()
                     .fill(theme.textColor.opacity(0.22))
                     .frame(width: 1)
                     .padding(.vertical, 2)
                 questionLines
-                    .padding(.leading, 10)
+                    .padding(.leading, 8)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
+                Rectangle()
+                    .fill(theme.textColor.opacity(0.22))
+                    .frame(width: 1)
+                    .padding(.vertical, 2)
+                // 右：**Harness**（JEV/代码匹配那一块）——移到最右（用户：「最右侧这部分显示
+                // 所有的这个 Harness 工程里面的整个结构」）。
+                harnessColumn
+                    .padding(.leading, 8)
+                    .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
             }
             .padding(.horizontal, Self.horizontalPadding)
             .padding(.top, Self.barTopPadding)
@@ -428,68 +440,81 @@ private struct ReferenceTagFlowLayout: Layout {
         // 只靠**7 字形自己的轮廓**把凹口划出来（见 `DirectionBoardSevenShape`）。
     }
 
-    /// **左列：Harness 工程树** —— 与右边那棵脑图**同一种写法**（用户 2026-09-28：
-    /// 「左侧 harness 也写成右侧的树状图的格式，包含 `├─` `└─` 这样的符号，表明逻辑关系」）。
+    /// **右列：Harness 工程树 —— 整棵常显，没命中的灰、命中的白**（用户 2026-09-28 的红框图：
+    /// 「最右侧这部分显示**所有的**这个 Harness 工程里面的整个结构，**默认是灰色**，
+    /// 然后如果用户的内容**选中了、或者匹配到了，就用白色**」）。
     ///
-    /// 所以这里也是一段**等宽字体**的树文本，层级靠 `├─` / `└─` / `│` 画出来：
+    /// ⚠️ 这一条**推翻了**本文件上一版"只显示命中的" ✗ —— 上一版是照他更早那句话做的
+    ///（「没匹配到的话你就不显示，因为完全显示的话高度就不够了」），这次他明确要**全显示** ✓。
+    /// 高度由"整棵树"决定，所以这一列现在**写得比别的列长** —— 横杠的高度是固定的，
+    /// 超出的部分由 `clipped()` 裁掉，不会把卡片顶高 ✓。
     ///
-    ///     执行前
-    ///     ├─ 提示词
-    ///     │  ├─ 任务
-    ///     │  └─ 约束
-    ///     └─ 上下文与记忆
-    ///        └─ 检索
-    ///
-    /// 只画**命中**的（用户：「没匹配到的话你就不显示，因为完全显示的话，可能这个高度就不够了」），
-    /// 所以树枝符号是**按真正画出来的东西**算的 —— 末项一律 `└─`，不是末项才有 `│` 往下去 ✓。
-    ///
-    /// 颜色两档（他的原话）：**条目命中 → 绿**；**阶段名与组名平时白、一整支全命中时也变绿**。
+    /// 写法与右边那棵脑图一致：等宽字体 + `├─` / `└─` / `│` 树枝符号 ✓（他要的"表明逻辑关系"）。
     private var harnessColumn: some View {
         let summary = session.matchedHarness
         let catalog = session.harnessCatalogForDisplay
-        var lines: [(text: String, isHighlighted: Bool, isBranch: Bool)] = []
+        var lines: [(text: String, isMatched: Bool)] = []
 
-        // 只留下"真的有命中"的阶段，好算谁才是最后一个（末项画 └─）。
-        let phasesWithMatches = catalog.phases.filter { phase in
-            catalog.groups.contains { $0.phase == phase && !summary.matchedKeywords(inGroup: $0.id).isEmpty }
-        }
-
-        for (phaseIndex, phase) in phasesWithMatches.enumerated() {
-            let isLastPhase = phaseIndex == phasesWithMatches.count - 1
-            lines.append((phase, summary.fullyMatchedPhases.contains(phase), false))
-
-            let groupsInPhase = catalog.groups.filter {
-                $0.phase == phase && !summary.matchedKeywords(inGroup: $0.id).isEmpty
-            }
+        for (phaseIndex, phase) in catalog.phases.enumerated() {
+            let isLastPhase = phaseIndex == catalog.phases.count - 1
+            lines.append((phase, summary.fullyMatchedPhases.contains(phase)))
+            let groupsInPhase = catalog.groups.filter { $0.phase == phase }
             for (groupIndex, group) in groupsInPhase.enumerated() {
                 let isLastGroup = groupIndex == groupsInPhase.count - 1
-                let groupPrefix = isLastGroup ? "└─ " : "├─ "
                 let matched = summary.matchedKeywords(inGroup: group.id)
                 let wholeGroupMatched = !group.items.isEmpty && matched.count == group.items.count
-                lines.append((groupPrefix + group.title, wholeGroupMatched, true))
-
-                let matchedItems = group.items.filter { matched.contains($0.keyword) }
-                // 下面还有没有别的东西 → 决定这一层要不要画竖线 `│`。
-                let continuesBelow = !isLastGroup
-                for (itemIndex, item) in matchedItems.enumerated() {
-                    let isLastItem = itemIndex == matchedItems.count - 1
-                    let stem = isLastItem ? "└─ " : "├─ "
-                    let rail = continuesBelow ? "│  " : "   "
-                    lines.append((rail + stem + item.keyword, true, true))
+                lines.append(((isLastGroup ? "└─ " : "├─ ") + group.title, wholeGroupMatched))
+                for (itemIndex, item) in group.items.enumerated() {
+                    let isLastItem = itemIndex == group.items.count - 1
+                    let rail = isLastGroup ? "   " : "│  "
+                    lines.append((rail + (isLastItem ? "└─ " : "├─ ") + item.keyword,
+                                  matched.contains(item.keyword)))
                 }
             }
+            if !isLastPhase { lines.append(("│", false)) }
         }
 
         return VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 Text(line.text)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(line.isHighlighted ? DS.Colors.success : theme.textColor)
+                    .font(.system(size: 11, design: .monospaced))
+                    // **命中 → 白；没命中 → 灰**（他的原话：默认灰、匹配到就白）。
+                    .foregroundStyle(line.isMatched ? theme.textColor : theme.textColor.opacity(0.35))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        // **整棵树常显，但横杠高度是定死的** —— 超出的部分在这里裁掉（`clipped` 不参与布局，
+        // 所以卡片不会被顶高 ✓）。用户担心的"全显示高度不够"就是指这个 ✓。
+        .clipped()
         .animation(.easeOut(duration: 0.25), value: summary)
+    }
+
+    /// **横杠最左那一列：推荐**（大语言模型生成）。
+    ///
+    /// 用户 2026-09-28：「你建议用户去说一点什么，或者尽可能去说点什么、或者再补充一点什么内容……
+    /// **不是必须建议**，也不是非得建议 —— 除非你检测到**真的是缺失一些非常重要的内容**再去显示。
+    /// 按照极简逻辑，**能不显示就不显示**。」（他还举了反例：「北京在哪里」**不要**追问
+    /// 「哪个城市/哪个乡镇」✗。）
+    ///
+    /// ⚠️ 数据来源那一块**还没接**（提示词与解析都要加一个字段，见 `需求/05-右上角卡片-三列布局.md`），
+    /// 所以现在这一列**永远是空的** ✓ —— 空的时候连标题都不画（极简逻辑 ✓）。
+    private var recommendationColumn: some View {
+        let value = session.recommendationText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 2) {
+            if !value.isEmpty {
+                Text("推荐")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.textColor)
+                Text(value)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.Colors.success)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .transition(.opacity)
+        .animation(.easeOut(duration: 0.25), value: value)
     }
 
     /// **最下面那一行：模型筛出来的 3 个方向**（用户 2026-09-28：「最多 4 个……多了不要，

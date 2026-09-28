@@ -597,6 +597,11 @@ final class DirectionBoardSession: ObservableObject {
     /// 卡片**只画命中的**（没命中的不画 —— 全画高度不够），阶段名在"整段命中"时也变绿。
     @Published private(set) var matchedHarness = HarnessMatchSummary()
 
+    /// **推荐**：大语言模型建议用户"再补点什么"（2026-09-28 新加的那一列）。
+    /// ⚠️ 数据源还没接（提示词与解析都要各加一个字段）—— 所以现在恒为空串 ✓，
+    /// 卡片上那一列因此**不显示**（用户的要求：「能不显示就不显示」✓）。
+    @Published private(set) var recommendationText = ""
+
     /// 清单只在启动时读一次（它是**内容**，不是状态 —— 改文件重启后生效，
     /// 与其它设置文件同一个约定 ✓）。
     private let harnessCatalog = HarnessCapabilityMatcher.loadCatalog()
