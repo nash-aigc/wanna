@@ -132,6 +132,11 @@ final class NotchPanelModel: ObservableObject {
     /// 由 `CompanionManager` 在 ESC 打断听的时候置上，在这一轮收尾/下一次按下时清掉。
     var isActivityPhaseHeldAtIdle: Bool = false
 
+    /// **引擎正在被拉起来**（2026-09-28）：按下快捷键之后、开麦之前的那 1.5~2 秒。
+    /// 相位推导读它（见 `refreshActivityPhase()` 的第一句）——
+    /// 那一刻麦克风还没开，屏幕上必须显示「正在准备」，而不是「在听」。
+    var isWaitingForEngineWarmUp: Bool = false
+
     var notchBandSitsAboveTranscriptLine: Bool {
         activityPhase == .listening && !isFullscreenSuppressed
     }
@@ -1957,6 +1962,20 @@ final class NotchWindowController {
     /// **走 `externalSessionOverride`**（2026-09-24 那条既有规矩）：语音聊天还连着的时候，
     /// 这一下收掉的是"这一轮的聆听/思考/播报"，不是那一整段会话 —— 屏幕上的「Chatting」
     /// 与挂断按钮不该因为一次打断就消失（`forceActivityPhaseIdle` 里写着同一条理由）。
+    /// 按下快捷键之后、引擎热起来之前：刘海显示 **Starting**。
+    /// 与 `holdActivityPhaseAtIdle` 同一形状（改旗标 + 立刻重算一次相位）。
+    func beginEngineWarmUpPhase() {
+        panelModel.isWaitingForEngineWarmUp = true
+        refreshActivityPhase()
+    }
+
+    /// 引擎热好了（或这一轮被取消）：撤掉 **Starting**，相位回到正常推导。
+    func endEngineWarmUpPhase() {
+        guard panelModel.isWaitingForEngineWarmUp else { return }
+        panelModel.isWaitingForEngineWarmUp = false
+        refreshActivityPhase()
+    }
+
     func holdActivityPhaseAtIdle() {
         panelModel.isActivityPhaseHeldAtIdle = true
         // 那个**一次性**抑制被这次"按住"接管：留着它会让"下一拍 idle"被当成
@@ -2011,6 +2030,15 @@ final class NotchWindowController {
     }
 
     private func refreshActivityPhase() {
+        // **引擎启动中优先于一切**：这一刻麦克风还没开，屏幕上必须显示"正在准备"，
+        // 而不是"在听"（见 `NotchActivityPhase.startingEngine` 的注释）。
+        // 放在最前面（连"被 ESC 按在 idle"那道闸都在它之后）—— 因为这是一次**全新的按下**，
+        // 那一刻用户最需要看到的反馈就是"它收到了"。
+        if panelModel.isWaitingForEngineWarmUp {
+            setActivityPhase(.startingEngine)
+            syncListeningTranscriptPanel()
+            return
+        }
         // 被 ESC 按在 idle 上：**这一轮结束之前不许再按 voiceState 算回来**
         //（用户 2026-09-27：「用户说话的过程中间，用户按住 ESC，他没有瞬间消失」）。
         if panelModel.isActivityPhaseHeldAtIdle {

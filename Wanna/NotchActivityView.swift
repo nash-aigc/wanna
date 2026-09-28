@@ -45,6 +45,17 @@ enum NotchActivityPhase: Equatable {
     case thinking
     case speaking
     case transcribing
+    /// **引擎启动中**（2026-09-28）：按下快捷键之后、那台播报引擎热起来之前。
+    ///
+    /// 为什么需要它：用户的设计是"**先把引擎拉起来、起来之后再开麦**"（那样引擎重配输入设备时
+    /// 我们还没占用麦克风，一个字都不会丢 ✓）。代价是按下之后有 **1.5~2 秒**麦克风才开 ——
+    /// 那段时间如果刘海什么都不显示，用户的感觉就是「**我按了，没反应**」✗（他当天就报了这一点）。
+    ///
+    /// **不能用 Listening 顶替**：那会画出一排麦克风音波，而那一刻我们根本还没在听 ✗ ——
+    /// 「它说在听、我说了没反应」正是这个仓库最忌讳的那种谎。
+    /// 所以这一格显示 **Starting**、动画用**脉冲点**（"正在准备"的形状 ✓），
+    /// 引擎一热就切到 Listening（同一色系，切换像一次颜色不变的交接 ✓）。
+    case startingEngine
     /// 语音聊天会话**连接中**——从发起连接到会话回报 ready 之前。
     /// 左翼显示 Connecting，右翼是连接动画；挂断图标只在连上之后出现
     /// （用户 2026-09-23：「连接中的时候不知道……右侧不要有挂断按钮，而应该
@@ -62,6 +73,7 @@ extension NotchActivityPhase {
     var notchStateWord: String {
         switch self {
         case .idle: return ""
+        case .startingEngine: return "Starting"
         case .listening: return "Listening"
         case .thinking: return "Thinking"
         case .speaking: return "Speaking"
@@ -84,6 +96,8 @@ extension NotchActivityPhase {
     var notchAnimationTint: Color {
         switch self {
         case .idle: return .white
+        // Starting 与 Listening 同一个青绿：引擎一热就切过去，颜色不变、只有动画换形状 ✓
+        case .startingEngine: return Color(red: 0.37, green: 0.92, blue: 0.83)   // #5EEAD4
         case .listening: return Color(red: 0.37, green: 0.92, blue: 0.83)   // #5EEAD4
         case .thinking: return Color(red: 0.77, green: 0.49, blue: 0.94)    // #C47CF0
         case .speaking: return Color(red: 0.98, green: 0.57, blue: 0.24)    // #FB923C
@@ -113,6 +127,7 @@ extension NotchActivityPhase {
     var notchGlowColor: Color {
         switch self {
         case .idle: return .clear
+        case .startingEngine: return Color(red: 0.07, green: 0.27, blue: 0.30)    // #12464C
         case .listening: return Color(red: 0.07, green: 0.27, blue: 0.30)    // #12464C
         case .thinking: return Color(red: 0.33, green: 0.00, blue: 0.40)     // #540067
         case .speaking: return Color(red: 0.27, green: 0.14, blue: 0.06)     // #45230F
@@ -864,7 +879,9 @@ struct NotchActivityView: View {
                     tint: tint
                 )
             }
-        case .thinking:
+        case .startingEngine, .thinking:
+            // 启动中与思考共用"脉冲点"这个形状（都是"正在准备"），区别只在状态词与时长。
+            // **绝不用音波** —— 那一刻麦克风还没开，画音波就是告诉用户"我在听" ✗。
             TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
                 NotchThinkingDotsView(timelineDate: timeline.date, tint: tint)
             }

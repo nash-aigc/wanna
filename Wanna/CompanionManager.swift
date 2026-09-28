@@ -2451,6 +2451,13 @@ final class CompanionManager: ObservableObject {
                 // 起来之后响一声轻的 —— 那是**"可以说话了"**的信号。
                 // （他要求"刘海给我一个动态效果告诉我引擎已启动"；刘海上的文字状态是紧接着的一小步，
                 //   见 `需求/03-引擎契约.md` §4。）
+                // **先把刘海点亮**（2026-09-28，用户的体验反馈）：
+                // 「我按下快捷键的时候不会瞬间在刘海上有一个反馈，而是说这个刘海会等到
+                //   引擎启动之后才会弹出来」✗ —— 那 1.5~2 秒的空白让人以为没按上。
+                // 所以按下立刻显示 **Starting**，引擎一热就交给正常的相位推导（→ Listening）。
+                self.notchWindowController?.beginEngineWarmUpPhase()
+                defer { self.notchWindowController?.endEngineWarmUpPhase() }
+
                 let engineBringUpBeganAt = Date()
                 await bailianTTSClient.warmUpVoiceEngine()
                 let engineBringUpSeconds = Date().timeIntervalSince(engineBringUpBeganAt)
