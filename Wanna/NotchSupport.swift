@@ -838,9 +838,11 @@ nonisolated enum NotchSupport {
     ///（卡窄一点时缝更大 —— 卡的宽度随内容变，这是它唯一能保证的下限）。
     nonisolated static let directionBoardBarCardClearance: CGFloat = 20
     nonisolated static var directionBoardBarWidth: CGFloat {
-        // **用户 2026-09-28：「补充跟矛盾这两列的宽度总和应该跟回复卡的宽度一致」** ✓
-        // 所以这里直接用回复卡的宽度（340），不再加 clearance ✓。
-        answerCardMaximumWidth
+        // **看板 = 回复卡宽 + clearance** ✓（用户 2026-09-28：「你把右上角的卡片……矛盾这个位置上，
+        // 你把它宽度**再往右拉一点**，这样它的宽度不就往右移动了吗？**你不要去修改回复卡片**」）。
+        // 两块左边缘对齐 ✓，看板右侧多出 clearance 这一段，于是 `问题` 列与回复卡之间
+        // 自然空出那条缝 ✓，而回复卡的宽度一个像素都没动 ✓。
+        answerCardMaximumWidth + directionBoardBarCardClearance
     }
     /// 横杠的高度 —— **定值**（行的集合恒定、每行预留固定行数，卡片高度因此不晃）。
     ///
@@ -850,11 +852,10 @@ nonisolated enum NotchSupport {
     /// 右下角那张 AI 回复卡的最大宽度 —— **7 字形那条竖条与它同宽**（用户 2026-09-28：
     /// 「竖向这个宽度其实跟右下角卡片的宽度应该设置为一样的」）。
     /// 两者是同一个数，所以放在一处：`OverlayWindow` 与看板都读它，改一个不会只改到一半。
-    // ⚠️ 340 → **324**（用户 2026-09-28：「实时回复卡片跟右上角这个卡片……**不要挨着**，
-    // 保留一定的距离」）—— 回复卡满宽时，它的右边缘正好落在看板"问题"列的左边缘上 ✗（贴住 ✗），
-    // 所以整体收 16pt 留出那条缝 ✓；看板的 补充｜矛盾 读的是同一个数 ✓，
-    // 于是"两列之和 = 回复卡宽"这条也仍然成立 ✓。
-    nonisolated static let answerCardMaximumWidth: CGFloat = 324
+    // ⚠️ **定死 340，不许再动**（用户 2026-09-28：「这个回复卡片的宽度一定要**定死不变**，
+    // 回复卡片**不要变化**。你要修改的是右上角那个卡片」）。
+    // 要留缝就往**看板**那边拉宽 ✓ —— 见 `directionBoardBarWidth` 里的 clearance ✓。
+    nonisolated static let answerCardMaximumWidth: CGFloat = 340
 
     // ⚠️ **看板自己的宽度基准 —— 与回复卡分开**（2026-09-28 我犯过一次错 ✗：
     // 把"缩 30%"改在了 `answerCardMaximumWidth` 上，结果**回复卡的宽度也被缩了** ✗，

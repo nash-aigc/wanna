@@ -138,19 +138,16 @@ struct DirectionBoardView: View {
         // 默认的 nonzero 会把洞内算成"在里面"（winding=2）→ 洞就被填实了 ✗。
         // 用 eoFill 才是"口" ✓（洞内 winding 2 → 偶 → 挖掉 ✓）。
         .clipShape(currentOutlineShape, style: FillStyle(eoFill: true))
-        // ⚠️ **整圈外框不画了**（用户 2026-09-28 第 5 次指着"最左边那条细线"说删 ✗，
-        // 并指出它「应该是：右上角卡片遗留的」）。留着它，凹口那条左壁就会一直挂在
-        // 鼠标左边 ✗ —— 那正是他反复要求删掉的那条 ✓。
-        // 折叠态仍然要看得见（那是他明确要过的："折叠后卡片边缘变绿"）→ 只在折叠时画 ✓。
+        // ⚠️ **边框加回来了**（用户 2026-09-28：「加上圆角」）—— 圆角要靠这圈边才看得见 ✓。
+        // 他之前要删的那条"最左边细线"是**凹口的左壁** ✗，而现在的形状 `notchLeadingInset: 0`
+        // 让凹口从 x=0 起（左壁根本不存在 ✓），所以这圈边不会再长出那条线 ✓ —— 两头都满足 ✓。
         .overlay(
-            // 只在**折叠态**画一圈绿边（用户要过："折叠后卡片边缘自动变成绿色，便于在桌面上找到它"）；
-            // 展开态什么都不画 ✓。
-            Group {
-                if session.isCollapsed {
-                    RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
-                        .stroke(DS.Colors.success, lineWidth: borderWidth)
-                }
-            }
+            currentOutlineShape
+                // 被按住不发 → 告警色呼吸；**折叠着 → 绿色**（用户：「折叠后卡片边缘自动变成绿色，
+                // 便于用户快速在桌面上看到其位置」）；其余用主题边框 ✓。
+                .stroke(borderTint, lineWidth: borderWidth)
+                .animation(.easeInOut(duration: 0.35), value: session.isHeldFromAutomaticSend)
+                .animation(.easeInOut(duration: 0.25), value: session.isCollapsed)
         )
         .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
         .contentShape(Rectangle())
