@@ -1896,12 +1896,12 @@ final class NotchWindowController {
         DirectionBoardPanelController.shared.sync(
             isVisible: panelModel.notchBandSitsAboveTranscriptLine
                 && DirectionBoardSession.shared.isListening
-                // **agent 模式下一律不显示**（用户 2026-09-28 的原话：「进入 Agent 模式后，
-                // 实时模式相关的任何东西都不显示……因为 Agent 模式只有右下角一个卡片」）。
-                // 挡在 `isListening` 之外的那半句是必需的：他打断 agent 时说的那句话会落进
-                // 追问窗口，`isListening` 那时又是 true —— 只看它，看板就会在他打断的
-                // 那一瞬间冒出来。
-                && !DirectionBoardSession.shared.isAgentModeActive,
+                // ⚠️ **agent 模式那一层判据不在这里**（2026-09-28 修）：它要在
+                // `DirectionBoardPanelController.applyVisibility()` 里**现读** ——
+                // 因为这半句挂在 `sync(...)` 的参数上时，"交给 agent 了"那一刻没人重新调
+                // `sync`，参数里的旧值照样放行（用户报的「进入 Agent 模式后卡片没消失」
+                // 就是它）。这里只留相位与 `isListening`。
+                ,
             isSheetExpanded: panelModel.isExpanded)
     }
 

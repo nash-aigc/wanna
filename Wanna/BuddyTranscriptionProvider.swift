@@ -38,13 +38,101 @@ protocol BuddyTranscriptionProvider {
     ) async throws -> any BuddyStreamingTranscriptionSession
 }
 
+/// **测试用的合成识别器**（2026-09-28）。
+///
+/// 为什么需要它：这台机器上"音箱发出来的声音进不了麦克风"（实测耦合峰值 212–447/32768，
+/// 对 0.25 的 VAD 门槛差约 20 倍，见 `开发经验/09-实测数据.md` §18.6），所以
+/// **"按下快捷键 → 说话 → 再按一次提交 → 进 agent 模式"这条真实流程我没有办法自己走一遍**
+/// —— 而它恰恰是用户反复报问题的那条路。
+///
+/// 它**只在 `WANNA_SYNTHETIC_TRANSCRIPT` 这个环境变量存在时才被选中**（和
+/// `WANNA_DIRECTION_BOARD_SELFCHECK` 同一个做法）：不带变量时这份代码一行都不执行，
+/// 与不存在完全一样。带上的时候，除了"音频从哪来"这一步被替换，**其余每一环都是真的**
+/// —— 真的按下快捷键、真的走录音状态机、真的走 VAD 与连续监听、真的提交、真的调模型。
+nonisolated final class SyntheticTranscriptionProvider: BuddyTranscriptionProvider {
+    let syntheticTranscript: String
+
+    init(syntheticTranscript: String) {
+        self.syntheticTranscript = syntheticTranscript
+    }
+
+    var displayName: String { "合成识别器（测试用）" }
+    var requiresSpeechRecognitionPermission: Bool { false }
+    var isConfigured: Bool { true }
+    var unavailableExplanation: String? { nil }
+
+    func startStreamingSession(
+        keyterms: [String],
+        onTranscriptUpdate: @escaping (String) -> Void,
+        onFinalTranscriptReady: @escaping (String) -> Void,
+        onError: @escaping (Error) -> Void
+    ) async throws -> any BuddyStreamingTranscriptionSession {
+        SyntheticTranscriptionSession(transcript: syntheticTranscript,
+                                      onTranscriptUpdate: onTranscriptUpdate,
+                                      onFinalTranscriptReady: onFinalTranscriptReady)
+    }
+}
+
+/// 合成会话：音频照收（走的是真的采集链），**只是不送去识别** —— 到点直接把那句话交出去。
+nonisolated final class SyntheticTranscriptionSession: BuddyStreamingTranscriptionSession {
+    /// 与真识别器同一个量级（用户在按下之后 ~1 秒内看到字）。
+    private static let interimDelaySeconds: TimeInterval = 0.6
+    /// 松手/到点之后多久给定稿 —— 真识别器实测 0.4 秒（豆包那条）。
+    private static let finalDelaySeconds: TimeInterval = 0.4
+
+    private let transcript: String
+    private let onTranscriptUpdate: (String) -> Void
+    private let onFinalTranscriptReady: (String) -> Void
+    private var emittedInterim = false
+    private var isCancelled = false
+
+    init(transcript: String,
+         onTranscriptUpdate: @escaping (String) -> Void,
+         onFinalTranscriptReady: @escaping (String) -> Void) {
+        self.transcript = transcript
+        self.onTranscriptUpdate = onTranscriptUpdate
+        self.onFinalTranscriptReady = onFinalTranscriptReady
+    }
+
+    var finalTranscriptFallbackDelaySeconds: TimeInterval { 0.6 }
+
+    func appendAudioBuffer(_ audioBuffer: AVAudioPCMBuffer) {
+        guard !emittedInterim, !isCancelled else { return }
+        emittedInterim = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.interimDelaySeconds) { [weak self] in
+            guard let self, !self.isCancelled else { return }
+            self.onTranscriptUpdate(self.transcript)
+        }
+    }
+
+    func requestFinalTranscript() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.finalDelaySeconds) { [weak self] in
+            guard let self, !self.isCancelled else { return }
+            self.onFinalTranscriptReady(self.transcript)
+        }
+    }
+
+    func beginNextUtterance() {}
+
+    func cancel() { isCancelled = true }
+}
+
 enum BuddyTranscriptionProviderFactory {
 
     /// `transcriptionModelIDOverride`：语音聊天的**角色独立配置**。对话页不传，
     /// 走「听」页的全局选择；传了就以它为准（工厂按模型名分流，见下面那三行）。
+    /// 环境变量：有它就用**合成识别器**（测试用，见 `SyntheticTranscriptionProvider`）。
+    /// 取值就是"用户说的那句话"。
+    static let syntheticTranscriptEnvironmentKey = "WANNA_SYNTHETIC_TRANSCRIPT"
+
     static func makeDefaultProvider(
         transcriptionModelIDOverride: String? = nil
     ) -> any BuddyTranscriptionProvider {
+        if let syntheticTranscript = ProcessInfo.processInfo
+            .environment[syntheticTranscriptEnvironmentKey], !syntheticTranscript.isEmpty {
+            print("🎙️ Transcription: 合成识别器（测试用）—— 它会把「\(syntheticTranscript)」当成你说的话")
+            return SyntheticTranscriptionProvider(syntheticTranscript: syntheticTranscript)
+        }
         let provider = resolveProvider(override: transcriptionModelIDOverride)
         print("🎙️ Transcription: using \(provider.displayName)")
         return provider

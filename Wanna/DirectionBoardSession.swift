@@ -1249,7 +1249,7 @@ final class DirectionBoardSession: ObservableObject {
     /// ⚠️ 为什么不能只靠 `isListening`：追问窗口一武装（回答开播时），`isListening` 又会变 true，
     /// 而他**在 agent 模式里打断**时说的那句话正落在这个窗口上 —— 光看 `isListening`
     /// 就会让看板在他打断的那一瞬间冒出来（他报的「偶尔有一次看到它显示了一下」）。
-    private(set) var isAgentModeActive = false
+    @Published private(set) var isAgentModeActive = false
 
     /// **一大轮结束（追问窗口关闭 / 任务完成 / 用户按 ESC 取消）：卡片回到"从来没有过"的状态。**
     ///

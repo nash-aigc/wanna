@@ -84,25 +84,74 @@ final class DirectionBoardPanelController {
     ///   看板在它下面根本看不见；与右下角那张结果卡片同一条规矩）。由调用方传进来，
     ///   面板控制器不去猜刘海的状态。
     func sync(isVisible shouldBeVisible: Bool, isSheetExpanded: Bool) {
+        bindVisibilityInputsIfNeeded()
         phaseAllowsBoard = shouldBeVisible && !isSheetExpanded
         applyVisibility()
     }
 
-    /// 两个条件都满足才显示：**相位允许**（说话期间 / 追问窗口）**且他真的说出了字**。
+    /// **把"会改变显隐判定的每一个输入"都订阅上**（2026-09-28 修的两个 bug 的根因就在这里）。
+    ///
+    /// 用户报的：①「进入 Agent 模式后这两个卡片没有消失」；②「**退出之后右上角这个卡片一直
+    /// 粘在我鼠标上**，我都退出了它还没退」。两条都不是判据写错，而是**判据变了却没人重新判**：
+    /// `applyVisibility()` 原来只在 `sync(...)` 时被调一次，而 `sync` 只挂在**相位变化**上
+    /// （`voiceState` 发布）—— 于是"这一轮交给 agent 了"、"用户取消了看板"、"他终于说出字了"、
+    /// "设置里把看板关了"这四件事发生时，面板**停在上一拍的状态**里；而它现在又跟着鼠标走，
+    /// 屏幕上看起来就是"一张该消失的卡片粘在鼠标上"。
+    ///
+    /// 所以这里把四个输入各订阅一次，任何一条变了都重判（`applyVisibility` 自己幂等）。
+    private func bindVisibilityInputsIfNeeded() {
+        guard visibilityCancellables.isEmpty else { return }
+        let session = DirectionBoardSession.shared
+        // ① 交给 agent 了（agent 模式：看板一律不显示）。
+        session.$isAgentModeActive
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &visibilityCancellables)
+        // ② 用户取消了看板（本次 / 十分钟 / 今日）。
+        session.$isCancelled
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &visibilityCancellables)
+        // ③ 他终于说出字了 —— 判据里那条"没说出字就不显示"也要有人重新判。
+        NotchListeningTranscriptModel.shared.$liveText
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &visibilityCancellables)
+        // ④ 设置里把「任务方向看板」关了。
+        NotificationCenter.default
+            .publisher(for: .wannaAppSettingsChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &visibilityCancellables)
+    }
+
+    /// 上面那四个订阅的持有者（清空即"还没绑过"，见 `bindVisibilityInputsIfNeeded`）。
+    private var visibilityCancellables = Set<AnyCancellable>()
+
+    /// **显隐的唯一判定点**：相位允许（说话期间 / 追问窗口）**且**没交给 agent、
+    /// 没被用户取消、且他真的说出了字。
+    ///
+    /// ⚠️ **这里必须"现读"每一个条件，不能靠调用方传进来的那份快照**（2026-09-28 修）。
+    /// 原来 `phaseAllowsBoard` 是 `sync(...)` 传进来的、而"交给 agent 了 / 被取消了 /
+    /// 说出字了 / 设置关了"这四件事**都不经过 `sync`** —— 于是它们变了也没人重判，
+    /// 面板停在上一次的状态里（用户报的「进入 Agent 模式后卡片没消失」「退出后卡片一直
+    /// 粘在鼠标上」就是这么来的，而它现在又跟着鼠标走，看着就是"粘住"）。
+    /// 现在四个输入都有订阅（见 `bindVisibilityInputsIfNeeded`）来调本函数，
+    /// 而本函数每次自己把四个条件读一遍。
     private func applyVisibility() {
         guard AppSettingsStore.snapshot().directionBoardEnabled else {
             hide()
             return
         }
+        let session = DirectionBoardSession.shared
         let spokenText = NotchListeningTranscriptModel.shared.liveText
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // 自检不走相位（它直接喂假转写），所以那道闸门在自检模式下恒开 —— 否则相位机
         // 每次 `refreshActivityPhase` 都会把它关回去（实测过一次：面板建好又被收掉）。
-        let phaseAllows = phaseAllowsBoard || DirectionBoardSession.selfCheckMode != nil
-        // **用户取消了看板就不显示**（本次 / 十分钟 / 今日 —— 状态在 `DirectionBoardSession` 里，
-        // 每次显隐判断只是一次布尔 + 一次日期比较，不轮询）。
-        let notCancelled = !DirectionBoardSession.shared.isCancelled
-        if phaseAllows && notCancelled && !spokenText.isEmpty {
+        let phaseAllowsBoardNow = phaseAllowsBoard || DirectionBoardSession.selfCheckMode != nil
+        // **交给 agent 了就不显示**（用户：「进入 Agent 模式后，实时模式相关的任何东西都不显示」）——
+        // 现读，因为它变化时不经过 `sync`。
+        let notInAgentMode = !session.isAgentModeActive
+        // **用户取消了看板就不显示**（本次 / 十分钟 / 今日）。
+        let notCancelled = !session.isCancelled
+        if phaseAllowsBoardNow && notInAgentMode && notCancelled && !spokenText.isEmpty {
             show()
         } else {
             hide()
