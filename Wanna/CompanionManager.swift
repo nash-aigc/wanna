@@ -599,6 +599,11 @@ final class CompanionManager: ObservableObject {
     ///
     /// 三种都没有（没在听、也没打字）→ 什么都不做，只记一行（按了回车但没东西可发）。
     private func sendTurnFromBoard() {
+        // **⌥⏎ 执行 = 进入 Agent 模式**（用户 2026-09-28 点名要它切图文）。
+        // 它自己也要切一次，不能只靠"按下那一刻切过"：这一下与按下之间隔着整轮实时对话，
+        // 中间用户完全可能去点了模式条。三个分支（打字 / 连续追问 / 松键）都从这一轮出发，
+        // 所以放在最前面一次就够。
+        forceImageTextModeForVoiceTurn(reason: "看板 ⌥⏎ 执行（进入 Agent 模式）")
         let typed = DirectionBoardSession.shared.typedInput
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty {
@@ -2436,6 +2441,9 @@ final class CompanionManager: ObservableObject {
                 // 按下说话键 = 一轮新的话，检测表（2 秒一次、之后每 3 秒）从这一刻起跑。
                 // 它放在起录音之前 —— 说话期间每一句实时转写都会被喂进去（见下面那个回调）。
                 NotionNoteSession.shared.beginListening()
+                // **按快捷键这一轮永远是「图文」**（用户 2026-09-28 定的），所以模式在
+                // *按下这一刻* 就切好 —— 他看得见模式条跟着动，而不是等说完才变。
+                forceImageTextModeForVoiceTurn(reason: "按下说话键")
                 // **方向看板也从这一刻起表**（用户：「触发时机：用户按下主 Agent 快捷键、
                 // 开始说话的那一秒即启动」）。它只起一块表，不发请求 —— 要等识别文本出来。
                 // 带上这一次大循环的 id：「取消本次」只在同一个 id 内有效，新循环自动恢复显示。
@@ -2564,7 +2572,7 @@ final class CompanionManager: ObservableObject {
                 liveTranscriptText = ""
                 lastTranscript = pendingTranscript
                 print("🗣️ Companion sending confirmed transcript: \(pendingTranscript)")
-                sendTranscriptToVisionChatWithScreenshot(transcript: pendingTranscript)
+                sendTranscriptToVisionChatWithScreenshot(transcript: pendingTranscript, comesFromTalkShortcut: true)
             } else if pendingConfirmationTranscript == nil {
                 // Cleared here as well as in `handleFinalTranscript`: a tap that
                 // produced no speech never reaches the submit callback, and a stale
@@ -2680,7 +2688,7 @@ final class CompanionManager: ObservableObject {
             liveTranscriptText = ""
             lastTranscript = trimmedTranscript
             print("🗣️ Companion sending transcript: \(trimmedTranscript)")
-            sendTranscriptToVisionChatWithScreenshot(transcript: trimmedTranscript)
+            sendTranscriptToVisionChatWithScreenshot(transcript: trimmedTranscript, comesFromTalkShortcut: true)
             return
         }
 
@@ -3168,8 +3176,12 @@ final class CompanionManager: ObservableObject {
 
         lastTranscript = trimmed
         liveTranscriptText = ""
+        // **`comesFromTalkShortcut: false` —— 这一条就是用户说的"窗口里对话"**：
+        // 在输入框里打字提问，用模式条上选的那个模式，不强制切图文
+        //（用户 2026-09-28：「但是窗口中对话的时候，根据窗口中选择的模式继续就行」）。
         sendTranscriptToVisionChatWithScreenshot(transcript: trimmed,
-                                                 sendsScreenshot: sendsScreenshot)
+                                                 sendsScreenshot: sendsScreenshot,
+                                                 comesFromTalkShortcut: false)
     }
 
     /// 当前主循环卡片这个模式**吃不吃图**（用户：「（文本、语音）都是只能保留文字，
@@ -3181,6 +3193,40 @@ final class CompanionManager: ObservableObject {
         return AppSettingsStore.snapshot()
             .cardChatMode(forCardID: sessionID, kind: .mainLoop)
             .carriesImages
+    }
+
+    /// **按快捷键说出来的那一轮永远是「图文」**（用户 2026-09-28 口述）。
+    ///
+    /// 他的一句原话把规则说全了：「用户点击快捷键（最开始，和进入 Agent 模式的时候），
+    /// 必须自动切换成（图文模式），之前好像是根据窗口中点击的模式进行的，这是不行的。
+    /// 必须是【图文模式】，**但是窗口中对话的时候，根据窗口中选择的模式继续就行**」。
+    /// 所以这是**一条按来源分叉的规则**，不是"把默认值改掉"：
+    ///
+    /// · 按下说话键 / 连续追问里说话 / 看板 ⌥⏎ 执行（= 进入 Agent 模式）→ 一律「图文」；
+    /// · 在窗口的输入框里打字提问 → **不动**，按模式条上选的那个模式走。
+    ///
+    /// 为什么连"提交那一刻"也要再切一次：模式是**按卡片存在磁盘上**的，而一轮实时对话
+    /// 中间用户完全可能去点了模式条（那一下不算"窗口中对话"）。只在按下时切，中途被改掉
+    /// 的那一轮就会带着别的模式发出去 —— 而这一路上的模式读取点
+    ///（`mainLoopChatModeCarriesImages`，`sendsScreenshot`）读的就是磁盘上那个值。
+    ///
+    /// **只在真的不一样时才写**，两个理由都是硬的：`setMode` 每次都会落一次
+    /// `AppSettings.json`（按一次键写一次盘、还发一次设置变更通知，而这在音频路径上）；
+    /// 而且它顺手会把 `voiceReplyMuted` 改成"非文本模式 = 不静音" —— 用户已经手动静音
+    /// 过的时候，按一下键就把它恢复回来是越权。
+    ///
+    /// 只认**主循环那张卡片**：这条快捷键送出去的问题只进主循环（Claude Code 卡片是
+    /// 另一条路，见 `AgentSessionManager.sendTurn`），而 `mainLoopChatModeCarriesImages`
+    /// 读的也正是同一张卡片，两处不可能指向不同的卡。
+    @discardableResult
+    private func forceImageTextModeForVoiceTurn(reason: String) -> Bool {
+        let cardID = ConversationSessionsStore.activeSession().id.uuidString
+        let previousMode = AppSettingsStore.snapshot().cardChatMode(forCardID: cardID, kind: .mainLoop)
+        guard previousMode != .imageText else { return false }
+        CardChatPreferenceModel.shared.setMode(.imageText, forCardID: cardID)
+        MainFlowDiagnostics.log("🖼 按快捷键这条路 → 切到「图文」（\(reason)）："
+                                + "卡片 \(cardID.prefix(8)) 原来是「\(previousMode.displayName)」")
+        return true
     }
 
     /// **这张卡片自己选的那个 AI**，解析成一次请求能用的角色；没选过、或那个选择已经失效
@@ -3579,7 +3625,7 @@ final class CompanionManager: ObservableObject {
             seconds: AppSettingsStore.snapshot().continuousListeningWindowSeconds
         )
 
-        sendTranscriptToVisionChatWithScreenshot(transcript: trimmedTranscriptText)
+        sendTranscriptToVisionChatWithScreenshot(transcript: trimmedTranscriptText, comesFromTalkShortcut: true)
     }
 
     /// 把看板上用户点过的方向拼成"加在提示词前面"的那几行，**取走即清**。
@@ -3598,9 +3644,22 @@ final class CompanionManager: ObservableObject {
     ///
     ///   ⚠️ 它**只加进发给模型的提示词**，不进历史、不进界面上那两颗气泡 —— 会话记录与
     ///   屏幕上显示的仍然只有用户自己说的话（他刚要求过"鼠标旁那颗气泡只显示结果"）。
+    ///
+    /// - Parameter comesFromTalkShortcut: 这一轮是不是**按快捷键说出来的**。
+    ///   **刻意不给默认值**：四条提交路径（确认模式轻点 / 松键 / 打字 / 连续追问）里
+    ///   有三条算"按快捷键说出来的"、一条不算，而没有默认值就等于**编译器**逼着每一个
+    ///   调用点表态 —— 将来再加第五条提交路径时不会有人"忘了传"而让它悄悄跟着窗口走。
+    ///   做了什么事见 `forceImageTextModeForVoiceTurn`。
     private func sendTranscriptToVisionChatWithScreenshot(transcript: String,
                                                           sendsScreenshot: Bool = true,
-                                                          userIntentTags: String? = nil) {
+                                                          userIntentTags: String? = nil,
+                                                          comesFromTalkShortcut: Bool) {
+        // **模式的归一化放在这里，不能只放在"按下"那一下**：一轮实时对话中间用户可能去点了
+        // 模式条，而这一轮最终发出去用的是磁盘上的模式。这条写在最前面，所以下面
+        // `mainLoopChatModeCarriesImages` 读到的一定是刚归一化过的值 —— 两者同一拍，不可能分家。
+        if comesFromTalkShortcut {
+            forceImageTextModeForVoiceTurn(reason: "提交这一轮")
+        }
         MainFlowDiagnostics.log("▶️ 提交一轮：转写 \(transcript.count) 字"
                                 + "，截图=\(sendsScreenshot ? "要" : "不要")")
         MainFlowDiagnostics.stage("提交：抓截图")
