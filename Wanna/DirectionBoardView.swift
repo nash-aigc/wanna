@@ -101,6 +101,9 @@ struct DirectionBoardView: View {
     /// 用户 2026-09-28 把左列定成"提示词工程"，右边留给矛盾，中间一条细线。
     static let harnessColumnWidth: CGFloat = 150
 
+    /// **右列（问题 / 那棵脑图）有多宽** —— 它内容长（30 个问题就是 30 行），需要宽一点。
+    static let questionColumnWidth: CGFloat = 360
+
     /// 编号那一列有多宽（「第三个方向」里的 3）。
     private static let numberColumnWidth: CGFloat = 18
 
@@ -375,8 +378,14 @@ private struct ReferenceTagFlowLayout: Layout {
     /// 右下角那张 AI 回复卡就嵌进**凹口**里（横杠在上、竖条在右，中间留一点距离）。
     private var sevenCard: some View {
         HStack(alignment: .top, spacing: 0) {
+            // **左：harness**（用户 2026-09-28：窄、够显示一行字就行；磨砂玻璃；整条高）
+            harnessColumn
+                .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
+            // **中：补充 ｜ 矛盾**（大语言模型那两块）+ 参考标签（保持原位）
             barColumn
-            mapColumn
+            // **右：问题**（那棵脑图）—— 整条高
+            mindMapColumn
+                .frame(width: Self.questionColumnWidth, alignment: .topLeading)
         }
     }
 
@@ -475,6 +484,10 @@ private struct ReferenceTagFlowLayout: Layout {
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        // **磨砂玻璃**（用户 2026-09-28：「harness 磨砂玻璃，微透明效果」）——
+        // 我们的卡片本来就是**透明面板**画在桌面上，所以 `ultraThinMaterial` 取到的
+        // 就是"它身后的桌面" ✓。只作用在这一列 ✓，其他三块保持实底 ✓。
+        .background(.ultraThinMaterial)
         // **整棵树常显，但横杠高度是定死的** —— 超出的部分在这里裁掉（`clipped` 不参与布局，
         // 所以卡片不会被顶高 ✓）。用户担心的"全显示高度不够"就是指这个 ✓。
         .clipped()
@@ -585,30 +598,10 @@ private struct ReferenceTagFlowLayout: Layout {
     ///
     /// 两块都是大语言模型生成的：左边是"推荐用户再补点什么"，右边是"矛盾"。
     /// 脑图（用户问题）这一版**搬去了横杠左侧** ✓，所以这里腾出来给它俩。
-    /// **右侧一整块：用户问题 ｜ Harness**（用户 2026-09-28 手绘的排版）。
+    /// **右侧一列：问题**（那棵脑图）—— 原来竖条里那棵，内容一字未改 ✓。
     ///
-    /// 它与**左上的「推荐 ｜ 矛盾」顶边对齐**、并且**一直往下**（比左上块高一倍）——
-    /// 左边半是"你说过的所有问题"（那棵脑图 ✓），右边半是 Harness 整棵树（灰→白 ✓）。
-    private var mapColumn: some View {
-        HStack(alignment: .top, spacing: 0) {
-            mindMapColumn
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            Rectangle()
-                .fill(theme.textColor.opacity(0.22))
-                .frame(width: 1)
-                .padding(.vertical, 2)
-            harnessColumn
-                .padding(.leading, 8)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .padding(.horizontal, Self.horizontalPadding)
-        .padding(.vertical, Self.mapVerticalPadding)
-        .frame(width: Self.mapWidth, alignment: .topLeading)
-        .frame(maxHeight: Self.maximumMapHeight, alignment: .topLeading)
-        .clipped()
-    }
-
-    /// **右侧块里的左半：用户问题** —— 原来竖条里那棵脑图，内容一字未改 ✓。
+    /// 用户 2026-09-28 的手绘排版把它放在**最右**、整条高 ✓；
+    /// 后来的几版又调整过位置，当前以 `sevenCard` 里那句为准（**左 harness ｜ 中 补充|矛盾 ｜ 右 问题**）。
     private var mindMapColumn: some View {
         let value = session.understandingLines.first { $0.label == Self.mindMapLabel }?.value ?? ""
         return Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
@@ -619,6 +612,10 @@ private struct ReferenceTagFlowLayout: Layout {
             .id(value)
             .transition(.opacity)
             .animation(.easeOut(duration: 0.28), value: value)
+            .padding(.horizontal, Self.horizontalPadding)
+            .padding(.vertical, Self.mapVerticalPadding)
+            .frame(maxHeight: Self.maximumMapHeight, alignment: .topLeading)
+            .clipped()
     }
 
     private var questionLines: some View {
