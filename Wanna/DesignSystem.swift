@@ -30,46 +30,46 @@ enum DS {
         //   --txt:#F2F2F4  --dim:#8A8A93  --accent:#0A84FF  hover:#101014
 
         /// The deepest background — used for the main app window fill.
-        static let background = Color(hex: "#050506")
+        static var background: Color { SkinPalette.active.background }
 
         /// First elevation layer — window/panel ground (参考页
         /// window's rgba(24,24,28,.94), stored opaque).
-        static let surface1 = Color(hex: "#18181C")
+        static var surface1: Color { SkinPalette.active.surface1 }
 
         /// Second elevation layer — card fill (参考页 `--card`).
         /// Darker than `surface1`: cards on this palette read as darker
         /// plates on a lighter ground, not lighter cards on a darker one.
-        static let surface2 = Color(hex: "#0C0C0E")
+        static var surface2: Color { SkinPalette.active.surface2 }
 
         /// Third elevation layer — hover ground (参考页's own
         /// button-hover background, #101014).
-        static let surface3 = Color(hex: "#101014")
+        static var surface3: Color { SkinPalette.active.surface3 }
 
         /// Fourth elevation layer — active/pressed states on interactive elements.
-        static let surface4 = Color(hex: "#1A1A1E")
+        static var surface4: Color { SkinPalette.active.surface4 }
 
         // ── Borders ──────────────────────────────────────────────────
 
         /// Subtle border — card outlines, dividers, input field borders
         /// (参考页 `--line`).
-        static let borderSubtle = Color(hex: "#1D1D21")
+        static var borderSubtle: Color { SkinPalette.active.borderSubtle }
 
         /// Strong border — focused inputs, hovered card outlines
         /// (参考页 `--faint`).
-        static let borderStrong = Color(hex: "#2A2A2E")
+        static var borderStrong: Color { SkinPalette.active.borderStrong }
 
         // ── Text ─────────────────────────────────────────────────────
 
         /// Primary text — main body text, titles, headings (参考页 `--txt`).
-        static let textPrimary = Color(hex: "#F2F2F4")
+        static var textPrimary: Color { SkinPalette.active.textPrimary }
 
         /// Secondary text — descriptions, hints, muted labels
         /// (参考页 `.opt` secondary text).
-        static let textSecondary = Color(hex: "#B9B9C2")
+        static var textSecondary: Color { SkinPalette.active.textSecondary }
 
         /// Tertiary text — very muted, used for section labels, timestamps, disabled text
         /// (参考页 `--dim`).
-        static let textTertiary = Color(hex: "#8A8A93")
+        static var textTertiary: Color { SkinPalette.active.textTertiary }
 
         /// Text used on top of the accent fill (#2563eb blue), like the primary button label.
         /// White on #2563eb achieves ~5.1:1 contrast — WCAG AA compliant.
@@ -107,14 +107,14 @@ enum DS {
 
         /// Accent fill — solid buttons, toggles, the user bubble fill.
         /// #0A84FF on the dark cards reads like 参考页's own blue.
-        static let accent = Color(hex: "#0A84FF")
+        static var accent: Color { SkinPalette.active.accent }
 
         /// Accent hover — a step darker for hover state.
-        static let accentHover = Color(hex: "#0873DB")
+        static var accentHover: Color { SkinPalette.active.accentHover }
 
         /// Accent text — accent-colored text and icons on dark backgrounds
         /// (links, active nav items, highlighted labels).
-        static let accentText = Color(hex: "#3D9DFF")
+        static var accentText: Color { SkinPalette.active.accentText }
 
         /// 参考页's icon-tile gradient — `.unit.ai .dot` and the
         /// header avatar's `linear-gradient(135deg,#0A84FF,#7A5CFF)`.
@@ -126,7 +126,7 @@ enum DS {
 
         /// Very subtle accent tint — selected item backgrounds
         /// (参考页 `.opt.sel`'s rgba(10,132,255,.10)).
-        static let accentSubtle = Color(hex: "#0A84FF").opacity(0.10)
+        static var accentSubtle: Color { SkinPalette.active.accentSubtle }
 
         // ── Chat bubbles ─────────────────────────────────────────────
         // 2026-09-23 用户要求「右侧气泡调成暗色，但要区分用户和 AI；三个
@@ -150,13 +150,13 @@ enum DS {
         // 免得三个文件各写一份 rgba 各差一点。
 
         /// 用户气泡的填充。
-        static let userBubbleFill = Color(hex: "#2E2E34")
+        static var userBubbleFill: Color { SkinPalette.active.userBubbleFill }
 
         /// AI 气泡的填充。
-        static let assistantBubbleFill = Color(hex: "#242429")
+        static var assistantBubbleFill: Color { SkinPalette.active.assistantBubbleFill }
 
         /// AI 气泡的描边——暗底上的暗气泡需要这一笔才看得见边界。
-        static let assistantBubbleBorder = Color.white.opacity(0.12)
+        static var assistantBubbleBorder: Color { SkinPalette.active.assistantBubbleBorder }
 
         // ── Pill Button (the light capsule the restyled UI uses) ──
 

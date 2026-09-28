@@ -1007,6 +1007,17 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// behaviour exactly: the text echo filter is still in place underneath.
     var echoCancellationEnabled: Bool = true
 
+    /// **窗口皮肤**（2026-09-28 用户：「最好能做成皮肤切换的（设置页面里面能手动切换），
+    /// 当前的风格先保留，增加一个风格」）。
+    ///
+    /// **存字符串**，不是直接存枚举：将来多一个皮肤、或者读到不认识的值（改了名字、
+    /// 手改过文件）时，整份设置解不出来会把用户所有设置一起带走 —— 存字符串最坏只是
+    /// 回落成 `current`（本仓规则 E1，与 `WindowExpansionStyle` 同一个做法）。
+    var windowSkinRawValue: String = WindowSkin.current.rawValue
+
+    /// 解析成枚举，认不出就是默认皮肤。
+    var windowSkin: WindowSkin { WindowSkin(rawValue: windowSkinRawValue) ?? .current }
+
     /// 「录制期间自动静音系统扬声器，避免录入系统声音」: while the microphone
     /// is recording (push-to-talk or continuous listening) and no answer is
     /// being played back, the system's default output device is muted — music,
@@ -1767,6 +1778,7 @@ nonisolated extension AppSettings {
         case openSheetCallShortcut
         case notchExpansionSpeedMultiplier
         case echoCancellationEnabled
+        case windowSkinRawValue
         case mutesSystemSpeakersDuringRecording
         case autoScreenshotOnFollowUpSpeech
         case autoScreenshotOnScreenKeyword
@@ -1943,6 +1955,7 @@ nonisolated extension AppSettings {
         openSheetCallShortcut = try container.decodeIfPresent(RecordedKeyboardShortcut.self, forKey: .openSheetCallShortcut)
         notchExpansionSpeedMultiplier = try container.decodeIfPresent(Double.self, forKey: .notchExpansionSpeedMultiplier) ?? defaults.notchExpansionSpeedMultiplier
         echoCancellationEnabled = try container.decodeIfPresent(Bool.self, forKey: .echoCancellationEnabled) ?? defaults.echoCancellationEnabled
+        windowSkinRawValue = try container.decodeIfPresent(String.self, forKey: .windowSkinRawValue) ?? defaults.windowSkinRawValue
         mutesSystemSpeakersDuringRecording = try container.decodeIfPresent(Bool.self, forKey: .mutesSystemSpeakersDuringRecording) ?? defaults.mutesSystemSpeakersDuringRecording
         autoScreenshotOnFollowUpSpeech = try container.decodeIfPresent(Bool.self, forKey: .autoScreenshotOnFollowUpSpeech) ?? defaults.autoScreenshotOnFollowUpSpeech
         autoScreenshotOnScreenKeyword = try container.decodeIfPresent(Bool.self, forKey: .autoScreenshotOnScreenKeyword) ?? defaults.autoScreenshotOnScreenKeyword

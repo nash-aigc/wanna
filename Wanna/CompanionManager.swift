@@ -48,6 +48,10 @@ nonisolated final class MainThreadHitchProbe {
 
     func start() {
         guard observer == nil else { return }
+
+        // **窗口皮肤要在任何界面建起来之前定好**：`DS.Colors.*` 是计算属性，
+        // 已建好的视图不会自己重画 —— 首帧之前把 palette 写对，免得启动时闪一下旧配色。
+        SkinPalette.active = AppSettingsStore.snapshot().windowSkin.palette
         let createdObserver = CFRunLoopObserverCreateWithHandler(
             kCFAllocatorDefault,
             CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue,
@@ -1476,6 +1480,11 @@ final class CompanionManager: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let settings = AppSettingsStore.snapshot()
+
+                // **窗口皮肤**：token 是计算属性（`DS.Colors.*` → `SkinPalette.active`），
+                // 所以换皮肤不需要重建任何视图 —— 下一次求值读到的就是新值。
+                // 这里只负责把"当前该用哪一套"写进去。
+                SkinPalette.active = settings.windowSkin.palette
 
                 if settings.persistsConversationHistory {
                     self.persistConversationHistory()
