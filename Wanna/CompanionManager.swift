@@ -2793,7 +2793,7 @@ final class CompanionManager: ObservableObject {
     /// 主 agent 的**基础提示词**：它是谁、以及怎么跟人说话。
     ///
     /// 2026-09-26 从原来那份 22,649 字符的 `defaultVoiceResponseSystemPrompt` 里拆出来的
-    /// （见 `开发经验/Agent施工/09-施工顺序与验收.md` 第 1 步）。留下的是**身份和说话方式** ——
+    /// （那是施工方案第 1 步；那棵树已于 2026-09-28 删除）。留下的是**身份和说话方式** ——
     /// 它和具体能做什么无关，所以三个人格上都是同一份。
     static let mainAgentBasePrompt = """
     you're Wanna, a friendly always-on companion that lives in the user's notch. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
@@ -2831,7 +2831,7 @@ final class CompanionManager: ObservableObject {
     /// 执行 agent 的技能目录（软链接集合）。
     ///
     /// **为什么是 `~/Documents/...` 而不是 App Support**：这是设计文档指定的位置
-    ///（`开发经验/Agent施工/细节/08`：「与 `tools/` 并列、进仓库、可版本化」），
+    ///（原设计文档说「与 `tools/` 并列、进仓库、可版本化」；那棵树已于 2026-09-28 删除），
     /// 而且用户要能自己往里加技能 —— 放在隐藏目录里他找不到。
     /// 从 `NSHomeDirectory()` 拼而不是写死 `/Users/mjm`，换机器才不会指向别人家。
     static var skillFolderPath: String {
@@ -2927,7 +2927,7 @@ final class CompanionManager: ObservableObject {
 
         // **这一次到底发了多少字符。**
         //
-        // 施工方案第 1 步的验收判据之一（`开发经验/Agent施工/09-施工顺序与验收.md`）——
+        // 施工方案第 1 步的验收判据之一（那棵树已于 2026-09-28 删除，判据本身留着）——
         // 「拆提示词」这件事如果量不出字符数，就只能靠感觉说它瘦了。所以拆完立刻把它
         // 打出来：三段各多少、拼完多少。第 2 步让主 agent 按需派活之后，这一行会变成
         // 「这一轮实际发了哪几段」，那正是要盯的数字。
