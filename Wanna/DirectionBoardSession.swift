@@ -1115,6 +1115,12 @@ final class DirectionBoardSession: ObservableObject {
     /// 回复了什么，这是不可以的」）。所以这两件事**与梳理解耦**：各自成功就各自落地。
     private func settleRound(newQuestion: String, analysisText: String?, answerText: String?) {
         let answer = answerText.flatMap(DirectionBoardPrompt.parseAnswer)
+        if answer == nil {
+            // **"这一轮没有答案"也留一行**：它和"调用失败"在屏幕上是同一个样子（右下角空着 ✗），
+            // 但原因完全不同 —— 没有这一行就只能猜（用户报的正是"第一次总不回复"）。
+            MainFlowDiagnostics.log("🧭 看板：这一轮**没解析出「答案：」那一行**"
+                                    + "（原文 \(answerText?.count ?? 0) 字）")
+        }
         if let answer {
             previewAnswer = answer
             answerPreviewWriter?(answer)
@@ -1217,8 +1223,11 @@ final class DirectionBoardSession: ObservableObject {
     private func answerWithModel(newQuestion: String,
                                  directions: [(id: String, keyword: String, detail: String)],
                                  screenshots: [(data: Data, label: String)]) async -> String? {
-        // **背景全部进系统提示词**，用户消息里只留那一句问题（见 `understandingSystemPrompt`）。
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+        // **背景全部进系统提示词**，用户消息里只留那一句问题（见 `answerSystemPrompt`）。
+        // ⚠️ 这条提示词**只问答案** —— 脑图/矛盾是**第一次调用**的活儿（`analyzeTranscriptWithModel`）。
+        // 喂给它 "细节/矛盾" 会让模型把输出花在画图上、**答案那一行写不出来** ✗
+        //（用户报的「第一次提问总是不回复」，见 `answerSystemPrompt` 的注释与 `开发经验/20` 9.76）。
+        let systemPrompt = DirectionBoardPrompt.answerSystemPrompt(
             directions: directions,
             context: answerContextBlocks())
         let userPrompt = DirectionBoardPrompt.understandingUserPrompt(newQuestion: newQuestion)
@@ -1233,8 +1242,17 @@ final class DirectionBoardSession: ObservableObject {
                 onTextChunk: { [weak self] partial in
                     self?.applyStreamingAnswer(partial)
                 })
-            return DirectionBoardPrompt.cleanRawResponse(text)
+            let cleaned = DirectionBoardPrompt.cleanRawResponse(text)
+            // **第二次调用的原文必须落进诊断日志**（2026-09-28 补）。
+            // 用户报「实时模式下**第一次提问总是不回复**，第二次以后才正常」—— 那一刻能区分
+            // "模型没写答案" / "解析器没认出来" / "调用失败了" 的**只有这一行** ✗，
+            // 而它原来只走 `print`（双击启动的 App 里 `print` 进不了任何地方 ✗，这条教训
+            // 本仓库已经吃过一次）。
+            MainFlowDiagnostics.log("🧭 看板：第二次调用回来了 —— 原文 \(cleaned.count) 字"
+                                    + "｜前 60 字：\(cleaned.prefix(60).replacingOccurrences(of: "\n", with: "⏎"))")
+            return cleaned
         } catch {
+            MainFlowDiagnostics.log("🧭 看板：第二次调用（回答）**失败** —— \(error.localizedDescription)")
             print("🧭 方向看板：第二次调用（回答）失败 —— \(error.localizedDescription)")
             return nil
         }

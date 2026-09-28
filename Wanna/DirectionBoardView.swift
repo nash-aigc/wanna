@@ -105,7 +105,11 @@ struct DirectionBoardView: View {
     static let blockGap: CGFloat = 0
 
     /// **右列（问题 / 那棵脑图）有多宽** —— 它内容长（30 个问题就是 30 行），需要宽一点。
-    static let questionColumnWidth: CGFloat = 250
+    /// ⚠️ 2026-09-28 **250 → 300（+20%）**：用户在原图上圈着这一列写「**宽度增加 20%**」。
+    /// 它变宽**不会**影响凹口与回复卡的对齐 —— 面板总宽 = 横杠 360 + 这一列 + harness 140，
+    /// 而凹口的右边界 = 面板右边缘 −（这一列 + harness）= 横杠右边缘 ✓（见 `notchTrailingInset`），
+    /// 所以改这一个数，横杠与凹口一个像素都不动 ✓，多出来的 50pt 全给这一列 ✓。
+    static let questionColumnWidth: CGFloat = 300
 
 
 
