@@ -19,6 +19,16 @@ import Testing
 @MainActor
 struct DirectionBoardTests {
 
+    /// `directionBoardPanelFrame` 的横向 gap —— 从**函数自己的默认值**拿，
+    /// 不在这里再写一个数（写死过一次 12，函数改成 24 之后这条断言就变成假的了）。
+    private var directionBoardPanelGap: CGFloat {
+        NotchSupport.directionBoardPanelFrame(
+            anchor: .zero,
+            size: CGSize(width: 0, height: 0),
+            topEdgeOffsetAboveAnchor: 0
+        ).minX
+    }
+
     private var directions: [TaskDirection] { TaskDirectionStore.builtinDirections }
 
     // MARK: - 本地关键词匹配（免费那条路）
@@ -537,20 +547,29 @@ struct DirectionBoardTests {
     /// ② 疑问**只写逻辑矛盾**，不许问澄清类的问题（「什么地方的北京」那种墨迹）；
     /// ③ **以当前这一句为准**（问题可以是跳跃的），并且用户的原话在请求里要被**标成重点**。
     @Test func thePromptKeepsTheUsersWordsAsTheGoal() throws {
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
-            directions: [(id: "d1", keyword: "整理文件", detail: "把下载目录收拾一下")],
-            looksAtTheScreen: true)
+        // ⚠️ 2026-09-28：这些字**住在第一次调用那条提示词里**（`0dbe96f` 把一条拆成两条之后，
+        // 它们全留在了梳理那条）—— 而这段断言原来指的是旧的那个单一函数，于是它一直在查
+        // **回答**那条，那里根本没有这些字。按"这句话到底在哪条提示词里"逐条归位。
+        let systemPrompt = DirectionBoardPrompt.transcriptAnalysisSystemPrompt()
         // ① 脑图要带上他的原话、别过度简化（用户 2026-09-27 深夜那条）。
         #expect(systemPrompt.contains("不许压成抽象的几个字"))
         #expect(systemPrompt.contains("我没说过这个"))
-        // ② 疑问：只关注逻辑矛盾，且明写不许问澄清类的问题。
-        #expect(systemPrompt.contains("只写逻辑矛盾"))
+        // ② 矛盾：**只认他自己前后真的冲突**，且明写不许问澄清类的问题。
+        //    ⚠️ 「只写逻辑矛盾」「用户的问题正常回答就好」这两句**已经不在提示词里**了
+        //    （后来重写时换了措辞），所以断言换成今天真正在用的那几句 ——
+        //    **要保的性质是同一件**：别问澄清类的问题，信息不全不算矛盾。
+        #expect(systemPrompt.contains("真的冲突"))          // 「只有他自己前后**真的冲突**才算」
+        #expect(systemPrompt.contains("信息不全不算"))
         #expect(systemPrompt.contains("不要问澄清类的问题"))
-        #expect(systemPrompt.contains("用户的问题正常回答就好"))
         #expect(systemPrompt.contains("什么地方的北京"))
-        // ③ 以当前这一句为准 + 两种场景。
-        #expect(systemPrompt.contains("以当前这一句为准"))
-        #expect(systemPrompt.contains("新开一个分支"))
+        // ③ 以当前这一句为准 —— **这句在回答那条里**（它约束的是"怎么答"），不在梳理这条。
+        #expect(DirectionBoardPrompt.answerSystemPrompt(
+            directions: [(id: "d1", keyword: "整理文件", detail: "把下载目录收拾一下")],
+            looksAtTheScreen: true
+        ).contains("以当前这一句为准"))
+        // 「新开一个分支」那句也没了 —— 图的结构那一版之后从"分支"改成了**分类**，
+        // 而"换了一件事就另起"这条性质现在是「不相关的各成一类」。
+        #expect(systemPrompt.contains("各成一类"))
 
         // **用户消息里只有那一句问题**（2026-09-27 深夜改成机械分离：背景全在系统提示词里）——
         // 模型对"这一轮要答什么"的判断读的就是用户消息，所以那里不能塞参考。
@@ -569,13 +588,20 @@ struct DirectionBoardTests {
         #expect(DirectionBoardView.questionRowLines == 10)
         #expect(DirectionBoardView.referenceTagRowLines == 1)
         #expect(DirectionBoardView.optionSlots == 3)
+        // ⚠️ **两个数在 2026-09-28 稍晚被用户缩小了 30%**，这条断言当时没跟着改（而且测试目标
+        // 从那天起就编译不过，没人跑得到它）：
+        //   · 横杠高 251 → **180**（代码里的原话：「缩约 30%（用户：太宽/太高，没有意义）」）
+        //   · 竖条宽 340 → **240**（同一轮；**不能改 `answerCardMaximumWidth`** —— 那是回复卡的
+        //     宽度，用户当场发现过一次「回复的卡片宽度你缩小了吧」，所以看板有自己的基准）
+        #expect(DirectionBoardView.barHeight == 180)
+        #expect(DirectionBoardView.mapWidth == NotchSupport.directionBoardColumnWidth)
+        #expect(DirectionBoardView.mapWidth == 240)
         // **左半宽 = 回复卡宽 + 20 的余量**（用户 2026-09-28：分隔线删掉之后，
         // 两张卡之间要留出距离 —— 「右侧内容也能不跟右下角卡片挨着」）。
         #expect(DirectionBoardView.barWidth
                 == NotchSupport.answerCardMaximumWidth + NotchSupport.directionBoardBarCardClearance)
-        #expect(DirectionBoardView.barHeight == 251)
-        #expect(DirectionBoardView.mapWidth == 340)
-        #expect(DirectionBoardView.mapWidth == NotchSupport.answerCardMaximumWidth)
+        // 而**回复卡那个宽度定死不许动**（用户 2026-09-28：「这个回复卡片的宽度一定要定死不变」）。
+        #expect(NotchSupport.answerCardMaximumWidth == 340)
     }
 
     /// **agent 模式下：看板不显示、那条链也不跑**（用户 2026-09-28）。
@@ -710,11 +736,15 @@ struct DirectionBoardTests {
         // 宽度，让分隔线落在这个位置上」）：横杠宽 = 回复卡宽，所以竖条的左边缘 =
         // 回复卡**最宽时**的右边缘 —— 卡窄一点的时候自然让出一条缝，卡最宽时严丝合缝。
         let mapLeft = frame.minX + NotchSupport.directionBoardBarWidth
-        let answerCardRightEdge = anchor.x + 12 + NotchSupport.answerCardMaximumWidth
+        // gap 是 **24**（用户 2026-09-28：「右上角卡片的最左边，跟回复卡片的最左边，
+        // 它们应该是**对齐**的关系」—— 而回复卡的锚点是"鼠标 + 24"，所以看板必须也是 24）。
+        // 这里原来写死 12，是 gap 还是 12 的年代留下的；现在**直接读那个常量**，
+        // 免得下次它再动的时候这条断言又变成假的。
+        let answerCardRightEdge = anchor.x + directionBoardPanelGap + NotchSupport.answerCardMaximumWidth
         // **留出那 20pt**（不是"等于"、更不是"贴着"）。
         #expect(abs(mapLeft - answerCardRightEdge - NotchSupport.directionBoardBarCardClearance) < 0.5)
         // 横向：顶边那个偏移不动 x，只动 y。
-        #expect(abs(frame.minX - (anchor.x + 12)) < 0.5)
+        #expect(abs(frame.minX - (anchor.x + directionBoardPanelGap)) < 0.5)
         // **贴到屏幕边也不许夹**（用户 2026-09-28：「右上角那个卡片……撞到边缘之后就不移动了，
         // 我希望它是一个**能够到屏幕外边**的」）—— 右下角那张回复卡从来不夹（它就是 鼠标 + 偏移），
         // 所以看板这边也必须只做算术，否则鼠标到边之后**只有一张卡还在动**，相对位置就散了。
@@ -724,7 +754,7 @@ struct DirectionBoardTests {
             let edgeFrame = NotchSupport.directionBoardPanelFrame(
                 anchor: edgeAnchor, size: size,
                 topEdgeOffsetAboveAnchor: NotchSupport.directionBoardExpandedTopOffset)
-            #expect(abs(edgeFrame.minX - (edgeAnchor.x + 12)) < 0.5)
+            #expect(abs(edgeFrame.minX - (edgeAnchor.x + directionBoardPanelGap)) < 0.5)
             #expect(abs(edgeFrame.maxY - (edgeAnchor.y + NotchSupport.directionBoardExpandedTopOffset)) < 0.5)
         }
 
@@ -783,7 +813,7 @@ struct DirectionBoardTests {
     /// 如果最近一次的问题跟之前没有关系，那就**只回复最近一次问题**」——
     /// 他给的那个例子（连着问北京）就是这条规则的判据。
     @Test func thePromptFocusesOnTheLatestQuestion() throws {
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+        let systemPrompt = DirectionBoardPrompt.answerSystemPrompt(
             directions: [(id: "d1", keyword: "记笔记", detail: "把内容记到 Notion")],
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("只看最近这一次"))
@@ -809,20 +839,25 @@ struct DirectionBoardTests {
     /// 之前问过的所有问题，连续的和跳跃的，都整理进去，看的是"用户到底在做什么"；
     /// 右下角那一条**只答当前这一轮**。所以"没关系就别提之前"那条只约束答案，不约束那张图。
     @Test func theMindMapAccumulatesEveryQuestion() throws {
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+        // ⚠️ **2026-09-28 修正断言的目标**：`0dbe96f` 把一条提示词拆成两条之后，
+        // 这一整段里的"图"那几条**住在第一次调用**（`transcriptAnalysisSystemPrompt`），
+        // 而它们原来指的是旧的那个单一函数 —— 于是这几条断言实际上一直在查**回答**那条
+        // 提示词，那里根本没有这些字，测试从那天起就是红的。
+        // 判据不是猜的：每一条都按"这句话到底在哪条提示词里"重新归位。
+        let analysisPrompt = DirectionBoardPrompt.transcriptAnalysisSystemPrompt()
+        let systemPrompt = DirectionBoardPrompt.answerSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             looksAtTheScreen: true)
         // 这一版：图的素材是**整份问题清单**，一次调用写出一张完整的图。
-        #expect(systemPrompt.contains("每一件事都要在图里"))
+        #expect(analysisPrompt.contains("每一件事都要在图里"))
         // **不限行数**（用户 2026-09-27 深夜：「我说的是提示词要求模型最多画 20 行的图，
         // **没有这个限制**。用户的内容可能是**两个小时**，那这个图就应该是两个小时的内容，
         // **用户所有的问题都应该在图里面显示**」）。
-        #expect(systemPrompt.contains("不限行数"))
-        #expect(!systemPrompt.contains("最多 20 行"))
+        #expect(analysisPrompt.contains("不限行数"))
+        #expect(!analysisPrompt.contains("最多 20 行"))
         // **分类这一层是这一版新加的**（用户 2026-09-27：「右上角的脑图应该按照内容的类型来进行分类……
         // **实时地、主动地去分类**，而不是定性地强制让他去分什么类」）——
         // ⚠️ 它住在**第一次调用**（梳理那条，画图的就是它），不是第二次。
-        let analysisPrompt = DirectionBoardPrompt.transcriptAnalysisSystemPrompt()
         #expect(analysisPrompt.contains("按大类分组画成一张树"))
         #expect(analysisPrompt.contains("分类行"))
         #expect(analysisPrompt.contains("问题行"))
@@ -831,8 +866,12 @@ struct DirectionBoardTests {
         #expect(analysisPrompt.contains("不许有\"没爹\"的问题"))
         #expect(analysisPrompt.contains("分类名里不要用冒号"))
         #expect(analysisPrompt.contains("只是例子，不是清单"))
-        // 而「两张卡片分工不同」那条属于第二次调用（回答那条）。
-        #expect(systemPrompt.contains("两张卡片分工不同"))
+        // 「两张卡片分工不同」那句**本身已经不在任何一条提示词里**了 —— 拆成两次调用之后，
+        // 它从"一条措辞"变成了"两条提示词各干各的"这个**结构事实**。所以这里断言那个结构：
+        // 图的那几条**不许出现在回答那条里**（分家分得干净，正是原来那句话的意思）。
+        #expect(!systemPrompt.contains("每一件事都要在图里"))
+        #expect(!systemPrompt.contains("不限行数"))
+        #expect(!systemPrompt.contains("按大类分组画成一张树"))
 
         // 请求里要带上**他问过的每一件事**（整份清单）——
         // 这是这一版的关键：**输入完整，输出才可能完整**（前两版只给"前五轮"，
@@ -897,16 +936,18 @@ struct DirectionBoardTests {
     /// 用户连着两轮报「右上角**总是**无法把用户所有的问题全都收集起来」。
     /// 现在把整份清单发过去：**输入完整，输出才可能完整**（他说的"一次调用就能解决"）。
     @Test func theMindMapIsBuiltFromEveryQuestion() throws {
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
-            directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
-            looksAtTheScreen: true)
-        #expect(systemPrompt.contains("进了「矛盾」不等于不用进那张图"))
-        #expect(systemPrompt.contains("每一件事都要在图里"))
+        // 同上：这些字住在**第一次调用**那条提示词里。
+        let analysisPrompt = DirectionBoardPrompt.transcriptAnalysisSystemPrompt()
+        #expect(analysisPrompt.contains("每一件事都要在图里"))
         // **不限行数**（用户 2026-09-27 深夜：「我说的是提示词要求模型最多画 20 行的图，
         // **没有这个限制**。用户的内容可能是**两个小时**，那这个图就应该是两个小时的内容，
         // **用户所有的问题都应该在图里面显示**」）。
-        #expect(systemPrompt.contains("不限行数"))
-        #expect(!systemPrompt.contains("最多 20 行"))
+        #expect(analysisPrompt.contains("不限行数"))
+        #expect(!analysisPrompt.contains("最多 20 行"))
+        // ⚠️ 这里原来还有一条 `进了「矛盾」不等于不用进那张图` —— 那句话随着那次重写
+        // **在提示词里已经不存在了**（全文件搜不到），所以断言无从谈起，删掉。
+        // 它当年要保的性质是"同一件事进了「矛盾」也仍然要在图上出现"；今天提示词里
+        // 只有「矛盾」那一节的写法规则，**没有**这一句 —— 要恢复这条规则得先恢复那句话。
         let prompt = DirectionBoardPrompt.transcriptAnalysisUserPrompt(
             transcript: "赵今麦的信息\n屏幕里是什么软件\n北京跟上海的关系是什么")
         #expect(prompt.contains("他到目前为止说过的全部内容"))
@@ -919,7 +960,7 @@ struct DirectionBoardTests {
     /// 他追问时说得常常很短（「重新换行列出」），**全部信息都在上一条回复里** ——
     /// 拆两次调用时我把这一段摘掉了，就是那次回归。
     @Test func theAnswerCallCarriesThePreviousAnswers() throws {
-        let prompt = DirectionBoardPrompt.understandingSystemPrompt(
+        let prompt = DirectionBoardPrompt.answerSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             context: """
             <previous_answers>
@@ -933,7 +974,7 @@ struct DirectionBoardTests {
         // 背景那一段明说"这是参考、只回答最后那条用户消息里的东西"。
         #expect(prompt.contains("只让你回答**最后那条用户消息**里的事"))
         // 提示词里还要明说：追问就基于上一条改，**不许说"我看不到"**。
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+        let systemPrompt = DirectionBoardPrompt.answerSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             looksAtTheScreen: true)
         #expect(systemPrompt.contains("改/追问"))
@@ -964,7 +1005,7 @@ struct DirectionBoardTests {
     /// 符号的形式来给它分开」）—— 模型据此**机械地**分清"哪段要答、哪段只是参考"。
     @Test func everyRequestBlockIsTagged() throws {
         // **用户消息里只有那一句问题**（机械分离），背景全在系统提示词的 context 里、各自带 tag。
-        let systemPrompt = DirectionBoardPrompt.understandingSystemPrompt(
+        let systemPrompt = DirectionBoardPrompt.answerSystemPrompt(
             directions: [(id: "d1", keyword: "查资料", detail: "查一下资料")],
             context: """
             <reference_materials>…</reference_materials>

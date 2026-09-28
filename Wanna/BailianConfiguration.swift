@@ -129,4 +129,33 @@ nonisolated enum BailianConfiguration {
     /// in exactly this format.
     static let textToSpeechFormat = "wav"
     static let textToSpeechSampleRate = 24000
+
+    /// **服务端合成音量**（官方 `input.volume`，`integer`，取值 `[0, 100]`，默认 50）。
+    ///
+    /// 两条事实撑起这个函数，都是实测来的（`开发经验/09-实测数据.md` 二十五）：
+    ///
+    /// 1. **不发这个字段就等于发 50**。「不发」与「发 50」实测相差 0.01 dB。App 原先
+    ///    一条都不发，所以每次合成都白丢 6 dB —— 用户那句「设置里是 100，声音还是小」
+    ///    有一半是这里。
+    /// 2. **音色之间的响度本来就差很多**。同一句话、同一模型，赵今麦那条克隆音色
+    ///    在 100 时是 −9.6 dBFS RMS，比第二响的（三段式用的角色音色）高 5 dB。用户
+    ///    2026-09-28 听出来的是「赵今麦的音量太大了，稍微降低一点」。
+    ///
+    /// 所以这里给每个音色一个**标定值**：默认 100（服务端上限），个别音色往下调。
+    /// 用服务端音量而不是播放增益来做这件事，理由是**试听和真朗读会在两个不同的
+    /// 地方各拼一次请求体** —— 写在服务端就把这件事收敛到一处，两边不可能漂。
+    ///
+    /// ⚠️ 这条路径上的音色 id 形如 `qwen-audio-3.1-tts-flash-zjm-…`（克隆音色会把
+    /// 模型名当前缀），所以按**中缀**认，不去匹配整串 hash。
+    static func speechSynthesisVolume(forVoiceID voiceID: String?) -> Int {
+        guard let voiceID, !voiceID.isEmpty else { return maximumSpeechSynthesisVolume }
+        // 赵今麦那条克隆音色：−4 dB（100 × 10^(−4/20) ≈ 63）。
+        // 「稍微降低一点」按"和另外三个模式齐平"来落地 —— 它原来比第二响的高 5 dB。
+        if voiceID.contains("-zjm-") { return 63 }
+        return maximumSpeechSynthesisVolume
+    }
+
+    /// 官方文档给的上限。**不是"无限大"** —— 实测到 100 峰值就贴 0 dBFS，
+    /// App 侧再也没有余量，所以播放侧那个 0…100% 只能是衰减器。
+    static let maximumSpeechSynthesisVolume = 100
 }

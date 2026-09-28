@@ -148,7 +148,6 @@ nonisolated enum VoicePreviewService {
             synthesizedAudioData = try await synthesizeWithConfiguredSpeechModel(
                 voiceID: voiceID,
                 speechRate: speechRate,
-                speechVolumePercent: speechVolumePercent,
                 styleInstruction: styleInstruction
             )
         case .omni:
@@ -173,9 +172,11 @@ nonisolated enum VoicePreviewService {
     private static func synthesizeWithConfiguredSpeechModel(
         voiceID: String,
         speechRate: Double,
-        speechVolumePercent: Double,
         styleInstruction: String
     ) async throws -> Data {
+        // ⚠️ 这里**收不到** `speechVolumePercent`，是刻意的：这个函数不再拿用户那个设置当
+        // 服务端音量（那会让试听与真朗读差 6 dB，见请求体里那段注释）。用户那个设置仍然
+        // 是**播放侧**的 0…100%，与这一层的服务端音量是两件事，所以不该传进来。
         guard let resolvedSpeechRole = ModelConfigurationStore.snapshot().status(of: .speech).resolvedRole else {
             throw VoicePreviewError(message: "还没有配置「说」这个角色（设置 → 模型），无法试听。")
         }
@@ -191,7 +192,13 @@ nonisolated enum VoicePreviewService {
             "format": BailianConfiguration.textToSpeechFormat,
             "sample_rate": BailianConfiguration.textToSpeechSampleRate,
             "rate": speechRate,
-            "volume": Int(speechVolumePercent)
+            // **走和真朗读同一个标定函数**（`BailianConfiguration.speechSynthesisVolume`）。
+            //
+            // 这里原来发的是用户那个 0…100% 的设置值，而**真朗读那条路一个 volume 都不发**
+            // （= 服务端默认 50）—— 也就是说**试听一直比真朗读响 6 dB**，而用户正是拿试听
+            // 来做决定的。2026-09-28 两边收敛到同一个函数：默认都是服务端的 100，
+            // 个别音色（赵今麦）在那一处往下调，两边不可能再漂。
+            "volume": BailianConfiguration.speechSynthesisVolume(forVoiceID: voiceID)
         ]
         let trimmedInstruction = styleInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedInstruction.isEmpty {

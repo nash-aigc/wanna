@@ -43,17 +43,6 @@ struct SpeechPlaybackConfiguration {
 
 @MainActor
 final class BailianTTSClient {
-    /// **每次合成都要发的服务端音量**（官方文档的合法上限）。
-    ///
-    /// 文档默认值是 50，而"不发"就等于按 50 走 —— 所以这个字段在 2026-09-28 之前
-    /// **一次都没生效过**，那是用户那句「设置里是 100，声音还是小」的一半原因。
-    ///
-    /// 写死 100 而不是把它做成一个设置项：它是**服务的上限**，不是用户的偏好 ——
-    /// 用户要的那个"音量"是播放侧那个 0…100%（`speechPlaybackVolumePercent`），
-    /// 而它只有在源头已经拉满时才有往上调的余地。声源永远取最大、用户从最大往下调，
-    /// 这样"设置 100%"和"服务端 100"是同义词，不会出现两个 100 各说各话。
-    private static let speechSynthesisVolume = 100
-
     private let session: URLSession
 
     /// The playback engine every chunk is spoken through. Shared with the
@@ -412,7 +401,8 @@ final class BailianTTSClient {
         // 只有 13 个采样（≈0.54 ms），是服务端自己的限幅，不是可听的失真。但这也意味着
         // **这之后没有余量了** —— 所以播放侧（`playerNode.volume`）永远不许再加增益，
         // 它只能是 0…1 的衰减器。见 `开发经验/09-实测数据.md` 二十五。
-        speechInput["volume"] = Self.speechSynthesisVolume
+        speechInput["volume"] = BailianConfiguration.speechSynthesisVolume(
+            forVoiceID: resolvedSpeechRole.speechVoiceID)
         // Voice names are model-family specific, so this is sent only when the user
         // has one configured for this provider. Omitting it lets the service report
         // a missing field, which is honest; substituting another provider's default
@@ -435,7 +425,7 @@ final class BailianTTSClient {
                      Date().timeIntervalSince1970,
                      resolvedSpeechRole.modelID,
                      resolvedSpeechRole.speechVoiceID ?? "(未指定，用服务端默认)",
-                     Self.speechSynthesisVolume,
+                     BailianConfiguration.speechSynthesisVolume(forVoiceID: resolvedSpeechRole.speechVoiceID),
                      textChunk.count))
 
         let body: [String: Any] = [

@@ -681,6 +681,18 @@ nonisolated enum DirectionBoardPrompt {
         let normalized = raw.replacingOccurrences(of: "：", with: ":")
         let otherLabels = ["细节", "矛盾", "疑问", "选择", "类型", "任务类型"]
         guard !otherLabels.contains(where: { normalized.contains($0 + ":") }) else { return nil }
+        // ⚠️ **整段就是「某个标签:」打头的，一律不是答案**（2026-09-28 修）。
+        //
+        // 这是那个兜底自己带出来的洞：模型回一句「答案：—」（它的"这一轮没有答案"的写法）
+        // 时，`parseSection` 判出那个值是空的、「—」按惯例也算空 → 返回 nil，**接着兜底就把
+        // 整段原文 `答案:—` 当成了答案正文** —— 右下角那张卡片上于是显示出一行「答案:—」，
+        // 而正确行为是**什么都不显示**（用户选的：「识别到「问题」才显示」）。
+        //
+        // 判据是"打头"，不是"包含"：兜底要救的是"模型没写标签、直接说了一句话"，
+        // 而那种句子不会以 `答案:` 开头。带上标签就说明这一轮**本来就是带标签的形状**，
+        // 标签的值该由 `parseSection` 说了算 —— 它已经说了（nil = 空 / 「—」）。
+        let labelledPrefixes = ["答案", "选择"] + otherLabels
+        guard !labelledPrefixes.contains(where: { normalized.hasPrefix($0 + ":") }) else { return nil }
         let stripped = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !stripped.isEmpty, stripped.count <= maximumAnswerCharacters else { return nil }
         guard normalizedValue(stripped).isEmpty == false else { return nil }

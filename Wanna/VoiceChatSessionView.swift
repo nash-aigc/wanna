@@ -532,7 +532,9 @@ struct VoiceChatSessionView: View {
     private var deviceTogglesControl: some View {
         HStack(spacing: 0) {
             deviceHalf(
-                title: "摄像头",
+                // 「摄像头」→「摄像」（用户 2026-09-28：「视频模式下，右侧的（摄像头）名称替换成（摄像）」）。
+                // 它与右边那颗「屏幕」拼成一颗控件，两个字和两个字宽度相当，那一排不会因此错位。
+                title: "摄像",
                 isOn: controller.isCameraEnabled,
                 isSupported: controller.selectedModeSupportsCamera,
                 unsupportedHelp: controller.videoInputDisabledReason ?? "当前设置用不了摄像头"
