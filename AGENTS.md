@@ -316,6 +316,17 @@ The shortcut's double identity while the bot is speaking is two separate questio
 
 One audio engine serves playback, continuous listening AND push-to-talk recording (`BuddyDictationManager`'s own `audioEngine` is fallback-only) — the one-audio-path rule, and the reason a session's FIRST question is fast: the ~2 s voice-processing IO reconfiguration starts when the recording does, while the user is still speaking. A new recording ends an open listening window first (on one engine the recording's tap replaces the window's, and the window's ASR session would turn the recording into a second question).
 
+**That same ~2 s is also why「从实时模式转到 agent 模式要 5 秒」，而那一次它落在了应答那一刻（2026-09-28 修）。**
+Measured with five timestamped stages in the pipeline (`MainFlowDiagnostics` 的开始截屏 / 截屏完成 /
+请求已发出 / 模型第一个字 / **出声**): before the fix `🔊 VoicePlaybackEngine: engine started` and the
+first audio were **the same millisecond** — every reply paid the VPIO reconfiguration at the moment the
+user was waiting for sound. `sendTranscriptToVisionChatWithScreenshot` now warms the shared engine the
+moment the turn is submitted (`Task { await warmUpEngine.warmUpForVoiceChat() }`, the same idempotent
+call 回答开播 already made), so it overlaps the screenshot and the network round-trip.
+**第一个字 → 出声：2.50 s → 0.93 / 0.99 / 1.21 s**（三次），**提交 → 出声：4.01 s → 2.21 / 2.84 s**。
+The residual 0.72–2.9 s is the model's own first token — network, not our code; see
+`开发经验/09-实测数据.md` §二十三 and `开发经验/20` 9.69.
+
 The cost of the held engine is the user's own setting and says so in its description: the app stays in macOS's communication-app class, other audio is ducked at `.min`, and the microphone route stays open.
 
 ### Model Configuration
@@ -613,9 +624,17 @@ The recording mute is now the between-replies half, and the AEC covers the windo
 ⭐ **`NSAppleEventsUsageDescription` 必须进 Info.plist**（Debug + Release 两处）——
 没有它 macOS **静默拒绝** Apple events（不弹框不报错）。⭐ **标签只反映"真的拿到了"**
 （他：「只有执行成功、成功获取到，才能显示，而不是根据用户的关键词」）—— 结构上成立：标签读材料，
-材料只在取到时才写。顺手收掉一处重复：**"这一轮的屏幕"原来有三个来源各截各的**（管线的
-`capturePendingPreScreenshots` 两个触发器 + 采集器 + 录音→Notion 那套），现在参考材料这一类归采集器、
-**管线不再自己截**（否则一轮两组图还互相矛盾），「说到屏幕」那个开关继续管着采集器的关键词触发。
+材料只在取到时才写。⭐ **这一段的意图是"这一轮的屏幕由采集器一处供应"，但接线只做了一半 ——
+如实记在这里，别照着这句去读代码**（2026-09-28 发现）：`sendTranscriptToVisionChatWithScreenshot`
+里确实算出了 `referenceCaptures`（采集器那几张，按 `deliversScreenshot` 门过一遍），
+**但那个变量没有任何读者**（编译警告 `immutable value 'referenceCaptures' was never used`）——
+真正发给模型的仍然是管线**自己截的那一张**（`takePendingPreCapturedScreensIfFresh()` 或当场截）。
+后果有两个，都不报错：**说两次「参考屏幕」不会带来第二张图**（屏幕上那几个「屏幕一/二」标签是真的
+—— 采集器确实拿到了，只是没进请求），以及一轮里**有两次截图**（采集器一次 + 管线一次）。
+不是"模型看不到屏幕"（管线那张就是当下的屏幕 ✓，所以功能本身是对的）。修它要选**哪些情况用采集器
+那一组**（圈选提问时**必须**现截，因为圈是按下之后画的、采集器那张里没有圈），
+所以不是把变量接上就完事 —— 单独一轮做。
+「说到屏幕」那个开关继续管着采集器的关键词触发。
 卡片上：**标签行**在表格下面（`[屏幕一][屏幕二][剪贴板][文件][文件夹]`），**取消行最左侧**加
 `复制`（复制右下角那张卡片此刻的文字）与 `复制并退出`（复制 + 走 `handleEscapeKeyPressed()`，
 中性灰、与三档取消留白隔开）。两个只有真跑才会发现的坑写进了 `开发经验/20` 9.5：
@@ -1455,6 +1474,16 @@ App 里干活，而那正是"打断"要发生的场合），而且这个 tap **�
 **正在跑 → `interruptActiveResponse()`（播报 + 卡片 + 主循环含 sub agent）+ 只收这一轮派出去的
 agent**｜其余什么都做。
 
+⚠️ **外加一条不随上面各支走的**（2026-09-28，用户报「永远无法停止」）：**那个追问窗口只要开着，
+ESC 一定把它关掉**，与这一轮在不在跑无关；实现上它在**所有分支之外**（进门先读一次
+`isContinuousListening`，开着就 `endContinuousListeningWindow`），下面那一支读**进门前**那个值。
+它为什么必须在分支之外 —— 那一刻控制流落进了「正在跑」那一支（`voiceState` 已是 `.idle`，
+但 `currentResponseTask` 还没置空），而**那一支里没有关窗口这一句**：播报、卡片、任务、agent 全收了，
+**只有麦克风还开着**，一直听到 30 秒到期。判据是用户自己的话——「我手动退出了 = 我代表这个任务
+已经完成了」，而窗口存在的理由正是"对话还在继续"，两者不可能同时为真。根因、复现脚本与教训见
+`开发经验/10-踩过的坑.md` D41、`开发经验/20` 9.68（`scripts/listening-stop-check.sh` 按两条退出
+方式各带四个断言，**造它之前这个问题只有用户碰得到**）。
+
 **「这一次提交」= `groupID`**（`turnGroupID`，一轮生成一次，派活时写进 `EphemeralAgent.groupID`）。
 另外三个候选都被排除，理由写在 `AgentActivityBoard.cancelRunningTasks(inGroup:reason:)` 的注释里：
 `sessionID` 是会话（跨多轮，按它停会杀掉之前几轮的活）、`startedAt` 没有边界、`cardID` 会被兜底
@@ -1647,6 +1676,7 @@ The model can do more than point — `[CLICK:]`, `[RIGHT_CLICK:]`, `[DOUBLE_CLIC
 | `ModelSettingsView.swift` | ~602 | The 模型 page: 「当前使用」 (one row per role) and 「服务商」 (credentials only), with the test/save bar pinned outside the scroll view. Rendered inside the settings window's content area, so it draws no window chrome of its own. |
 | `geometry-dsl/` | — | **画图技能子项目（第五出口的引擎）**。完整的上游 Git 项目（shand001/geometry-dsl，自带 `.git`，历史上游），Wanna 不改它、只通过 CLI 调用：`node dist/cli.js 文件.geom -o 图.svg` 渲染、`node scripts/validate_geometry.mjs 文件.geom` 校验（退出码 0 = 通过）。出口⑤的桥接脚本 `geometry-dsl/figure_agent.py` 也住在这里（不在上游仓库的追踪里）：Wanna 的大模型在回复里写 `[SVG_AGENT:任务]`（开文件模式）或 `[SVG_BOARD:元素名：任务]`（屏幕白板模式，加 `--no-open`）→ `MacosUseController`（`figureAgentScriptPath`）用 python3 跑它 → DeepSeek 写 .geom → 校验失败自动让模型修（最多 3 轮）→ SVG 落 `~/Desktop/Wanna图形/`；开文件模式自动打开预览，白板模式由 `FigureBoardController` 画在屏幕上。stdout 第一行固定是「图已画好：<路径>」，Swift 靠这一行取路径。分工是「模型只描述，编译器算坐标」。 |
 | `scripts/panel-sizing-probe.swift` | ~111 | **独立最小复现：`NSPanel(.borderless + .nonactivatingPanel)` + `NSHostingView`，`setFrame` 之后窗口会不会被 AppKit 自己改掉**（看板被推下屏幕那件事的探针）。三个变量各跑一遍（`PROBE_VARIANT=emptySizing` / `emptySizingPlusMask` / `defaultSizing`），跑法 `swift scripts/panel-sizing-probe.swift`：只有 `defaultSizing`（即 `.standardBounds`）会让窗口自己变成内容的固有尺寸并移动 —— 所以问题不在"透明无边框面板"这个配方本身，而在**嵌套了什么内容**。 |
+| `scripts/listening-stop-check.sh` | ~120 | **「手动退出之后，那个 30 秒追问窗口到底关没关」—— 一条能自己跑的检查**（2026-09-28 新建，为 D41 那个 bug）。走完整条真实流程（合成识别器 + 他真正在用的快捷键），然后断言四件事：A 回答念完后窗口**真的**武装了（否则是空跑）/ B 手动退出后窗口关掉 / C **之后 10 秒不许自己武装回来**（修之前它 30 毫秒就回来）/ D 麦克风 tap 撤掉了。参数 `1` = 再按一次快捷键、`2` = 按 ESC —— **两条路各跑一次就分出了好坏**：修之前快捷键那条全绿、ESC 那条当场红，从红到定位到那一行 `print` 只读了一次日志。判据全部取自日志（"continuous listening started" / "ended"），不猜时间点。 |
 | `AudioInputDeviceCatalog.swift` | ~213 | 输入设备的清单与身份：列出所有**真有输入声道**的设备（**聚合体一律不列** —— 它的声道数会随成员变，变到某个形态就是纯静音，选它等于把修掉的故障装回去），每条带 UID / 声道数 / 是否系统默认 / 是否虚拟。设置页那个下拉和录音绑设备读的是同一份真相，所以不会出现「设置页说有、录音说没有」。另有一个查进程的口子 `processesCurrentlyCapturingInput()`（`kAudioHardwarePropertyProcessObjectList` + `kAudioProcessPropertyIsRunningInput`，macOS 14.2+）：**此刻正在开麦的 App** —— 全零故障里「谁占着麦克风」是用户唯一能立刻行动的信息，实测那段时间唯一为真的就是第三方听写软件 `闪电说`。 |
 | `LongFormRecorderController.swift` | ~2600 | 长录音的编排器 + **「重新转写」**（把落盘的 `.wav` 重新喂给同一个识别器，5 倍实时；节奏与两条分寸见上面 长录音 那节）。它和语音管线**零共享** —— 自己的 `AVAudioEngine`（`BuddyDictationManager` 只有一份连续监听窗口，共用必然串台）、自己的状态、自己的快捷键。音频 tap 每 ~100ms 出一块，重采样到 16kHz 单声道 PCM16 之后**一份落盘、一份上行**（同一个缓冲，所以 `.wav` 里的字节就是发给服务端的字节，可原样重放复现一次识别）。3 小时不断靠四条腿：`recordingRotationMinutes`（默认 20 分钟，在**静音处**换连接）、**间隔两倍的硬上限**（连续说话没有停顿的用户也要换，否则连接无限跑）、断线重连、以及接缝的**重叠重喂 + 毫秒时间戳去重**（`RecentAudioRing` 留最近 8 秒，重连时先喂回去，`seamSuppressionMilliseconds` 把重喂那段回来的文字按服务端时间戳丢掉 —— 用时间戳不用文本，因为重喂的段会被重新识别、用词不同）。转写结束后按「自定义风格」重写一遍（`polishIfConfigured`），**没勾选任何风格也没勾截图时一步都不走**，原文直接就是最终内容。`polishScreenshotJPEG` 在**停止那一刻**抓 —— 晚几百毫秒屏幕上就可能换了样。`cancellationGeneration` 是取消的闸门：润色正卡在网络请求里时取消是从另一个入口按下来的，两者不在同一条任务链上，代次是唯一能跨入口说的「这件事作废了」。`transcriptPlainText` 与 `livePartialText` 都**只追加**，`marqueeText` 由两者拼成 —— 位移是 `可用宽度 − 文字宽度`，**文字一旦变短就会向右跳**，而 `liveTranscriptLine`（尾巴 `suffix(90)` + 当前段）每定稿一次就变短。**采集挂在一队候选设备上**（`inputDeviceCandidates(for:)`：用户选定的 → 系统默认 → 其余真设备），看门狗发现「连续 90 块**精确全零**」就 `switchToNextCandidateDevice()` 换下一个、同一场接着录；换不动了才收尾并说明是谁占着麦克风 —— 见上面第五条腿。**2026-09-27：「录音 → Notion 笔记」那一整节（关键词检测 / 参考材料 / 那几颗按钮 / 保存）从这个文件里整块删掉，搬去了 `NotionNoteSession` —— 这里现在一段 Notion 代码都没有，录音只剩「录 → 转写 → 润色 → 落盘 → 剪贴板」。** |
 | `VolcengineTranscriptionProvider.swift` | ~425 | **主 Agent 那条路的识别：豆包（火山引擎）。** 把 `VolcengineRealtimeASRClient` 包成一个符合 `BuddyTranscriptionProvider` 协议的 provider，与百炼那个并列 —— 音频管线、VAD、连续监听、打断一行没动，换的只是「音频送给谁」。配置读「录音」页那一套（同一个火山账号、同一份密钥；「听」页的识别语言因此只作用于百炼，那里写明了）。**两处与录音那条路不同，都是实测逼出来的**（见 `开发经验/09-实测数据.md` 二十）：**不发末包**（这条路末包不回定稿，两次都等满 2.04 秒兜底且回来的文字与实时文字一字不差），改成盯「文字不再变长」（连续 0.4 秒没变就交，收尾 2.04 → 0.40 秒）；`beginNextUtterance` **重连**而不是复用连接（复用会让上一句「定稿晚到」的那一帧落进下一句的累积，而按时间戳做水位又会吃掉「按了发送之后继续说」的半句 —— 重连干净，握手期间音频在 URLSession 里排队不丢）。**第三处不同是 2026-09-27 加的：连接死掉不结束这一场录音**（`handleConnectionLoss`）—— 长录音那条自己会 `reconnect()`，所以同一条看门狗在那边误报一次只是换条连接；这条路原来把连接死亡当致命错误，于是「按住键沉默思考」触发看门狗 15 秒判死 → 整场录音被取消 → 用户说的话一个字都没提交（见 `开发经验/10-踩过的坑.md` D21）。现在：**一句还没定稿时连接死掉就重连**（上限 3 次），已经认出来的字冻成 `sealedTranscriptPrefix` 拼在最前面（新连接的时间轴从零重计，留在同一个按毫秒索引的字典里会被同键覆盖）。

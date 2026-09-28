@@ -492,6 +492,9 @@ final class BailianTTSClient {
             // included, so it cannot say whether sound was coming out.
             print("🔊 [aecprobe] t=\(String(format: "%.3f", Date().timeIntervalSince1970)) event=chunkStart \(chunkDescription)")
             print("🔊 Bailian TTS: playing \(chunkDescription) (\(audioData.count / 1024)KB)")
+            // **出声的那一刻**（用户 2026-09-28 问"为什么提交要 5 秒"）：与「请求已发出」
+            // 「模型第一个字」两行配起来，整条链（截屏 → 请求 → 首字 → 合成 → 出声）就全有时间戳了。
+            MainFlowDiagnostics.log("⏱️ 环节：**出声**（\(chunkDescription)，\(audioData.count / 1024)KB）")
         } catch {
             print("⚠️ Bailian TTS: could not play audio chunk \(chunkIndex)/\(chunkCount): \(error.localizedDescription)")
         }

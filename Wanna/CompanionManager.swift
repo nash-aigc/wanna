@@ -1122,6 +1122,7 @@ final class CompanionManager: ObservableObject {
             // 同一条判据也用在别处（录音、Notion 检测），这里只多起一块表。
             // **同一个 cycleID 传下去**：追问仍属于这一次大循环，"取消本次"不会被清掉。
             Task { @MainActor in
+                MainFlowDiagnostics.log("🧭 看板起表：**追问窗口里他开口了**（cycle=\(self?.currentVoiceCycleID ?? "nil")）")
                 DirectionBoardSession.shared.beginListening(cycleID: self?.currentVoiceCycleID)
             }
         }
@@ -2005,6 +2006,11 @@ final class CompanionManager: ObservableObject {
     ///    把**这一次提交**派出去的 agent 全部收掉（之前几轮的不管）；
     /// 3. 其余情况（没有这一轮）→ **什么都不做**，ESC 原样进前台 App。
     ///
+    /// **另有一条不随上面三段走的**（2026-09-28 补，用户报的「永远无法停止」）：
+    /// **那个追问窗口只要开着，ESC 一定把它关掉** —— 与这一轮在不在跑无关。
+    /// 「我手动退出了」= 这个任务结束了，而窗口存在的理由正是"对话还在继续"，
+    /// 两者不可能同时为真。理由与实测复现写在下面那一句的注释里。
+    ///
     /// 边界（既有语义不许破坏）：**转写编辑窗开着时，ESC 仍然是「收起编辑窗」** ——
     /// 那是这个 App 里早就有的一条 ESC，用户的「打断」不该把它抢走；编辑窗本身就是
     /// 在 Listening 里开出来的，用户按 ESC 时最可能的意思是「把这块收起来」。
@@ -2014,6 +2020,28 @@ final class CompanionManager: ObservableObject {
             NotchListeningTranscriptModel.shared.isEditorExpanded = false
             print("⏹️ ESC：收起转写编辑窗（既有语义，不打断这一轮）")
             return
+        }
+
+        // ⚠️⚠️ **ESC 永远关掉那个追问窗口，而且这一句必须在下面那些分支之外**
+        //（2026-09-28 修，用户报的正是这一条）：
+        //
+        // 「我进入了 agent 模式之后，我退出了，我可能是按住第二次、再一次按住快捷键，然后退出了，
+        //  或者是我按住 ESC 退出了，**他这个持续监听应该也退出啊**？如果我手动的去退出了，
+        //  那相当于是我代表这个任务，我说明这个任务已经完成了呀？他还是在监听我，这是不对的，
+        //  **那相当于是永远无法停止**」。
+        //
+        // 实测确认过它是真的：回答念完、30 秒的窗口刚武装起来，这一刻按 ESC ——
+        // `voiceState` 已经是 `.idle`，但 `currentResponseTask` 还没置空（任务收尾是异步的），
+        // 于是控制流落进下面「正在跑」那一支：播报、卡片、任务、agent 全收了，
+        // **只有麦克风还开着**，一直听到 30 秒到期（脚本 `scripts/listening-stop-check.sh` 能复现）。
+        //
+        // 所以判据不是"哪一支会跑"，而是**用户说的那句话本身**：ESC 的意思是「这个任务结束了」，
+        // 而窗口存在的理由恰恰是"这次对话还在继续"—— 两者不可能同时为真。
+        // 放在分支之前，任何一支（包括将来新加的那一支）都不可能再漏掉它。
+        // 编辑窗那一支在上面已经 return 了：那里的 ESC 是"把这块收起来"，不是"结束任务"。
+        let escapeArrivedWithListeningWindowOpen = buddyDictationManager.isContinuousListening
+        if escapeArrivedWithListeningWindowOpen {
+            endContinuousListeningWindow(reason: "user pressed escape")
         }
 
         if buddyDictationManager.isRecordingFromKeyboardShortcut
@@ -2032,7 +2060,11 @@ final class CompanionManager: ObservableObject {
 
         // 连续追问那个窗口开着也算「正在听」—— 麦克风开着、下面那行字幕也开着，
         // 用户的 ESC 是「别听了」。交给同一个出口：窗口关掉、这一句不发、录音照留。
-        if buddyDictationManager.isContinuousListening {
+        //
+        // 判据用的是**进门前**那个值：窗口在上面已经关掉了，此刻再问
+        // `isContinuousListening` 永远是 false，这一支就再也进不来 ——
+        // 而"回答念完之后按 ESC"（上面第 2 条注释里那种情形）要的正是这一支的收尾。
+        if escapeArrivedWithListeningWindowOpen {
             cancelTurnByEscapeWhileListening()
             return
         }
@@ -2168,6 +2200,10 @@ final class CompanionManager: ObservableObject {
         // Read per transition, not cached: the settings window can flip the
         // trigger mode between two presses of the same key.
         let triggerMode = AppSettingsStore.snapshot().pushToTalkTriggerMode
+        MainFlowDiagnostics.log("⌨️ 说话键 \(transition == .pressed ? "按下" : transition == .released ? "松开" : "无")"
+                                + "（模式=\(triggerMode == .doubleTapToTalk ? "点两下" : "按住")"
+                                + "，正在录=\(buddyDictationManager.isRecordingFromKeyboardShortcut)"
+                                + "，准备中=\(buddyDictationManager.isPreparingToRecord)）")
 
         switch transition {
         case .pressed:
@@ -2228,6 +2264,12 @@ final class CompanionManager: ObservableObject {
             // 发送这句话；没开口 = 打断 AI 回答 + 退出监听，不开麦——否则用户
             // 没法安静下来去操作其他软件。第二按才是正常录音（走到下面的
             // guard !isDictationInProgress 时监听已结束）。
+            // **诊断**：这一次按下走了哪条分支（用户 2026-09-28 报「第二次按下进不了 agent 模式」，
+            // 而"按下的哪条分支"这件事原本只写在 `print` 里 —— `open` 启动的实例根本看不到，
+            // 于是只能靠猜。这一行把状态一起打出来，判据从这一刻起可查）。
+            MainFlowDiagnostics.log("⌨️ 快捷键按下：voiceState=\(voiceState) TTS=\(bailianTTSClient.isPlaying)"
+                                    + " 连续监听=\(buddyDictationManager.isContinuousListening)"
+                                    + " 待发=\(buddyDictationManager.isContinuousListeningUtterancePending)")
             if voiceState == .processing
                 || voiceState == .responding
                 || bailianTTSClient.isPlaying
@@ -2244,11 +2286,13 @@ final class CompanionManager: ObservableObject {
                 // 播报中没说话按一次必须能停，用户报的是「按两次才能停止播放」）。
                 if buddyDictationManager.isContinuousListening
                     && buddyDictationManager.isContinuousListeningUtterancePending {
+                    MainFlowDiagnostics.log("⌨️ 按下 → 分支：**发送**这句（实时模式里我说完了）")
                     buddyDictationManager.finishContinuousListeningUtteranceByShortcutSend()
                     // 同上：release 不能把这次按下当成有效按压。
                     shortcutPressBeganAt = nil
                     return
                 }
+                MainFlowDiagnostics.log("⌨️ 按下 → 分支：**纯打断**（它在忙，这一下只停它、不开麦）")
                 endContinuousListeningWindow(reason: "talk shortcut pressed while busy (pure stop)")
                 interruptActiveResponse()
                 // 让 release 把这次按下当成一次没有时长的按压：既不能触发确认
@@ -2359,6 +2403,7 @@ final class CompanionManager: ObservableObject {
                 // **方向看板也从这一刻起表**（用户：「触发时机：用户按下主 Agent 快捷键、
                 // 开始说话的那一秒即启动」）。它只起一块表，不发请求 —— 要等识别文本出来。
                 // 带上这一次大循环的 id：「取消本次」只在同一个 id 内有效，新循环自动恢复显示。
+                MainFlowDiagnostics.log("🧭 看板起表：**按下快捷键开始一轮**（cycle=\(currentVoiceCycleID ?? "nil")）")
                 DirectionBoardSession.shared.beginListening(cycleID: currentVoiceCycleID)
                 // **参考材料**：按下快捷键就自动截一张（用户：「进入录音时，会自动截屏」）。
                 TurnReferenceCollector.shared.beginTurn()
@@ -3481,6 +3526,20 @@ final class CompanionManager: ObservableObject {
         MainFlowDiagnostics.log("▶️ 提交一轮：转写 \(transcript.count) 字"
                                 + "，截图=\(sendsScreenshot ? "要" : "不要")")
         MainFlowDiagnostics.stage("提交：抓截图")
+        // **预热播报引擎**（2026-09-28，用户问"为什么提交要将近 5 秒、应该 1~2 秒"）。
+        //
+        // 实测（诊断日志的环节打点）：「模型第一个字 +1.51s」→「出声 +4.01s」，而
+        // `🔊 VoicePlaybackEngine: engine started` **就出现在出声的同一毫秒** ——
+        // 那 2.5 秒里的大头是**共享引擎（带回声消除的那条）现拉起来**的 VPIO 重配（约 2 秒）。
+        //
+        // 这 2 秒原来付在"用户说话期间"（那时采集中途交班，实测缝 1204ms、丢用户 1.2 秒的话，
+        // 所以 9-27 改成"先用不开 VPIO 的快采"）—— 代价被挪到了回答开播这一刻。现在把它
+        // 挪到**提交这一刻**：录音已经停了（tap 已撤）、截屏 + 视觉请求还要 ~1.5 秒，
+        // 这段时间正好够引擎起来，于是答案一到就能直接出声。
+        // （引擎实例由 TTS 客户端持有 —— `bailianTTSClient.voicePlaybackEngine`，
+        //  它不是单例；下面这句就是"共享引擎"那一个。）
+        let warmUpEngine = bailianTTSClient.voicePlaybackEngine
+        Task { await warmUpEngine.warmUpForVoiceChat() }
         // **方向看板那几行在这里取一次**（用户点过的方向 + 输入框里的补充说明）。
         //
         // 放在这个函数的开头，是因为**四条提交路径全部经过它**（快捷键发送 / 2 秒静默 /
@@ -3861,6 +3920,7 @@ final class CompanionManager: ObservableObject {
                         print("📸 Companion: using the pre-captured screen for this question")
                         screenCaptures = preCapturedScreens
                     } else {
+                        MainFlowDiagnostics.log("⏱️ 环节：开始截屏")
                         screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
                             maximumDimension: appSettings.screenshotMaxDimension == 0
                                 ? nil
@@ -3868,6 +3928,7 @@ final class CompanionManager: ObservableObject {
                             compressionQuality: appSettings.screenshotCompressionQuality,
                             capturesAllDisplays: appSettings.capturesAllDisplays
                         )
+                        MainFlowDiagnostics.log("⏱️ 环节：截屏完成（\(screenCaptures.count) 张）")
                     }
 
                     guard !Task.isCancelled else { return }
@@ -3951,6 +4012,7 @@ final class CompanionManager: ObservableObject {
                     print("🧠 本轮上下文：历史 \(stepHistory.count) 轮 · 摘要 \(compressedHistorySummary.count) 字 · 系统提示词 \(Self.companionSystemPrompt(for: appSettings).count) 字 · 截图 \(labeledImages.count) 张 · 屏幕上下文 \((pendingAccessibilityContext?.count ?? 0)) 字 · 会话=\(turnSessionID.uuidString.prefix(8))")
 
                     var announcedAnswerStart = false
+                    MainFlowDiagnostics.log("⏱️ 环节：请求已发出（图 \(labeledImages.count) 张）")
                     var (fullResponseText, _) = try await visionChatAPI.analyzeImageStreaming(
                         images: labeledImages,
                         systemPrompt: Self.companionSystemPrompt(for: appSettings),
@@ -3960,6 +4022,11 @@ final class CompanionManager: ObservableObject {
                         // **这张卡片自己选的 AI**（没选过就是 nil = 跟设置里全局那份）。
                         roleOverride: Self.visionRoleOverride(forCardID: turnSessionID.uuidString),
                         onTextChunk: { [weak self] accumulatedText in
+                            // **第一个字**是"模型开始回答"的时刻 —— 从提交到这一刻的差值
+                            // 就是"它想了多久"（用户 2026-09-28 问的"为什么要 5 秒"）。
+                            if accumulatedText.count <= 2 {
+                                MainFlowDiagnostics.log("⏱️ 环节：模型第一个字（\(accumulatedText.count) 字）")
+                            }
                             // The vision client hands over the whole accumulated answer,
                             // not just the new piece. Assigning it (rather than appending)
                             // is what keeps the bubble from duplicating text.
@@ -5003,24 +5070,32 @@ final class CompanionManager: ObservableObject {
                 guard !Task.isCancelled else { return }
             }
 
-            // **回复念完了 —— 30 秒的倒计时从这一刻重新起算。**
+            // Only the state this method owns. A newer turn has already set its
+            // own, and overwriting that would retract a reply that is playing.
+            //
+            // ⚠️ **这一道守卫必须在"重新起算 30 秒"之前**（2026-09-28 修，用户报的那条
+            // 「我手动退出了它还在监听，相当于永远无法停止」）：用户**手动**停掉播报时
+            //（打断 / 再按一次快捷键 / ESC），`interruptActiveResponse()` 会把 `voiceState`
+            // 复位成 `.idle` —— 于是走到这里直接 return，**窗口不会被重新打开**。
+            // 第一版把重新起算放在守卫之前，于是"他刚说完停、30 毫秒后窗口又武装起来"
+            //（他自己的日志里就是 `08:27:06.052 窗口结束` → `08:27:06.082 窗口又武装`）。
+            guard self.voiceState == .responding else { return }
+
+            // **回复念完了（而且是自然念完的）—— 30 秒的倒计时从这一刻重新起算。**
             //
             // 用户 2026-09-28：「AI 语音播放完成、回复结果语音播放完成的那一秒开始，
             // **倒计时 30 秒**……如果过程中用户说话了、或者打断它了，就进入一个全新的循环，
             // 然后它继续回复用户，等回复完成那一秒开始**重新计时 30 秒**，一直这样循环」。
+            // 他同时说清了另一半：「**如果我手动退出了**……那相当于是我代表这个任务，
+            // 说明这个任务已经完成了呀？他还是在监听我，这是不对的」—— 所以这一下只属于
+            // **自然念完**：手动停的那条路在上面那道 guard 就返回了。
             //
             // ⚠️ **开窗仍在"开播那一刻"**（`armContinuousListeningWindow` 的两个调用点不动）——
             // 那条窗口就是打断的耳朵，回答还在念的时候必须已经开着；这里做的是**把它的
-            // 到期时间重新拨到 30 秒之后**（`armContinuousListeningWindow` 在窗口已开时
-            // 只重排到期，见它自己的注释）。
-            //
-            // 用户报的「对话几轮之后它就不说话了」正是缺了这一下：回答念 40 秒的话，
-            // 30 秒的窗口在它还念着的时候就到期了，念完再说话已经没人听。
+            // 到期时间重新拨到 30 秒之后**（它在窗口已开时只重排到期，见那个函数的注释）。
+            // 少了这一下，回答一长（念 40 秒），30 秒的窗口在它还念着的时候就到期了 ——
+            // 用户报的「对话几轮之后它就不说话了」就是这个。
             self.armContinuousListeningWindow()
-
-            // Only the state this method owns. A newer turn has already set its
-            // own, and overwriting that would retract a reply that is playing.
-            guard self.voiceState == .responding else { return }
 
             self.voiceState = .idle
             // …and retract the panel on this run-loop turn, not 2.5 s later.
