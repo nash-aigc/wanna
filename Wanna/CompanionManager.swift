@@ -49,9 +49,6 @@ nonisolated final class MainThreadHitchProbe {
     func start() {
         guard observer == nil else { return }
 
-        // **窗口皮肤要在任何界面建起来之前定好**：`DS.Colors.*` 是计算属性，
-        // 已建好的视图不会自己重画 —— 首帧之前把 palette 写对，免得启动时闪一下旧配色。
-        SkinPalette.active = AppSettingsStore.snapshot().windowSkin.palette
         let createdObserver = CFRunLoopObserverCreateWithHandler(
             kCFAllocatorDefault,
             CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue,
@@ -1003,6 +1000,10 @@ final class CompanionManager: ObservableObject {
     }
 
     func start() {
+
+        // **窗口皮肤要在任何界面建起来之前定好**：`DS.Colors.*` 是计算属性，
+        // 已建好的视图不会自己重画 —— 首帧之前把 palette 写对，免得启动时闪一下旧配色。
+        SkinPaletteStore.shared.applyAtLaunch(AppSettingsStore.snapshot().windowSkin)
         // 行缓冲 stdout。macOS 上 `print` 到管道/文件是**块缓冲**的，所以本项目的
         // 所有探针（`⏱️ [voiceweb]` / `⏱️ [hitch]` / `[listen]`）在从终端带重定向
         // 启动时都会攒在 4KB 缓冲里，不到 4KB 就什么都看不到——2026-09-24 排查
@@ -1484,7 +1485,7 @@ final class CompanionManager: ObservableObject {
                 // **窗口皮肤**：token 是计算属性（`DS.Colors.*` → `SkinPalette.active`），
                 // 所以换皮肤不需要重建任何视图 —— 下一次求值读到的就是新值。
                 // 这里只负责把"当前该用哪一套"写进去。
-                SkinPalette.active = settings.windowSkin.palette
+                SkinPaletteStore.shared.apply(settings.windowSkin)
 
                 if settings.persistsConversationHistory {
                     self.persistConversationHistory()

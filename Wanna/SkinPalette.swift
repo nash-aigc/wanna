@@ -35,9 +35,10 @@
 //  `--card` 来的）。这是参考页那套玻璃设计本身的方向，不是写错了。
 //
 
+import Combine
 import SwiftUI
 
-nonisolated struct SkinPalette: Sendable {
+nonisolated struct SkinPalette: Sendable, Equatable {
 
     // 地基
     let background: Color
@@ -145,5 +146,38 @@ nonisolated enum WindowSkin: String, CaseIterable, Sendable {
         case .current: return .current
         case .glass: return .glass
         }
+    }
+}
+
+/// **换皮肤时"让界面重画"的唯一出口。**
+///
+/// ⚠️ **没有它，切换就是不生效的**（2026-09-28 实测：直接改 `SkinPalette.active` 什么都
+/// 不会发生）。原因是 `DS.Colors.*` 虽然变成了计算属性、下一次求值会读到新值，但
+/// **没有任何东西触发那次求值** —— SwiftUI 只重算"依赖变了"的视图，而一个普通全局变量
+/// 不在任何视图的依赖里。启动时之所以有效，是因为 palette 在任何界面建起来之前就写对了。
+///
+/// 所以：`revision` 变 → 观察它的根视图重算 → 根视图上挂着 `.id(revision)` →
+/// **整棵子树按新配色重建一次**。切换是用户按一下的一次性动作，重建一次的代价可以接受。
+@MainActor
+final class SkinPaletteStore: ObservableObject {
+    static let shared = SkinPaletteStore()
+
+    /// 每次换皮肤 +1。根视图 `.id()` 挂它，于是换一次重建一次。
+    @Published private(set) var revision = 0
+
+    private init() {}
+
+    func apply(_ skin: WindowSkin) {
+        guard SkinPalette.active != skin.palette else { return }
+        SkinPalette.active = skin.palette
+        revision &+= 1
+    }
+
+    /// 启动时用：**只写 palette、不重建**（那一刻还没有界面需要重建）。
+    ///
+    /// `nonisolated`：调用点是 `AppLifecycle.start()`（不是主 actor 隔离的），而它只写一个
+    /// 全局变量、不碰任何 UI 状态。
+    nonisolated func applyAtLaunch(_ skin: WindowSkin) {
+        SkinPalette.active = skin.palette
     }
 }

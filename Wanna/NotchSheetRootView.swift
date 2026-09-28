@@ -29,6 +29,10 @@ struct NotchSheetRootView: View {
     /// **文本 / 图文那一排最右那颗通话按钮的状态源**（正在通话 / 没在通话）——
     /// 观察它是为了按钮自己变绿变红，不需要别处再报一遍。
     @ObservedObject private var textCallController: TextCallController
+
+    /// **换皮肤要重建整棵树**：`DS.Colors.*` 是计算属性，但普通全局变量不在任何视图的
+    /// 依赖里 —— 少了这一行，在设置里切皮肤什么都不会发生（2026-09-28 实测）。
+    @ObservedObject private var skinStore = SkinPaletteStore.shared
     /// 每张卡片的聊天模式与角色。设置本身住在磁盘上（`AppSettings.json`），这个模型只是
     /// 把它读成视图要的形状 —— 观察它是为了让「切一下模式」立刻重绘右列。
     @ObservedObject private var cardChatPreferences = CardChatPreferenceModel.shared
@@ -431,6 +435,9 @@ struct NotchSheetRootView: View {
         .onChange(of: panelModel.requestedSettingsPage) { _, _ in
             consumeRequestedSettingsPageIfNeeded()
         }
+            // **换皮肤要重建整棵树**：`DS.Colors.*` 是计算属性，但普通全局变量不在任何
+            // 视图的依赖里 —— 少了这一行，在设置里切皮肤什么都不会发生（2026-09-28 实测）。
+            .id(skinStore.revision)
     }
 
     /// 用户 2026-09-23：「如果用户当前处于聊天状态，点击刘海屏后应首先自动切换
