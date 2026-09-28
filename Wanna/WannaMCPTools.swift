@@ -34,7 +34,8 @@ nonisolated enum WannaMCPTools {
         [screenshotDeclaration, clickDeclaration, typeTextDeclaration,
          pressKeyDeclaration, scrollDeclaration, openAppDeclaration, readScreenDeclaration,
          setValueDeclaration, pressAXDeclaration, setSelectedDeclaration,
-         pointDeclaration, drawDeclaration]
+         pointDeclaration, drawDeclaration,
+         drawFigureDeclaration, spawnAgentDeclaration, sendAgentDeclaration]
     }
 
     /// 坐标参数的措辞，七处重复所以抽出来 —— 它必须**逐字一致**，
@@ -266,6 +267,10 @@ nonisolated enum WannaMCPTools {
             .setValue(try string(arguments, "value"), at: try coordinate(arguments)), arguments)
         case "press_ax": return try await run(
             .pressAccessibility(at: try coordinate(arguments)), arguments)
+        case "draw_figure": return try await run(.runFigureAgent(task: try string(arguments, "task")),
+                                                 arguments)
+        case "spawn_agent": return try await spawnAgent(arguments: arguments)
+        case "send_agent": return try await sendAgent(arguments: arguments)
         case "point": return try await point(arguments: arguments)
         case "draw": return try await draw(arguments: arguments)
         case "set_selected": return try await run(
@@ -486,6 +491,90 @@ nonisolated enum WannaMCPTools {
             screenNumber: arguments["screen"] as? Int)
         let captures = try await currentScreens()
         let text = await manager.drawAnnotationsForMCPTool([request], among: captures)
+        return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    // MARK: 画图 与 派 agent（2026-09-29 补，用户点名要的）
+
+    // 这两样原来也是"模型写标签"触发的（`[SVG_AGENT:]` / `[AGENT_SPAWN:]`），
+    // 换成 Python 之后静默失效 —— 用户问「还有其他的工具吗」时查出来的。
+    //
+    // 同样**没有另写一套**：画图直接走现成的 `CompanionAction.runFigureAgent`，
+    // 派 agent 直接走 `AgentSessionManager` 那两个现成入口。
+
+    private static var drawFigureDeclaration: [String: Any] {
+        [
+            "name": "draw_figure",
+            "description": """
+                画一张**精确的几何图**（落成一个 SVG 文件并在屏幕上打开）。\n\
+                用户说「画个示意图」「画个几何图」「把这个图画出来」时用它。\n\
+                **你只写任务描述，不用写坐标** —— 背后是一个几何编译器在算每一个点，
+                所以画出来的比例是准的，不是估的。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": ["task": ["type": "string",
+                    "description": "要画什么，尽量说清图形之间的关系（谁和谁相切、谁等于谁…）。"]],
+                "required": ["task"],
+            ],
+        ]
+    }
+
+    private static var spawnAgentDeclaration: [String: Any] {
+        [
+            "name": "spawn_agent",
+            "description": """
+                **派一个 Claude Code agent 去后台做一件长活**（它能读写文件、跑命令、
+                联网查、在项目里干活）。同名 agent 已存在就直接把任务交给它，不会重复创建。\n\
+                用在"这件事要跑很久"或"要在某个文件夹里做一串事"的时候。\n\
+                任务描述**必须自包含** —— agent 只看得到你写的这段字，看不到你和用户的对话。\n\
+                ⚠️ 一次回复**最多派一个**。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": ["type": "string", "description": "给它起个短名字（按名字复用/追问）。"],
+                    "task": ["type": "string", "description": "要它做什么，自包含。"],
+                ],
+                "required": ["name", "task"],
+            ],
+        ]
+    }
+
+    private static var sendAgentDeclaration: [String: Any] {
+        [
+            "name": "send_agent",
+            "description": "给一个**已经在跑的** agent 追加一句要求（按名字找它）。",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": ["type": "string", "description": "那个 agent 的名字。"],
+                    "message": ["type": "string", "description": "追加要求。"],
+                ],
+                "required": ["name", "message"],
+            ],
+        ]
+    }
+
+    @MainActor
+    private static func spawnAgent(arguments: [String: Any]) async throws -> [String: Any] {
+        guard let manager = CompanionManager.sharedForMCPTools else {
+            throw MCPToolError.failed("Wanna 还没准备好，没有派出 agent。")
+        }
+        let text = manager.agentSessionManager.spawnAndSendFirstTurn(
+            name: try string(arguments, "name"),
+            firstTurnText: try string(arguments, "task"))
+        return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    @MainActor
+    private static func sendAgent(arguments: [String: Any]) async throws -> [String: Any] {
+        guard let manager = CompanionManager.sharedForMCPTools else {
+            throw MCPToolError.failed("Wanna 还没准备好，没有送出。")
+        }
+        let text = manager.agentSessionManager.dispatchFollowUp(
+            named: try string(arguments, "name"),
+            turnText: try string(arguments, "message"))
         return ["content": [["type": "text", "text": text]], "isError": false]
     }
 
