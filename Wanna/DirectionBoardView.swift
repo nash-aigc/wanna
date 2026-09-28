@@ -99,13 +99,13 @@ struct DirectionBoardView: View {
 
     /// **右列（Harness 树）有多宽** —— 横杠总宽 360 去掉这条与右边的矛盾列。
     /// 用户 2026-09-28 把左列定成"提示词工程"，右边留给矛盾，中间一条细线。
-    static let harnessColumnWidth: CGFloat = 200
+    static let harnessColumnWidth: CGFloat = 140
 
-    /// 两块卡片之间的缝（B 版：中间不再有竖线，靠缝把两块分开 ✓）。
-    static let blockGap: CGFloat = 10
+    /// 两块之间的缝 —— 现在是 0（图里两块是**相接**的 ✓，靠那条共用的竖线分界）。
+    static let blockGap: CGFloat = 0
 
     /// **右列（问题 / 那棵脑图）有多宽** —— 它内容长（30 个问题就是 30 行），需要宽一点。
-    static let questionColumnWidth: CGFloat = 360
+    static let questionColumnWidth: CGFloat = 250
 
 
 
@@ -395,38 +395,36 @@ private struct ReferenceTagFlowLayout: Layout {
     /// 为什么是 7：用户的原话 ——「右侧……它非常非常长，而左侧又非常的少，
     /// 所以就会占用一个很大的空白空间，这完全没有意义，所以把它做成一个 7 字形」。
     /// 右下角那张 AI 回复卡就嵌进**凹口**里（横杠在上、竖条在右，中间留一点距离）。
-    /// **两块独立的圆角卡片**（用户 2026-09-28 选 B：「连它们也去掉」）——
-    /// 上面一块是 `补充 ｜ 矛盾` ✓，右边一列是 `用户问题 ｜ harness` ✓，
-    /// 两块的轮廓**各自闭合**、之间留一条缝 ✓ —— 所以中间**再没有竖线** ✓。
+    /// **一整张卡片，里面四格**（用户 2026-09-28 最后画的那张图）：
+    ///
+    ///     ┌────────┬────────┐ ┌──────────┬──────────┐
+    ///     │ 补充   │  矛盾   │ │  问题    │ harness  │
+    ///     └────────┴────────┘ │          │          │
+    ///        ↑ 左边这块矮       └──────────┴──────────┘
+    ///                            ↑ 右边这块高
+    ///
+    /// 两块**各自有框**、靠中间那条竖线相接 ✓；**里面的内容各渲染各的** ✓。
+    /// 左边那块矮（只有"补充｜矛盾"两格 ✓）、右边那块高（"问题｜harness" ✓）。
     private var sevenCard: some View {
-        HStack(alignment: .top, spacing: Self.blockGap) {
-            blockCard { barColumn }
-            blockCard {
-                HStack(alignment: .top, spacing: 0) {
-                    mindMapColumn
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    harnessColumn
-                        .padding(.leading, 12)
-                        .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
-                }
-                .frame(width: Self.questionColumnWidth + Self.harnessColumnWidth, alignment: .topLeading)
+        HStack(alignment: .top, spacing: 0) {
+            barColumn                       // 左：矮（补充 ｜ 矛盾）
+            HStack(alignment: .top, spacing: 0) {
+                mindMapColumn                   // 问题（高可变）
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                dividerLine
+                harnessColumn                   // harness（高固定）
+                    .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
             }
+            .frame(width: Self.questionColumnWidth + Self.harnessColumnWidth, alignment: .topLeading)
         }
     }
 
-    /// 给一块内容套上"卡片壳"：圆角底 + 一圈边 ✓（两块各套一次 ✓）。
-    @ViewBuilder
-    private func blockCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .background(
-                RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
-                    .fill(.clear)
-                    .background(AnswerCardView.cardBackground(theme: theme))
-                    .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius,
-                                               style: .continuous))
-            )
-            // ⚠️ **边框不画了**（用户 2026-09-28：「细线，它出现在鼠标的左侧……彻底删除」
-            // —— 那条"卡片左边缘"就是这圈边框的左段 ✗）。只留底色 ✓，所以整块上没有任何线条 ✓。
+    /// 四格里那两条内部分隔线（用户图里画了两条 ✓）。
+    private var dividerLine: some View {
+        Rectangle()
+            .fill(theme.textColor.opacity(0.22))
+            .frame(width: 1)
+            .padding(.vertical, 2)
     }
 
     /// **7 的那一横**（三段，从下往上）。
@@ -460,8 +458,7 @@ private struct ReferenceTagFlowLayout: Layout {
                 // **左上块：推荐 ｜ 矛盾**（用户 2026-09-28 手绘的排版：这一块在左上、矮）
                 recommendationColumn
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                // ⚠️ **「补充 ｜ 矛盾」之间那条竖线也删掉了**（用户 2026-09-28 的红框：
-                // 「这条线，也要删除」）—— 两列宽度仍然固定且相等 ✓，只是不再画线 ✓。
+                dividerLine
                 questionLines
                     .padding(.leading, 8)
                     .frame(maxWidth: .infinity, alignment: .topLeading)

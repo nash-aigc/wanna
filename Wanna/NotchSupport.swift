@@ -834,17 +834,19 @@ nonisolated enum NotchSupport {
     ///（卡窄一点时缝更大 —— 卡的宽度随内容变，这是它唯一能保证的下限）。
     nonisolated static let directionBoardBarCardClearance: CGFloat = 20
     nonisolated static var directionBoardBarWidth: CGFloat {
-        answerCardMaximumWidth + directionBoardBarCardClearance
+        answerCardMaximumWidth + directionBoardBarCardClearance   // 360 → 250（见下）
     }
     /// 横杠的高度 —— **定值**（行的集合恒定、每行预留固定行数，卡片高度因此不晃）。
     ///
     /// 算式（2026-09-28 三段定稿）：上边距 12 + 问题 10 行（10×16 + 9×3 = 187）+ 间隔 8
     /// + 参考一行（17）+ 选项行 27（**贴底、没有下边距**）= **251**。
-    nonisolated static let directionBoardBarHeight: CGFloat = 251
+    nonisolated static let directionBoardBarHeight: CGFloat = 180   // 缩约 30%（用户：太宽/太高，没有意义）
     /// 右下角那张 AI 回复卡的最大宽度 —— **7 字形那条竖条与它同宽**（用户 2026-09-28：
     /// 「竖向这个宽度其实跟右下角卡片的宽度应该设置为一样的」）。
     /// 两者是同一个数，所以放在一处：`OverlayWindow` 与看板都读它，改一个不会只改到一半。
-    nonisolated static let answerCardMaximumWidth: CGFloat = 340
+    nonisolated static let answerCardMaximumWidth: CGFloat = 240
+    // ⚠️ 340 → 240（约 −30%）：用户 2026-09-28「宽度我觉得应该再缩小个 30%，你现在太宽了，没有意义」。
+    // 看板的横杠宽与"问题/harness"两列的宽都从这个数派生 ✓，所以改一处三处跟着动 ✓。
 
     /// 7 的**竖条**（那条脑图）宽 —— 就是回复卡的宽度。
     nonisolated static var directionBoardMapWidth: CGFloat { answerCardMaximumWidth }
