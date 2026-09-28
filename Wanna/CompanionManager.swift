@@ -4266,13 +4266,24 @@ final class CompanionManager: ObservableObject {
                     // 它回来的文字里**不会有动作标签**（活它自己干完了），所以下面那个
                     // "一步一截图"的动作循环会自然地空转一轮就结束。
                     //
-                    // ⚠️ **没配好就退回 Swift 那条**，并把原因写进诊断日志 ——
-                    // 一台没装 Python 依赖的机器不该因为这一条就整轮不动。
+                    // ⚠️⚠️ **没配好就大声报错，绝不静默退回 Swift**（2026-09-29 用户拍板删掉退回）。
+                    //
+                    // 原来那一版是"没配好就退回 Swift 那条链"。用户问「为什么会有这个、
+                    // 有意义吗」，答案是没有 —— 而且有害：
+                    // **它会制造一条静默的假路**（Python 坏了 → 悄悄换回 Swift →
+                    // 屏幕上没有任何区别 → 你以为在用新框架，其实没有）。
+                    // 这和本仓最忌讳的那类故障（录音坏了但界面一切正常）是同一类：
+                    // **最难发现的那种**。
+                    //
+                    // 现在的规矩：**配好就走 Python，没配好就如实报错**。宁可让它说
+                    // "决策大脑没配好"，也不要让它偷偷换个脑子继续跑。
                     var fullResponseText = ""
-                    var isUsingPythonDecisionBrain = false
-                    if (AppSettingsStore.snapshot().usesPythonDecisionBrain ?? true),
-                       PythonAgentRunner.isConfigured {
-                        isUsingPythonDecisionBrain = true
+                    if (AppSettingsStore.snapshot().usesPythonDecisionBrain ?? true) {
+                        guard PythonAgentRunner.isConfigured else {
+                            throw PythonAgentError.notConfigured(
+                                python: PythonAgentRunner.pythonExecutablePath,
+                                script: PythonAgentRunner.agentScriptPath)
+                        }
                         MainFlowDiagnostics.log("🐍 这一轮的决策交给 Python（OpenAI Agents SDK）")
                         fullResponseText = try await PythonAgentRunner.shared.runTurn(
                             task: userPromptForThisTurn,
@@ -4280,11 +4291,7 @@ final class CompanionManager: ObservableObject {
                                 Task { @MainActor in self?.liveJobProgressSteps.append(note) }
                             }
                         ).finalText
-                    } else if (AppSettingsStore.snapshot().usesPythonDecisionBrain ?? true) {
-                        MainFlowDiagnostics.log("⚠️ 想用 Python 决策大脑但没配好，已退回 Swift 那条链")
-                    }
-
-                    if !isUsingPythonDecisionBrain {
+                    } else {
                     (fullResponseText, _) = try await visionChatAPI.analyzeImageStreaming(
                         images: labeledImages,
                         systemPrompt: Self.companionSystemPrompt(for: appSettings),
@@ -4356,7 +4363,7 @@ final class CompanionManager: ObservableObject {
                             MainFlowDiagnostics.stage("回答：正在流式上屏")
                         }
                     )
-                    }   // ← if !isUsingPythonDecisionBrain（用 Python 时上面那段整个跳过）
+                    }   // ← else（用 Python 时上面那段整个跳过）
 
                     guard !Task.isCancelled else { return }
 
