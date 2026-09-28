@@ -2917,15 +2917,15 @@ final class CompanionManager: ObservableObject {
             : trimmedCustomPrompt
 
         let skillIndexLines = SkillCatalog.indexLines()
-        let toolIndexLines = ToolCatalog.indexLines()
-        if !skillIndexLines.isEmpty || !toolIndexLines.isEmpty {
+        // **「工具目录」那一节 2026-09-29 删掉了**：它读 tools/manifest.json，走的是
+        // `[RUN:]` 标签那条路 —— 而 Python 用 MCP 工具、不写标签，够不着；
+        // 那两条命令（搜索 / 读网页）的功能又被 firecrawl 完全覆盖。
+        if !skillIndexLines.isEmpty {
             systemPrompt += "\n\n" + Self.skillsAndToolsSection(skillLines: skillIndexLines,
-                                                               toolLines: toolIndexLines)
+                                                               toolLines: [])
         }
-        let mcpSection = mcpPromptSection()
-        if !mcpSection.isEmpty {
-            systemPrompt += "\n\n" + mcpSection
-        }
+        // **`[MCP:…]` 那一节 2026-09-29 删掉了** —— Python 直接连官方 firecrawl MCP，
+        // Wanna 这边的 MCP 客户端（MCPClient / MCPServersStore）整个删了。
 
         // **高速通道**（方案第 5 步）：复盘统计出来、用户批准过的那几条。
         //
@@ -2954,7 +2954,7 @@ final class CompanionManager: ObservableObject {
         SoundEffectPlayer.appendToDiagnosticLog(
             "主 agent 提示词 \(systemPrompt.count) 字符"
             + "（基础 \(trimmedCustomPrompt.isEmpty ? Self.mainAgentBasePrompt.count : trimmedCustomPrompt.count)"
-            + " + 技能 \(skillIndexLines.count) 条 / 工具 \(toolIndexLines.count) 条 / MCP \(mcpSection.count) 字"
+            + " + 技能 \(skillIndexLines.count) 条"
             + "；**技能正文一条都不在**）")
 
         return systemPrompt
@@ -2988,47 +2988,12 @@ final class CompanionManager: ObservableObject {
             """)
         }
 
-        if !toolLines.isEmpty {
-            let exampleToolName = ToolCatalog.allTools().first?.name ?? "工具名"
-            parts.append("""
-            runnable tools:
-            these are finished commands you can run. **you never write a command yourself** —
-            if the tool you want is not on this list, say so instead of improvising.
-
-            \(toolLines.joined(separator: "\n"))
-
-            - to run one: [RUN:工具名:参数] — e.g. [RUN:\(exampleToolName):要查的东西]
-            - the arguments are plain text after the second colon. for a tool with several
-              parameters write them as 名=值 pairs separated by spaces.
-            - the result comes back in a <tool_results> block with your next message.
-              **report what it actually returned** — if it failed or came back empty, say that
-              plainly instead of answering from memory.
-            """)
-        }
+        // **「runnable tools」那一节 2026-09-29 删掉** —— 同上面那条理由：
+        // 它教模型写 `[RUN:工具名:参数]`，而 Python 用的是 MCP 工具、不写标签。
 
         return parts.joined(separator: "\n\n")
     }
 
-    /// 提示词里关于 MCP 的那一段。
-    ///
-    /// **只写服务器名字和标签语法，不写工具清单，更不写 schema。** 方案 §08 明写
-    /// 「工具 schema 不直接注入提示词」—— 一个 firecrawl 就有 29 个工具，全塞进来
-    /// 比整个提示词还长，而其中绝大多数这一轮用不到。所以给的是两步：
-    /// 先 `[MCP:服务器.*]` 看有什么，再 `[MCP:服务器.工具:{参数}]` 调。
-    private static func mcpPromptSection() -> String {
-        let names = MCPRegistry.shared.configuredServerNames
-        guard !names.isEmpty else { return "" }
-        return """
-        mcp tools:
-        you have MCP servers configured: \(names.joined(separator: ", ")).
-        **if the task needs anything from the internet, your FIRST action tag is
-        [MCP:server.*] to list that server's tools — do not describe what you would
-        do, do not answer from memory, and never say you cannot search.**
-        - to see what one offers: [MCP:server.*] — do this BEFORE guessing a tool name.
-        - to call one: [MCP:server.tool:{"arg": "value"}] — the arguments are JSON.
-        you do not know their tool names until you ask; never invent one.
-        """
-    }
 
     /// Builds this turn's user message, optionally carrying the interface read on
     /// the previous turn.
@@ -4557,20 +4522,8 @@ final class CompanionManager: ObservableObject {
                     // model can see what actually happened to its request, and a failure is
                     // also surfaced on the conversation view's error line — a spawn the
                     // model already announced out loud must not silently not exist.
-                    // **`[MCP:服务器.工具:{json}]` 在这里跑，不在上面那个动作 switch 里。**
-                    // 一次 MCP 调用不碰屏幕，所以它绝不能进「一步一动作 + 截图续写」那个循环
-                    // —— 和派活、图形板同一个理由。结果作为数据块回给模型。
-                    let mcpOutcomeLines = await runMCPRequests(parseResult.mcpRequests)
-                    if !mcpOutcomeLines.isEmpty {
-                        let mcpContext = "<mcp_results>\n"
-                            + mcpOutcomeLines.joined(separator: "\n")
-                            + "\n</mcp_results>"
-                        if let existingContext = pendingAccessibilityContext {
-                            pendingAccessibilityContext = existingContext + "\n" + mcpContext
-                        } else {
-                            pendingAccessibilityContext = mcpContext
-                        }
-                    }
+                    // **`[MCP:服务器.工具:{json}]` 那一段 2026-09-29 删掉了** ——
+                    // Python 直接连官方 firecrawl MCP，Wanna 这边的 MCP 客户端整个删了。
 
                     // **`[SKILL:技能名]` —— 技能那条路。** 三个 sub agent 变成三个技能之后，
                     // 这是"怎么做"进上下文的唯一入口。和下面两条同一个通道、同一个理由。
@@ -4586,20 +4539,9 @@ final class CompanionManager: ObservableObject {
                         }
                     }
 
-                    // **`[RUN:工具名:参数]` —— 工具目录那条路。** 和上面 MCP 那一段
-                    // 同一个通道、同一个理由：跑一条写好的命令不碰屏幕，所以不进
-                    // 「一步一动作 + 截图续写」那个循环；结果作为数据块回给模型。
-                    let toolRunOutcomeLines = await runToolRunRequests(parseResult.toolRunRequests)
-                    if !toolRunOutcomeLines.isEmpty {
-                        let toolContext = "<tool_results>\n"
-                            + toolRunOutcomeLines.joined(separator: "\n")
-                            + "\n</tool_results>"
-                        if let existingContext = pendingAccessibilityContext {
-                            pendingAccessibilityContext = existingContext + "\n" + toolContext
-                        } else {
-                            pendingAccessibilityContext = toolContext
-                        }
-                    }
+                    // **`[RUN:工具名:参数]` 那一段 2026-09-29 删掉了** —— 它读的是
+                    // tools/manifest.json，而那条路 Python 够不着（它调 MCP 工具、
+                    // 不写标签），那两条命令的功能又被 firecrawl 完全覆盖。
 
                     // **写了标签、但一个都没解析出来** —— 必须当面告诉它。
                     //
@@ -4706,7 +4648,7 @@ final class CompanionManager: ObservableObject {
                     // 标签写歪了也算"还没做完" —— 否则上面那段 <tag_syntax_error> 永远
                     // 送不到模型手里（它会先跳出循环）。步数上限照样兜着，不会无限转。
                     if (parseResult.actions.isEmpty && parseResult.mcpRequests.isEmpty
-                        && parseResult.toolRunRequests.isEmpty && parseResult.skillRequests.isEmpty
+                        && parseResult.skillRequests.isEmpty
                         && unparsedTagNotes.isEmpty)
                         || stepCount >= Self.maximumAutonomousActionSteps {
                         break
@@ -5951,86 +5893,7 @@ final class CompanionManager: ObservableObject {
         return lines
     }
 
-    /// 跑 `[RUN:工具名:参数]` —— 用**工具目录**（`tools/manifest.json`）里的那条工具。
-    ///
-    /// 和 `runMCPRequests` 是**同一档的两条来源**：都不碰屏幕、都不进动作循环、
-    /// 结果都作为数据块回给模型。区别只在工具住在哪：MCP 的住在子进程里、靠 `tools/list`
-    /// 现问；目录里的住在磁盘上、是一条写死的 argv。
-    ///
-    /// **三道闸门，每一道都回一句话，绝不静默：**
-    /// ① 归执行 agent（方案 §06：跑脚本 / 调工具那一类能力，图形和文本 agent 都没有）；
-    /// ② 用户开的「允许调用工具库」（与「允许操作电脑」分开 —— 调自己的脚本和"点鼠标"
-    ///    风险模型不同，这是用户 2026-09-24 定的）；
-    /// ③ 目录里有这条工具（**没有就如实说没有，不做相似度匹配** —— 方案 §07：
-    ///    「挑一个差不多的」正是这个仓库被坑过的那一类）。
-    private func runToolRunRequests(_ requests: [ToolRunRequest]) async -> [String] {
-        guard !requests.isEmpty else { return [] }
-        guard AppSettingsStore.snapshot().allowsToolLibrary ?? true else {
-            return ["工具调用被拒：设置 → 操作 里的「允许调用工具库」是关的，没有跑任何东西。"]
-        }
 
-        var lines: [String] = []
-        for request in requests {
-            if Task.isCancelled { break }
-            guard let tool = ToolCatalog.tool(named: request.toolName) else {
-                // 目录里没有 —— 如实说，并把目录里**有什么**告诉它，让它下一轮能挑对。
-                let availableNames = ToolCatalog.allTools().map { $0.name }
-                lines.append("工具「\(request.toolName)」不在目录里。目录里有："
-                             + (availableNames.isEmpty ? "（空的）" : availableNames.joined(separator: "、")))
-                SoundEffectPlayer.appendToDiagnosticLog(
-                    "🔧 工具「\(request.toolName)」不在目录里（目录里 \(availableNames.count) 条）")
-                continue
-            }
-            do {
-                let argv = try ToolCatalog.resolvedArgv(for: tool, argumentText: request.argumentText)
-                SoundEffectPlayer.appendToDiagnosticLog(
-                    "🔧 跑工具「\(tool.name)」：\(argv.dropFirst().joined(separator: " ").prefix(160))")
-                let startedAt = Date()
-                let outcome = await ToolCatalog.run(argv: argv,
-                                                    timeoutSeconds: tool.effectiveTimeoutSeconds)
-                let seconds = Date().timeIntervalSince(startedAt)
-                let trimmedOutput = outcome.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                if outcome.timedOut {
-                    lines.append("工具「\(tool.name)」超时（\(Int(tool.effectiveTimeoutSeconds)) 秒）被杀，"
-                                 + "没有结果。可以换个说法再试一次，或者告诉用户这个工具没跑出来。")
-                    SoundEffectPlayer.appendToDiagnosticLog(
-                        "🔧 工具「\(tool.name)」超时（\(String(format: "%.1f", seconds)) 秒）")
-                } else if outcome.exitCode != 0 {
-                    lines.append("工具「\(tool.name)」失败（退出码 \(outcome.exitCode)）：\n"
-                                 + String(trimmedOutput.prefix(1500))
-                                 + Self.toolUsageExpansion(for: tool))
-                    SoundEffectPlayer.appendToDiagnosticLog(
-                        "🔧 工具「\(tool.name)」失败（退出码 \(outcome.exitCode)，"
-                        + String(format: "%.1f", seconds) + " 秒）")
-                } else if trimmedOutput.isEmpty {
-                    lines.append("工具「\(tool.name)」跑完了（退出码 0）但**没有输出**。")
-                    SoundEffectPlayer.appendToDiagnosticLog("🔧 工具「\(tool.name)」无输出")
-                } else {
-                    lines.append("工具「\(tool.name)」返回：\n" + String(trimmedOutput.prefix(6000)))
-                    SoundEffectPlayer.appendToDiagnosticLog(
-                        "🔧 工具「\(tool.name)」成功：\(trimmedOutput.count) 字，"
-                        + String(format: "%.1f", seconds) + " 秒")
-                }
-            } catch {
-                lines.append("工具「\(tool.name)」没跑起来：\(error)"
-                             + Self.toolUsageExpansion(for: tool))
-                SoundEffectPlayer.appendToDiagnosticLog("🔧 工具「\(tool.name)」没跑起来：\(error)")
-            }
-        }
-        return lines
-    }
-
-    /// 失败驱动的那一次**展开**：把这条工具的用法细节连同错误一起回填。
-    ///
-    /// **只有失败时才出现**，所以它不是常驻提示词的一部分 —— 常驻的只有 L0 那一行
-    /// （见 `toolLibraryPromptSection`）。方案 §五：「不需要它一开始就背所有细节，
-    /// 需要的是**第一次错的时候有人告诉它怎么对**」。
-    private static func toolUsageExpansion(for tool: ToolDefinition) -> String {
-        guard let usage = tool.usage, !usage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return ""
-        }
-        return "\n\n（这个工具的用法：\(usage)）"
-    }
 
     /// 「写了标签、但一个都没解析出来」时，该对模型说的话。
     ///
@@ -6049,91 +5912,10 @@ final class CompanionManager: ObservableObject {
             notes.append("你写了 `[SKILL:…]`，但它**没有解析成一次调用**。"
                          + "正确写法是 [SKILL:技能名]，技能名要和清单上的写法**一模一样**。")
         }
-        if responseText.contains("[RUN:"), parseResult.toolRunRequests.isEmpty {
-            notes.append("你写了 `[RUN:…]`，但它**没有解析成一次调用**。"
-                         + "正确写法是 [RUN:工具名:参数]，工具名要和清单上的写法**一模一样**。")
-        }
         return notes
     }
 
-    /// 一条 MCP 工具的**参数骨架** —— 从它的 `inputSchema` 里只取属性名，占位成 `"名字": "…"`。    ///
-    /// 为什么要给：2026-09-28 实测，只给工具**名字**的时候模型会猜两件事 ——
-    /// 分隔符（它写了 `firecrawl_developer_search` 而不是 `firecrawl.firecrawl_developer_search`）
-    /// 和参数的形状（它写了一整句散文而不是 JSON）。两处猜错标签就整个解析不出来，
-    /// 而"标签没被认出来"和"模型没写标签"在屏幕上长得一模一样（什么都不发生、也不报错）。
-    ///
-    /// **只给属性名，不给完整 schema** —— 方案 §08 明写「MCP 的原始 schema 永远不进
-    /// 系统提示词」（一个 firecrawl 就有 29 个工具，全展开比整个提示词还长）。
-    /// 属性名足够让它把 JSON 写对，那才是缺的那一点。
-    private static func parameterHint(for tool: MCPTool) -> String {        guard let schemaData = tool.inputSchemaJSON.data(using: .utf8),
-              let schema = try? JSONSerialization.jsonObject(with: schemaData) as? [String: Any],
-              let properties = schema["properties"] as? [String: Any],
-              !properties.isEmpty else {
-            return ""
-        }
-        // 必填的排前面 —— 模型最容易漏的就是它们。
-        let requiredNames = Set((schema["required"] as? [String]) ?? [])
-        let orderedNames = properties.keys.sorted { first, second in
-            let firstIsRequired = requiredNames.contains(first)
-            let secondIsRequired = requiredNames.contains(second)
-            if firstIsRequired != secondIsRequired { return firstIsRequired }
-            return first < second
-        }
-        return orderedNames
-            .map { requiredNames.contains($0) ? "\"\($0)\": \"…\"" : "\"\($0)\": …" }
-            .joined(separator: ", ")
-    }
 
-    private func runMCPRequests(_ requests: [MCPToolRequest]) async -> [String] {
-        guard !requests.isEmpty else { return [] }
-        var lines: [String] = []
-        for request in requests {
-            do {
-                switch request.kind {
-                case .listTools:
-                    let started = Date()
-                    let tools = try await MCPRegistry.shared.tools(ofServerNamed: request.serverName)
-                    // **成功也要打。** 原来只有失败打日志，于是「它到底调没调」这个问题
-                    // 在日志里和「模型压根没写这个标签」长得一模一样 —— 而这两件事的
-                    // 修法完全不同（一个是接线，一个是提示词）。第一次 npx 还要下载，
-                    // 所以耗时也记下来。
-                    SoundEffectPlayer.appendToDiagnosticLog(String(
-                        format: "MCP 列出 %@ 的工具：%d 个（%.1f 秒，首次会下载）",
-                        request.serverName, tools.count, Date().timeIntervalSince(started)))
-                    lines.append("MCP `\(request.serverName)` 有 \(tools.count) 个工具。\n"
-                                 + "**要调哪一个，照抄下面那一行，只把 `{}` 里面换成 JSON 参数** ——"
-                                 + "分隔符是 `服务器.工具`（一个点），参数**必须是 JSON 对象**：\n"
-                                 + tools.map { tool in
-                                     "  [MCP:\(request.serverName).\(tool.name):{\(Self.parameterHint(for: tool))}]"
-                                     + " — \(tool.description.prefix(60))"
-                                   }.joined(separator: "\n"))
-                case .call:
-                    guard let arguments = Self.mcpArguments(fromJSON: request.argumentsJSON) else {
-                        lines.append("MCP \(request.serverName).\(request.toolName) 的参数不是合法 JSON 对象："
-                                     + request.argumentsJSON.prefix(120))
-                        continue
-                    }
-                    let started = Date()
-                    let result = try await MCPRegistry.shared.call(server: request.serverName,
-                                                                   tool: request.toolName,
-                                                                   arguments: arguments)
-                    SoundEffectPlayer.appendToDiagnosticLog(String(
-                        format: "MCP 调用 %@.%@ 成功：参数 %d 项，返回 %d 字符，耗时 %.1f 秒",
-                        request.serverName, request.toolName, arguments.count,
-                        result.count, Date().timeIntervalSince(started)))
-                    lines.append("MCP \(request.serverName).\(request.toolName) 返回：\n"
-                                 + String(result.prefix(4000)))
-                }
-            } catch {
-                // **失败要说出来**，而且要说清是哪个服务器哪个工具 —— 静默失败会让模型
-                // 以为自己调过了，然后对着用户复述一个根本没发生的结果。
-                lines.append("MCP \(request.serverName).\(request.toolName) 失败：\(error)")
-                SoundEffectPlayer.appendToDiagnosticLog(
-                    "MCP 调用失败 \(request.serverName).\(request.toolName)：\(error)")
-            }
-        }
-        return lines
-    }
 
     /// 把一个动作翻译成**给人看的一行**（面板里工具调用那一列，折叠着）。
     ///
