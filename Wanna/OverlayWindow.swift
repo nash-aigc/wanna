@@ -489,8 +489,8 @@ struct BlueCursorView: View {
                         }
                     }
                     .offset(
-                        x: mouseAnchorPosition.x + Self.conversationBubbleAnchorOffset.width,
-                        y: mouseAnchorPosition.y + Self.conversationBubbleAnchorOffset.height
+                        x: mouseAnchorPosition.x + bubbleAnchorOffset.width,
+                        y: mouseAnchorPosition.y + bubbleAnchorOffset.height
                     )
                     .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: mouseAnchorPosition)
             }
@@ -660,6 +660,24 @@ struct BlueCursorView: View {
     /// the pointer (which spans roughly the 16–34 pt band below the mouse
     /// under the default 「稍远」 follow distance) so neither covers the other.
     private static let conversationBubbleAnchorOffset = CGSize(width: 12, height: 32)
+
+    /// **看板在屏上时，回复卡的落点改成"看板的凹口里"**（用户 2026-09-28：
+    /// 「鼠标卡片放在这里面，卡片的定位应该在（这里）」—— 他指的就是那个凹口 ✓）。
+    ///
+    /// 数字怎么来的（都是量出来的，不是调的）：
+    ///   · 看板左上角 = 鼠标 + (12, −281)  —— 左边距 12 ✓、顶边在鼠标上方 281（= 横杠高 251 + 30）✓；
+    ///   · 凹口左上角 = 看板左上角 + (左列宽 200, 横杠高 251) = 鼠标 + (212, −30) ✓；
+    ///   · 再各留 12 的气口 → **(224, −18)** ✓。
+    ///
+    /// 看板**不在屏上**时仍用老的 (12, 32) ✓（那时没有凹口可落）✓。
+    private static let conversationBubbleAnchorOffsetInsideBoard = CGSize(width: 224, height: -18)
+
+    /// 看板开着 → 落进凹口；没开 → 老位置。
+    private var bubbleAnchorOffset: CGSize {
+        DirectionBoardSession.shared.isListening
+            ? Self.conversationBubbleAnchorOffsetInsideBoard
+            : Self.conversationBubbleAnchorOffset
+    }
 
     /// Whether the buddy triangle should be visible on this screen.
     /// True when cursor is on this screen during normal following, or
