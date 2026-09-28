@@ -162,704 +162,8 @@ nonisolated enum CompanionAction: Sendable {
     case setSelected(at: ModelReportedCoordinate, selected: Bool)
 }
 
-nonisolated struct ActionParseResult: Sendable {
-    /// The reply with every tag removed — this is what gets spoken aloud.
-    let spokenText: String
-    /// The first [POINT:…] tag, or nil when the model pointed at nothing (it
-    /// wrote [POINT:none], or wrote no point tag at all).
-    let pointingRequest: ModelReportedCoordinate?
-    /// Every action tag, in the order the model wrote them.
-    let actions: [CompanionAction]
-    /// Every [SHAPE:…] tag, in the order the model wrote them — drawings for
-    /// the user's eyes only, never executed and never fed back as actions.
-    let shapeRequests: [AnnotationShapeRequest]
-    /// Every [AGENT_SPAWN:…] / [AGENT_SEND:…] tag. Deliberately NOT in
-    /// `actions`: dispatching a background agent touches no screen, so it must
-    /// not enter the one-action-per-screenshot continuation loop — these are
-    /// handed to `AgentSessionManager` directly, the way `shapeRequests` are
-    /// handed to the annotation manager.
-    let agentRequests: [AgentDispatchRequest]
-    /// 每一个 `[SKILL:技能名]` —— 把那个技能的正文拉进这一轮。
-    ///
-    /// **不进 `actions`**：拉一份方法论不碰屏幕，不该触发「截图 → 续写」那个循环 ——
-    /// 和 MCP、工具目录同一个理由。它当场把正文拼进上下文，模型下一轮照着做。
-    ///
-    /// **2026-09-28 架构调整**：这里原来放的是 `subAgentRequest`（主 agent 把活派给三个
-    /// sub agent 之一）。那一层整个删掉了 —— **每个子 agent 各自变成一个技能**
-    /// （`Wanna/SkillCatalog.swift`），主 agent 常驻只拿到一行描述，要用正文才写这个标签。
-    let skillRequests: [SkillNameRequest]
-    /// 每一个 `[MCP:服务器.工具:{json}]`。
-    ///
-    /// **不进 `actions`**：一次 MCP 调用不碰屏幕，不该触发「截图 → 续写」那个循环 ——
-    /// 和派活、图形板同一个理由。它当场跑完，结果作为一个数据块回给模型。
-    ///
-    /// 判定（允不允许调）在调用处，不在这里 —— 解析器只该回答「模型写了什么」，
-    /// 不该回答「它有没有资格」。
-    let mcpRequests: [MCPToolRequest]
-    /// 每一个 `[RUN:工具名:参数]`。
-    ///
-    /// **和 `mcpRequests` 是同一档、不同来源**：两个都不碰屏幕、都不进 `actions`、
-    /// 都当场跑完把结果作为数据块回给模型。区别只在"工具住在哪"——
-    /// MCP 的工具住在一个子进程里、靠 `tools/list` 现问；目录里的工具住在
-    /// `tools/manifest.json` 里、是一条**写死的 argv**。
-    ///
-    /// **模型只能挑目录里有的**（方案 §07：模型只做选择，永远不生成命令），
-    /// 挑不到就如实说"没有这个工具"，不做相似度匹配。
-    let toolRunRequests: [ToolRunRequest]
-    /// Every [SVG_BOARD:…] tag, in the order the model wrote them — figures
-    /// for the user's eyes, drawn on screen next to a named element. Deliberately NOT in
-    /// `actions`: a board touches no screen state, so it must not enter the
-    /// one-action-per-screenshot continuation loop — these are handed to the
-    /// figure-board controller, the way `shapeRequests` are handed to the
-    /// annotation manager.
-    let figureBoardRequests: [FigureBoardRequest]
-
-    init(
-        spokenText: String,
-        pointingRequest: ModelReportedCoordinate?,
-        actions: [CompanionAction],
-        shapeRequests: [AnnotationShapeRequest] = [],
-        agentRequests: [AgentDispatchRequest] = [],
-        mcpRequests: [MCPToolRequest] = [],
-        toolRunRequests: [ToolRunRequest] = [],
-        skillRequests: [SkillNameRequest] = [],
-        figureBoardRequests: [FigureBoardRequest] = []
-    ) {
-        self.spokenText = spokenText
-        self.pointingRequest = pointingRequest
-        self.actions = actions
-        self.shapeRequests = shapeRequests
-        self.agentRequests = agentRequests
-        self.mcpRequests = mcpRequests
-        self.toolRunRequests = toolRunRequests
-        self.skillRequests = skillRequests
-        self.figureBoardRequests = figureBoardRequests
-    }
-}
-
-/// 一次 `[MCP:服务器.工具:{json}]` —— 模型要调一个 MCP 工具。
-nonisolated struct MCPToolRequest: Sendable, Equatable {
-    enum Kind: Sendable, Equatable {
-        /// `[MCP:服务器.工具:{json}]` —— 调一个工具。
-        case call
-        /// `[MCP:服务器.*]` —— 先看这个服务器有什么工具。
-        ///
-        /// **这一步是必须的，不是便利。** 方案 §08 明写「工具 schema 不直接注入
-        /// 提示词」，所以模型手上根本没有工具清单；不给它一条「先问有什么」的路，
-        /// 它只能猜工具名 —— 而猜错的表现是「服务器报错」，不是「你该先列一下」。
-        case listTools
-    }
-
-    let kind: Kind
-    let serverName: String
-    let toolName: String
-    /// 参数，**原始 JSON 字符串**，由调用处解析成字典。
-    ///
-    /// 留成字符串而不是在这里就解析成字典，是因为解析器至今只依赖
-    /// Foundation + CoreGraphics、能脱离 App 单独跑（见这个文件的头注释）。
-    /// 引一个 `[String: Any]` 进来不会破坏那一点，但会把「参数对不对」这件事
-    /// 混进「标签怎么写」里 —— 它们该分开报错。
-    let argumentsJSON: String
-}
-
-/// 一次 `[RUN:工具名:参数]` —— 模型要从**工具目录**里挑一条工具来跑。
-///
-/// `argumentText` 是参数那一整段**原文**，一个字都不动：怎么把这段文本对到工具声明的
-/// 那几个参数上，是 `ToolCatalog.resolvedArgv` 的事（它才知道那条工具声明了几个参数）。
-/// 解析器只回答「模型写了什么」——**和 `MCPToolRequest` 同一条分工**。
-nonisolated struct ToolRunRequest: Sendable, Equatable {
-    let toolName: String
-    let argumentText: String
-}
-
-/// 一次 `[SKILL:技能名]` —— 把那个技能的正文拉进这一轮。
-///
-/// 只带一个名字：正文由 `SkillCatalog` 现读（技能文件改了，下一次调用就是新的，
-/// 不需要重启）。**解析器不碰文件系统** —— 它只依赖 Foundation + CoreGraphics、
-/// 能脱离 App 单独跑，那是它的立身之本。
-nonisolated struct SkillNameRequest: Sendable, Equatable {
-    let skillName: String
-}
-
-/// One [AGENT_SPAWN:…] or [AGENT_SEND:…] tag: the model asking the voice
-/// companion to act as a dispatcher — start a background agent, or hand a
-/// follow-up instruction to one that already exists.
-nonisolated struct AgentDispatchRequest: Sendable {
-    nonisolated enum Kind: Sendable {
-        /// Start a new agent named `agentName` and give it `message` as its
-        /// first task.
-        case spawn
-        /// Give `message` to the existing agent named `agentName`.
-        case send
-    }
-
-    let kind: Kind
-    /// The agent's name as the model wrote it — matched against the roster
-    /// case-insensitively, by containment, because the model may abbreviate.
-    let agentName: String
-    /// The task text: a new agent's first instruction, or an existing agent's
-    /// follow-up.
-    let message: String
-}
-
-/// One [SVG_BOARD:元素名：任务] tag: the model asking for a figure drawn ON
-/// SCREEN, on a small white board placed next to a named element — the
-/// screen-anchored sibling of [SVG_AGENT], which instead opens the figure as
-/// a file. Deliberately NOT in `actions`, exactly like shapeRequests and
-/// agentRequests: a board is a drawing for the user's eyes, so it must not
-/// enter the one-action-per-screenshot continuation loop.
-nonisolated struct FigureBoardRequest: Sendable {
-    /// The on-screen element's own wording the anchor resolves against — the
-    /// same label vocabulary the click path's AX lookup ranks (exact name →
-    /// control-sized → nearest).
-    let anchorLabel: String
-    /// The figure description, passed to the figure agent verbatim.
-    let task: String
-}
-
 nonisolated enum ActionTagParser {
 
-    // MARK: - Tag patterns
-
-    /// `[POINT:x,y]`, `[POINT:x,y:label]`, `[POINT:x,y:label:screen2]`,
-    /// `[POINT:none]` — and the same four shapes for the three click kinds.
-    ///
-    /// Capture groups: 1 = which tag, 2 = x, 3 = y, 4 = label, 5 = screen number.
-    private static let pointingAndClickingPattern =
-        #"\[(POINT|CLICK|RIGHT_CLICK|DOUBLE_CLICK):(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]"#
-
-    /// `[SCROLL:x,y:up:3]` with an optional `:label` and an optional `:screenN`.
-    ///
-    /// Capture groups: 1 = x, 2 = y, 3 = direction, 4 = steps, 5 = label, 6 = screen.
-    private static let scrollingPattern =
-        #"\[SCROLL:(\d+)\s*,\s*(\d+):(up|down):(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?\]"#
-
-    private static let typingPattern = #"\[TYPE:([^\]]*)\]"#
-    private static let selectingPattern = #"\[SELECT:([^\]]+)\]"#
-    private static let pressingPattern = #"\[PRESS:([^\]]+)\]"#
-    private static let openingPattern = #"\[OPEN:([^\]]+)\]"#
-    private static let accessibilityTreePattern = #"\[AX_TREE\]"#
-    private static let waitingPattern = #"\[WAIT:([^\]]+)\]"#
-
-    /// `[PY_AGENT:把 todo.txt 的内容改成……]` — hand a task to the desktop file
-    /// agent (the fourth exit). The task is the whole rest of the tag.
-    ///
-    /// Capture group: 1 = task text.
-    private static let desktopAgentPattern = #"\[PY_AGENT:([^\]]+)\]"#
-
-    /// `[SVG_AGENT:画一个三角形和它的外接圆]` — hand a task to the figure agent
-    /// (the fifth exit). The task is the whole rest of the tag.
-    ///
-    /// Capture group: 1 = task text.
-    private static let figureAgentPattern = #"\[SVG_AGENT:([^\]]+)\]"#
-
-    /// `[SVG_BOARD:三角形:画出两条边并标注勾股定理]` — the on-screen whiteboard
-    /// variant of the figure agent: draw the figure next to a named element
-    /// instead of opening it as a file. The anchor is split at the FIRST
-    /// colon, so the element name cannot contain one but the task text may.
-    ///
-    /// Capture groups: 1 = anchor element name, 2 = task text.
-    private static let figureBoardPattern = #"\[SVG_BOARD:([^:\]]+?):([^\]]+)\]"#
-
-    /// `[SHAPE:circle:500,300;560,300:a label:screen2]` — kind, then two or more
-    /// ";"-separated points, then an optional label and an optional screen.
-    /// The label may carry an `anchor|display` split (`Manage|管理`): before
-    /// the pipe is the element's own on-screen name the AX lookup anchors on,
-    /// after it the caption the user asked to see drawn instead.
-    ///
-    /// Capture groups: 1 = kind, 2 = everything after the kind's colon (points,
-    /// label, screen — split further below).
-    private static let shapePattern = #"\[SHAPE:\s*([^\]]+)\]"#
-
-    /// `[AGENT_SPAWN:调研员:整理沙箱文件夹里的文件清单]` — start a new background
-    /// agent and hand it the task. The name may not contain a colon (it is the
-    /// split point); the task text may contain anything but `]`.
-    ///
-    /// Capture groups: 1 = agent name, 2 = task text.
-    private static let agentSpawnPattern = #"\[AGENT_SPAWN:\s*([^:\]]+?)\s*:\s*([^\]]*?)\s*\]"#
-
-    /// `[AGENT_SEND:调研员:把清单写成 markdown]` — hand a follow-up instruction
-    /// to an agent that already exists in the roster.
-    ///
-    /// Capture groups: same as `agentSpawnPattern`.
-    private static let agentSendPattern = #"\[AGENT_SEND:\s*([^:\]]+?)\s*:\s*([^\]]*?)\s*\]"#
-
-
-    /// `[RUN:工具名:参数]` —— 用**工具目录**（`tools/manifest.json`）里的那条工具。
-    ///
-    /// 捕获组：1 = 工具名（名字或别名），2 = 参数那一段原文。
-    ///
-    /// 分隔用**第一个** `:`，所以参数里可以有冒号（URL、`key:value` 都能过）；
-    /// ⚠️ **但参数里不能有 `]`** —— 它会被当成标签结束。这是有意的取舍：
-    /// 让参数里带 `]` 就要引入括号配对，而配对在散文里没有可靠的判据
-    /// （`[` 常常只是半个方括号）。模型要查带 `]` 的东西时换个说法就行。
-    private static let toolRunPattern = #"\[RUN:\s*([^:\]]+?)\s*:\s*([^\]]*)\]"#
-
-    /// `[SKILL:技能名]` —— 把那个技能的正文拉进这一轮。
-    ///
-    /// **2026-09-28 架构调整后的新标签。** 三个 sub agent 没有了，它们各自变成一个技能
-    /// （`~/Documents/SuperAgent/APP/Design/wanna/skills/<名字>/SKILL.md`），
-    /// 主 agent 常驻只拿到一行描述，要用正文时才写这个标签 —— 见 `SkillCatalog`。
-    ///
-    /// 捕获组：1 = 技能名（名字里不能有 `]`，和别的标签同一条取舍）。
-    private static let skillPattern = #"\[SKILL:\s*([^\]]+?)\s*\]"#
-
-    // MARK: - MCP 标签的扫描
-
-    /// 扫 `[MCP:服务器.工具:{json}]`。
-    ///
-    /// **不能用正则。** 参数是 JSON，而 JSON 的值里完全可能有 `]` ——
-    /// `{"query": "a]b"}`。`[^\]]*` 会在那个 `]` 上提前收尾，把一个合法参数截成
-    /// 半个对象；而模型那侧看到的是「参数不对」，不是「解析器错了」，**归因直接跑偏**。
-    ///
-    /// 所以这个标签自己走一遍字符：跟踪「在不在字符串里」和「花括号深度」，
-    /// 只有**深度归零且不在字符串里**遇到的 `]` 才是它的结尾。
-    ///
-    /// 标签一定要 `claim` —— 没认领的话它会留在要朗读的那句话里，用户会听见
-    /// 「firecrawl 点 firecrawl search」这种话。
-    private static func scanMCPRequests(
-        in text: String,
-        claimTagRange: (Range<String.Index>) -> Bool
-    ) -> [MCPToolRequest] {
-        let opening = "[MCP:"
-        var requests: [MCPToolRequest] = []
-        var searchStart = text.startIndex
-
-        while let openRange = text.range(of: opening, options: [.caseInsensitive],
-                                         range: searchStart..<text.endIndex) {
-            let bodyStart = openRange.upperBound
-            var index = bodyStart
-            var depth = 0
-            var inString = false
-            var isEscaped = false
-            var closing: String.Index?
-
-            while index < text.endIndex {
-                let character = text[index]
-                if isEscaped { isEscaped = false }
-                else if inString, character == "\\" { isEscaped = true }
-                else if character == "\"" { inString.toggle() }
-                else if !inString {
-                    if character == "{" { depth += 1 }
-                    else if character == "}" { depth -= 1 }
-                    else if character == "]", depth <= 0 { closing = index; break }
-                }
-                index = text.index(after: index)
-            }
-            // 没闭合就到此为止：剩下的半截不当标签，也不当正文。
-            guard let closing else { break }
-
-            let tagRange = openRange.lowerBound..<text.index(after: closing)
-            if claimTagRange(tagRange),
-               let request = parseMCPBody(String(text[bodyStart..<closing])) {
-                requests.append(request)
-            }
-            searchStart = text.index(after: closing)
-        }
-        return requests
-    }
-
-    /// 拆 `服务器.工具:{"json"}`；冒号后面那一段可以没有（= 无参数）。
-    private static func parseMCPBody(_ body: String) -> MCPToolRequest? {
-        let head: String
-        let argumentsJSON: String
-        if let colon = body.firstIndex(of: ":") {
-            head = String(body[body.startIndex..<colon])
-            let raw = String(body[body.index(after: colon)...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            argumentsJSON = raw.isEmpty ? "{}" : raw
-        } else {
-            head = body
-            argumentsJSON = "{}"
-        }
-        // 只按**第一个**点切：工具名里再有点（`a.b.c`）也归工具名。
-        let parts = head.split(separator: ".", maxSplits: 1)
-        guard parts.count == 2 else { return nil }
-        let server = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-        let tool = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !server.isEmpty, !tool.isEmpty else { return nil }
-        // `*` 是「列出这个服务器的工具」，不是一个叫 `*` 的工具。
-        return MCPToolRequest(kind: tool == "*" ? .listTools : .call,
-                              serverName: server, toolName: tool,
-                              argumentsJSON: argumentsJSON)
-    }
-
-    // MARK: - Parsing
-
-    /// Pulls every action tag out of a model reply, and returns what is left to
-    /// say out loud alongside the actions to perform.
-    static func parse(from responseText: String) -> ActionParseResult {
-        var claimedRanges: [Range<String.Index>] = []
-        var pointingRequest: ModelReportedCoordinate?
-        var actions: [CompanionAction] = []
-        var shapeRequests: [AnnotationShapeRequest] = []
-        var agentRequests: [AgentDispatchRequest] = []
-        var toolRunRequests: [ToolRunRequest] = []
-        var skillRequests: [SkillNameRequest] = []
-        var mcpRequests: [MCPToolRequest] = []
-        var figureBoardRequests: [FigureBoardRequest] = []
-
-        // Tags are removed from the spoken text afterwards, so a tag nested inside
-        // another tag's text would corrupt the result once both were cut. Letting
-        // the first tag to claim a stretch of the reply keep it can't happen with
-        // the shapes the prompt asks for; the guard is here so that it degrades
-        // into "one tag ignored" instead of mangled speech.
-        func claimTagRange(_ tagRange: Range<String.Index>) -> Bool {
-            guard !claimedRanges.contains(where: { $0.overlaps(tagRange) }) else { return false }
-            claimedRanges.append(tagRange)
-            return true
-        }
-
-        forEachMatch(in: responseText, pattern: pointingAndClickingPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-
-            let tagName = capture(1, of: match, in: responseText)?.uppercased() ?? ""
-
-            // [POINT:none] / [CLICK:none] carry no coordinate. They are treated as
-            // "no tag" rather than as an error, so a model that answers a question
-            // without pointing still gets its whole sentence spoken.
-            guard let x = capture(2, of: match, in: responseText).flatMap(Double.init),
-                  let y = capture(3, of: match, in: responseText).flatMap(Double.init) else {
-                return
-            }
-
-            let reportedCoordinate = ModelReportedCoordinate(
-                normalizedCoordinate: CGPoint(x: x, y: y),
-                elementLabel: capture(4, of: match, in: responseText)?
-                    .trimmingCharacters(in: .whitespaces),
-                screenNumber: capture(5, of: match, in: responseText).flatMap(Int.init)
-            )
-
-            switch tagName {
-            case "POINT":
-                // Only the first point wins. A second one would have nowhere to
-                // fly to — the cursor can only be in one place.
-                if pointingRequest == nil {
-                    pointingRequest = reportedCoordinate
-                }
-            case "CLICK":
-                actions.append(.click(at: reportedCoordinate))
-            case "RIGHT_CLICK":
-                actions.append(.rightClick(at: reportedCoordinate))
-            case "DOUBLE_CLICK":
-                actions.append(.doubleClick(at: reportedCoordinate))
-            default:
-                break
-            }
-        }
-
-        forEachMatch(in: responseText, pattern: scrollingPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-
-            guard let x = capture(1, of: match, in: responseText).flatMap(Double.init),
-                  let y = capture(2, of: match, in: responseText).flatMap(Double.init),
-                  let directionName = capture(3, of: match, in: responseText)?.lowercased(),
-                  let direction = ScrollDirection(rawValue: directionName),
-                  let amountInSteps = capture(4, of: match, in: responseText).flatMap(Int.init) else {
-                return
-            }
-
-            actions.append(
-                .scroll(
-                    at: ModelReportedCoordinate(
-                        normalizedCoordinate: CGPoint(x: x, y: y),
-                        elementLabel: capture(5, of: match, in: responseText)?
-                            .trimmingCharacters(in: .whitespaces),
-                        screenNumber: capture(6, of: match, in: responseText).flatMap(Int.init)
-                    ),
-                    direction: direction,
-                    amountInSteps: amountInSteps
-                )
-            )
-        }
-
-        forEachMatch(in: responseText, pattern: typingPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let textToType = capture(1, of: match, in: responseText), !textToType.isEmpty else { return }
-            actions.append(.typeText(textToType))
-        }
-
-        forEachMatch(in: responseText, pattern: selectingPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let selectionDescription = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespaces), !selectionDescription.isEmpty else { return }
-
-            // The separator is split ONCE, at its first occurrence: the start
-            // marker therefore cannot contain ">>>", but the end marker may.
-            let parts: [String]
-            if let separatorRange = selectionDescription.range(of: ">>>") {
-                parts = [
-                    String(selectionDescription[..<separatorRange.lowerBound]),
-                    String(selectionDescription[separatorRange.upperBound...])
-                ]
-            } else {
-                parts = [selectionDescription]
-            }
-
-            let startMarker = parts[0]
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "\r\n", with: "\n")
-                .replacingOccurrences(of: "\\n", with: "\n")
-            guard !startMarker.isEmpty else { return }
-            let endMarker = parts.count > 1
-                ? parts[1]
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .replacingOccurrences(of: "\r\n", with: "\n")
-                    .replacingOccurrences(of: "\\n", with: "\n")
-                : nil
-
-            actions.append(.selectText(
-                startMarker: startMarker,
-                endMarker: (endMarker?.isEmpty == false) ? endMarker : nil
-            ))
-        }
-
-        forEachMatch(in: responseText, pattern: pressingPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let keyDescription = capture(1, of: match, in: responseText) else { return }
-            let (keyName, modifierNames) = splitKeyDescription(keyDescription)
-            guard !keyName.isEmpty else { return }
-            actions.append(.pressKey(keyName: keyName, modifierNames: modifierNames))
-        }
-
-        forEachMatch(in: responseText, pattern: openingPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let applicationName = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespaces), !applicationName.isEmpty else { return }
-            actions.append(.openApplication(named: applicationName))
-        }
-
-        forEachMatch(in: responseText, pattern: accessibilityTreePattern) { _, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            actions.append(.readAccessibilityTree)
-        }
-
-        forEachMatch(in: responseText, pattern: waitingPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            // The seconds are clamped rather than rejected: a model that writes
-            // [WAIT:30] is asking for a pause, and refusing it silently would
-            // leave the reply looking like it succeeded while nothing waited.
-            // The text lands in a local first: chaining the conversion straight
-            // onto the optional-capture call makes the overload resolution pick
-            // the wrong flatMap, and this reads better anyway.
-            let secondsText = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespaces)
-                .replacingOccurrences(of: "s", with: "")
-                .replacingOccurrences(of: "秒", with: "")
-            guard let requestedSeconds = secondsText.flatMap({ Double($0) }) else {
-                return
-            }
-            let clampedSeconds = max(1, min(10, requestedSeconds.rounded()))
-            actions.append(.wait(seconds: Int(clampedSeconds)))
-        }
-
-        forEachMatch(in: responseText, pattern: desktopAgentPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let taskText = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !taskText.isEmpty else { return }
-            actions.append(.runDesktopFileAgent(task: taskText))
-        }
-
-        forEachMatch(in: responseText, pattern: figureAgentPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let taskText = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !taskText.isEmpty else { return }
-            actions.append(.runFigureAgent(task: taskText))
-        }
-
-        forEachMatch(in: responseText, pattern: figureBoardPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let anchorLabel = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespaces), !anchorLabel.isEmpty else { return }
-            guard let taskText = capture(2, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !taskText.isEmpty else { return }
-            figureBoardRequests.append(FigureBoardRequest(anchorLabel: anchorLabel, task: taskText))
-        }
-
-        forEachMatch(in: responseText, pattern: shapePattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            // The pattern swallows *any* `[SHAPE:…]` tag — an unknown kind, a
-            // malformed point list — and claims it above, so garbage never
-            // reaches the spoken text. Only a fully valid request survives to
-            // the drawing stage.
-            guard let shapeBody = capture(1, of: match, in: responseText) else {
-                return
-            }
-            let bodyParts = shapeBody.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-            guard let kindName = bodyParts.first.map(String.init)?
-                    .trimmingCharacters(in: .whitespaces)
-                    .lowercased(),
-                  let kind = AnnotationShapeKind(rawValue: kindName),
-                  bodyParts.count > 1 else {
-                return
-            }
-            guard let shapeRequest = parseShapeBody(String(bodyParts[1]), kind: kind) else {
-                return
-            }
-            shapeRequests.append(shapeRequest)
-        }
-
-        mcpRequests = Self.scanMCPRequests(in: responseText, claimTagRange: claimTagRange)
-
-        forEachMatch(in: responseText, pattern: toolRunPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let rawToolName = capture(1, of: match, in: responseText) else { return }
-            let toolName = rawToolName.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !toolName.isEmpty else { return }
-            let argumentText = capture(2, of: match, in: responseText) ?? ""
-            toolRunRequests.append(ToolRunRequest(toolName: toolName, argumentText: argumentText))
-        }
-
-        forEachMatch(in: responseText, pattern: skillPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let rawSkillName = capture(1, of: match, in: responseText) else { return }
-            let skillName = rawSkillName.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !skillName.isEmpty else { return }
-            skillRequests.append(SkillNameRequest(skillName: skillName))
-        }
-
-        forEachMatch(in: responseText, pattern: agentSpawnPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let agentName = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespaces), !agentName.isEmpty else { return }
-            let taskText = capture(2, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            // An empty task would start an agent that does nothing; treating it
-            // as no tag at all (it has already been claimed, so the garbage
-            // never reaches the spoken text either).
-            guard !taskText.isEmpty else { return }
-            agentRequests.append(AgentDispatchRequest(kind: .spawn, agentName: agentName, message: taskText))
-        }
-
-        forEachMatch(in: responseText, pattern: agentSendPattern) { match, tagRange in
-            guard claimTagRange(tagRange) else { return }
-            guard let agentName = capture(1, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespaces), !agentName.isEmpty else { return }
-            let followUpText = capture(2, of: match, in: responseText)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !followUpText.isEmpty else { return }
-            agentRequests.append(AgentDispatchRequest(kind: .send, agentName: agentName, message: followUpText))
-        }
-
-        return ActionParseResult(
-            spokenText: spokenTextByRemoving(claimedRanges, from: responseText),
-            pointingRequest: pointingRequest,
-            actions: actions,
-            shapeRequests: shapeRequests,
-            agentRequests: agentRequests,
-            mcpRequests: mcpRequests,
-            toolRunRequests: toolRunRequests,
-            skillRequests: skillRequests,
-            figureBoardRequests: figureBoardRequests
-        )
-    }
-
-    /// Splits a `[SHAPE:…]` tag's body — everything after the kind's colon —
-    /// into its points, label and screen number.
-    ///
-    /// The body reads `"x1,y1;x2,y2[;…][:label][:screenN]"`. The points are
-    /// split off at the body's first `":"` so a label containing a colon still
-    /// parses, and a trailing `:screenN` is only treated as a screen number when
-    /// it actually says "screen" — otherwise it is part of the label.
-    private static func parseShapeBody(
-        _ shapeBody: String,
-        kind: AnnotationShapeKind
-    ) -> AnnotationShapeRequest? {
-        let bodyParts = shapeBody.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard let pointsPart = bodyParts.first else { return nil }
-        let trailingPart = bodyParts.count > 1 ? String(bodyParts[1]) : nil
-
-        var labelText: String?
-        var displayText: String?
-        var screenNumber: Int?
-        if let trailingPart {
-            if let screenMatch = trailingPart.range(of: #"(?:^|:)screen(\d+)\s*$"#, options: .regularExpression) {
-                let screenText = trailingPart[screenMatch]
-                    .replacingOccurrences(of: "screen", with: "")
-                    .trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-                screenNumber = Int(screenText)
-                let labelPart = String(trailingPart[..<screenMatch.lowerBound])
-                let trimmedLabel = labelPart.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-                labelText = trimmedLabel.isEmpty ? nil : trimmedLabel
-            } else {
-                labelText = trailingPart.isEmpty ? nil : trailingPart
-            }
-        }
-
-        // Optional `anchor|display` split: everything before the first `|`
-        // stays the AX-lookup anchor, everything after is what the capsule
-        // draws. A label the user asked to rename/translate must keep the
-        // element's own words as the anchor — a translated-only label matches
-        // no element, the lookup fails, and the shape falls back to the
-        // model's estimated coordinates (the "renamed it and it went crazy"
-        // failure).
-        if let existingLabelText = labelText, let pipeIndex = existingLabelText.firstIndex(of: "|") {
-            let anchor = String(existingLabelText[existingLabelText.startIndex..<pipeIndex])
-                .trimmingCharacters(in: .whitespaces)
-            let display = String(existingLabelText[existingLabelText.index(after: pipeIndex)...])
-                .trimmingCharacters(in: .whitespaces)
-            if anchor.isEmpty {
-                // `|display` with no anchor: nothing to look up, so keep the
-                // whole text as a plain display-only label.
-                labelText = nil
-                displayText = display.isEmpty ? nil : display
-            } else {
-                labelText = anchor
-                displayText = display.isEmpty ? nil : display
-            }
-        }
-
-        let parsedPoints: [CGPoint] = pointsPart
-            .split(separator: ";")
-            .compactMap { pointText in
-                let coordinates = pointText.split(separator: ",")
-                guard coordinates.count == 2,
-                      let x = Double(coordinates[0].trimmingCharacters(in: .whitespaces)),
-                      let y = Double(coordinates[1].trimmingCharacters(in: .whitespaces)) else {
-                    return nil
-                }
-                return CGPoint(x: x, y: y)
-            }
-
-        guard parsedPoints.count >= kind.minimumPointCount else { return nil }
-
-        return AnnotationShapeRequest(
-            kind: kind,
-            points: parsedPoints,
-            label: labelText,
-            displayLabel: displayText,
-            screenNumber: screenNumber
-        )
-    }
-
-    // MARK: - Helpers
-
-    /// Splits `"cmd+a"` into the key to press and the modifiers held with it.
-    ///
-    /// Which component is the key is decided by **name, not by position**.
-    /// Position is the obvious way to write this and it is wrong: the prompt
-    /// teaching this tag spells the combination key-first (`[PRESS:a+cmd]`),
-    /// while macOS convention spells it modifier-first, and a model asked for
-    /// "全选" can reasonably emit either. Read positionally, one of those two
-    /// comes out as "hold A down and strike Command" — which the executor
-    /// refuses as an unknown modifier, so the shortcut simply never fires.
-    /// Deciding by name makes both orders the same request, which is what a tag
-    /// written by a language model needs.
-    ///
-    /// A description that is nothing but modifiers (`cmd`) names that modifier
-    /// key itself; there is no other component left to be the one struck.
-    private static func splitKeyDescription(_ keyDescription: String) -> (keyName: String, modifierNames: [String]) {
-        let components = keyDescription
-            .split(separator: "+")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-
-        let modifierNames = components.filter { modifierFlag(named: $0) != nil }
-        let otherNames = components.filter { modifierFlag(named: $0) == nil }
-
-        guard let keyName = otherNames.last ?? modifierNames.last else { return ("", []) }
-        return (keyName, modifierNames.filter { $0 != keyName })
-    }
 
     /// Maps the words a model may write for a modifier key into the event flag
     /// they mean, or `nil` for anything that is not a modifier.
@@ -897,22 +201,6 @@ nonisolated enum ActionTagParser {
     /// them in place: deleting in place means mutating a string while holding
     /// indices into a different copy of it, which is the kind of thing that works
     /// until it doesn't.
-    private static func spokenTextByRemoving(
-        _ tagRanges: [Range<String.Index>],
-        from responseText: String
-    ) -> String {
-        let sortedRanges = tagRanges.sorted { $0.lowerBound < $1.lowerBound }
-
-        var spokenText = ""
-        var nextCharacterToCopy = responseText.startIndex
-        for tagRange in sortedRanges {
-            spokenText += responseText[nextCharacterToCopy..<tagRange.lowerBound]
-            nextCharacterToCopy = tagRange.upperBound
-        }
-        spokenText += responseText[nextCharacterToCopy...]
-
-        return spokenText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 
     // MARK: - Streaming speech support (逐句快答)
 
@@ -987,25 +275,6 @@ nonisolated enum ActionTagParser {
         options: [.caseInsensitive]
     )
 
-    private static func forEachMatch(
-        in text: String,
-        pattern: String,
-        _ body: (NSTextCheckingResult, Range<String.Index>) -> Void
-    ) {
-        // Case-insensitive on purpose: the tags are uppercase in the prompt, but a
-        // model that writes [click:…] means exactly the same thing, and silently
-        // speaking the tag aloud instead of clicking would be a confusing failure.
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return
-        }
-
-        let wholeTextRange = NSRange(text.startIndex..., in: text)
-        for match in regex.matches(in: text, options: [], range: wholeTextRange) {
-            guard let tagRange = Range(match.range, in: text) else { continue }
-            body(match, tagRange)
-        }
-    }
-
     private static func capture(
         _ groupIndex: Int,
         of match: NSTextCheckingResult,
@@ -1017,4 +286,68 @@ nonisolated enum ActionTagParser {
         }
         return String(text[groupRange])
     }
+
+    // MARK: - 指位标签（现存唯一的标签）
+
+    /// `[POINT:x,y]` / `[POINT:x,y:label]` / `[POINT:x,y:label:screen2]` / `[POINT:none]`
+    /// 四种形状。捕获组：1 = x，2 = y，3 = 标签，4 = 屏幕号（1 起数）。
+    private static let pointingTagPattern =
+        #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]"#
+
+    private static let pointingTagRegex = try? NSRegularExpression(
+        pattern: pointingTagPattern,
+        options: [.caseInsensitive]
+    )
+
+    /// 从回复里取出 `[POINT:…]`，并把标签从"要说的话"里去掉。
+    ///
+    /// **2026-09-29 起，这是唯一还在解析的标签。** 其余 19 个（`[CLICK:]`、`[TYPE:]`、
+    /// `[SCROLL:]`、`[SKILL:]`、`[AGENT_SPAWN:]`、`[SVG_AGENT:]`、`[WAIT:]` …）连同
+    /// 它们的正则、`ActionParseResult`、以及 CompanionManager 里那一整段
+    /// 「解析 → 执行动作 → 继续下一步」的循环**一起删掉了**。
+    ///
+    /// 判据不是推测，是诊断日志：那些标签在整个 1.3MB 日志里**各出现 0 次**，
+    /// 而 `parse` 那一行**一次都没有执行过**。原因是决策已经搬去 Python，
+    /// 它动手走的是 MCP 工具，回复里不会再出现这些标签。
+    ///
+    /// **POINT 留下来只有一个原因：开机引导还在用它。** 新装首次运行那段
+    /// 「光标飞过去指个东西」走的是旧的视觉模型（`onboardingDemoSystemPrompt`），
+    /// 它真的会写 `[POINT:…]`。
+    static func parsePointing(from responseText: String)
+        -> (spokenText: String, pointing: ModelReportedCoordinate?) {
+        guard let regex = pointingTagRegex else {
+            return (responseText, nil)
+        }
+
+        let wholeTextRange = NSRange(responseText.startIndex..., in: responseText)
+
+        // Only the first point wins: the cursor can only be in one place, so a
+        // second coordinate would have nowhere to fly to.
+        var pointing: ModelReportedCoordinate?
+        for match in regex.matches(in: responseText, options: [], range: wholeTextRange) {
+            guard pointing == nil,
+                  let x = capture(1, of: match, in: responseText).flatMap(Double.init),
+                  let y = capture(2, of: match, in: responseText).flatMap(Double.init) else {
+                continue
+            }
+            pointing = ModelReportedCoordinate(
+                normalizedCoordinate: CGPoint(x: x, y: y),
+                elementLabel: capture(3, of: match, in: responseText)?
+                    .trimmingCharacters(in: .whitespaces),
+                screenNumber: capture(4, of: match, in: responseText).flatMap(Int.init)
+            )
+        }
+
+        // A tag the model wrote is never spoken, coordinate or not (`[POINT:none]`
+        // included — it is an answer, not a sentence).
+        let spokenText = regex.stringByReplacingMatches(
+            in: responseText,
+            options: [],
+            range: wholeTextRange,
+            withTemplate: ""
+        )
+
+        return (spokenText.trimmingCharacters(in: .whitespacesAndNewlines), pointing)
+    }
+
 }
