@@ -89,7 +89,9 @@ nonisolated final class LongFormAudioCapture {
     private(set) var inputDeviceSwitchCount = 0
 
     /// 一块 PCM（16kHz 单声道 PCM16）。在音频线程上调用。
-    var onPCMChunk: ((Data) -> Void)?
+    /// 一块 PCM 交给落盘 + 上行。第二个参数是**这块里有没有人说话**（同一块刚算出的
+    /// 电平判据）—— 它只服务看门狗，让客户端分得清「静音期服务端不回包」和「连接死了」。
+    var onPCMChunk: ((Data, Bool) -> Void)?
     /// 平滑后的电平（0…1）和「这一刻是否在说话」。在音频线程上调用。
     var onLevel: ((Double, Bool) -> Void)?
     /// 音频链路的一行诊断。**在音频线程上调用**，接收方必须只做非阻塞的事。
@@ -654,7 +656,7 @@ nonisolated final class LongFormAudioCapture {
         }
 
         onLevel?(level, isSpeaking)
-        onPCMChunk?(Data(bytes: samples, count: sampleCount * MemoryLayout<Int16>.size))
+        onPCMChunk?(Data(bytes: samples, count: sampleCount * MemoryLayout<Int16>.size), isSpeaking)
     }
 }
 
@@ -928,6 +930,31 @@ final class LongFormRecorderController: ObservableObject {
     /// 新连接开头这段（毫秒）里回来的文字是**重喂的重叠**，一律丢掉。
     /// 服务端的时间轴在新连接上从零重计，所以这个数是「重喂了多久」。
     private var seamSuppressionMilliseconds = 0
+
+    // MARK: - 识别节奏的仪表（2026-09-28）
+
+    /// 用户报的三件事（「出来慢」「说话时卡顿」「停一下然后突然来很多字」）全都是
+    /// **时间**的事，而这份日志原来的时间戳只到秒 —— 秒级精度下 1.0s 与 1.4s 长得
+    /// 一模一样，「比之前慢」这种话根本没法证实也没法证伪。所以两处一起补：
+    /// 时间戳带毫秒（`diagnosticTimestampFormatter`），外加每秒一行节奏汇总。
+    ///
+    /// 这一行回答的正是用户描述的那个形状：**这一秒来了几段、最长隔了多久、
+    /// 新增多少字**。段少 + 间隔长 + 字数一次跳很多 = 「停一下再涌一批」被量到了。
+    private var cadenceWindowStartedAt = Date()
+    private var cadenceSegmentCount = 0
+    private var cadenceCharacterCount = 0
+    private var cadenceLongestGapMilliseconds = 0
+    private var lastCadenceSegmentAt: Date?
+
+    /// 日志时间戳：**带毫秒**（`withFractionalSeconds`）。
+    ///
+    /// 复用同一个实例而不是每次 `ISO8601DateFormatter()` —— 后者每行都要建一个，
+    /// 而这一行可能每秒来好几条。
+    private static let diagnosticTimestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     /// 抓当前主屏，缩到 1600px 长边、JPEG 0.7 —— 和「看与截图」页那两个设置同一个
     /// 量级，够模型看清内容又不会把请求撑大。
@@ -1386,6 +1413,12 @@ final class LongFormRecorderController: ObservableObject {
         livePartialText = ""
         committedTranscriptTail = ""
         liveTranscriptLine = ""
+        // 节奏仪表也跟着清零 —— 不清的话，上一场的「最长间隔」会被算进这一秒。
+        cadenceWindowStartedAt = Date()
+        cadenceSegmentCount = 0
+        cadenceCharacterCount = 0
+        cadenceLongestGapMilliseconds = 0
+        lastCadenceSegmentAt = nil
     }
     /// 最近若干行诊断，设置页和排查时看。
     @Published private(set) var recentDiagnostics: [String] = []
@@ -1415,7 +1448,7 @@ final class LongFormRecorderController: ObservableObject {
     private var hasReportedMissingKey = false
 
     private init() {
-        capture.onPCMChunk = { [weak self] pcm in
+        capture.onPCMChunk = { [weak self] pcm, inputHasSpeech in
             // 音频线程 → 落盘 + 上行。两者都不碰主线程：`RecordingAudioWriter`
             // 是 nonisolated 的，`asrClient.enqueue` 只是投递到它自己的串行队列。
             //
@@ -1423,7 +1456,11 @@ final class LongFormRecorderController: ObservableObject {
             // `nonisolated(unsafe)` 桥接属性，而不是同名的 `@MainActor` 存储属性 ——
             // 实时音频线程上访问 MainActor 属性是编译不过的，而且真跑起来就是丢音。
             self?.audioWriterBox?.tryAppend(pcm)
-            self?.audioClient?.enqueue(audio: pcm)
+            // **把"这块里有没有人说话"一起交给客户端**（2026-09-28）：看门狗靠它
+            // 区分「静音期服务端不回包」和「连接真的死了」—— 少了它，每一次长静音
+            // 都会被误判成死连接，然后重连 + 重喂 8 秒音频（实测 156 次里 137 次是
+            // 这么来的）。判据在这里现成（上面那块刚算完），不在客户端重算一遍。
+            self?.audioClient?.enqueue(audio: pcm, inputHasSpeech: inputHasSpeech)
             // 留着给重连重喂用。环形缓冲自己带锁，音频线程上调是安全的。
             self?.recentAudio.append(pcm)
         }
@@ -1456,7 +1493,7 @@ final class LongFormRecorderController: ObservableObject {
 
     private func appendDiagnosticToFile(_ line: String) {
         guard let url = diagnosticLogURL else { return }
-        let stamp = ISO8601DateFormatter().string(from: Date())
+        let stamp = Self.diagnosticTimestampFormatter.string(from: Date())
         guard let data = "[\(stamp)] \(line)\n".data(using: .utf8) else { return }
         if let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()
@@ -1467,8 +1504,46 @@ final class LongFormRecorderController: ObservableObject {
         }
     }
 
-    /// 音频线程与主线程之间的桥。`@MainActor` 的存储属性在实时线程上读不到，
-    /// 这两个 `nonisolated(unsafe)` 的引用就是那条通道；它们只在开始/结束时被
+    /// 一段识别结果到屏幕上了 —— 记进这一秒的节奏表。
+    ///
+    /// 两个数字是分开数的：**段数**（服务端多久给一次结果）与**最长间隔**
+    ///（两段之间屏幕上完全不动的那段时间有多长）。用户说的「卡顿」如果成立，
+    /// 它一定表现为「段数很少、最长间隔很长」。
+    private func recordSegmentArrival(characterDelta: Int) {
+        let now = Date()
+        if let last = lastCadenceSegmentAt {
+            let gapMilliseconds = Int(now.timeIntervalSince(last) * 1000)
+            if gapMilliseconds > cadenceLongestGapMilliseconds {
+                cadenceLongestGapMilliseconds = gapMilliseconds
+            }
+        }
+        lastCadenceSegmentAt = now
+        cadenceSegmentCount += 1
+        cadenceCharacterCount += characterDelta
+    }
+
+    /// 满一秒就把这一秒的节奏写成一行，然后清零。
+    ///
+    /// **只在有段到达的那一秒才写**（`cadenceSegmentCount > 0`）—— 屏幕上本来就
+    /// 一个字都不来的时候再刷一行"0 段"，只会把日志淹掉，而那件事已经由
+    /// 「最长间隔」那一列表达了。
+    private func emitCadenceIfWindowElapsed() {
+        let windowSeconds = Date().timeIntervalSince(cadenceWindowStartedAt)
+        guard windowSeconds >= 1 else { return }
+        if cadenceSegmentCount > 0 {
+            publishDiagnostic(String(format: "📊 这一秒：段 %d · 最长间隔 %dms · 新增 %d 字 · 实时 %d 字",
+                                     cadenceSegmentCount,
+                                     cadenceLongestGapMilliseconds,
+                                     cadenceCharacterCount,
+                                     livePartialText.count))
+        }
+        cadenceWindowStartedAt = Date()
+        cadenceSegmentCount = 0
+        cadenceCharacterCount = 0
+        cadenceLongestGapMilliseconds = 0
+    }
+
+    /// 音频线程与主线程之间的桥。`@MainActor` 的存储属性在实时线程上读不到，    /// 这两个 `nonisolated(unsafe)` 的引用就是那条通道；它们只在开始/结束时被
     /// 主线程写入，音频线程只读，所以没有数据竞争。
     private nonisolated(unsafe) var audioWriterBox: RecordingAudioWriter?
     private nonisolated(unsafe) var audioClient: VolcengineRealtimeASRClient?
@@ -2293,6 +2368,8 @@ final class LongFormRecorderController: ObservableObject {
             // 都是我们已经落过盘的话。靠文本判重做不到这件事（重喂的段被重新识别，
             // 用词会有细微差别），靠时间戳可以。
             if segment.endMilliseconds <= self.seamSuppressionMilliseconds { return }
+            // **节奏仪表**：这一段真的到屏幕上了，记一笔（见 `cadenceWindowStartedAt`）。
+            self.recordSegmentArrival(characterDelta: segment.text.count)
             if segment.isDefinite {
                 // **只有真的落盘了才往下走。** `commit` 会判重（服务端在句末会把
                 // 同一段再发一次），返回 false 表示这一段已经被写过了 —— 原来不判
@@ -2396,6 +2473,7 @@ final class LongFormRecorderController: ObservableObject {
             Task { @MainActor in
                 guard let self, let startedAt = self.startedAt else { return }
                 self.elapsedSeconds = Date().timeIntervalSince(startedAt)
+                self.emitCadenceIfWindowElapsed()
             }
         }
         rotationTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in

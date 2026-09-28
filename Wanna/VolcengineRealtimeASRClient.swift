@@ -82,6 +82,11 @@ nonisolated final class VolcengineRealtimeASRClient {
     private var receiveLoopTask: Task<Void, Never>?
     private var watchdogTimer: DispatchSourceTimer?
     private var lastReceivedFrameAt: Date?
+    /// **最近一次喂进去的音频里有人说话**的时刻（只在 `socketQueue` 上读写）。
+    ///
+    /// 看门狗靠它区分两件长得一模一样的事：静音期服务端不回包（正常）和连接死了
+    /// （故障）。判据的理由与实测见 `startWatchdogOnQueue`。
+    private var lastInputSpeechAt: Date?
     private var hasFinished = false
     /// 代次。每次连接自增，让旧连接的收包循环认得出自己已经过期 ——
     /// 重连后旧 socket 的迟到回包绝不能写进新一轮的转录。
@@ -202,10 +207,16 @@ nonisolated final class VolcengineRealtimeASRClient {
     // MARK: - 音频
 
     /// 喂一块 PCM。**不会阻塞调用方** —— 音频 tap 在实时线程上，那里阻塞会丢音。
-    func enqueue(audio: Data) {
+    ///
+    /// `inputHasSpeech` = **这块音频里有没有人说话**（采集那一侧已经算好的电平判据）。
+    /// 它只为看门狗服务：让看门狗分得清「静音期服务端本来就不回包」和「连接真的死了」
+    /// —— 见 `startWatchdogOnQueue`。**由调用方传进来，不在这里自己算**：采集那边
+    /// 已经有这个判据（`isSpeaking`），两处各算一遍必然会漂。
+    func enqueue(audio: Data, inputHasSpeech: Bool = false) {
         guard !audio.isEmpty else { return }
         socketQueue.async { [weak self] in
             guard let self, !self.hasFinished, self.task != nil else { return }
+            if inputHasSpeech { self.lastInputSpeechAt = Date() }
             self.sentAudioByteCount += Int64(audio.count)
             // 中途永远 isLastPacket: false —— 见类注释第 2 条。
             self.sendOnQueue(VolcengineASRFrame.audioRequest(pcm: audio, isLastPacket: false),
@@ -362,12 +373,32 @@ nonisolated final class VolcengineRealtimeASRClient {
             guard self.sentAudioByteCount > 0 else { return }
             guard let last = self.lastReceivedFrameAt else { return }
             let silence = Date().timeIntervalSince(last)
-            // 15 秒没有任何回包，而音频一直在喂：判定为死连接。
-            if silence > 15 {
-                self.publishDiagnostic("看门狗：已 \(Int(silence)) 秒没有任何回包，判定连接已死")
-                self.publishState(.disconnected(reason: "连接无响应 \(Int(silence)) 秒"))
-                self.teardownOnQueue(sendLastPacket: false, notify: false)
-            }
+            guard silence > 15 else { return }
+            // ⚠️ **安静不是"连接死了"的证据 —— 这一条是 2026-09-28 补的，别删。**
+            //
+            // 服务端只在**有东西可认**的时候回包。用户在想事情、或者两句之间停一会儿
+            // （长录音里这非常常见），喂进去的是底噪，服务端**一个字节都不回**是正常的，
+            // 而旧判据只看「距上一帧多久」—— 于是把每一次长静音都当成死连接：
+            // 重连 → **重喂 8000ms 音频**（日志里还常见连着重连两次 = 16 秒）→
+            // 服务端要把这 8~16 秒重新认一遍。用户看到的就是「说一段话就停止，
+            // 然后突然间来很多字」。
+            //
+            // 实测（2026-09-28，`录音诊断.log` 全量统计）：**156 次「判定连接已死」里
+            // 137 次（88%）发生在房间安静时**（触发前 10 块内最高峰值 < 0.06，而真人
+            // 说话是 0.3~1.0），只有 2 次发生在说话时。也就是说这条看门狗当时主要在
+            // 制造故障，而不是发现故障。
+            //
+            // 所以判据改成两条同时成立：**喂进去的话里刚有过声音** 且 **15 秒没回包**。
+            // 「刚有过声音」用 15 秒的窗口，与上面那条同一个数量级 —— 说话期间服务端
+            // 15 秒不回包，那是真的死了；一旦静下来超过 15 秒，这条判据自己失效，
+            // 不会再去杀一条好连接。连接真死了而用户一直没说话时：他一张嘴，
+            // `lastInputSpeechAt` 立刻更新，这条判据当场成立、当场重连，
+            // 所以"该发现的时候"依然是零延迟。
+            guard let lastSpeech = self.lastInputSpeechAt,
+                  Date().timeIntervalSince(lastSpeech) < 15 else { return }
+            self.publishDiagnostic("看门狗：已 \(Int(silence)) 秒没有任何回包（其间有说话），判定连接已死")
+            self.publishState(.disconnected(reason: "连接无响应 \(Int(silence)) 秒"))
+            self.teardownOnQueue(sendLastPacket: false, notify: false)
         }
         timer.resume()
         watchdogTimer = timer
