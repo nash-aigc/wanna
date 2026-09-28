@@ -298,9 +298,87 @@ struct DirectionBoardView: View {
     ///
     /// 样式也是他定的：「改大一点，做成矩形，**上下边距小一点**，加上圆角，字体大一点」——
     /// 所以从 Capsule(10pt 字) 改成 RoundedRectangle(12pt 字、垂直 1pt)。
-    /// **参考标签那一行**（用户 2026-09-28：「不需要写"参考"两个字，只需要把具体参考的内容
-    /// 用标签的形式显示在**一行**就可以了」）—— 所以没有标题，只有标签本身。
+    /// **参考那一行**（用户 2026-09-28 定的极简风格，取代了原来那排"按钮"）：
+    ///
+    /// 他的原话：「把这个参考部分的内容做成一个**极简风格**，不是用**按钮**的形式……
+    /// 你可以理解为是**一行**，是一个按钮或者是一行内容，然后它们……**没有边框线**，
+    /// 中间用**白色的细线**分开。然后如果……有第二个参考的话，就显示在**右侧**，
+    /// 然后**点亮**，用绿色的颜色，**背景颜色点亮**。」
+    ///
+    /// 所以是**一条**（不是一排各自带边框的胶囊 ✗）：整条一个圆角底，段与段之间一条
+    /// 1pt 纯白细线，文字直接写在段里（同「底栏合成一条按钮」那一版的语言 ✓）；
+    /// **最近拿到的那一份参考**那一段**底色点亮成绿色** —— 它就是"这一轮真正在看的东西"
+    /// （原先用一行「重点关注最近一次屏幕内容」的小字去说这件事，现在那一段点亮本身就说明白了，
+    /// 那行小字因此去掉 ✓，它本来也已经被裁成一行看不见了 ✗）。
     private var referenceTagRow: some View {
+        let items = referenceRowItems
+        return HStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                if index > 0 {
+                    // 段与段之间的那条**纯白细线**（用户：「中间用白色的细线分开」）
+                    Rectangle()
+                        .fill(Color.white.opacity(0.20))
+                        .frame(width: 1)
+                }
+                Text(item.text)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(item.tint)
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .frame(maxHeight: .infinity)
+                    // **点亮**：最近那一份的底色刷成绿色（其余段透明 —— 没有边框、没有底 ✓）
+                    .background(item.isLit ? DS.Colors.success.opacity(0.30) : Color.clear)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(theme.textColor.opacity(0.06))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        // 宽度与下面那张回复卡一致、左边缘对齐（见 `barColumn` 里的注释）✓；
+        // `clipped` 兜住"参考特别多"时向右溢出的那一段（宁可截掉，也不许画到卡片外面 ✗）。
+        .frame(width: NotchSupport.answerCardMaximumWidth, height: Self.referenceTagRowHeight,
+               alignment: .leading)
+        .clipped()
+        .transition(.opacity)
+        .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.tags)
+        .animation(.easeOut(duration: 0.2), value: referenceCollector.materials.unresolved)
+    }
+
+    /// 那一行里的每一段：拿到的参考（`屏幕一` / `屏幕二` / `剪贴板`…）＋ 没拿到的（`无法识别：…`）。
+    private struct ReferenceRowItem {
+        let text: String
+        let tint: Color
+        /// **点亮**这一段的底色（只有"最近拿到的那一份参考"为真 ✓）
+        let isLit: Bool
+    }
+
+    private var referenceRowItems: [ReferenceRowItem] {
+        let obtainedTags = referenceCollector.materials.tags
+        let unresolvedLabels = referenceCollector.materials.unresolved
+        var items: [ReferenceRowItem] = []
+        for (index, tag) in obtainedTags.enumerated() {
+            // 最后一份拿到的 = 这一轮最新的参考 → 点亮 ✓（他说的"第二个显示在右侧、点亮"）
+            let isNewestReference = index == obtainedTags.count - 1
+            items.append(ReferenceRowItem(
+                text: tag,
+                tint: isNewestReference ? DS.Colors.success : theme.textColor.opacity(0.55),
+                isLit: isNewestReference))
+        }
+        for label in unresolvedLabels {
+            // 没拿到的不算参考 ⇒ **不点亮**，只把字写成告警色 ✓
+            items.append(ReferenceRowItem(text: "无法识别：" + label,
+                                          tint: DS.Colors.warning,
+                                          isLit: false))
+        }
+        return items
+    }
+
+    /// ⚠️ **上一版的"一排胶囊按钮"**（`ReferenceTagFlowLayout` + `referenceTag`）—— 用户
+    /// 2026-09-28 换成上面那条极简的一行之后**不再被调用**了 ✗。实现留着（他改主意时一句话就能换回来），
+    /// 但**别照着它去调样式** —— 现在屏幕上哪来的边框，那都是这一版之前的 ✗。
+    private var legacyReferenceTagRow: some View {
         ReferenceTagFlowLayout(spacing: 6, lineSpacing: 4) {
             ForEach(referenceCollector.materials.tags, id: \.self) { tag in
                 referenceTag(tag, tint: DS.Colors.success)
