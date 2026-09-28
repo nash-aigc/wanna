@@ -135,6 +135,31 @@ nonisolated enum CompanionAction: Sendable {
     /// the only free part; the rendered figure lands in `Wanna图形/`
     /// and opens in front of the user. Same shape as `runDesktopFileAgent`.
     case runFigureAgent(task: String)
+
+    // MARK: 从 `mcp-server-macos-use` 移植过来的三个原子动作（2026-09-28）
+
+    // 用户 2026-09-28 拍板：「把它所有的特点和优势全都移植过来」。
+    // 这三样是它**有而 Wanna 没有**的，全部来自同一个底层 SDK
+    // （`MacosUseSDK/AccessibilityActions.swift` 里三个**全局函数**）。
+    //
+    // 它们不能互相替代，各有各的场合：
+    //
+    // - **`setValue`**：直接往控件里写值，**绕过键盘**。合成键盘事件在 Catalyst
+    //   应用、沙箱输入框、安全输入框里会被吞掉 —— 那时只有这一条路。
+    // - **`pressAccessibility`**：发 `kAXPressAction`，**由目标 App 自己执行**。
+    //   合成鼠标点击对 Catalyst 右栏按钮、沙箱应用经常无效（本仓 D39 记过：
+    //   本进程合成的事件落不到前台 App）。这是那条路的替代品。
+    // - **`setSelected`**：设置选中。列表行、表格行、侧栏项**普通点击选不中**
+    //   （点下去只得到焦点），只有设 `kAXSelectedAttribute` 才算选中。
+
+    /// 往 `at` 处的控件里写一个值（走 `kAXValueAttribute`，不经键盘）。
+    case setValue(String, at: ModelReportedCoordinate)
+
+    /// 对 `at` 处的控件发一次 `kAXPressAction`（目标 App 自己执行这个动作）。
+    case pressAccessibility(at: ModelReportedCoordinate)
+
+    /// 设置 `at` 处那一行的选中状态。
+    case setSelected(at: ModelReportedCoordinate, selected: Bool)
 }
 
 nonisolated struct ActionParseResult: Sendable {

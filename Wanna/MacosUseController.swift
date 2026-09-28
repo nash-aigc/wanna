@@ -344,6 +344,33 @@ enum MacosUseController {
                 targeting: targeting
             )
 
+        // MARK: 三个原子动作（2026-09-28 从 mcp-server-macos-use 移植）
+        //
+        // 它们和 `click` **共用同一条坐标解析链**（`resolvedClickPoint`，也就是那三层）
+        // —— 这一点很重要：移植过来的动作不该绕过 Wanna 已经调好的定位逻辑，
+        // 否则就会出现"点击走一套坐标、写值走另一套"的分裂。
+
+        case .setValue(let value, let reportedCoordinate):
+            return await performAccessibilityAction(
+                named: "写入内容", at: reportedCoordinate, among: screenCaptures
+            ) { pid, point in
+                try setAccessibilityValue(pid: pid, at: point, value: value)
+            }
+
+        case .pressAccessibility(let reportedCoordinate):
+            return await performAccessibilityAction(
+                named: "按下控件", at: reportedCoordinate, among: screenCaptures
+            ) { pid, point in
+                try pressAccessibilityElement(pid: pid, at: point)
+            }
+
+        case .setSelected(let reportedCoordinate, let selected):
+            return await performAccessibilityAction(
+                named: selected ? "选中" : "取消选中", at: reportedCoordinate, among: screenCaptures
+            ) { pid, point in
+                try setAccessibilitySelected(pid: pid, at: point, selected: selected)
+            }
+
         case .scroll(let reportedCoordinate, let direction, let amountInSteps):
             return await performScrollAction(
                 at: reportedCoordinate,
@@ -425,6 +452,63 @@ enum MacosUseController {
         case double
     }
 
+    /// 把 SDK 的遍历差异**说人话** —— 这是移植过来最值钱的一件东西。
+    ///
+    /// 判据的重点不在"变了多少"，而在**"一点都没变"**：
+    /// 界面对一个动作毫无反应，通常意味着这一下**没点中**（点歪了、或者那个控件
+    /// 本来就不吃点击）。在这之前调用方看不到这个信号 —— 它只拿到「点击完成」，
+    /// 于是会对着一个没发生的结果继续往下做。
+    private static func describeTraversalDiff(_ diff: TraversalDiff) -> String {
+        let added = diff.added.count
+        let removed = diff.removed.count
+        let modified = diff.modified.count
+        if added == 0 && removed == 0 && modified == 0 {
+            return "⚠️ 界面**没有任何变化** —— 这一下可能没点中，或者那个控件本来就不响应。"
+        }
+        return "界面变了：新增 \(added) · 消失 \(removed) · 改动 \(modified)。"
+    }
+
+    /// 三个 AX 原子动作共用的前半段与收尾（2026-09-28 移植时新增）。
+    ///
+    /// **前半段走和点击完全相同的那条链**（`resolvedClickPoint`，也就是那三层）——
+    /// 这一点是刻意的：移植过来的动作绝不能绕过 Wanna 已经调好的定位逻辑，
+    /// 否则就会出现"点击走一套坐标、写值走另一套"的分裂，而那种分裂**不报错**。
+    ///
+    /// 收尾：成功说做了什么；失败**把 SDK 的原话带回来** —— 这三个动作的失败方式
+    /// 比点击多得多（控件角色不对、目标 App 不响应 AX 动作、point 落在了没有可写值的
+    /// 控件上），一句"没成功"等于什么都没说。
+    private static func performAccessibilityAction(
+        named actionName: String,
+        at reportedCoordinate: ModelReportedCoordinate,
+        among screenCaptures: [CompanionScreenCapture],
+        _ body: (Int32, CGPoint) throws -> Void
+    ) async -> ActionExecutionOutcome {
+        guard let resolution = await resolvedClickPoint(for: reportedCoordinate,
+                                                        among: screenCaptures) else {
+            return ActionExecutionOutcome(
+                description: "找不到要操作的那块屏幕，\(actionName)没有执行。",
+                contextForNextTurn: nil)
+        }
+        // 这三个动作要的是**目标 App 的 pid**（AX 调用按进程走），而点击不需要 ——
+        // 点击只是往屏幕坐标发一个事件。所以 pid 取当前前台应用。
+        guard let frontmost = NSWorkspace.shared.frontmostApplication else {
+            return ActionExecutionOutcome(
+                description: "拿不到当前前台应用，\(actionName)没有执行。",
+                contextForNextTurn: nil)
+        }
+
+        do {
+            try body(frontmost.processIdentifier, resolution.point)
+            return ActionExecutionOutcome(
+                description: "\(actionName)完成（\(frontmost.localizedName ?? "前台应用")）。",
+                contextForNextTurn: nil)
+        } catch {
+            return ActionExecutionOutcome(
+                description: "\(actionName)失败：\(error)",
+                contextForNextTurn: nil)
+        }
+    }
+
     private static func performClickAction(
         named actionName: String,
         at reportedCoordinate: ModelReportedCoordinate,
@@ -490,9 +574,26 @@ enum MacosUseController {
         let clickPoint = resolution.point
 
         do {
+            // ⭐ 2026-09-28：左键改用 `clickWithDiff`（从 `mcp-server-macos-use` 移植）。
+            //
+            // 它在点击**前后各遍历一次界面树**，把"变了什么"带回来。在这之前 Wanna
+            // 只回一句「点击完成」—— **调用方根本不知道那一下生效没有**。
+            // 而这一点至关重要：那个模型看到"点击完成"会以为成功了，于是对着一个
+            // 没发生的结果继续往下做。实测（用户 2026-09-28 对比两个 MCP 时）：
+            // macos-use 回 `106 added, 129 removed`，比我们那句有用得多。
+            //
+            // 右键/双击没有对应的 WithDiff 版本，保持原样。
+            var changeSummary = ""
             switch kind {
             case .left:
-                try clickMouse(at: clickPoint)
+                if let frontmost = NSWorkspace.shared.frontmostApplication {
+                    let result = try await CombinedActions.clickWithDiff(
+                        point: clickPoint, pid: frontmost.processIdentifier)
+                    changeSummary = Self.describeTraversalDiff(result.diff)
+                } else {
+                    try clickMouse(at: clickPoint)
+                    changeSummary = "（拿不到前台应用，没能比对变化）"
+                }
             case .right:
                 try rightClickMouse(at: clickPoint)
             case .double:
@@ -500,7 +601,7 @@ enum MacosUseController {
             }
 
             return ActionExecutionOutcome(
-                description: "\(actionName)了\(describeTarget(reportedCoordinate, at: clickPoint))。",
+                description: "\(actionName)了\(describeTarget(reportedCoordinate, at: clickPoint))。\(changeSummary)",
                 contextForNextTurn: nil
             )
         } catch {

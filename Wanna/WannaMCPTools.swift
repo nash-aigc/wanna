@@ -32,7 +32,8 @@ nonisolated enum WannaMCPTools {
     /// `tools/list` 的返回。形状照 MCP 规范：name / description / inputSchema。
     static func list() -> [[String: Any]] {
         [screenshotDeclaration, clickDeclaration, typeTextDeclaration,
-         pressKeyDeclaration, scrollDeclaration, openAppDeclaration, readScreenDeclaration]
+         pressKeyDeclaration, scrollDeclaration, openAppDeclaration, readScreenDeclaration,
+         setValueDeclaration, pressAXDeclaration, setSelectedDeclaration]
     }
 
     /// 坐标参数的措辞，七处重复所以抽出来 —— 它必须**逐字一致**，
@@ -175,6 +176,75 @@ nonisolated enum WannaMCPTools {
         ]
     }
 
+    // MARK: 三个原子动作（2026-09-28 从 mcp-server-macos-use 移植）
+    //
+    // 它们和 `click` 的区别不是"能不能点"，而是**在点击不管用的地方管用**：
+    // 合成事件会被 Catalyst / 沙箱 / 安全输入框吞掉，那时只有 AX 动作这条路。
+
+    /// 三个原子动作共用的参数（坐标 + 可选的名字，用来走那条按名字解析的链）。
+    private static func atomicCoordinateProperties(extra: [String: Any] = [:]) -> [String: Any] {
+        var properties = coordinateProperties()
+        properties["label"] = [
+            "type": "string",
+            "description": "目标控件的名字（可选，但**强烈建议写**）—— 写了它 Wanna 会去界面树里"
+                           + "按名字找到那个控件的真实位置，比只给坐标准得多。",
+        ]
+        return properties.merging(extra) { _, new in new }
+    }
+
+    private static var setValueDeclaration: [String: Any] {
+        [
+            "name": "set_value",
+            "description": """
+                把一个值**直接写进**控件（走无障碍 API，**不经过键盘**）。\
+                在普通输入框上 `type_text` 更好（更像真人）；但**合成键盘事件会被\
+                沙箱输入框、Catalyst 应用、安全输入框吞掉** —— 那些地方只有这个能用。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": atomicCoordinateProperties(extra: [
+                    "value": ["type": "string", "description": "要写进去的值。"],
+                ]),
+                "required": ["x", "y", "value"],
+            ],
+        ]
+    }
+
+    private static var pressAXDeclaration: [String: Any] {
+        [
+            "name": "press_ax",
+            "description": """
+                对控件发一次**无障碍"按下"动作**（由目标 App 自己执行）。\
+                和 `click` 的区别：`click` 是往屏幕坐标发一个合成鼠标事件，\
+                而 **某些按钮（Catalyst 应用、沙箱应用、部分自绘控件）根本收不到合成事件** —— \
+                那时用这个。点不动的时候换它试试。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": atomicCoordinateProperties(),
+                "required": ["x", "y"],
+            ],
+        ]
+    }
+
+    private static var setSelectedDeclaration: [String: Any] {
+        [
+            "name": "set_selected",
+            "description": """
+                **选中**一个列表行 / 表格行 / 侧栏项。\
+                这类目标普通点击**选不中**（点下去只得到焦点，不算选中），只有设选中属性才算。\
+                不传 selected 默认是选中（true）。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": atomicCoordinateProperties(extra: [
+                    "selected": ["type": "boolean", "description": "true 选中（默认）/ false 取消选中。"],
+                ]),
+                "required": ["x", "y"],
+            ],
+        ]
+    }
+
     // MARK: - 执行
 
     /// `tools/call` 的执行入口。抛出的错误会被服务端包成 `isError: true` 的结果。
@@ -191,6 +261,13 @@ nonisolated enum WannaMCPTools {
         case "open_app": return try await run(.openApplication(named: try string(arguments, "name")),
                                               arguments)
         case "read_screen": return try await run(.readAccessibilityTree, arguments)
+        case "set_value": return try await run(
+            .setValue(try string(arguments, "value"), at: try coordinate(arguments)), arguments)
+        case "press_ax": return try await run(
+            .pressAccessibility(at: try coordinate(arguments)), arguments)
+        case "set_selected": return try await run(
+            .setSelected(at: try coordinate(arguments),
+                         selected: (arguments["selected"] as? Bool) ?? true), arguments)
         default: throw MCPToolError.unknownTool(name)
         }
     }
@@ -312,8 +389,7 @@ nonisolated enum WannaMCPTools {
 
     // MARK: 参数取值（缺了就抛，别用默认值蒙混）
 
-    private static func string(_ arguments: [String: Any], _ key: String) throws -> String {
-        guard let value = arguments[key] as? String, !value.isEmpty else {
+    private static func string(_ arguments: [String: Any], _ key: String) throws -> String {        guard let value = arguments[key] as? String, !value.isEmpty else {
             throw MCPToolError.failed("缺少参数「\(key)」")
         }
         return value
@@ -323,6 +399,18 @@ nonisolated enum WannaMCPTools {
         if let value = arguments[key] as? Double { return value }
         if let value = arguments[key] as? Int { return Double(value) }
         throw MCPToolError.failed("缺少参数「\(key)」（或它不是数字）")
+    }
+
+    /// 从参数里拼一个坐标 —— `click` 与三个原子动作共用。
+    ///
+    /// `label` 留着是有意义的：它让这个动作也走**按名字**那条解析链（三层里的第一层），
+    /// 而不是只有坐标可走。少了它，这三个原子动作就永远落在"看图估坐标"那条最差的路上了。
+    private static func coordinate(_ arguments: [String: Any]) throws -> ModelReportedCoordinate {
+        ModelReportedCoordinate(
+            normalizedCoordinate: CGPoint(x: try number(arguments, "x"),
+                                          y: try number(arguments, "y")),
+            elementLabel: (arguments["label"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            screenNumber: arguments["screen"] as? Int)
     }
 }
 

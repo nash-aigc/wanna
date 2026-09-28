@@ -6127,6 +6127,10 @@ final class CompanionManager: ObservableObject {
         case .readAccessibilityTree: return "读了一遍界面"
         case .runDesktopFileAgent(let task): return "文件助手：\(task.prefix(30))"
         case .runFigureAgent(let task): return "画图：\(task.prefix(30))"
+        // 2026-09-28 从 mcp-server-macos-use 移植的三个原子动作。
+        case .setValue(let value, let at): return "写入「\(value.prefix(20))」到「\(at.elementLabel ?? "未命名")」"
+        case .pressAccessibility(let at): return "按下「\(at.elementLabel ?? "未命名")」（无障碍动作）"
+        case .setSelected(let at, let selected): return "\(selected ? "选中" : "取消选中")「\(at.elementLabel ?? "未命名")」"
         }
     }
 
