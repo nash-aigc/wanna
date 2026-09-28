@@ -283,10 +283,104 @@ Wanna 现在有一套精密的坐标转换（见 `MacosUseController.swift` 文�
 
 ## 九、下一步（本次会话结束时应该做的）
 
-- [ ] 阶段 0 的验证（脱离 Wanna，零风险）
-- [ ] 记录实测数据：哪些工具能调通、坐标准不准、报什么错
-- [ ] 把实测结果追加到本文档下方
+- [x] 阶段 0 的验证（脱离 Wanna，零风险）—— **2026-09-28 完成，见下**
+- [x] 记录实测数据：哪些工具能调通、坐标准不准、报什么错
+- [x] 把实测结果追加到本文档下方
 
 **实测记录**
 
-（待填）
+> **2026-09-28 · 阶段 0 完成。** 全部在仓库外做，`Wanna/` 一行代码没动。
+> 工程在 `~/Documents/SuperAgent/WannaAgent/`（`agent.py` / `probe_mcp.py` /
+> `probe_tools.py` / `probe_tools_extra.py` / `.venv` / `.deepseek_key` 0600）。
+
+### 0.1 环境（实测）
+
+| 项 | 值 |
+|---|---|
+| Python | 3.14.7（homebrew），独立 venv |
+| 包 | `openai-agents 0.22.3` / `openai 3.19.2` / `mcp 2.2.0` |
+| 模型 | `deepseek-flash` @ `https://api.deepseek.com`（官方端点） |
+| 那只手 | `mcp-server-macos-use/.build/debug/…`，`server=SwiftMacOSServerDirect v1.6.0`，协议 `2025-11-25` |
+
+### 0.2 方案里那两个「待验证」，答案如下
+
+| 方案担心 | 实测答案 |
+|---|---|
+| 「本机 `localhost:3000` 上没有 Claude 模型」 | 对。**而且 `deepseek-flash` 也不在那儿** —— 网关回 `model_not_found`。它只在 `https://api.deepseek.com` 上（就是 App 里 DeepSeek 服务商那个地址） |
+| 「Agents SDK 默认走 Responses API，代理多半只支持 Chat Completions」 | 网关**两条路由都在**（`/v1/chat/completions` 与 `/v1/responses` 各返 401 而非 404）。但 DeepSeek 官方端点这条路**必须显式切**：`set_default_openai_api("chat_completions")` |
+| **（方案没提，但决定成败）`deepseek-flash` 支不支持 tool calling？** | **支持。** 实测返回规范的 `tool_calls` + `finish_reason: "tool_calls"`，参数抽取正确。**它是 DeepSeek-V4.1-Flash**，上下文 1,048,576，支持文本+图片输入 |
+
+⚠️ **一条会影响手感与账单的事实**：`deepseek-flash` 是**推理模型**，每次决策前先吐 reasoning token
+（实测一次简单工具选择用掉 14 个）。Agent 场景下这未必是坏事，但延迟和成本都会体现。
+
+### 0.3 九个工具逐个实测（全部覆盖）
+
+跑法：`probe_tools.py` + `probe_tools_extra.py`，每个工具调一次、动作可逆。
+
+| 工具 | 结果 |
+|---|---|
+| `open_application_and_traverse` | ✅ 访达 1597 元素 / 计算器 186 / TextEdit 315 |
+| `refresh_traversal` | ✅ |
+| `click_and_traverse` | ✅ **按 `element` 名字 + `role` 点的**，不是猜坐标 |
+| `type_and_traverse` | ✅ TextEdit |
+| `press_key_and_traverse` | ✅ |
+| `scroll_and_traverse` | ✅ |
+| `press_ax_and_traverse` | ✅ |
+| `set_value_and_traverse` | ✅ TextEdit 正文区 |
+| `set_selected_and_traverse` | ✅ 访达列表行 |
+
+**9/9 覆盖。** 其中两个第一次没通，原因是**文档没写的必填项**（见 0.5 坑 4）。
+
+### 0.4 端到端：一句中文 → 真的点对了
+
+指令「打开计算器，按一下数字 7，然后读一次界面确认显示屏上现在是什么」，实测：
+
+```
+[02] → open_application_and_traverse  {"identifier": "com.apple.calculator"}
+[05] → click_and_traverse  {"pid":8438, "element":"7", "role":"AXButton", …}
+[07] → refresh_traversal   {"pid":8438}
+[09] 💬 「…显示屏的内容是 7（AXStaticText 显示 "7"，宽 17px，正好一位数字的宽度；
+        同时「全部清除」按钮已变为「清除」）」
+```
+
+**总耗时 9.232 秒**（含 3 次模型往返），9 条交互条目。
+
+**独立复核**（本仓规矩「返回 success ≠ 动作生效」，不信模型自述）——直接读那只手写下的界面树：
+
+```
+16: [AXStaticText (文本)] "7 编辑字段" x:242 y:789 w:17 h:36 visible
+18: [AXButton (按钮)] "清除" x:104 y:833 w:48 h:48 visible
+```
+
+第 16 行确实是 7；第 18 行确实从「全部清除」变成了「清除」—— **模型那个交叉验证点是真的**，
+不是编的（我没提示它去看那个按钮）。计算器进程 `8438` 独立核对也在跑。
+
+### 0.5 发现的坑（**阶段 1 设计时必须先看这几条**）
+
+1. ⭐ **那只手返回的是「界面树文件的路径」，不是正文。** agent 只能看到摘要那几百字，
+   于是它自己说出了这句：「完整清单存在 `/tmp/macos-use/….txt`，但**我这边没有读取该文件的工具**」。
+   **在 Wanna 里是 App 自己去读那个文件** —— 阶段 0 的 Python agent 没有这个工具。
+   这条直接决定阶段 1 的形状：Wanna 的 MCP server 是**回正文**还是**回路径 + 另给读文件工具**。
+2. **`identifier` 必须用 bundle id。** 传英文名 `"Finder"` 报
+   `error: Application not found for identifier: 'Finder'`，`com.apple.finder` 才行。
+3. **`AXRow` / `AXCell` 没有 `"文字"` 字段**（只有 role + 坐标），解析界面树的代码不能假设每行都有引号字段。
+4. **`set_value` 与 `set_selected` 的 `pid` 是必填**，而工具的 description 里没写 ——
+   第一版没传，报 `-32602 Invalid params: Missing required 'pid'`。
+5. **Python SDK 是 snake_case**：`init.server_info` / `init.protocol_version`（MCP 规范 JSON 里是
+   camelCase）。写错抛 `AttributeError`，而**握手其实已经成功了** —— 报错会把人往错的方向带。
+
+### 0.6 ⚠️ 阶段 0 **回答不了**的那件事（别拿它推论）
+
+**「坐标准不准」—— 阶段 0 没有资格回答。** 这次点击走的是 `element=` **元素名解析**
+（和 Wanna 的 `resolvedClickPoint` 同一条思路），用的是**界面树里的元素坐标**；
+而 Wanna 那套是 **0–1000 归一化网格 → 截图像素 → 屏幕本地 → Quartz 全局**。
+两套语义不同（方案 §五 自己写明了）。
+
+所以阶段 0 证明的是「**链路通、工具调得到、动作真的生效**」，
+**不是**「最终系统的坐标会准」。后者只能等阶段 1（Wanna 自己当 MCP server、只留一套坐标）来答。
+
+### 0.7 没量的（如实记，别当成量过）
+
+- **每个工具各自的延迟**：只量了端到端那次 9.2 秒；单工具的冷启动/热启动没分开量。
+- **把 Python 打包进 `.app` 后的权限继承与冷启动** —— 那是阶段 2 的验收问题，阶段 0 碰不到。
+- **多步长任务**：只验到 3 步（开→点→读）。更长的循环、失败重试、超时都还没跑。
