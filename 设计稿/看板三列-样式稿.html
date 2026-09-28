@@ -1,0 +1,181 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>看板样式稿 v2</title>
+<style>
+  :root{
+    --bg:#0b0b0d; --card:#141417; --line:#2a2a2f; --line2:#3a3a42;
+    --text:#f2f2f4; --dim:#8a8a93; --faint:#4d4d55; --green:#4ade80;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:13px/1.5 -apple-system,"PingFang SC",sans-serif;padding:26px}
+  h1{font-size:15px;font-weight:600;margin:0 0 6px}
+  .note{color:var(--dim);font-size:12px;margin:0 0 20px}
+  .wrap{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+
+  .seven{position:relative;width:1080px;height:880px;flex:0 0 auto}
+
+  /* 横杠：宽 360，只放 推荐 ｜ 矛盾 */
+  .bar{position:absolute;left:0;top:0;width:570px;height:250px;
+       background:var(--card);border:1px solid var(--line);
+       border-radius:14px;display:flex;overflow:hidden}
+
+  /* 右侧长条：宽 340 = 右下角回复卡的宽度；上半 用户问题、下半 Harness */
+  .strip{position:absolute;left:570px;top:-10px;width:510px;height:800px;
+         background:var(--card);border:1px solid var(--line);border-radius:14px;
+         display:flex;overflow:hidden}
+
+  /* 右下角那张回复卡嵌在 7 的凹口里 */
+  .answer{position:absolute;left:0;top:300px;width:520px;height:210px;
+          background:var(--card);border:1px solid var(--line);border-radius:14px;
+          padding:12px 14px;color:var(--dim);font-size:11.5px}
+  .answer b{color:var(--text);font-weight:600;display:block;margin-bottom:6px}
+
+  .col{padding:13px 15px;overflow:hidden}
+  .bar .col{flex:1}
+  .bar .col:first-child{border-right:1px solid var(--line2)}
+  h2{font-size:12px;font-weight:600;margin:0 0 8px;color:var(--dim);letter-spacing:.06em}
+  pre{margin:0;font:10.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;white-space:pre}
+  .m{color:var(--text)} .u{color:var(--faint)} .ph{color:var(--dim)}
+  .empty{color:var(--faint);font-size:11px}
+  .strip .col.userCol{flex:1;border-right:1px solid var(--line2)}
+  .strip .col.harnessCol{flex:1}
+
+  .legend{max-width:320px;font-size:12px;color:var(--dim)}
+  .legend b{color:var(--text)}
+  .legend p{margin:0 0 10px}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+</style>
+
+<h1>右上角看板 · 样式稿 v2</h1>
+<p class="note">按你的标注改的：<b>2 推荐 ｜ 3 矛盾</b> 在横杠上；<b>1 用户问题</b> 和 <b>4 Harness</b>
+都放进<b>右侧那条长条</b>（它的宽度 = 右下角回复卡的宽度 340）。画的是「已问过 30 个问题」的样子。</p>
+
+<div class="wrap">
+  <div class="seven">
+    <!-- 横杠：推荐 ｜ 矛盾 -->
+    <div class="bar">
+      <div class="col">
+        <h2>推荐</h2>
+        <div class="empty">（空 —— 多数时候不显示）</div>
+      </div>
+      <div class="col">
+        <h2>矛盾</h2>
+        <pre><span style="color:var(--green)">一、关于「改哪些文件」：</span>
+   前面说不要动别的文件，
+   后面又让加一个入口
+
+<span style="color:var(--green)">二、关于「要不要自检」：</span>
+   先说做完要自检，
+   后来说不用每步都检查</pre>
+      </div>
+    </div>
+
+    <!-- 右下角回复卡（嵌在 7 的凹口里） -->
+    <div class="answer">
+      <b>右下角（鼠标旁）· 另一次模型调用</b>
+      这是回答你**最新那一句**的卡片，跟看板不是同一块，位置固定跟着鼠标走。
+    </div>
+
+    <!-- 右侧长条：上=用户问题，下=Harness -->
+    <div class="strip">
+      <div class="col userCol">
+        <h2>用户问题</h2>
+        <pre>关于杨幂
+├─ 杨幂是谁
+├─ 她的代表作有哪些
+├─ 她的出生地和生日
+└─ 她最近有什么作品
+关于这次的任务
+├─ 屏幕上这个内容该怎么处理
+├─ 你觉得应该怎么改
+└─ 帮我确认一下改法
+关于提示词工程
+├─ 我该怎么描述我的需求
+├─ 提示词要写哪些部分
+├─ 角色应该怎么写
+├─ 约束要写多少条
+├─ 要不要给例子
+├─ 输出格式怎么定
+├─ 什么时候该自检
+├─ 上下文放前面还是后面
+├─ 长文档放哪里
+├─ 工具调用该写什么规则
+├─ 失败了怎么办
+├─ 要不要写安全护栏
+├─ 模型参数要不要写进提示词
+├─ 语气和长度怎么控制
+└─ 输出要不要 JSON
+关于 Harness
+├─ 和提示词工程什么关系
+├─ 上下文工程包含什么
+├─ 技能算哪一层
+└─ 自动化怎么描述
+关于排查
+├─ 为什么它没回复我
+└─ 那个卡片为什么一直显示选择</pre>
+      </div>
+      <div class="col harnessCol">
+        <h2>Harness</h2>
+        <pre><span class="ph">执行前</span>
+<span class="m">├─ 提示词</span>
+<span class="m">│  ├─ 角色</span>
+<span class="m">│  ├─ 任务</span>
+<span class="u">│  ├─ 动机</span>
+<span class="u">│  ├─ 上下文背景</span>
+<span class="u">│  ├─ 范例</span>
+<span class="m">│  ├─ 输出格式</span>
+<span class="u">│  ├─ 风格</span>
+<span class="m">│  ├─ 约束</span>
+<span class="u">│  ├─ 安全护栏</span>
+<span class="m">│  └─ 自检</span>
+<span class="u">├─ 上下文与记忆</span>
+<span class="u">│  ├─ 会话历史</span>
+<span class="u">│  ├─ 记忆与摘要</span>
+<span class="u">│  ├─ 检索</span>
+<span class="u">│  ├─ 工具定义</span>
+<span class="u">│  ├─ 文件与资料</span>
+<span class="u">│  └─ 顺序与缓存</span>
+<span class="u">└─ 模型与连接</span>
+<span class="u">   ├─ 模型选择</span>
+<span class="u">   ├─ 采样参数</span>
+<span class="u">   ├─ 路由与高可用</span>
+<span class="u">   └─ 入口</span>
+<span class="ph">执行中</span>
+<span class="u">├─ 执行与工具</span>
+<span class="u">│  ├─ 执行循环</span>
+<span class="u">│  ├─ 子代理</span>
+<span class="u">│  ├─ MCP</span>
+<span class="u">│  ├─ 浏览器自动化</span>
+<span class="u">│  ├─ 文件读写</span>
+<span class="u">│  ├─ 代码审查</span>
+<span class="u">│  └─ 失败怎么办</span>
+<span class="u">└─ 自动化与编排</span>
+<span class="u">   ├─ 定时调用</span>
+<span class="u">   ├─ 长期目标</span>
+<span class="u">   ├─ 工作流</span>
+<span class="u">   ├─ 批量处理</span>
+<span class="u">   ├─ 事件钩子</span>
+<span class="u">   └─ 后台任务</span>
+<span class="ph">执行后</span>
+<span class="u">└─ 验收与可观测</span>
+<span class="u">   ├─ 执行前检查</span>
+<span class="u">   ├─ 执行中盯防</span>
+<span class="u">   ├─ 执行后验收</span>
+<span class="u">   ├─ 验收标准</span>
+<span class="u">   ├─ 执行追踪</span>
+<span class="u">   └─ 成本与用量</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <p><b>横杠（宽 360）</b><br>① 推荐 ｜ ② 矛盾 —— 都是大语言模型生成的。</p>
+    <p><b>右侧长条（宽 340 = 右下角回复卡的宽度）</b><br>
+      上：用户问题（你说的每件事都在里面，问 30 句就是 30 行）<br>
+      下：Harness 整棵树 ——
+      <span class="sw" style="background:var(--faint)"></span>灰 = 还没提到
+      <span class="sw" style="background:var(--text)"></span>白 = 匹配到了</p>
+    <p><b>没画的</b>：底部那行方向格（已删）、任何按钮。这一版是纯看的。</p>
+  </div>
+</div>

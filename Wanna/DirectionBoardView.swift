@@ -408,17 +408,16 @@ private struct ReferenceTagFlowLayout: Layout {
     private var barColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
-                // 左：**用户问题**（= 那棵脑图；用户 2026-09-28 纠正：左侧是用户问题）
-                mindMapColumn
+                // **左上块：推荐 ｜ 矛盾**（用户 2026-09-28 手绘的排版：这一块在左上、矮）
+                recommendationColumn
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 Rectangle()
                     .fill(theme.textColor.opacity(0.22))
                     .frame(width: 1)
                     .padding(.vertical, 2)
-                // 右：**Harness**（他原话：「右侧=harness」）
-                harnessColumn
+                questionLines
                     .padding(.leading, 8)
-                    .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .padding(.horizontal, Self.horizontalPadding)
             .padding(.top, Self.barTopPadding)
@@ -586,15 +585,19 @@ private struct ReferenceTagFlowLayout: Layout {
     ///
     /// 两块都是大语言模型生成的：左边是"推荐用户再补点什么"，右边是"矛盾"。
     /// 脑图（用户问题）这一版**搬去了横杠左侧** ✓，所以这里腾出来给它俩。
+    /// **右侧一整块：用户问题 ｜ Harness**（用户 2026-09-28 手绘的排版）。
+    ///
+    /// 它与**左上的「推荐 ｜ 矛盾」顶边对齐**、并且**一直往下**（比左上块高一倍）——
+    /// 左边半是"你说过的所有问题"（那棵脑图 ✓），右边半是 Harness 整棵树（灰→白 ✓）。
     private var mapColumn: some View {
         HStack(alignment: .top, spacing: 0) {
-            recommendationColumn
+            mindMapColumn
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             Rectangle()
                 .fill(theme.textColor.opacity(0.22))
                 .frame(width: 1)
                 .padding(.vertical, 2)
-            questionLines
+            harnessColumn
                 .padding(.leading, 8)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -605,11 +608,11 @@ private struct ReferenceTagFlowLayout: Layout {
         .clipped()
     }
 
-    /// **用户问题**：横杠左侧那一列 —— 就是原来竖条里那棵脑图（内容一字未改 ✓）。
+    /// **右侧块里的左半：用户问题** —— 原来竖条里那棵脑图，内容一字未改 ✓。
     private var mindMapColumn: some View {
         let value = session.understandingLines.first { $0.label == Self.mindMapLabel }?.value ?? ""
         return Text(value.isEmpty ? Self.emptyValuePlaceholder : value)
-            .font(.system(size: 12, design: .monospaced))
+            .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(theme.textColor.opacity(value.isEmpty ? 0.35 : 1.0))
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .topLeading)
