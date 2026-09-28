@@ -101,6 +101,9 @@ struct DirectionBoardView: View {
     /// 用户 2026-09-28 把左列定成"提示词工程"，右边留给矛盾，中间一条细线。
     static let harnessColumnWidth: CGFloat = 200
 
+    /// 两块卡片之间的缝（B 版：中间不再有竖线，靠缝把两块分开 ✓）。
+    static let blockGap: CGFloat = 10
+
     /// **右列（问题 / 那棵脑图）有多宽** —— 它内容长（30 个问题就是 30 行），需要宽一点。
     static let questionColumnWidth: CGFloat = 360
 
@@ -392,23 +395,40 @@ private struct ReferenceTagFlowLayout: Layout {
     /// 为什么是 7：用户的原话 ——「右侧……它非常非常长，而左侧又非常的少，
     /// 所以就会占用一个很大的空白空间，这完全没有意义，所以把它做成一个 7 字形」。
     /// 右下角那张 AI 回复卡就嵌进**凹口**里（横杠在上、竖条在右，中间留一点距离）。
+    /// **两块独立的圆角卡片**（用户 2026-09-28 选 B：「连它们也去掉」）——
+    /// 上面一块是 `补充 ｜ 矛盾` ✓，右边一列是 `用户问题 ｜ harness` ✓，
+    /// 两块的轮廓**各自闭合**、之间留一条缝 ✓ —— 所以中间**再没有竖线** ✓。
     private var sevenCard: some View {
-        HStack(alignment: .top, spacing: 0) {
-            // **左（上）：补充 ｜ 矛盾** —— 回复卡落在它**下面**的空处 ✓（用户 2026-09-28 的原话：
-            // 「卡片右上角分别是（补充｜矛盾），在回复卡片的上面」）。
-            barColumn
-            // **右侧一整条长竖列：用户问题 ｜ harness** ✓（他：「右侧是【很长的竖列】（用户问题｜haness）」）。
-            HStack(alignment: .top, spacing: 0) {
-                mindMapColumn
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                // ⚠️ **两列之间那条细线删掉了**（用户 2026-09-28：「细线（删除吧）」）——
-                // 他要的是一整条**没有内部分隔**的长竖列 ✓。
-                harnessColumn
-                    .padding(.leading, 12)
-                    .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
+        HStack(alignment: .top, spacing: Self.blockGap) {
+            blockCard { barColumn }
+            blockCard {
+                HStack(alignment: .top, spacing: 0) {
+                    mindMapColumn
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    harnessColumn
+                        .padding(.leading, 12)
+                        .frame(width: Self.harnessColumnWidth, alignment: .topLeading)
+                }
+                .frame(width: Self.questionColumnWidth + Self.harnessColumnWidth, alignment: .topLeading)
             }
-            .frame(width: Self.questionColumnWidth + Self.harnessColumnWidth, alignment: .topLeading)
         }
+    }
+
+    /// 给一块内容套上"卡片壳"：圆角底 + 一圈边 ✓（两块各套一次 ✓）。
+    @ViewBuilder
+    private func blockCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .background(
+                RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
+                    .fill(.clear)
+                    .background(AnswerCardView.cardBackground(theme: theme))
+                    .clipShape(RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius,
+                                               style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AnswerCardView.cardCornerRadius, style: .continuous)
+                    .stroke(borderTint, lineWidth: borderWidth)
+            )
     }
 
     /// **7 的那一横**（三段，从下往上）。
