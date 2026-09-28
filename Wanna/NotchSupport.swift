@@ -804,7 +804,11 @@ nonisolated enum NotchSupport {
     nonisolated static func directionBoardPanelFrame(anchor: CGPoint,
                                                      size: CGSize,
                                                      topEdgeOffsetAboveAnchor: CGFloat,
-                                                     gap: CGFloat = 12) -> CGRect {
+                                                     gap: CGFloat = 24) -> CGRect {
+        // ⚠️ **gap 12 → 24**（用户 2026-09-28：「右上角卡片的最左边，跟回复卡片的最左边，
+        // 它们应该是**对齐**的关系……以下面的实时生成的一个位置为标准」）——
+        // 回复卡的锚点是"鼠标 + 24" ✓，所以看板也必须是 24 ✗，两边左边缘才在同一条竖线上 ✗
+        //（原来是 12，于是两块差 12pt、看起来是"交叉"的 ✗）。
         // 横杠的下沿在鼠标上方 `topEdgeOffsetAboveAnchor`，整块从那里往下长。
         let topEdgeY = anchor.y + topEdgeOffsetAboveAnchor
         return CGRect(x: anchor.x + gap,
