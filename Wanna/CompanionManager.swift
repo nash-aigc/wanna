@@ -1008,6 +1008,21 @@ final class CompanionManager: ObservableObject {
         // **方向看板的自检**（`WANNA_DIRECTION_BOARD_SELFCHECK=1`）：没有麦克风也把看板摆出来，
         // 喂几句假转写、不打任何请求。开发期验界面用，不是用户可见的设置 —— 见
         // `DirectionBoardSession.selfCheckMode` 里写的理由（这台机器没有可用的语音输入）。
+        // **「引擎启动中」那一格的自检**（`WANNA_STARTING_PHASE_SELFCHECK=1`）：
+        // 把它按在刘海上好截图核样式（它本来只存在 1.5~2 秒）。
+        if ProcessInfo.processInfo.environment["WANNA_STARTING_PHASE_SELFCHECK"] != nil {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                self?.notchWindowController?.beginSelfCheckStartingEnginePhase()
+                print("🎛️ Starting 自检：相位已钉在 startingEngine")
+                // 再等 3 秒走一遍"引擎热好"那一拍（`✓` 停 0.6 秒）—— 那一下在真机上
+                // 只有 0.6 秒，不这样钉住根本截不到 ✗。
+                try? await Task.sleep(for: .seconds(3))
+                self?.notchWindowController?.endEngineWarmUpPhase()
+                print("🎛️ Starting 自检：已走「引擎热好」那一拍（应显示 ✓ 0.6 秒）")
+            }
+        }
+
         if DirectionBoardSession.selfCheckMode == "stream" {
             // 只量字幕那条渲染链（不拉看板、不发请求）—— 但相位要钉在 Listening，
             // 否则那一行根本不画（第一次量就是这么扑空的）。
@@ -2461,9 +2476,16 @@ final class CompanionManager: ObservableObject {
                 let engineBringUpBeganAt = Date()
                 await bailianTTSClient.warmUpVoiceEngine()
                 let engineBringUpSeconds = Date().timeIntervalSince(engineBringUpBeganAt)
-                if engineBringUpSeconds > 0.3 {
-                    SoundEffectPlayer.shared.play(.answerFinished)
-                }
+                // ⚠️ **这里原来会响一声 `.answerFinished` 当"可以说话了"的信号 —— 2026-09-28 删掉** ✗。
+                // 用户的反馈：「按下快捷键它会直接启动引擎，然后**声音会很卡，基本上播放一半**，
+                // 很影响用户体验……你把这个声音删掉……让用户能够**看到**他的启动就好了，
+                // **不要有声音**」。根因：这一声正好落在 VPIO 刚把音频设备重配完的那一刻 ✗
+                // （引擎起来的同一拍），所以它从来就没有完整播过 —— 不是音效文件的问题，是**时机** ✗。
+                // "已经可以说话了"这件事现在由**视觉**说：刘海左翼那个 `Starting`
+                // + 右翼那颗**绿色呼吸**的点 → 引擎一热变成 `✓`（0.6 秒）→ Listening ✓
+                // （见 `NotchWindowController.beginEngineWarmUpPhase()` 与 `NotchActivityView`）。
+                // ⚠️ 中途试过"3-2-1 倒计时"，用户当场否掉 ✗：「只显示 **Starting + 绿色呼吸**，
+                // **没有 321**」—— 别再加回来。
                 // **开麦这件事本身也留一行**：引擎是刚预热完的还是本来就热着、等了多久。
                 // 这一行是"录音到底从哪一刻开始收东西"的唯一判据 —— 以后出问题第一时间看它。
                 MainFlowDiagnostics.log("🎙️ 开麦：引擎预热耗时 "

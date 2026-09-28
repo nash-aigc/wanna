@@ -96,8 +96,10 @@ extension NotchActivityPhase {
     var notchAnimationTint: Color {
         switch self {
         case .idle: return .white
-        // Starting 与 Listening 同一个青绿：引擎一热就切过去，颜色不变、只有动画换形状 ✓
-        case .startingEngine: return Color(red: 0.37, green: 0.92, blue: 0.83)   // #5EEAD4
+        // **启动中 = 绿色**（用户 2026-09-28：「把它做成一个绿色的呼吸的样子，然后结束……
+        // 就变成 listening 就好了」）—— 所以它与 Listening 的青绿**不再同色**了：
+        // 绿是"正在准备"，青绿是"已经在听"，交接那一下靠颜色 + 形状一起说明白 ✓。
+        case .startingEngine: return Color(red: 0.29, green: 0.87, blue: 0.50)   // #4ADE80 绿
         case .listening: return Color(red: 0.37, green: 0.92, blue: 0.83)   // #5EEAD4
         case .thinking: return Color(red: 0.77, green: 0.49, blue: 0.94)    // #C47CF0
         case .speaking: return Color(red: 0.98, green: 0.57, blue: 0.24)    // #FB923C
@@ -127,7 +129,7 @@ extension NotchActivityPhase {
     var notchGlowColor: Color {
         switch self {
         case .idle: return .clear
-        case .startingEngine: return Color(red: 0.07, green: 0.27, blue: 0.30)    // #12464C
+        case .startingEngine: return Color(red: 0.04, green: 0.27, blue: 0.15)   // #0B4627 深绿
         case .listening: return Color(red: 0.07, green: 0.27, blue: 0.30)    // #12464C
         case .thinking: return Color(red: 0.33, green: 0.00, blue: 0.40)     // #540067
         case .speaking: return Color(red: 0.27, green: 0.14, blue: 0.06)     // #45230F
@@ -549,6 +551,9 @@ struct NotchWingView: View {
     var audioHistoryProvider: () -> [CGFloat]
     let isLeading: Bool
 
+    /// **引擎刚热的那一拍，左翼那一格显示什么**（`✓`）—— **空串时用相位自己的词**（启动中 = `Starting` ✓）。
+    var engineWarmUpSymbol: String = ""
+
     /// **把这条翼外端的下圆角收成直角。**
     ///
     /// 只有一件事会让它变成 true：**刘海下面那一行字幕正显示着**。那一行（以及它下面
@@ -599,6 +604,12 @@ struct NotchWingView: View {
         )
     }
 
+    /// **左翼那一格该显示什么**：启动中显示倒计时符号（`3`/`2`/`1`/`✓`），其余用相位自己的词 ✓。
+    private var displayedStateWord: String {
+        if phase == .startingEngine, !engineWarmUpSymbol.isEmpty { return engineWarmUpSymbol }
+        return phase.notchStateWord
+    }
+
     var body: some View {
         // The outline is the BASE and everything else rides in an `overlay`,
         // which never contributes to its parent's layout size. That distinction
@@ -641,10 +652,15 @@ struct NotchWingView: View {
                     // left.
                     HStack {
                         Spacer(minLength: 0)
-                        Text(phase.notchStateWord)
+                        // **启动中这一格就是 `Starting`** —— 用户 2026-09-28 当场否掉了 3-2-1：
+                        // 「只显示 **Starting + 绿色呼吸**，**没有 321**」✗。符号只有引擎
+                        // **真的**热了那一刻才被设成 `✓`（他要的"启动完成"），其余时候是空串
+                        // ⇒ 用相位自己的词 ✓。
+                        Text(displayedStateWord)
                             .font(.system(size: 13.5, weight: .bold))
                             .foregroundColor(.white)
                             .lineLimit(1)
+                            .contentTransition(.numericText())
                     }
                     .padding(.trailing, 6)
                 }
@@ -730,7 +746,11 @@ struct NotchWingView: View {
                             NotchActivityView(
                                 phase: phase,
                                 audioHistoryProvider: audioHistoryProvider,
-                                tint: phase.notchAnimationTint
+                                tint: phase.notchAnimationTint,
+                                // **引擎热了之后那颗绿点就不再呼吸**（用户 2026-09-28：
+                                // 「然后结束就是启动完成，**就是呼吸也删掉**，就变成 listening 就好了」）——
+                                // 那一拍左翼显示的是 `✓`，符号非空 ⇒ 呼吸停 ✓。
+                                breathes: engineWarmUpSymbol.isEmpty
                             )
                         }
                     }
@@ -866,6 +886,8 @@ struct NotchActivityView: View {
     let phase: NotchActivityPhase
     var audioHistoryProvider: () -> [CGFloat] = { [] }
     var tint: Color = .white
+    /// **`.startingEngine` 那一格要不要呼吸** —— 引擎热了（左翼显示 `✓`）之后就不再呼吸 ✓。
+    var breathes: Bool = true
 
     var body: some View {
         switch phase {
@@ -879,9 +901,21 @@ struct NotchActivityView: View {
                     tint: tint
                 )
             }
-        case .startingEngine, .thinking:
-            // 启动中与思考共用"脉冲点"这个形状（都是"正在准备"），区别只在状态词与时长。
-            // **绝不用音波** —— 那一刻麦克风还没开，画音波就是告诉用户"我在听" ✗。
+        case .startingEngine:
+            // **绿色呼吸**（用户 2026-09-28：「在启动的过程中间……把它做成一个绿色的呼吸的样子，
+            // 然后结束就是启动完成，就是呼吸也删掉，就变成 listening 就好了」）——
+            // 一颗绿点缓慢地吸气/呼气，与左翼那个 `Starting` 一起读作"正在准备" ✓。
+            // **绝不用音波** ✗ —— 那一刻麦克风还没开，画音波就是告诉用户"我在听"（正是这个仓库
+            // 最忌讳的那种谎）。
+            // ⚠️ 也不能用"脉冲点"（那是 Thinking / Connecting 的形状 ✗）—— 他点名要的是**呼吸**。
+            if breathes {
+                NotchEngineBreathingDotView(tint: tint)
+            } else {
+                // 启动完成那一拍：**不呼吸**（呼吸是"还在准备"的意思），只留一颗静止的绿点，
+                // 与左翼那个 `✓` 一起读作"好了" ✓。
+                Circle().fill(tint).frame(width: 9, height: 9)
+            }
+        case .thinking:
             TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
                 NotchThinkingDotsView(timelineDate: timeline.date, tint: tint)
             }
@@ -937,6 +971,30 @@ struct NotchListeningWaveformView: View {
 }
 
 /// Three dots pulsing out of phase — thinking.
+/// **引擎启动中那颗"绿色呼吸"的点**（2026-09-28）。
+///
+/// 一颗圆点缓慢地放大到 1.35 倍再回到 0.8，同时透明度 0.4 → 1 —— 读起来就是**呼吸** ✓，
+/// 而不是脉冲点的"我在想"✗。
+///
+/// ⚠️ **`repeatForever` 必须挂在一个会变的布尔上**（`isBreathing` 在 `onAppear` 里翻一次 ✓）。
+/// 直接挂在"相位是不是 `.startingEngine`"上是**没用**的 —— 那个值在一次启动里只说一次，
+/// 动画不会重复播 ✗（本仓库在"折叠钮呼吸灯"那一轮为这一条吃过亏）。
+/// 每一次启动都会新挂一次这个视图，所以每次启动的呼吸都是从头开始的 ✓。
+struct NotchEngineBreathingDotView: View {
+    let tint: Color
+    @State private var isBreathing = false
+
+    var body: some View {
+        Circle()
+            .fill(tint)
+            .frame(width: 9, height: 9)
+            .scaleEffect(isBreathing ? 1.35 : 0.80)
+            .opacity(isBreathing ? 1.0 : 0.40)
+            .animation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true), value: isBreathing)
+            .onAppear { isBreathing = true }
+    }
+}
+
 struct NotchThinkingDotsView: View {
 
     var timelineDate: Date
@@ -1093,6 +1151,8 @@ struct NotchPanelRootSwitchingView: View {
                             // `voiceChatController` 里（它是独立管线）。
                             companionManager.hangUpAnyActiveCall()
                         },
+                        // **展开态那条带子也要有启动反馈**（用户很可能正开着面板按快捷键）✓
+                        engineWarmUpSymbol: panelModel.engineWarmUpSymbol,
                         squaresBottomOuterCorner: panelModel.notchBandSitsAboveTranscriptLine
                     )
                 }
@@ -1161,6 +1221,8 @@ struct NotchExpandedWingBand: View {
     var notionNoteButtonPlacement: NotchSupport.NotionNoteButtonPlacement?
     /// 语音聊天进行中，右翼是一颗真的挂断按钮。
     var hangUpAction: (() -> Void)?
+    /// **引擎刚热的那一拍，左翼那一格显示什么**（`✓`）—— 见 `NotchWingView` 的同名属性。
+    var engineWarmUpSymbol: String = ""
     /// 刘海下面那行字幕正显示着 —— 整条带子的下边缘收成直角，见
     /// `NotchWingView.squaresBottomOuterCorner`。
     ///
@@ -1190,6 +1252,7 @@ struct NotchExpandedWingBand: View {
                     phase: phase,
                     audioHistoryProvider: audioHistoryProvider,
                     isLeading: true,
+                    engineWarmUpSymbol: engineWarmUpSymbol,
                     squaresBottomOuterCorner: squaresBottomOuterCorner
                 )
                 .frame(width: NotchSupport.leadingWingWidth, height: notchBandHeight)
@@ -1206,6 +1269,7 @@ struct NotchExpandedWingBand: View {
                     phase: phase,
                     audioHistoryProvider: audioHistoryProvider,
                     isLeading: false,
+                    engineWarmUpSymbol: engineWarmUpSymbol,
                     squaresBottomOuterCorner: squaresBottomOuterCorner
                 )
                 .frame(width: NotchSupport.trailingWingWidth, height: notchBandHeight)

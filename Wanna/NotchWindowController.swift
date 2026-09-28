@@ -137,6 +137,17 @@ final class NotchPanelModel: ObservableObject {
     /// 那一刻麦克风还没开，屏幕上必须显示「正在准备」，而不是「在听」。
     var isWaitingForEngineWarmUp: Bool = false
 
+    /// **引擎刚热的那一拍，刘海左翼那一格显示什么**（2026-09-28）。
+    ///
+    /// 空串 = 用相位自己的词 —— 启动中就是 **`Starting`** ✓（用户定的：「只显示
+    /// **Starting + 绿色呼吸**，**没有 321**」；3-2-1 那一版他当场否掉了 ✗）。
+    /// 只有引擎**真的**热了那一刻由控制器设成 **`✓`**、停 0.6 秒，随后交给 Listening ✓。
+    var engineWarmUpSymbol: String = ""
+
+    /// **`✓` 那一拍还按着相位不放**：引擎热了之后先把 ✓ 显示完，再让相位回到正常推导
+    ///（否则 `isWaitingForEngineWarmUp` 一落，下一拍就变成 Listening，那个 ✓ 一帧都看不见 ✗）。
+    var isHoldingEngineReadyBeat: Bool = false
+
     var notchBandSitsAboveTranscriptLine: Bool {
         activityPhase == .listening && !isFullscreenSuppressed
     }
@@ -282,6 +293,8 @@ final class NotchWindowController {
     /// menu bar panel is the permanent backup entry, so disabling this never
     /// strands the user.
     func teardown() {
+        engineReadyBeatTask?.cancel()
+        engineReadyBeatTask = nil
         collapse(expandBackToPill: false)
         for presence in screenPresences {
             if let resizeObserver = presence.resizeObserver {
@@ -1924,6 +1937,9 @@ final class NotchWindowController {
     /// 意义…不要一会儿开一会儿关」). The gap is not the end of the turn, and the
     /// panel should not read as flickering during it.
     private var activityPhaseHoldTask: Task<Void, Never>?
+
+    /// **✓ 那一拍的停留**（引擎热了之后按住相位 0.6 秒，见 `endEngineWarmUpPhase()`）。
+    private var engineReadyBeatTask: Task<Void, Never>?
     private static let activityPhaseHoldSeconds: TimeInterval = 2.5
 
     /// Set by an explicit stop, consumed by the next `refreshActivityPhase`:
@@ -1966,14 +1982,29 @@ final class NotchWindowController {
     /// 与 `holdActivityPhaseAtIdle` 同一形状（改旗标 + 立刻重算一次相位）。
     func beginEngineWarmUpPhase() {
         panelModel.isWaitingForEngineWarmUp = true
+        panelModel.engineWarmUpSymbol = ""
         refreshActivityPhase()
     }
 
-    /// 引擎热好了（或这一轮被取消）：撤掉 **Starting**，相位回到正常推导。
+    /// 引擎热好了（或这一轮被取消）：**先亮一个 ✓**，再撤掉 **Starting**、让相位回到正常推导。
+    ///
+    /// ⚠️ 那个 ✓ **必须自己按住 0.6 秒**：`isWaitingForEngineWarmUp` 一落，下一拍相位就按
+    /// `voiceState` 算成 Listening 了，✓ 一帧都看不见 ✗（这就是 `isHoldingEngineReadyBeat`
+    /// 存在的唯一理由）。
     func endEngineWarmUpPhase() {
         guard panelModel.isWaitingForEngineWarmUp else { return }
         panelModel.isWaitingForEngineWarmUp = false
+        panelModel.engineWarmUpSymbol = "✓"
+        panelModel.isHoldingEngineReadyBeat = true
         refreshActivityPhase()
+        engineReadyBeatTask?.cancel()
+        engineReadyBeatTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard let self, !Task.isCancelled else { return }
+            self.panelModel.isHoldingEngineReadyBeat = false
+            self.panelModel.engineWarmUpSymbol = ""
+            self.refreshActivityPhase()
+        }
     }
 
     func holdActivityPhaseAtIdle() {
@@ -1985,6 +2016,17 @@ final class NotchWindowController {
         activityPhaseHoldTask = nil
         setActivityPhase(panelModel.externalSessionOverride ?? .idle)
         syncListeningTranscriptPanel()
+    }
+
+    /// **自检专用：把相位钉在 `.startingEngine`**（引擎启动中那一格）。
+    ///
+    /// 那一格只存在 1.5~2 秒（引擎热起来就过去了），肉眼抓不住、采样也容易扑空 ——
+    /// 所以给一个开关把它按住：`WANNA_STARTING_PHASE_SELFCHECK=1` 启动，
+    /// 刘海就一直显示 **`Starting` + 绿色呼吸**，好截图核样式（同
+    /// `beginSelfCheckListeningPhase()` 的做法）。
+    func beginSelfCheckStartingEnginePhase() {
+        panelModel.isWaitingForEngineWarmUp = true
+        refreshActivityPhase()
     }
 
     /// **自检专用**：把相位钉在 `.listening`，好让刘海那行字幕真的画出来。
@@ -2034,7 +2076,7 @@ final class NotchWindowController {
         // 而不是"在听"（见 `NotchActivityPhase.startingEngine` 的注释）。
         // 放在最前面（连"被 ESC 按在 idle"那道闸都在它之后）—— 因为这是一次**全新的按下**，
         // 那一刻用户最需要看到的反馈就是"它收到了"。
-        if panelModel.isWaitingForEngineWarmUp {
+        if panelModel.isWaitingForEngineWarmUp || panelModel.isHoldingEngineReadyBeat {
             setActivityPhase(.startingEngine)
             syncListeningTranscriptPanel()
             return
