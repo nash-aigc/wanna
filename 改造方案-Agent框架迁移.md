@@ -397,6 +397,74 @@ Wanna 有两条独立的路径，**只有一条要改**：
 
 ---
 
+## 附：`mcp-server-macos-use` 与 Wanna 的逐条对照（2026-09-28 读源码得出）
+
+用户要求：「**你要去把这个代码读一下**，然后看它具体是不是跟当前的 MCP 功能重合」
+—— 下面是读 `Sources/MCPServer/main.swift`（2056 行）与 `MacosUseSDK` 的结果。
+
+### 同源，但"找元素"那一层是各写各的
+
+两边都 `import MacosUseSDK`（mediar-ai，同一作者）。但：
+
+| | 共用 | 各写各的 |
+|---|---|---|
+| 读界面树 | ✅ 同一个 SDK | |
+| 输入合成（点击/打字/按键） | ✅ 同一个 `InputController` | |
+| **找元素** | | **Wanna：三键排序（精确名→控件尺寸→离估算点近）+ 包含语义**<br>**macos-use：`elementText == text` 精确相等** |
+| 兜底 | | Wanna 有 ②吸附 ③估算；**macos-use 没有兜底**，找不到名字就必须给坐标 |
+
+### 谁也不是谁的父集
+
+| 能力 | Wanna | macos-use |
+|---|---|---|
+| 按名字（宽松/包含） | ✅ | ❌（必须完全相等） |
+| 坐标兜底（吸附 / 估算点） | ✅ | ❌ |
+| ⭐ **动作后报 diff（变了什么）** | ❌ | ✅ |
+| `set_value` / `press_ax` / `set_selected` | ❌ | ✅ |
+| 蓝光标 / 圈选提问 / 画圈 / agent 循环 | ✅ | ❌ |
+| 截图**剔除本 App 窗口** | ✅ | ❌ |
+
+### ⭐ 而且 diff 这个能力**本来就在我们脚下**
+
+`MacosUseSDK` 自己就提供 `CombinedActions.clickWithDiff` / `pressKeyWithDiff` /
+`writeTextWithDiff`，以及 `AccessibilityActions` 里的
+`setAccessibilityValue(pid:at:value:)` / `pressAccessibilityElement(pid:at:)` /
+`setAccessibilitySelected(pid:at:selected:)`。**Wanna 一个都没用。**
+
+### 正面对比：同一批目标各点一遍（豆包，6 个目标）
+
+脚本 `~/Documents/SuperAgent/WannaAgent/compare_two_mcps.py`
+（Wanna 走 HTTP、macos-use 走 stdio，**同一个 Python 客户端**；判据对两者相同：
+点前点后界面树有没有变）。
+
+| | 生效 |
+|---|---|
+| **Wanna** | **4/6** |
+| **macos-use** | **2/6** |
+
+macos-use 那 4 个失败里 **2 个是「参数报错」**（它根本没处理），另 2 个它自报
+`Clicked element 'X'. 1 added, 1 removed` 而我的判据没看到变化 ——
+**说明它的 diff 比"整棵树对比"更灵敏**，这也正是要吸收它的理由。
+
+### 三层的真实工作原理（用户问）
+
+**串行兜底，不是并行对比**：①按名字 → 找到了就返回（**根本不看估算点**）
+→ 没找到才 ②吸附 → 还不行才 ③估算点。
+
+⚠️ **所以 ③ 不是罕见路径**：仓库自己量过（2026-09-26，7 次点击解析），
+**6 次是「模型没写名字」** → 全部直接掉到 ③。**模型不写名字 = 直接用 17% 那条路。**
+
+### 结论：合并什么、不合并什么
+
+- ❌ **不合并服务端**：能力互不包含，合成一个只会互相牵制；而且两套坐标（像素 vs 网格）
+  同时暴露给 agent 正是 §五 的致命风险。
+- ✅ **吸收这四样**（用户拍板「我们没有的全都吸收过来」）：
+  1. ⭐ **动作后报 diff** —— 现在只回「点击完成」，调用方不知道生效没有
+  2. `set_value`　3. `press_ax`　4. `set_selected`
+- ✅ **给 Python agent 只暴露 Wanna 一个**。macos-use 留着给别的客户端用（Claude Code 现在就在用）。
+
+---
+
 ## 五、最大的风险（一条，但致命）
 
 ### 坐标语义不一致 → **点歪，而且不报错**
