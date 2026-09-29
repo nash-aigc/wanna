@@ -230,7 +230,6 @@ final class CompanionManager: ObservableObject {
     /// Held so `stop()` can cancel it, and so a second compression cannot start
     /// while one is running — two summaries folding the same exchange would
     /// produce a summary of a summary.
-    private var historyCompressionTask: Task<Void, Never>?
 
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
@@ -1452,8 +1451,6 @@ final class CompanionManager: ObservableObject {
             MainActor.assumeIsolated {
                 self?.conversationHistory = []
                 self?.compressedHistorySummary = ""
-                self?.historyCompressionTask?.cancel()
-                self?.historyCompressionTask = nil
                 print("💬 Wanna: conversation memory cleared")
             }
         }
@@ -5219,32 +5216,18 @@ final class CompanionManager: ObservableObject {
         )
         conversationHistory.removeFirst(agedOutEntries.count)
 
-        guard AppSettingsStore.snapshot().autoCompressesHistory,
-              !agedOutEntries.isEmpty,
-              historyCompressionTask == nil else { return }
-
-        let entriesToCompress = Array(agedOutEntries)
-        let summarySoFar = compressedHistorySummary
-
-        historyCompressionTask = Task { [weak self] in
-            defer { self?.historyCompressionTask = nil }
-
-            guard let self else { return }
-            guard let foldedSummary = try? await self.summarizeExchanges(
-                entriesToCompress,
-                previousSummary: summarySoFar
-            ) else {
-                // The exchanges are already gone from the window. A failed summary
-                // means they are simply forgotten, which is the behaviour the
-                // setting has when it is off — worth a log line, not an alert.
-                print("⚠️ Wanna: could not compress aged-out conversation; those turns are dropped")
-                return
-            }
-
-            self.compressedHistorySummary = foldedSummary
-            self.persistConversationHistoryIfEnabled()
-            print("💬 Wanna: compressed \(entriesToCompress.count) aged-out exchanges into the conversation summary")
-        }
+        // **压缩这一整段删掉了**（2026-09-29）。
+        //
+        // 它每轮烧**一次模型请求**，把挤出去的轮次折成一段摘要，存进会话记录的
+        // `summary` 字段 —— 而那个字段**一个读者都没有**：归档页、侧栏、
+        // ConversationSessionsModel 全都不读它（grep 实测），
+        // 模型也不读（历史现在由官方的 Session 自己带）。
+        //
+        // 整条链是个纯循环：磁盘读进镜像 → 压缩任务更新 → 写回磁盘。
+        // **白烧一次请求，换一个没人看的字符串。**
+        //
+        // ⚠️ `summary` 这个**字段本身留在 store 里**没动 —— 磁盘上已有数据，
+        // 为一个没人读的字段做文件格式迁移不值得（§0.8：停掉生产者就够了）。
     }
 
     /// Folds `entries` into `previousSummary` with one text-only model request.
