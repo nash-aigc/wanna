@@ -142,10 +142,57 @@
 **反复压缩**时，摘要起点是**上一次压缩保留的边界**（`firstKeptEntryId`），
 不是压缩条目本身 —— **这样上一次压缩后活下来的消息会被再带进下一轮摘要**。
 
-## 9. 还没读的
+## 9. 命令行（官方 `cli.md`）
 
-`cli.md`（全部命令行选项）· `extensions.md`（扩展怎么写）·
-`configuration.md` / `settings.md`
+**三种非交互模式**（决定我们怎么起 Pi）：
+
+| 选项 | 行为 |
+|---|---|
+| `--mode rpc` | **读 stdin 的 JSONL 命令、往 stdout 写响应与事件，直到关闭** ← 我们用的 |
+| `--mode json` | 跑完给的 prompt，把 JSONL 事件写 stdout，**然后退出** |
+| `--mode text` | 文本输出（stdin/stdout 都是终端时仍开 TUI） |
+| `-p`, `--print` | 跑 prompt，**只把最终 assistant 文字写 stdout**，然后退出 |
+
+**输入怎么给**：`message`（初始 prompt）· `@path`（把文本文件或图片带进第一个 prompt）·
+**管道 stdin**（内容前置到第一个 prompt）· `--`（让 prompt 能以 `-` 开头）
+
+⚠️ 官方 `rpc.md` 另有一条：**RPC 模式拒绝 `@file` 形式的 prompt 参数**，prompt 一律走 `prompt` 命令。
+
+## 10. 扩展怎么写（官方 `extensions.md`）
+
+```ts
+export default function (pi: ExtensionAPI) {
+  pi.registerCommand("hello", { ... })
+}
+```
+
+| 想加什么 | 用哪个 |
+|---|---|
+| 模型能调的操作（工具） | `pi.registerTool()` |
+| 一个 `/` 斜杠命令 | `pi.registerCommand()` |
+| 快捷键 / 命令行开关 | `pi.registerShortcut()` / `pi.registerFlag()` |
+| 模型服务商 | `pi.registerProvider()` |
+| 把请求路由到某个模型 | `pi.registerVirtualModel()` |
+
+**我们的 19 个工具不走这条路** —— 它们是 MCP，用 `pi-mcp-adapter` 接。
+**但将来 Wanna 想给 Pi 加一个专属工具，入口就在这里。**
+
+## 11. 设置与资源加载（官方 `settings.md`）
+
+资源的数组写法支持：**glob 排除 `!pattern`** · **精确包含 `+path`** · **精确排除 `-path`**。
+用户级与项目级设置里的资源**都会加载**。
+
+→ **我们那 11 个技能可以显式列进设置里**，不必非得挪到 `~/.agents/skills/`
+（挪目录是"约定位置"，列进设置是"显式指定"，两条路都行 —— 动手时选一条并写明）。
+
+## 12. 读完了 —— 这批文档到此为止
+
+`rpc.md` · `rpc-commands.md` · `json.md` · `cli.md` · `skills.md` · `custom-provider.md` ·
+`models.md` · `sessions.md` · `compaction.md` · `extensions.md` · `settings.md` —— **全读过。**
+
+**剩下的没读**（判断用不上，动手时按需翻）：`configuration.md` · `terminal-setup.md` ·
+`themes.md` · `keybindings.md` · `slash-commands.md` · `security.md` · 以及 Windows/Termux/tmux 那几份。
+**它们在 `reference/pi/packages/coding-agent/docs/` 里，随手可查。**
 
 ## 8. 官方文档目录树（38 份）
 
