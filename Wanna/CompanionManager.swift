@@ -1223,6 +1223,19 @@ final class CompanionManager: ObservableObject {
             self?.bailianTTSClient.voicePlaybackEngine
         }
 
+        // **Wanna 那份规矩送给 pi**（2026-09-29 补）。
+        //
+        // 在它之前，那份提示词（六千多字，含说话规矩、用工具的规矩、动手后要核对）
+        // **从来没有送到过任何模型** —— 只被用来打了一行字数日志。pi 拿到的是它自己的
+        // coding-agent 提示词，于是它会拿 `bash` 去 mkdir（那个工具已经被摘掉）、
+        // 会去点 Finder 界面，最后还能说一句「已完成」—— 用户报的「建个文件夹都建不成」。
+        //
+        // 注入的是**取值闭包**，因为提示词随设置变（自定义提示词 / 补充指令 / 回答长度），
+        // 而起 pi 那一刻才读一次；`PiAgentRunner` 会自己比哈希，变了就重起进程。
+        PiAgentRunner.shared.systemPromptProvider = {
+            Self.piAppendedSystemPrompt(for: AppSettingsStore.snapshot())
+        }
+
         // **主 Agent 的「一轮一条录音」（接线图第 4 条，2026-09-27）。**
         //
         // 两处都是**只读观察者**，音频管线、VAD、连续监听、打断一行没改：
@@ -2825,7 +2838,7 @@ final class CompanionManager: ObservableObject {
     - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
     - if the user's question relates to what's on their screen, reference specific things you see.
     - if the screenshot is irrelevant to the question — general knowledge, coding, writing, planning, small talk — answer the question directly and completely, and say NOTHING about the screen: do not describe what you see, do not mention the app or window in front, do not open with "on your screen…", do not append a "by the way, I can also see…" tail. the screenshot exists only for questions that need it; an unrelated question gets a pure answer with zero screen commentary.
-    - **the screenshot is never the answer to a question about the outside world.** when the user asks you to find something out, look it up, search, check, compare, or research, the answer is not on their screen — the screen is just where some other window (often one of your own earlier answers) happens to be. do not describe what you see as if it were the result, and **never report progress on something you never started**: if the job needs a search, a tool or a skill, write its tag in this reply — [RUN:工具名:参数] for a tool, [SKILL:名字] for a skill. if you wrote no tag, nothing is running, and saying otherwise is the worst answer you can give, because the user hears a promise and watches nothing happen.
+    - **the screenshot is never the answer to a question about the outside world.** when the user asks you to find something out, look it up, search, check, compare, or research, the answer is not on their screen — the screen is just where some other window (often one of your own earlier answers) happens to be. do not describe what you see as if it were the result. **do the job with the tools you have, in this turn** — and for anything about files or folders use the file tools (`create_folder` / `write_file` / `read_file` / `list_folder`), never by driving the terminal or Finder through clicks and keystrokes: that path depends on whatever the screen happens to show and it fails. **and never say something is done before you have looked and seen it** — call `list_folder` (or read the file back) first. "nothing ran and you said it did" is the worst answer you can give, because the user hears a promise and watches nothing happen.
     - you can help with anything — coding, writing, general knowledge, brainstorming.
     - never say "simply" or "just".
     - don't read out code verbatim. describe what the code does or what needs to change conversationally.
@@ -2891,6 +2904,32 @@ final class CompanionManager: ObservableObject {
     /// This applies to a user-edited base too: the editor is for the base prompt, so
     /// 回答长度 and 补充指令 keep working on top of whatever they wrote. Anything else
     /// would make those two settings silently dead the moment the editor was touched.
+    /// **挂给 pi 的那一份**（`PiAgentRunner` 用官方的 `--append-system-prompt` 挂上去）。
+    ///
+    /// 与 `companionSystemPrompt` 的差别只有一处：**不重复技能清单** ——
+    /// pi 按官方 Agent Skills 规范**自己**把技能的「名字 + 描述 + 路径」写进它的提示词，
+    /// 正文用 `read` 去读。我们再挂一份只是白花 token，而且两个版本迟早对不上。
+    ///
+    /// 所以这里只给 pi **它不可能知道**的那部分：Wanna 是谁、怎么说话（基础段或用户
+    /// 自定义的那份）、回答长度、用户额外提的要求、高速通道。
+    static func piAppendedSystemPrompt(for settings: AppSettings) -> String {
+        let trimmedCustomPrompt = settings.customSystemPrompt?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var prompt = trimmedCustomPrompt.isEmpty ? mainAgentBasePrompt : trimmedCustomPrompt
+
+        let fastPathSection = FastPathCatalog.promptSection(from: settings.fastPathEntries)
+        if !fastPathSection.isEmpty {
+            prompt += "\n\n" + fastPathSection
+        }
+        prompt += "\n\nlength for this conversation — this overrides the length guidance above: \(settings.answerLengthStyle.promptSentence)"
+        let extraInstructions = settings.extraSystemPromptInstructions
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !extraInstructions.isEmpty {
+            prompt += "\n\nthe user also asked for these, and they come first:\n\(extraInstructions)"
+        }
+        return prompt
+    }
+
     private static func companionSystemPrompt(for settings: AppSettings) -> String {
         let trimmedCustomPrompt = settings.customSystemPrompt?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -4279,6 +4318,59 @@ final class CompanionManager: ObservableObject {
                         // 「连续对话」= 同一个 UUID；「新建对话」= 换一个。
                         // 历史与压缩全归 pi（compaction 默认开启），Swift 侧不再管。
                         sessionID: turnSessionID.uuidString,
+                        // ⚠️⚠️ **这一段是 2026-09-29 补的 —— 「agent 模式没有回复」的另一半。**
+                        //
+                        // 换血前，这里的流式回调（旧视觉 API 的 `onTextChunk`）干三件事：
+                        // 喂逐句快答的播报会话、把剥完标签的文字写进鼠标旁那张卡片、
+                        // 以及点火 `isAnswerStreamLive`。那条路径随 Swift 决策一起删掉之后
+                        // （`06e4c36`），这三样一起**静默**失效 —— 而 Pi 的文字要到整轮结束
+                        // 才一次性拿到，于是：
+                        //   · 播报会话从建立起就没被喂过 → `finishStreaming()` 只报
+                        //     「the whole reply played / first audio never started」，**一声不出**
+                        //   · 卡片只在收尾写一次，而收尾的清理（停留 0 秒 + 播报未启动）
+                        //     **下一拍就把它擦了**
+                        // 真机实测（截图存证）：Pi 明明在 1.3 秒就答完了，屏幕上右下角
+                        // 什么都没有、也没有声音 —— 用户报的「点击按键进入 agent 模式，
+                        // 发现：没有回复」。官方 RPC 本来就是按 `text_delta` 逐块推的，
+                        // 把它接回来，两条路一起活。
+                        onTextDelta: { [weak self] accumulatedText in
+                            guard let self else { return }
+                            // **第一个字**是"模型开始回答"的时刻 —— 从提交到这一刻的差值
+                            // 就是"它想了多久"。
+                            if accumulatedText.count <= 2 {
+                                MainFlowDiagnostics.log("⏱️ 环节：模型第一个字（\(accumulatedText.count) 字）")
+                            }
+                            // 给卡片的与喂播报的都是**剥掉标签的**文字，用的就是收尾 settle
+                            // 那一个 helper，所以流式上屏的与 settled 的是同一个字符串
+                            //（换一个剥法就换一个断行 —— 用户报过两次的那条）。
+                            let displayText = ActionTagParser.speakableTextFromStreamedReply(accumulatedText)
+
+                            if !announcedAnswerStart,
+                               !accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                announcedAnswerStart = true
+                                // The stream is live — the cursor-side answer card
+                                // may show its blurred writing tail from here on.
+                                self.isAnswerStreamLive = true
+                                self.currentReplyReceivedAt = Date()
+                            }
+
+                            // 逐句快答：累计文本交给播报会话（它内部做差分），于是
+                            // **一边写一边念**。卡片关掉也照样念（与旧路径一致）。
+                            if let streamingSpeechSession {
+                                streamingSpeechSession.feed(cumulativeSpeakableText: displayText)
+                                // The echo filter compares mic transcripts
+                                // against exactly what is being read aloud.
+                                self.spokenAnswerTextForEchoFilter = displayText
+                            }
+
+                            guard showsResponseText else { return }
+                            // **交接**：真答案的第一个字到达时把看板那份预览收掉 ——
+                            // 两段文字落在同一张卡片上、中间不空一帧，用户看到的是
+                            //「答案被补全了」而不是"又冒出一个回复"。
+                            self.clearAnswerPreview()
+                            self.streamingAnswerText = displayText
+                            MainFlowDiagnostics.stage("回答：正在流式上屏")
+                        },
                         onProgress: { [weak self] note in
                             Task { @MainActor in self?.liveJobProgressSteps.append(note) }
                         }
@@ -4590,6 +4682,13 @@ final class CompanionManager: ObservableObject {
                     }
 
                     if let streamingSpeechSession {
+                        // **收尾兜底再喂一次**（2026-09-29）：正常路径已由上面的流式回调
+                        // 逐块喂过，但那一条在"整个回答一块 `text_delta` 都没有"的边角下
+                        // 一次也不会触发（例如 prompt 被扩展 `handled` 消费）。
+                        // `feed` 按累计文本做差分，重复喂同一份是空操作
+                        //（`BailianTTSClient.feed` 的契约），所以无脑喂一次既覆盖边角、
+                        // 又不会念两遍。
+                        streamingSpeechSession.feed(cumulativeSpeakableText: finalSpokenText)
                         // 逐句快答: the segments were already spoken while the reply
                         // streamed in; the flush speaks the tail the aggregator was
                         // still holding. `voiceState` went to .responding when the

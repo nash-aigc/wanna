@@ -38,6 +38,7 @@ nonisolated enum WannaMCPTools {
          pointDeclaration, drawDeclaration,
          drawFigureDeclaration, spawnAgentDeclaration, sendAgentDeclaration,
          listSkillsDeclaration, readFileDeclaration, writeFileDeclaration,
+         createFolderDeclaration, listFolderDeclaration,
          searchHistoryDeclaration]
     }
 
@@ -274,6 +275,8 @@ nonisolated enum WannaMCPTools {
         case "search_history": return try await searchHistory(arguments: arguments)
         case "read_file": return try await readFile(arguments: arguments)
         case "write_file": return try await writeFile(arguments: arguments)
+        case "create_folder": return try await createFolder(arguments: arguments)
+        case "list_folder": return try await listFolder(arguments: arguments)
         case "draw_figure": return try await run(.runFigureAgent(task: try string(arguments, "task")),
                                                  arguments)
         case "spawn_agent": return try await spawnAgent(arguments: arguments)
@@ -813,8 +816,90 @@ nonisolated enum WannaMCPTools {
         return clean.isEmpty ? "<\(role)（非文本）>" : "\(role)：\(clean.prefix(400))"
     }
 
-    private static func readFile(arguments: [String: Any]) async throws -> [String: Any] {
+    private static var createFolderDeclaration: [String: Any] {
+        [
+            "name": "create_folder",
+            "description": """
+                新建一个文件夹（**父目录不存在会一起建好**，已存在不报错，建完回读核对）。\n\
+                用户说「建一个文件夹 / 新建目录 / 在桌面建个 X」时用它 ——\n\
+                **不要**去开终端打 mkdir、也别用 Finder 的 cmd+shift+n 点界面：\n\
+                那两条路都要看界面当时是什么状态（终端里可能跑着别的东西、Finder 窗口可能不在前面），\n\
+                实测就这么失败过。这一步不需要看屏幕，就一个工具调用的事。\n\
+                （只想放一个空文件夹、没有内容要写，就用这个；要写文件用 write_file，它也会顺带建好目录。）
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "文件夹的绝对路径（`~` 开头也可以）。"],
+                ],
+                "required": ["path"],
+            ],
+        ]
+    }
+
+    private static var listFolderDeclaration: [String: Any] {
+        [
+            "name": "list_folder",
+            "description": """
+                列出一个文件夹里有什么（名字 + 是文件还是文件夹 + 大小）。\n\
+                **用于核对**：动手做完一件事、要说「做好了」之前，先用它（或 read_file）看一眼真的在。\n\
+                看不到就说看不到 —— 没核对过就说完成，是用户最生气的那一种回答。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "文件夹的绝对路径（`~` 开头也可以）。"],
+                ],
+                "required": ["path"],
+            ],
+        ]
+    }
+
+    private static func createFolder(arguments: [String: Any]) async throws -> [String: Any] {
         let path = expandPath(try string(arguments, "path"))
+        do {
+            try FileManager.default.createDirectory(at: URL(fileURLWithPath: path),
+                                                    withIntermediateDirectories: true)
+        } catch {
+            throw MCPToolError.failed("建不了文件夹：\(path) —— \(error.localizedDescription)")
+        }
+        // **回读核对**：`createDirectory` 返回成功也不等于它真的在那儿（权限、重定向都骗过人）。
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+        guard exists, isDirectory.boolValue else {
+            throw MCPToolError.failed("建完却读不到：\(path)")
+        }
+        MainFlowDiagnostics.log("📁 MCP create_folder → \(path)")
+        return ["content": [["type": "text", "text": "文件夹已就绪（回读确认过）：\(path)"]],
+                "isError": false]
+    }
+
+    private static func listFolder(arguments: [String: Any]) async throws -> [String: Any] {
+        let path = expandPath(try string(arguments, "path"))
+        let entries: [URL]
+        do {
+            entries = try FileManager.default.contentsOfDirectory(
+                at: URL(fileURLWithPath: path),
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+                options: [.skipsHiddenFiles])
+        } catch {
+            throw MCPToolError.failed("读不了这个文件夹：\(path) —— \(error.localizedDescription)")
+        }
+        let lines = entries
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .map { entry -> String in
+                let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+                if values?.isDirectory == true { return "[文件夹] \(entry.lastPathComponent)" }
+                return "\(entry.lastPathComponent)（\(values?.fileSize ?? 0) B）"
+            }
+        MainFlowDiagnostics.log("📁 MCP list_folder → \(path)（\(entries.count) 项）")
+        let body = lines.isEmpty ? "（空的）" : lines.joined(separator: "\n")
+        return ["content": [["type": "text",
+                             "text": "\(path) 里有 \(entries.count) 项：\n\(body)"]],
+                "isError": false]
+    }
+
+    private static func readFile(arguments: [String: Any]) async throws -> [String: Any] {        let path = expandPath(try string(arguments, "path"))
         guard let data = FileManager.default.contents(atPath: path),
               let text = String(data: data, encoding: .utf8) else {
             throw MCPToolError.failed("读不了这个文件：\(path)（不存在，或者不是文本）")

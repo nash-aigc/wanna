@@ -84,6 +84,30 @@ final class PiAgentRunner {
         FileManager.default.isExecutableFile(atPath: piExecutablePath)
     }
 
+    // MARK: 系统提示词（Wanna 的规矩）
+
+    /// **Wanna 那份规矩**（`CompanionManager.companionSystemPrompt`）—— 由 `CompanionManager` 注入。
+    ///
+    /// 2026-09-29 才发现：在它之前，这份提示词**从来没有送到过任何模型** ——
+    /// `companionSystemPrompt` 只被用来打了一行字数日志。
+    /// 于是 pi 拿到的是它自己的 coding-agent 提示词，对 Wanna 的规矩（用 MCP 工具、
+    /// 动手后要核对、只说一句话的收据）一无所知 —— 它拿 `bash` 去 mkdir（没有那个工具）、
+    /// 拿界面去点 Finder，最后还说了句「已完成」✗（用户报的「建个文件夹都建不成」）。
+    ///
+    /// 用**官方机制**挂上去：`--append-system-prompt <文件>` —— pi 自己的提示词保留，
+    /// 我们的规矩追加在它后面。
+    var systemPromptProvider: (() -> String)?
+
+    /// 起进程时实际挂上去的那一份（算哈希）—— 用户改了提示词就重起进程，否则
+    /// 长驻进程永远读不到新那份（那就是又一次静默失效）。
+    private var spawnedSystemPromptHash: Int?
+
+    /// 提示词先写这个文件，再把**路径**传给 pi（官方接受文件路径，免得 6KB 文本进 argv）。
+    static var systemPromptFileURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent("Library/Application Support/Wanna/pi-system-prompt.md")
+    }
+
     // MARK: 常驻进程
 
     private var process: Process?
@@ -100,9 +124,17 @@ final class PiAgentRunner {
         try FileManager.default.createDirectory(
             atPath: Self.sessionsDirectory, withIntermediateDirectories: true)
 
+        // **先把 Wanna 的规矩写成文件**（官方 `--append-system-prompt` 接受一个存在的文件路径）。
+        let currentSystemPrompt = systemPromptProvider?() ?? ""
+        if !currentSystemPrompt.isEmpty {
+            try? currentSystemPrompt.write(to: Self.systemPromptFileURL,
+                                           atomically: true, encoding: .utf8)
+        }
+        spawnedSystemPromptHash = currentSystemPrompt.hashValue
+
         let newProcess = Process()
         newProcess.executableURL = URL(fileURLWithPath: Self.piExecutablePath)
-        newProcess.arguments = [
+        var launchArguments: [String] = [
             "--mode", "rpc",
             "--no-context-files",      // ⚠️ 仓库的 AGENTS.md 有 503KB —— 官方 security.md 写明
                                        // context 文件"regardless of project trust"照读，
@@ -129,12 +161,59 @@ final class PiAgentRunner {
             // `<name>`+`<description>`+`<location>` 绝对路径，正文靠 `read` 去读，正是三级披露）；
             // 去掉 `bash`/`edit`/`write` —— 那三个才是它"自己动手"和"满硬盘找"的来源。
             // 取舍就是这一条：**决策归 Pi，动手归 Wanna。**
-            "--model", "deepseek/deepseek-flash",
-            "--session-dir", Self.sessionsDirectory,
+            // ⚠️ **provider 名是 `deepseek-official`，不是 `deepseek`**（2026-09-29 端到端抓到）。
+            //
+            // 起因：用户报「点快捷键进实时模式说话能回，切进 agent 模式后没有返回、非常慢」。
+            // 实时那半边走的是本地小模型那条快链，agent 这半边才走本文件这条 pi 链。
+            // `pi --list-models deepseek` 显示真实 provider 名是 `deepseek-official`；
+            // 而这里原来写死 `deepseek/deepseek-flash` —— pi 把 `deepseek` 当成一个**不存在的
+            // provider**，`prompt` 直接回 `success:false · No API key found for deepseek`，
+            // 于是这一轮永远等不到 `agent_settled`，表现就是「没有返回、非常慢（干等到超时）」。
+            // 名字对齐配置里那一条即可（`~/.pi/agent/models.json` 的 providers 键名）。
+            //
+            // ⚠️ **`--thinking off`：关掉思考**（用户点名「对 wanna 必须使用非思考模式」）。
+            //
+            // `deepseek-flash` 是推理模型（reasoning=true）：不关的话它先吐一大段 reasoning_content，
+            // 正文迟迟不来，用户端就是「慢、半天不出字」。官方 CLI 参数 `--thinking off` 会让
+            // openai-completions 那条链发出 `reasoning_effort: "none"`（deepseek 中转实测认这个字段）。
+            // 端到端实测（保持 stdin 开着、等到 agent_settled）：off = 0.8s 无思考流；
+            // 默认 medium = 1.6s 有思考流 —— 关掉既满足要求又更快一倍。
+            "--model", "deepseek-official/deepseek-flash",
+            "--thinking", "off",
         ]
+        // **Wanna 的规矩追加在 pi 自己的提示词后面**（官方机制 `--append-system-prompt`，非自造）。
+        // 没注入提示词提供者时不加这个参数，退回原来的行为。
+        if !currentSystemPrompt.isEmpty {
+            launchArguments += ["--append-system-prompt", Self.systemPromptFileURL.path]
+        }
+        launchArguments += ["--session-dir", Self.sessionsDirectory]
+        newProcess.arguments = launchArguments
         // 工作目录给一个**我们自己的空目录**，不是随 App 继承来的 `/` ——
         // 万一还有任何按路径的动作，范围也可控。
         newProcess.currentDirectoryURL = URL(fileURLWithPath: Self.sessionsDirectory)
+
+        // ⚠️⚠️ **必顶补 PATH，否则双击启动的 App 根本起不了 pi**（2026-09-29 实测报到）。
+        //
+        // `/opt/homebrew/bin/pi` 的 shebang 是 `#!/usr/bin/env node` —— **它要找 `node`**。
+        // 而**双击（LaunchServices）启动的 App 只拿到极简 PATH**（`/usr/bin:/bin:/usr/sbin:/sbin`），
+        // 里面没有 `/opt/homebrew/bin`，于是 `env node` 找不到：
+        //     实验：`env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/pi --version`
+        //           → `env: node: No such file or directory`
+        // 进程当场退出 —— **退出码 127**，诊断日志里就是
+        //     `🥧 起 Pi（常驻 RPC）· /opt/homebrew/bin/pi` → `🥧 Pi 进程退出（码 127）`
+        // 而用户看到的只是「**进入 agent 模式没回复**」。
+        //
+        // 为什么以前没查到：**我所有测试都是从终端起的**（`/Applications/.../Wanna` 直接执行，
+        // 继承终端那份完整的 PATH），所以 pi 一直起得来；用户双击启动就 127。
+        // 这就是「你（pi）能用、客户端不能用」的真正分界线 —— 不在模型、不在 API，
+        // 在**子进程拿不到 node**。
+        //
+        // 补法与仓库里另外两个 spawn 点（`ExternalToolchain` / `ClaudeAgentProcess`）同源：
+        // 把那串 garantor 目录拼在 PATH 前面，一份常量、两处共读。
+        var childEnvironment = ProcessInfo.processInfo.environment
+        childEnvironment["PATH"] = ExternalToolchain.guaranteedPaths
+            + ":" + (childEnvironment["PATH"] ?? "/usr/bin:/bin")
+        newProcess.environment = childEnvironment
 
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
@@ -144,6 +223,9 @@ final class PiAgentRunner {
         newProcess.standardError = stderrPipe
 
         MainFlowDiagnostics.log("🥧 起 Pi（常驻 RPC）· \(Self.piExecutablePath)")
+        // **把实际参数打出来**（包含提示词有没有挂上去）：这一条是 2026-09-29 那次
+        // 「规则挂了却看不出有没有生效」的直接教训 —— 参数不落盘，就只能靠猜。
+        MainFlowDiagnostics.log("🥧 参数：\(launchArguments.joined(separator: " "))")
         try newProcess.run()
 
         let newChannel = PiRPCChannel()
@@ -189,10 +271,29 @@ final class PiAgentRunner {
     ///   「连续对话」= 同一个 UUID（同一个 pi 会话文件）；「新建对话」= 换一个。
     func runTurn(task: String,
                  sessionID: String,
+                 // 每一块文字到达时叫一次，给的是**累计全文**（与旧视觉那条 `onTextChunk` 同形）。
+                 // 2026-09-29 补：官方 RPC 本来就是按 `text_delta` 逐块推的，不交出去的话
+                 // 上游三个下游（卡片流式上屏 / 逐句快答喂字 / isAnswerStreamLive）
+                 // 全都拿不到东西 —— 用户报的「agent 模式没有回复」有一半出在这里。
+                 onTextDelta: @escaping @MainActor @Sendable (String) -> Void = { _ in },
                  onProgress: @escaping (String) -> Void) async throws -> TurnResult {
 
         guard Self.isConfigured else {
             throw PiAgentError.notConfigured(path: Self.piExecutablePath)
+        }
+
+        // **提示词变了就重起。（2026-09-29）**
+        // 进程是常驻的，而 `--append-system-prompt` 只在**启动那一刻**读一次 ——
+        // 不重起的话，用户在设置里改了系统提示词/补充指令，屏幕上将没有任何变化 ✗，
+        // 而那种静默失效正是这个仓库最不想再看到的一类。
+        if let runningProcess = process, runningProcess.isRunning,
+           let spawnedSystemPromptHash,
+           spawnedSystemPromptHash != (systemPromptProvider?() ?? "").hashValue {
+            MainFlowDiagnostics.log("🥧 系统提示词变了 —— 重起 Pi 进程让它生效")
+            runningProcess.terminate()
+            process = nil
+            stdinHandle = nil
+            channel = nil
         }
 
         let (process, stdin, channel) = try ensureProcess()
@@ -273,6 +374,10 @@ final class PiAgentRunner {
                           inner["type"] as? String == "text_delta",
                           let delta = inner["delta"] as? String else { continue }
                     finalText += delta
+                    // **交出去，不要只攒着**（2026-09-29）：`runTurn` 要等 `agent_settled`
+                    // 才返回，而在此之前屏幕上那张卡片、逐句快答、刘海相位都在等这个字。
+                    // 主 actor 上的同步调用，所以卡片拿到字的那一帧就是它到达的那一帧。
+                    onTextDelta(finalText)
 
                 case "tool_execution_start":
                     stepCount += 1
