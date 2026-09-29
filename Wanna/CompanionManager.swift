@@ -2919,12 +2919,12 @@ final class CompanionManager: ObservableObject {
         let skillIndexLines = SkillCatalog.indexLines()
         // **「工具目录」那一节 2026-09-29 删掉了**：它读 tools/manifest.json，走的是
         // `[RUN:]` 标签那条路 —— 而 Python 用 MCP 工具、不写标签，够不着；
-        // 那两条命令（搜索 / 读网页）的功能又被 firecrawl 完全覆盖。
+        // 那两条命令（搜索 / 读网页）的功能又被 AnySearch 技能完全覆盖。
         if !skillIndexLines.isEmpty {
             systemPrompt += "\n\n" + Self.skillsAndToolsSection(skillLines: skillIndexLines,
                                                                toolLines: [])
         }
-        // **`[MCP:…]` 那一节 2026-09-29 删掉了** —— Python 直接连官方 firecrawl MCP，
+        // **`[MCP:…]` 那一节 2026-09-29 删掉了** —— Python 自己连 MCP，
         // Wanna 这边的 MCP 客户端（MCPClient / MCPServersStore）整个删了。
 
         // **高速通道**（方案第 5 步）：复盘统计出来、用户批准过的那几条。

@@ -43,7 +43,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 
 from agents import Agent, Runner, set_default_openai_api, set_default_openai_client
-from agents.mcp import MCPServerStdio, MCPServerStreamableHttp
+from agents.mcp import MCPServerStreamableHttp
 from openai import AsyncOpenAI
 
 HERE = Path(__file__).resolve().parent
@@ -53,7 +53,6 @@ WANNA_MCP_URL = "http://127.0.0.1:8765/mcp"
 MODEL = os.environ.get("WANNA_AGENT_MODEL", "deepseek-flash")
 BASE_URL = os.environ.get("WANNA_AGENT_BASE_URL", "https://api.deepseek.com/v1")
 KEY_FILE = HERE / ".deepseek_key"
-FIRECRAWL_KEY_FILE = HERE / ".firecrawl_key"
 
 INSTRUCTIONS = """你是 Wanna，住在用户 Mac 刘海里的助手。用户说一句任务，你就真的把它做出来。"""
 
@@ -121,21 +120,18 @@ async def main() -> int:
     set_default_openai_client(client, use_for_tracing=False)
     set_default_openai_api("chat_completions")
 
-    # **firecrawl 用官方的 MCP 服务器**（用户 2026-09-29：「firecrawl 有官方的 mcp，
-    # 装那个」）—— 不再走 Wanna 自己那套 `[MCP:…]` 机制。Python 本来就是个 MCP 客户端，
-    # 直接连上去就行，Wanna 那边一行都不用管。
-    servers: list = []
-    if FIRECRAWL_KEY_FILE.exists():
-        servers.append(MCPServerStdio(
-            params={"command": "npx", "args": ["-y", "firecrawl-mcp"],
-                    "env": {**os.environ,
-                            "FIRECRAWL_API_KEY": FIRECRAWL_KEY_FILE.read_text().strip()}},
-            cache_tools_list=True,
-            client_session_timeout_seconds=120,
-        ))
-    else:
-        log("没有 .firecrawl_key，跳过 firecrawl")
-
+    # **只有 Wanna 自己这一个 MCP**（2026-09-29 用户拍板删掉 firecrawl）。
+    #
+    # 用户原话：「把这个 Firecrawl MCP 删掉，因为它只是一个搜索工具。现在用
+    # AnySearch 这个技能，其实也能实现很好的功能和效果。」
+    #
+    # 这是**极简逻辑：功能重复就只留一个**。AnySearch 已经是一个技能（走三级披露 ——
+    # 描述常驻约 130 字、正文按需读），而 firecrawl 是 **27 个工具全量进上下文、
+    # 46 604 字符**。同一件事，留成本低的那个。
+    #
+    # ⚠️ 以后**再想加 MCP / 工具 / 权限之前，先问一句"这个功能是不是已经有了"** ——
+    # 重复的要提醒用户，而不是顺手装上（用户 2026-09-29：「用户要求安装时，你也应该
+    # 提醒用户，符合极简逻辑」）。用户已经默认的那些保留，但不自动加新的。
     hand = MCPServerStreamableHttp(
         params={"url": WANNA_MCP_URL, "headers": {"Authorization": f"Bearer {token}"}},
         cache_tools_list=True,
@@ -145,12 +141,9 @@ async def main() -> int:
     try:
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(hand)
-            for extra in servers:
-                await stack.enter_async_context(extra)
 
             tools = await hand.list_tools()
-            log(f"挂上 Wanna 的 {len(tools)} 个工具"
-                + (f" + firecrawl（官方 MCP）" if servers else ""))
+            log(f"挂上 Wanna 的 {len(tools)} 个工具")
 
             # **技能清单常驻系统提示词**（2026-09-29 用户纠正）。
             #
@@ -176,7 +169,7 @@ async def main() -> int:
                 log(f"技能清单没拉到（不影响干活）：{type(exc).__name__}: {exc}")
 
             agent = Agent(name="Wanna", instructions=instructions,
-                          model=MODEL, mcp_servers=[hand] + servers)
+                          model=MODEL, mcp_servers=[hand])
 
             result = await Runner.run(agent, task, max_turns=args.max_steps)
 
