@@ -160,6 +160,28 @@ else
     fi
 fi
 
+# ══════════════════════════════════════════════════════════════════════════
+# 闸门五：交互标准（用户 2026-09-30 要求"做一个闸门才能真正约束 AI 的行为"）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 用户原话：「提交代码或进入测试之前，必须先检查当前设置是在文档中的哪一个环节、
+# 做了哪一个功能上的修改，文档到底是怎么规定的。**不要让 AI 只是参考文档、对照文档，
+# 否则它根本不知道要看什么。** 一定要让 AI 明确知道自己刚才在哪个环节的哪个点、
+# 做了哪个交互上的调整；**如果它不知道，就永远无法真正把文档用起来。**」
+#
+# 判据（详见 scripts/interaction-standard-check.py 的文件头）：
+#   碰了交互相关的文件 → 必须带上《交互变更记录》，而且那条记录里的
+#   **「标准原文」要拿去《交互标准》里逐字比对** —— 对不上直接拒。
+#   另外《交互标准》本身是只读的，改它默认拒。
+INTERACTION_CHECK="$ROOT/scripts/interaction-standard-check.py"
+if [ -x "$INTERACTION_CHECK" ]; then
+    if ! python3 "$INTERACTION_CHECK"; then
+        echo "⛔ 提交被拒：交互标准闸门没过（见上）。"
+        echo
+        exit 1
+    fi
+fi
+
 FACTCHECK="$ROOT/scripts/overview-fact-check.sh"
 if echo "$STAGED_FILES" | grep -qF "全局框架/00-项目全貌.md" && [ -x "$FACTCHECK" ]; then
     if ! "$FACTCHECK"; then
