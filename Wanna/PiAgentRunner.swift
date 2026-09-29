@@ -45,12 +45,34 @@
 import Foundation
 
 /// 通过 RPC 驱动一个常驻的 pi 进程，把这一轮任务跑完。
+///
+/// ⭐ **双进程**（2026-09-29 用户定）：这个软件**同时开着两个 pi 进程**，从启动到退出
+/// 任何时候都必须活着，互相之间零混淆 ——
+/// · `.realtime`（`PiAgentRunner.realtime`）：**实时模式**专用。**思考关**（`--thinking off`）、
+///   模型可配（默认 deepseek-flash）—— 目的是"快速出结果，显示在鼠标右下角的卡片"。
+/// · `.execute`（`PiAgentRunner.shared`）：**执行模式**专用。**思考开**（不传 `--thinking`，
+///   走 pi 默认），模型可配 —— 让它"真正高效地解决问题"。
+/// 两者**MCP、技能完全相同**（同一份 `~/.pi/agent/` 配置），差的只有模型与思考开关。
+/// 会话文件靠前缀区分：执行 = 会话 UUID；实时 = `realtime-` 前缀。
 @MainActor
 final class PiAgentRunner {
 
-    static let shared = PiAgentRunner()
+    enum ProcessRole {
+        /// 实时模式：思考关、要快。
+        case realtime
+        /// 执行模式：思考开、可以配另一个模型。
+        case execute
+    }
 
-    private init() {}
+    /// 执行模式的常驻进程（原有那条链都走它）。
+    static let shared = PiAgentRunner(role: .execute)
+    /// 实时模式的常驻进程（2026-09-29 新增；与 shared 是**两个进程**）。
+    static let realtime = PiAgentRunner(role: .realtime)
+
+    let role: ProcessRole
+    private init(role: ProcessRole) {
+        self.role = role
+    }
 
     /// 一轮的开始到结束。
     struct TurnResult {
@@ -84,6 +106,52 @@ final class PiAgentRunner {
         FileManager.default.isExecutableFile(atPath: piExecutablePath)
     }
 
+    /// **这个进程用哪个模型、开不开思考**（2026-09-29）。
+    ///
+    /// 两条规则（都是用户定的）：
+    /// · 模型 id 从设置读（`PiModeSettings`），默认 `deepseek-official/deepseek-flash`；
+    /// · **实时进程强制 `--thinking off`**（要快）；执行进程**不传 `--thinking`**
+    ///   （pi 默认 = 开思考）—— "执行要思考"是这次设计的前提，不给出错关掉它的入口。
+    func modelAndThinkingArguments() -> [String] {
+        let settings = PiModeSettingsStore.shared.snapshot()
+        var arguments = ["--model", settings.modelID(for: role)]
+        // 实时进程强制关思考；执行进程不传（pi 默认 = 开）。
+        if role == .realtime {
+            arguments += ["--thinking", "off"]
+        }
+        return arguments
+    }
+
+    /// ⭐ **启动即预热**（2026-09-29 用户定：两个进程"任何时候都必须要开"）。
+    ///
+    /// 在 `CompanionManager.start()` 里各调一次 —— 进程在后台拉起来，等第一轮真的来时
+    /// 握手已经完成。进程挂了不在这里复活（`runTurn` 会看到 isRunning == false 自动重拉），
+    /// 这里只负责"App 活着的时候进程也活着"。
+    /// ⚠️ **失败必须留一行日志**（第一版 `try?` 把失败吞了 —— "起 Pi"日志打在 `run()`
+    /// 之前，`run()` 抛错时既没有进程也没有退出日志，屏幕上与日志里都看不出任何异常）。
+    static func warmUpBothProcesses() {
+        guard isConfigured else {
+            MainFlowDiagnostics.log("🥧 双进程预热跳过：pi 不在（\(piExecutablePath)）")
+            return
+        }
+        Task { @MainActor in
+            do {
+                _ = try realtime.ensureProcess()
+                MainFlowDiagnostics.log("🥧 实时进程已预热（思考关）")
+            } catch {
+                MainFlowDiagnostics.log("🥧 ⚠️ 实时进程预热失败：\(error.localizedDescription)")
+            }
+        }
+        Task { @MainActor in
+            do {
+                _ = try shared.ensureProcess()
+                MainFlowDiagnostics.log("🥧 执行进程已预热（思考开）")
+            } catch {
+                MainFlowDiagnostics.log("🥧 ⚠️ 执行进程预热失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: 系统提示词（Wanna 的规矩）
 
     /// **Wanna 那份规矩**（`CompanionManager.companionSystemPrompt`）—— 由 `CompanionManager` 注入。
@@ -114,9 +182,18 @@ final class PiAgentRunner {
     private var stdinHandle: FileHandle?
     private var channel: PiRPCChannel?
     private var requestSequence = 0
+    /// ⚠️ **stdin 管道本体必须被这个实例持有**（2026-09-29 实测抓到）：
+    /// `ensureProcess` 的返回值如果被调用方丢弃（`warmUpBothProcesses` 那样 `_ =`），
+    /// 局部的 `Pipe` 对象随之释放 —— **stdin 的 fd 被关**，pi 的 RPC 模式读到 EOF
+    /// 就**干净退出**（实测：终端里 `pi --mode rpc` 一旦 stdin 断开，立刻退出、零输出、
+    /// 零报错）。`runTurn` 路径一直持有返回值所以从没暴露；预热路径一上就现形。
+    /// 存在这里 = fd 永远开着，调用方持不持有返回值都无所谓。
+    private var stdinPipe: Pipe?
     /// ⭐ **此刻有没有一轮在跑**（2026-09-29）—— 常驻进程一次只能对准一个会话，
     /// 两轮并发会互相切走对方的会话（见 `runTurn` 门口那道 guard）。
     private var isTurnRunning = false
+    /// 起进程那一刻的"模型 + 思考"参数哈希（变了 → runTurn 门口重起，见 runTurn 注释）。
+    private var spawnedModelArgumentsHash: Int?
 
     /// pi 的 stderr 走诊断日志（官方：stdout 只走协议，日志走 stderr —— P6）。
     private func ensureProcess() throws -> (Process, FileHandle, PiRPCChannel) {
@@ -134,6 +211,7 @@ final class PiAgentRunner {
                                            atomically: true, encoding: .utf8)
         }
         spawnedSystemPromptHash = currentSystemPrompt.hashValue
+        spawnedModelArgumentsHash = modelAndThinkingArguments().hashValue
 
         let newProcess = Process()
         newProcess.executableURL = URL(fileURLWithPath: Self.piExecutablePath)
@@ -164,7 +242,11 @@ final class PiAgentRunner {
             // `<name>`+`<description>`+`<location>` 绝对路径，正文靠 `read` 去读，正是三级披露）；
             // 去掉 `bash`/`edit`/`write` —— 那三个才是它"自己动手"和"满硬盘找"的来源。
             // 取舍就是这一条：**决策归 Pi，动手归 Wanna。**
-            // ⚠️ **provider 名是 `deepseek-official`，不是 `deepseek`**（2026-09-29 端到端抓到）。
+            // ⭐ **模型与思考开关按进程角色走设置**（2026-09-29 用户定）：
+            // 实时进程 = 思考**关**（快，显示在右下角卡片）、执行进程 = 思考**开**（默认）；
+            // 两者都可配模型，当前默认都是 deepseek-flash（用户："方便用户调试嘛，
+            // 未来可以让用户手动去设置"）。设置页在 设置 → Agent → 「Pi 模型」一节
+            //（`PiModeSettings`，读的是已保存的快照 —— 改了会**重起进程**，见上面的哈希检查）。
             //
             // 起因：用户报「点快捷键进实时模式说话能回，切进 agent 模式后没有返回、非常慢」。
             // 实时那半边走的是本地小模型那条快链，agent 这半边才走本文件这条 pi 链。
@@ -181,9 +263,8 @@ final class PiAgentRunner {
             // openai-completions 那条链发出 `reasoning_effort: "none"`（deepseek 中转实测认这个字段）。
             // 端到端实测（保持 stdin 开着、等到 agent_settled）：off = 0.8s 无思考流；
             // 默认 medium = 1.6s 有思考流 —— 关掉既满足要求又更快一倍。
-            "--model", "deepseek-official/deepseek-flash",
-            "--thinking", "off",
         ]
+        launchArguments += modelAndThinkingArguments()
         // **Wanna 的规矩追加在 pi 自己的提示词后面**（官方机制 `--append-system-prompt`，非自造）。
         // 没注入提示词提供者时不加这个参数，退回原来的行为。
         if !currentSystemPrompt.isEmpty {
@@ -218,12 +299,14 @@ final class PiAgentRunner {
             + ":" + (childEnvironment["PATH"] ?? "/usr/bin:/bin")
         newProcess.environment = childEnvironment
 
-        let stdinPipe = Pipe()
+        let newStdinPipe = Pipe()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
-        newProcess.standardInput = stdinPipe
+        newProcess.standardInput = newStdinPipe
         newProcess.standardOutput = stdoutPipe
         newProcess.standardError = stderrPipe
+        // ⚠️ **管道本体归实例持有**（见 stdinPipe 字段的注释 —— 丢了它 pi 会静默退出）。
+        stdinPipe = newStdinPipe
 
         MainFlowDiagnostics.log("🥧 起 Pi（常驻 RPC）· \(Self.piExecutablePath)")
         // **把实际参数打出来**（包含提示词有没有挂上去）：这一条是 2026-09-29 那次
@@ -259,9 +342,9 @@ final class PiAgentRunner {
         // ⚠️ stdin 必须是 standardInput 管道的写端。第一版把它接成了 stdout 管道的
         // 写端 —— 命令喂给了自己的读取器，pi 一个字都没收到，switch_session 15 秒
         // 超时（2026-09-29 端到端实测抓到：起 Pi 之后毫无动静、无报错直到超时）。
-        stdinHandle = stdinPipe.fileHandleForWriting
+        stdinHandle = newStdinPipe.fileHandleForWriting
         channel = newChannel
-        return (newProcess, stdinPipe.fileHandleForWriting, newChannel)
+        return (newProcess, newStdinPipe.fileHandleForWriting, newChannel)
     }
 
     // MARK: 跑一轮
@@ -306,6 +389,17 @@ final class PiAgentRunner {
            let spawnedSystemPromptHash,
            spawnedSystemPromptHash != (systemPromptProvider?() ?? "").hashValue {
             MainFlowDiagnostics.log("🥧 系统提示词变了 —— 重起 Pi 进程让它生效")
+            runningProcess.terminate()
+            process = nil
+            stdinHandle = nil
+            channel = nil
+        }
+        // ⭐ **模型/思考开关变了也要重起**（2026-09-29 双进程）：它们也是**启动那一刻**
+        // 读一次的启动参数 —— 不重起的话，用户在设置页改了模型，屏幕上没有任何变化，
+        // 跑的还是旧模型（与提示词那条静默失效同一类，见 `PiModeSettings`）。
+        if let runningProcess = process, runningProcess.isRunning,
+           spawnedModelArgumentsHash != modelAndThinkingArguments().hashValue {
+            MainFlowDiagnostics.log("🥧 模型配置变了 —— 重起 Pi 进程让它生效")
             runningProcess.terminate()
             process = nil
             stdinHandle = nil

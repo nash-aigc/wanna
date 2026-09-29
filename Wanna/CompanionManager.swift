@@ -543,6 +543,19 @@ final class CompanionManager: ObservableObject {
     /// 也就是不是在窗口里续的那种）时生成；这一串结束（`endContinuousListeningWindow`）时清掉。
     private var currentVoiceCycleID: String?
 
+    /// ⭐ **这一大轮里执行模式交出去过没有**（2026-09-29 两段式恢复）。
+    ///
+    /// `false` = 还在**实时模式**：静音 1 秒自动发送的那一轮走**实时进程**（思考关、快），
+    /// 结果流式显示在鼠标右下角卡片（窗口开着时窗口底部显示同一份）—— **不播报、不进执行链**。
+    /// `true` = 已经进过**执行模式**：之后的每一句（含追问窗口里的）都走执行进程（思考开）。
+    ///
+    /// 置位：显式提交（再按一下快捷键 / ⌥⏎ 执行）。复位：一次全新的按下（新的大轮）。
+    private var hasSubmittedToExecuteThisCycle = false
+
+    /// 实时模式那一轮的临时会话 id —— 一大轮一个（追问窗口里连续多轮 = 同一个会话，
+    /// pi 自己带上下文）。随大轮换新。
+    private var realtimeSessionID: String?
+
     /// **这一轮被 ESC 取消了**：录音照存、什么都不发。
     ///
     /// 用户 2026-09-27 定的：「用户在录音时按下 ESC，直接中断录音，但**录音需保存到
@@ -680,6 +693,8 @@ final class CompanionManager: ObservableObject {
     /// 三种都没有（没在听、也没打字）→ 什么都不做，只记一行（按了回车但没东西可发）。
     private func sendTurnFromBoard() {
         // **⌥⏎ 执行 = 进入 Agent 模式**（用户 2026-09-28 点名要它切图文）。
+        // ⭐ 同时置执行旗标（2026-09-29 两段式）：之后的句子走执行进程。
+        hasSubmittedToExecuteThisCycle = true
         // 它自己也要切一次，不能只靠"按下那一刻切过"：这一下与按下之间隔着整轮实时对话，
         // 中间用户完全可能去点了模式条。三个分支（打字 / 连续追问 / 松键）都从这一轮出发，
         // 所以放在最前面一次就够。
@@ -1117,6 +1132,12 @@ final class CompanionManager: ObservableObject {
         // **主 Agent 这条链的诊断日志 + 主线程看门狗**（2026-09-27 新建）。
         // 用户报过「连续问到第六七轮就卡死、界面没有任何变化」，而那条路当时**一个字都没落盘**
         //（双击启动的 App，`print` 进不了任何地方），所以只能猜。见 `MainFlowDiagnostics` 文件头。
+        // ⭐ **两个 Pi 进程都从启动就预热**（2026-09-29 用户定："这两个进程是一直开的，
+        // 任何时候都必须要开"）。执行进程挂主提示词（原来的那条链）；实时进程挂**轻量提示词**
+        //（它只做"快速回答"，不需要执行那套规矩）。
+        PiAgentRunner.realtime.systemPromptProvider = { Self.realtimeProcessSystemPrompt }
+        PiAgentRunner.warmUpBothProcesses()
+
         MainFlowDiagnostics.startMainThreadWatchdog()
 
         refreshAllPermissions()
@@ -2425,6 +2446,9 @@ final class CompanionManager: ObservableObject {
                 if buddyDictationManager.isContinuousListening
                     && buddyDictationManager.isContinuousListeningUtterancePending {
                     MainFlowDiagnostics.log("⌨️ 按下 → 分支：**发送**这句（实时模式里我说完了）")
+                    // ⭐ **这一下是显式提交 = 进入执行模式**（2026-09-29 两段式）：
+                    // 接下来那句定稿走**执行进程**（思考开、带实时上下文），不再走实时问答。
+                    hasSubmittedToExecuteThisCycle = true
                     buddyDictationManager.finishContinuousListeningUtteranceByShortcutSend()
                     // 同上：release 不能把这次按下当成有效按压。
                     shortcutPressBeganAt = nil
@@ -2446,6 +2470,10 @@ final class CompanionManager: ObservableObject {
             // AI 回复结束」）。在连续监听窗口里续着说的那种按下**不算**新周期 —— 它属于当前这个。
             if !buddyDictationManager.isContinuousListening {
                 currentVoiceCycleID = UUID().uuidString
+                // ⭐ 一次全新的按下 = 新的大轮：回到实时模式（执行旗标复位）、
+                // 换一个新的实时会话（2026-09-29 两段式）。
+                hasSubmittedToExecuteThisCycle = false
+                realtimeSessionID = currentVoiceCycleID
             }
             // Recorded so the release can tell a tap (send what's waiting) from a
             // hold (say something new). See `handleFinalTranscript`.
@@ -2702,6 +2730,45 @@ final class CompanionManager: ObservableObject {
     /// the whole reason a press that captured no speech is harmless: it leaves the
     /// pending question exactly where it was, so a user whose first attempt was not
     /// heard can hold the key again and try again without losing what they said.
+    /// ⭐ **实时轮**（2026-09-29 两段式恢复）：静音 1 秒自动发送的那一句，交给
+    /// **实时进程**（`PiAgentRunner.realtime`，思考关、快），结果**流式**显示在
+    /// 鼠标右下角卡片（窗口开着时，窗口底部显示**同一份** —— 两个位置读同一个字段）。
+    ///
+    /// 与执行轮（`sendTranscriptToVisionChatWithScreenshot`）的四点不同，都是用户定的：
+    /// · **不播报**（实时是"预演"，答案在屏幕上看）；
+    /// · **不截图**（实时进程自己要看屏幕可以调 `screenshot` 工具）；
+    /// · **不进对话历史**（它不是一次正式对话）；
+    /// · **会话 = `realtime-<大轮id>`** —— 同一个大轮里连续多轮问答落同一个 pi 会话，
+    ///   "追问时记得前几轮"由 pi 的会话文件自己完成（这正是"全部使用 pi agent"的收益）。
+    ///
+    /// 结束时把答案记进 `recentCornerAnswers` —— **这就是"带实时上下文一起交执行"的那条线**：
+    /// 用户再按一下快捷键进执行模式时，`previousCornerAnswersPromptBlock()` 会把实时模式里
+    /// 回过的这几条拼进执行那一轮的提示词。
+    private func runRealtimeAnswerTurn(transcript: String) {
+        guard PiAgentRunner.isConfigured else {
+            MainFlowDiagnostics.log("🥧 实时轮：Pi 没配好 —— 这一句不答")
+            return
+        }
+        let sessionID = "realtime-" + (realtimeSessionID ?? currentVoiceCycleID ?? UUID().uuidString)
+        MainFlowDiagnostics.log("🥧 实时轮 → 实时进程（思考关）· 会话 \(sessionID.prefix(16)) · \(transcript.prefix(40))")
+        Task { @MainActor [weak self] in
+            do {
+                let result = try await PiAgentRunner.realtime.runTurn(
+                    task: transcript,
+                    sessionID: sessionID,
+                    onTextDelta: { accumulatedText in
+                        DirectionBoardSession.shared.noteRealtimeAnswerChunk(accumulatedText)
+                    },
+                    onProgress: { _ in })
+                DirectionBoardSession.shared.settleRealtimeAnswer(result.finalText)
+                MainFlowDiagnostics.log("🥧 实时轮回来了：\(result.finalText.count) 字")
+            } catch {
+                // 忙（执行轮正在跑）或失败：右下角什么都不画，留一行日志。下一句继续。
+                MainFlowDiagnostics.log("🥧 实时轮没答（\(error.localizedDescription.prefix(80))）")
+            }
+        }
+    }
+
     private func handleFinalTranscript(
         _ finalTranscript: String,
         sendsImmediately: Bool
@@ -2785,6 +2852,14 @@ final class CompanionManager: ObservableObject {
             liveTranscriptText = ""
             lastTranscript = trimmedTranscript
             print("🗣️ Companion sending transcript: \(trimmedTranscript)")
+            // ⭐ **两段式分派**（2026-09-29）：还没进过执行模式 = **实时轮** ——
+            // 静音 1 秒自动发送的这一句交给**实时进程**（思考关、快），结果流式写
+            // 鼠标右下角卡片（窗口开着时窗口底部显示**同一份**）。不播报、不进执行链。
+            // 进过执行模式 = **执行轮**，照旧走下面那条链。
+            if !hasSubmittedToExecuteThisCycle {
+                runRealtimeAnswerTurn(transcript: trimmedTranscript)
+                return
+            }
             sendTranscriptToVisionChatWithScreenshot(transcript: trimmedTranscript, comesFromTalkShortcut: true)
             return
         }
@@ -2805,7 +2880,20 @@ final class CompanionManager: ObservableObject {
     /// Not `private`, because 对话与记忆 → 「系统提示词」 shows this text in an editor
     /// and offers a 「恢复默认」 button that writes it back. That editor is the only
     /// other reader, and it reads `AppSettings.customSystemPrompt ?? this`.
-    /// 主 agent 的**基础提示词**：它是谁、以及怎么跟人说话。
+    /// ⭐ **实时进程的提示词**（2026-09-29）—— 它只做一件事：**快**。
+    /// 思考已由 `--thinking off` 关掉；提示词只管"答得短、答得对、别啰嗦"。
+    /// MCP / 技能与执行进程完全相同（同一份 `~/.pi/agent/` 配置）。
+    static let realtimeProcessSystemPrompt = """
+    you're Wanna's realtime companion. the user is speaking and every pause becomes a question that arrives here. answer FAST and SHORT — this is a live preview of what a fuller agent could do, not the full job.
+
+    rules:
+    - reply in the user's language (chinese stays chinese).
+    - one to three sentences by default. no preamble, no restating the question.
+    - if the question needs a real action (open an app, click something, write a file), you may use the tools — but prefer answering or pointing over doing; the execute stage handles real work.
+    - no markdown, no lists, write for reading at a glance.
+    """
+
+    /// 主 agent 的**基础提示词**：它是谁、以及怎么跟人说话。    /// 主 agent 的**基础提示词**：它是谁、以及怎么跟人说话。
     ///
     /// 2026-09-26 从原来那份 22,649 字符的 `defaultVoiceResponseSystemPrompt` 里拆出来的
     /// （那是施工方案第 1 步；那棵树已于 2026-09-28 删除）。留下的是**身份和说话方式** ——

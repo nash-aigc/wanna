@@ -1539,6 +1539,69 @@ struct GeneralSettingsView: View {
                 text: "「完全授权」会让 Agent 不经任何确认执行命令（包括删文件、联网）。只在你完全清楚自己让它做什么的时候使用。"
             )
 
+            // ⭐ **Pi 模型**（2026-09-29 双进程）：两个常驻进程各用各的模型。
+            // 思考开关不给 UI —— 实时强制关、执行强制开，那是设计前提不是偏好。
+            // 改了立即写盘，进程在下一轮门口自动重起（`PiAgentRunner` 的哈希检查）。
+            SettingsGroupLabel("Pi 模型")
+            SettingsCard {
+                SettingsRow(
+                    label: "实时模式模型",
+                    description: "思考关闭、求快 —— 回答显示在鼠标右下角。格式：provider/模型（pi --list-models 可查）。"
+                ) {
+                    TextField("deepseek-official/deepseek-flash",
+                              text: Binding(
+                                get: { PiModeSettingsStore.shared.snapshot().realtimeModelID },
+                                set: { newValue in
+                                    var settings = PiModeSettingsStore.shared.snapshot()
+                                    settings.realtimeModelID = newValue
+                                    PiModeSettingsStore.shared.save(settings)
+                                }))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 210)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(DS.Colors.surface2)
+                        .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous)
+                                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                        )
+                }
+                SettingsCardRowDivider()
+                SettingsRow(
+                    label: "执行模式模型",
+                    description: "思考开启 —— 真正去执行任务的那一个。可以配与实时模式不同的模型。"
+                ) {
+                    TextField("deepseek-official/deepseek-flash",
+                              text: Binding(
+                                get: { PiModeSettingsStore.shared.snapshot().executeModelID },
+                                set: { newValue in
+                                    var settings = PiModeSettingsStore.shared.snapshot()
+                                    settings.executeModelID = newValue
+                                    PiModeSettingsStore.shared.save(settings)
+                                }))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 210)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(DS.Colors.surface2)
+                        .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous)
+                                .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                        )
+                }
+            }
+            SettingsNote(
+                text: "两个模式各是一个常驻 Pi 进程：实时 = 思考关（快），执行 = 思考开（默认 deepseek-flash，可以换成别的模型）。改完下一轮自动用新模型。"
+            )
+
             SettingsGroupLabel("运行")
             SettingsCard {
                 SettingsRow(

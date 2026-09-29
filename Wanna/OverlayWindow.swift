@@ -208,10 +208,13 @@ struct BlueCursorView: View {
         if !companionManager.streamingAnswerText.isEmpty {
             return companionManager.streamingAnswerText
         }
-        // ⭐ **"说话期间的答案预览"那条分支 2026-09-29 删掉了** —— 答案现在流式写进
-        // **实时窗口底部**（`DirectionBoardSession.previewAnswer`），鼠标右下角这张卡片
-        // 从今以后**只放 agent 模式的回复**（用户：「实时模式中，之前右下角的卡片，
-        // 显示回复结果这个问题」—— 那个位置的实时答案没有了）。
+        // ⭐ **实时模式的答案也显示在这里**（2026-09-29 晚，用户把这条恢复了）：
+        // 实时轮（Pi 实时进程，思考关）的流式结果写 `DirectionBoardSession.previewAnswer`，
+        // **右下角卡片与实时窗口底部读同一个字段**（用户："同一个结果返回到两个位置，仅此而已"；
+        // 窗口没开就只有这里显示）。执行轮的回复仍走上面的 `streamingAnswerText`（优先级更高）。
+        if !(DirectionBoardSession.shared.previewAnswer ?? "").isEmpty {
+            return DirectionBoardSession.shared.previewAnswer ?? ""
+        }
         return companionManager.liveTranscriptText
     }
 
@@ -230,9 +233,10 @@ struct BlueCursorView: View {
     private var answerCardBubble: some View {
         AnswerCardView(
             text: conversationBubbleText,
-            // 主 Agent 那条管线在流（⭐ 2026-09-29：看板那条"预览流式"标志删掉了，
-            // 答案搬进了实时窗口，这张卡片只剩 agent 模式自己的流）。
-            isStreaming: companionManager.isAnswerStreamLive,
+            // 主 Agent 那条管线在流（⭐ 2026-09-29 晚：实时轮的流也算 —— 它写
+            // `DirectionBoardSession.isPreviewStreaming`，与窗口底部同一份）。
+            isStreaming: companionManager.isAnswerStreamLive
+                || DirectionBoardSession.shared.isPreviewStreaming,
             style: AppSettingsStore.snapshot().answerCardStyle
         )
         .frame(maxWidth: NotchSupport.answerCardMaximumWidth, alignment: .leading)
@@ -476,8 +480,9 @@ struct BlueCursorView: View {
                 Color.clear
                     .overlay(alignment: .topLeading) {
                         Group {
-                            // ⭐ 2026-09-29：只剩 agent 模式的流（实时答案搬进了实时窗口）。
-                            if !companionManager.streamingAnswerText.isEmpty {
+                            // ⭐ 2026-09-29 晚：实时轮的答案**恢复显示在右下角**（与实时窗口同源）。
+                            if !companionManager.streamingAnswerText.isEmpty
+                                || !(DirectionBoardSession.shared.previewAnswer ?? "").isEmpty {
                                 answerCardBubble
                             } else {
                                 liveTranscriptBubble

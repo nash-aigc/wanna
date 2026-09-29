@@ -311,6 +311,29 @@ final class DirectionBoardSession: ObservableObject {
     @Published private(set) var previewAnswer: String?
     /// 正在流式写进上面那个字段（窗口据此决定要不要用模糊焦点那套渲染）。
     @Published private(set) var isPreviewStreaming = false
+
+    // MARK: 实时轮的答案（2026-09-29 两段式恢复）
+
+    /// ⭐ **实时轮的流式写点**（由 `CompanionManager.runRealtimeAnswerTurn` 调）。
+    /// 右下角卡片与实时窗口底部读**同一个字段**（用户："同一个结果返回到两个位置，仅此而已"）。
+    func noteRealtimeAnswerChunk(_ accumulatedText: String) {
+        let answer = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty, answer != streamingAnswerText else { return }
+        streamingAnswerText = answer
+        previewAnswer = answer
+        isPreviewStreaming = true
+    }
+
+    /// 实时轮收尾：落定 + **记进 recentCornerAnswers** —— 这是"带实时上下文一起交执行"的
+    /// 那条线：进执行模式时 `previousCornerAnswersPromptBlock()` 把它们拼进执行提示词。
+    func settleRealtimeAnswer(_ text: String) {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty else { return }
+        streamingAnswerText = ""
+        previewAnswer = answer
+        isPreviewStreaming = false
+        noteCornerAnswerShown(answer)
+    }
     /// **内容更新了几次** —— 视图拿它触发那一下"淡入"动画（用户：「我希望让它有一种动画效果，
     /// 而不是突然间显示出来」）。每次模型回复落下来就 +1。
     @Published private(set) var contentRevision = 0
@@ -1241,7 +1264,7 @@ final class DirectionBoardSession: ObservableObject {
         guard let temporarySessionID else { return nil }
         guard PiAgentRunner.isConfigured else { return nil }
         do {
-            let result = try await PiAgentRunner.shared.runTurn(
+            let result = try await PiAgentRunner.realtime.runTurn(
                 task: question,
                 // ⭐ 临时会话的文件名与主会话区分开（同一个目录、不同前缀）。
                 sessionID: "realtime-\(temporarySessionID)",
