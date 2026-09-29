@@ -935,9 +935,26 @@ final class NotchWindowController {
             return
         }
 
+        // ⭐ **点进刘海里面才算点刘海**（2026-09-29 用户定的硬规矩：「只有鼠标点击刘海
+        // 内部才能激活刘海，而不是在周围区域内。必须进入刘海里面，尤其是刘海底部，
+        // 进入刘海底部里面点击时才有效；在下方或其他周围区域点击应该没有效果」）。
+        //
+        // 为什么非改不可：命中矩形原来是 `restingPillFrame`（= 刘海 + 左右各 2pt +
+        // **下方 22pt 的动画余量**）再向外扩 4pt —— 也就是刘海下方约 26pt 那一整条、
+        // 以及两侧各 6pt 全都能点亮它。用户在菜单栏下面点别的东西，一碰就把面板打开了。
+        //
+        // 现在判的是**刘海矩形本身**（`notchRect`，换算成 AppKit 全局 —— 与上面展开态
+        // 「点刘海收起」用的是同一个矩形、同一套换算，两态天然一致）。下方 / 两侧 /
+        // 两翼外的一切照旧穿透给别的 App。
         if let clickedPresence = screenPresences.first(where: { presence in
-            guard let restingFrame = NotchSupport.restingPillFrame(on: presence.screen) else { return false }
-            return restingFrame.insetBy(dx: -NotchSupport.pillClickHitMargin, dy: -NotchSupport.pillClickHitMargin).contains(clickLocation)
+            guard let notchRect = NotchSupport.notchRect(on: presence.screen) else { return false }
+            let notchInGlobal = CGRect(
+                x: presence.screen.frame.minX + notchRect.minX,
+                y: presence.screen.frame.maxY - notchRect.height,
+                width: notchRect.width,
+                height: notchRect.height
+            )
+            return notchInGlobal.contains(clickLocation)
         }) {
             expand(on: clickedPresence)
         }

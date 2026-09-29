@@ -34,6 +34,14 @@ struct CardChatModeBar: View {
     /// 靠右那一组（语音页的摄像头 / 屏幕 / 模式下拉 / 通话，对话页的音色）。
     var trailingAccessory: AnyView? = nil
 
+    /// ⭐ **最右那一格**（2026-09-29）：图文页把「选项」那颗放这里 —— 它在「角色」的
+    /// **右边**，也就是这一排的最后一格。
+    ///
+    /// 位置是用户从三张图里选的（`设计稿/选项按钮-合并方案对比.html` 方案 A）：
+    /// 他明说「角色按钮的右侧」，而那天「角色」本来就是最右 —— 把两种读法都画出来给他看，
+    /// 他仍然选了这一个，所以「角色」从此不再是页头最右那一颗。
+    var optionsAccessory: AnyView? = nil
+
     /// 「角色」那颗要不要画。**语音页不画** —— 它把角色挪到输入框那一行去了
     ///（用户 2026-09-26：「把角色按钮放在右侧，放在类似语速按钮的位置上，最右侧」）。
     var showsRoleChip: Bool = true
@@ -77,8 +85,22 @@ struct CardChatModeBar: View {
             // **「角色」在最右**（用户 2026-09-26：「把角色按钮放在右侧…最右侧」）——
             // 它曾经在最左，那是"先选角色再选模式"的读法；他现在要的是**靠右那一组**，
             // 与摄像头 / 模式 / 通话并排。
+            //
+            // ⚠️ **2026-09-29 起它不再是最后一格**：图文页那颗「选项」排在它右边
+            //（`optionsAccessory`，见那个属性的注释）。
             if showsRoleChip {
                 CardChatRoleChip(cardID: cardID, cardKind: cardKind, preferences: preferences)
+            }
+
+            if let optionsAccessory {
+                TableVerticalRule(rowHeight: NotchSupport.contentHeaderControlHeight)
+                // ⭐ **分割线与按钮之间必须有缝**（2026-09-29 用户：「右上角选项按钮的左侧
+                // 有一个分割线，这个分割线跟选项按钮应该保持一定的距离，图文模式下它没有
+                // 距离，贴在一起了」）—— 「选项」那颗自己不带横向内边距（padding 0），分隔线
+                // 因此直接贴着字。这里补上与这一行其他格**同一个**内边距，间距由常量保证。
+                optionsAccessory
+                    .padding(.leading, TableStyle.cellHorizontalPadding)
+                    .padding(.trailing, TableStyle.cellHorizontalPadding)
             }
         }
         .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)

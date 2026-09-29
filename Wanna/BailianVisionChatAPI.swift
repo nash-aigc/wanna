@@ -44,6 +44,10 @@ class BailianVisionChatAPI {
         AppSettingsStore.snapshot().visionMaxCompletionTokens
     }
 
+    /// ⭐ **工具调用最多跑几轮**（2026-09-29）。模型可能连环调工具（写完文件再读回来
+    /// 核对），所以是循环；这个上限是**防失控**的，不是设计容量 —— 正常一轮就完了。
+    private static let maximumToolRounds = 3
+
     /// Extra top-level body fields that keep a reasoning model from spending its
     /// budget on a chain of thought, sent whenever the user has left thinking off
     /// for this provider (which is the default — see
@@ -303,6 +307,11 @@ class BailianVisionChatAPI {
         /// **这张卡片自己选的那个 AI**（`AppSettings.cardVisionModelOverride`）。
         /// 给了就用它，连服务商一起换；没给就照旧从全局配置里解析 🧠。
         roleOverride: ResolvedModelRole? = nil,
+        /// ⭐ **工具定义**（OpenAI function calling 形状，2026-09-29）。
+        /// 语音 / 视频模式传 `SimpleFileTools.definitions()`（读 / 写文件两个）；
+        /// 不传 = 没有工具，行为与从前完全一致。模型决定调工具时，这里在本地执行
+        /// 并按官方流程把结果发回模型拿最终答复（最多 `Self.maximumToolRounds` 轮）。
+        tools: [[String: Any]]? = nil,
         onTextChunk: @MainActor @Sendable (String) -> Void
     ) async throws -> (text: String, duration: TimeInterval) {
         let startTime = Date()
@@ -326,6 +335,9 @@ class BailianVisionChatAPI {
             )
         ]
         body.merge(Self.reasoningSuppressionBodyFields(for: resolvedVisionRole)) { _, newValue in newValue }
+        if let tools, !tools.isEmpty {
+            body["tools"] = tools
+        }
 
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         request.httpBody = bodyData
@@ -359,6 +371,10 @@ class BailianVisionChatAPI {
 
         // Parse the SSE stream — each event is "data: {json}\n\n"
         var accumulatedResponseText = ""
+        // ⭐ **工具调用也在流里**（2026-09-29）：模型决定调工具时，它不发 content，
+        // 发的是 `delta.tool_calls` —— 按 `index` 分片到达（name 一片、arguments 好几片），
+        // 要拼起来。拼完在流结束后本地执行（见下面那个循环）。
+        var toolCallFragments: [Int: (id: String, name: String, arguments: String)] = [:]
 
         for try await line in byteStream.lines {
             // **取消必须在这里判 —— 这个循环是唯一能做这件事的地方。**
@@ -398,11 +414,27 @@ class BailianVisionChatAPI {
                 continue
             }
 
+            guard let delta = firstChoice["delta"] as? [String: Any] else { continue }
+
+            // **工具调用分片**（与 content 是互斥的两条路 —— 调工具的那一轮一般没有文字）。
+            if let streamedToolCalls = delta["tool_calls"] as? [[String: Any]] {
+                for fragment in streamedToolCalls {
+                    guard let index = fragment["index"] as? Int else { continue }
+                    var entry = toolCallFragments[index] ?? ("", "", "")
+                    if let id = fragment["id"] as? String, !id.isEmpty { entry.id = id }
+                    if let function = fragment["function"] as? [String: Any] {
+                        if let name = function["name"] as? String, !name.isEmpty { entry.name = name }
+                        if let arguments = function["arguments"] as? String { entry.arguments += arguments }
+                    }
+                    toolCallFragments[index] = entry
+                }
+                continue
+            }
+
             // Answer text lives at choices[0].delta.content. The model's optional
             // chain-of-thought arrives separately in delta.reasoning_content and is
             // deliberately skipped — this response gets spoken aloud.
-            guard let delta = firstChoice["delta"] as? [String: Any],
-                  let textChunk = delta["content"] as? String,
+            guard let textChunk = delta["content"] as? String,
                   !textChunk.isEmpty else {
                 continue
             }
@@ -411,6 +443,59 @@ class BailianVisionChatAPI {
             // Send the accumulated text so far to the UI for progressive rendering
             let currentAccumulatedText = accumulatedResponseText
             await onTextChunk(currentAccumulatedText)
+        }
+
+        // ⭐ **模型要调工具 —— 本地执行，再把结果发回去拿最终答复**（2026-09-29）。
+        // 官方 function calling 流程：assistant 带 `tool_calls` → 每个调用一条
+        // `role: "tool"` 消息 → 再请求一次。模型可能连环调（写完文件再读回来核对），
+        // 所以是循环，上限 `Self.maximumToolRounds` 轮 —— 那是防失控的，不是设计容量。
+        var orderedToolCalls = toolCallFragments.sorted { $0.key < $1.key }.map(\.value)
+        var followUpMessages = body["messages"] as? [[String: Any]] ?? []
+        var toolRounds = 0
+
+        while !orderedToolCalls.isEmpty && toolRounds < Self.maximumToolRounds {
+            toolRounds += 1
+            guard Task.isCancelled == false else { throw CancellationError() }
+
+            // assistant 那条要**原样带上它要调的工具** —— 这是协议要求的（模型说的话
+            // 里有一部分是"我要调工具"，少了它 tool 结果就对不上号）。
+            let assistantMessage: [String: Any] = [
+                "role": "assistant",
+                "content": accumulatedResponseText.isEmpty ? NSNull() : accumulatedResponseText,
+                "tool_calls": orderedToolCalls.map { call in
+                    [
+                        "id": call.id,
+                        "type": "function",
+                        "function": ["name": call.name, "arguments": call.arguments]
+                    ] as [String: Any]
+                }
+            ]
+            followUpMessages.append(assistantMessage)
+
+            var toolResultMessages: [[String: Any]] = []
+            for call in orderedToolCalls {
+                let result = SimpleFileTools.execute(name: call.name, argumentsJSON: call.arguments)
+                print("🛠 [tools] \(call.name)（\(call.arguments.prefix(200))）→ \(result.prefix(160))")
+                toolResultMessages.append([
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": result
+                ])
+            }
+            followUpMessages.append(contentsOf: toolResultMessages)
+
+            // 拿下一轮：**非流式**就够了 —— 工具已经执行完，这一轮纯粹是"模型看完结果
+            // 说话（或再调下一个工具）"，再流式一遍只会让上层（逐句快答 / 卡片）多接
+            // 一次全文替换。它可能又带回一批 tool_calls（连环调用），循环接着跑。
+            body["messages"] = followUpMessages
+            body["stream"] = false
+            let round = try await completeNonStreaming(body: body, role: resolvedVisionRole)
+            accumulatedResponseText = round.text
+            orderedToolCalls = round.toolCalls
+
+            // 传给上层 —— 让卡片 / 逐句快答拿到的是**最终**那份。
+            let finalText = accumulatedResponseText
+            await onTextChunk(finalText)
         }
 
         // An empty answer arrives as a perfectly successful HTTP 200, and the only
@@ -501,5 +586,66 @@ class BailianVisionChatAPI {
 
         let duration = Date().timeIntervalSince(startTime)
         return (text: text, duration: duration)
+    }
+
+    // MARK: - 工具调用的后续轮（2026-09-29）
+
+    /// **非流式的一轮**，工具循环的内部件：发请求、解析 `message.content` 与
+    /// `message.tool_calls`（模型看完工具结果后可能接着调下一个工具）。
+    ///
+    /// 与 `analyzeImage` 的区别：content 可以为空（模型只调工具不说话是**合法**的，
+    /// 空在这里不是故障）、tool_calls 要带出来给循环接着跑。两个都空才真的算失败。
+    private func completeNonStreaming(
+        body: [String: Any],
+        role: ResolvedModelRole
+    ) async throws -> (text: String, toolCalls: [(id: String, name: String, arguments: String)]) {
+        var request = try makeAPIRequest(for: role)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+        guard (200...299).contains((response as? HTTPURLResponse)?.statusCode ?? -1) else {
+            let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(
+                domain: "BailianVisionChatAPI",
+                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                userInfo: [NSLocalizedDescriptionKey: "API Error: \(responseString)"]
+            )
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let choices = json?["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any] else {
+            let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(
+                domain: "BailianVisionChatAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid response format: \(responseString)"]
+            )
+        }
+
+        let text = message["content"] as? String ?? ""
+        var toolCalls: [(id: String, name: String, arguments: String)] = []
+        if let rawCalls = message["tool_calls"] as? [[String: Any]] {
+            for call in rawCalls {
+                guard let function = call["function"] as? [String: Any],
+                      let name = function["name"] as? String else { continue }
+                toolCalls.append((
+                    id: (call["id"] as? String) ?? "",
+                    name: name,
+                    arguments: (function["arguments"] as? String) ?? "{}"
+                ))
+            }
+        }
+
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !toolCalls.isEmpty else {
+            throw NSError(
+                domain: "BailianVisionChatAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "模型（\(role.modelID)）返回了空回答。常见原因：推理内容吃光了 max_tokens。"]
+            )
+        }
+        return (text: text, toolCalls: toolCalls)
     }
 }

@@ -1116,7 +1116,9 @@ struct NotchPanelRootSwitchingView: View {
                 hideSheetAction: hideSheetAction,
                 revealSheetAction: revealSheetAction,
                 toggleFullScreenAction: toggleFullScreenAction,
-                companionManager: companionManager
+                companionManager: companionManager,
+                wingBandWidth: wingBandWidth,
+                notchBandHeight: notchBandHeight
             )
             // 展开态的骨架（侧栏那几行 + 空的内容列）在这里第一次出现。
             //
@@ -1383,6 +1385,17 @@ struct NotchExpandedSheetView: View {
     var toggleFullScreenAction: () -> Void
     var companionManager: CompanionManager
 
+    /// **展开态那条状态带的几何**（2026-09-29 新增这两个）。
+    ///
+    /// 由 `NotchWindowController` 算好、跟 `NotchExpandedWingBand` 走同一条路传下来
+    /// （只有控制器手里有 `NSScreen`）。它们到这里是因为**那颗通话按钮要落在右翼上** ——
+    /// 用户：「通话按钮……位置 = 刘海的右侧，因为点击通话后，会显示动画效果，
+    /// 这个动画效果刚好是挂断，这样就是：通话、挂断在同一个位置」。
+    ///
+    /// 0 = 这块屏没有刘海（或还没算好）→ 那颗按钮不画。
+    var wingBandWidth: CGFloat = 0
+    var notchBandHeight: CGFloat = 0
+
     /// 参考页 01 中心缩放的内容入场（'line' 模式）：窗口本体沿 frame 驱动
     /// 器的缩放路径长出来，内容块则延迟 230ms、从「+8pt 下移 + 8pt 模糊 +
     /// 全透明」浮现到清晰（0.45s ease）——「内容整块错峰浮现」。视图在
@@ -1409,7 +1422,9 @@ struct NotchExpandedSheetView: View {
                 hideSheetAction: hideSheetAction,
                 revealSheetAction: revealSheetAction,
                 toggleFullScreenAction: toggleFullScreenAction,
-                audioHistoryProvider: audioHistoryProvider
+                audioHistoryProvider: audioHistoryProvider,
+                wingBandWidth: wingBandWidth,
+                notchBandHeight: notchBandHeight
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // 内容入场两件套：透明、模糊，同时归零。reduceMotion 时直接落在

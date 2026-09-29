@@ -241,6 +241,11 @@ final class CascadeVoiceEngine {
                     systemPrompt: systemPrompt(for: role),
                     userPrompt: userPromptWithAttachments,
                     modelIDOverride: understandingModelID,
+                    // ⭐ **读写两个工具**（2026-09-29 用户定：「自己写一个函数，让它能够支持
+                    // 文件的读写就可以了……就一个读取写入就完事了」）—— 语音 / 视频那条
+                    // 管线够不着 Pi，所以按 OpenAI function calling 直接给模型两个工具。
+                    // 执行在 `SimpleFileTools`（本地），写文件的基准文件夹在 设置 → Agent。
+                    tools: SimpleFileTools.definitions(),
                     onTextChunk: { @MainActor accumulatedText in
                         // TEMPORARY PROBE (2026-09-25)：每长 200 字打一行 —— 见
                         // `performTurn` 开头那把尺子。首字那一行是**关键**：从这里到

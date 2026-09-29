@@ -170,6 +170,8 @@ struct VoiceChatSessionView: View {
     @State private var isModeMenuOpen = false
     /// 语速下拉（摄像头左侧那颗）。
     @State private var isSpeedMenuOpen = false
+    /// 工具调用那一节显示的文件夹（进设置改或在选项里改都要能立刻看见，所以存一份快照）。
+    @State private var voiceToolFolder: String = SimpleFileTools.baseFolder
     /// 音色面板：该账号的克隆音色（打开面板时才加载）。
     @State private var customVoices: [CustomVoice] = []
     @State private var isLoadingCustomVoices = false
@@ -419,8 +421,21 @@ struct VoiceChatSessionView: View {
                 // 分隔线的上面，然后放在「全双工」这个按钮的右侧」）。
                 CardChatModeBar(cardID: cardID,
                                 cardKind: cardKind,
-                                callAccessory: AnyView(connectButton),
-                                trailingAccessory: AnyView(headerTrailingControls),
+                                // ⭐ **通话按钮不在这一排里了**（2026-09-29）—— 三个模式的
+                                // 通话键统一搬到面板顶部、刘海右翼那一格
+                                //（`NotchSheetRootView.notchTrailingWingOverlay`），
+                                // 理由是用户要「通话、挂断在同一个位置」。这一页的连接动作
+                                // 由那颗按钮按模式分派过来（见 `startOrEndCallForCurrentCard`）。
+                                callAccessory: nil,
+                                // 摄像头 / 屏幕在 2026-09-29 搬去了输入框那一行
+                                //（「它们和声音、视频、摄像头属于同一逻辑」），
+                                // 所以这一排右侧不再有别的控件。
+                                trailingAccessory: nil,
+                                // ⭐ **这一排的最后一格**：跟图文页同一颗「选项」
+                                //（用户：「把窗口右上角、角色左侧的全双工按钮移动到角色右侧，
+                                // 名字改成『选项』，其他不变」）。点开还是原来那两行 ——
+                                // 「全双工 / 三段式」，功能一个字没动。
+                                optionsAccessory: AnyView(modeDisclosureButton(hasBarCellPadding: true)),
                                 onModeSelected: { _ in syncChannelToCardChatMode() },
                                 preferences: cardChatPreferences)
             } else {
@@ -443,6 +458,11 @@ struct VoiceChatSessionView: View {
                 VStack(spacing: 6) {
                     modeRow(.duplexVoice)
                     modeRow(.threeStage)
+                    // ⭐ **工具调用那一节**（2026-09-29 用户：「右上角的选项，无论是图文、
+                    // 语音还是视频，都再增加一个选项，就是工具调用」）—— 与图文页那颗
+                    // 「选项」里的「工具」同一个意思：语音 / 视频没有 Pi，所以是**读写
+                    // 文件两个工具**（`SimpleFileTools`），文件夹在这里就能改。
+                    voiceToolsSection
                 }
                 .padding(.top, 8)
                 .padding(.bottom, 10)
@@ -481,7 +501,9 @@ struct VoiceChatSessionView: View {
 
             // **模式下拉**（用户 2026-09-26 第 3 条）：把「全双工 / 三段式」那两行从
             // **常驻**改成**点开才显示**，这颗按钮负责展开/收起。
-            modeDisclosureButton
+            // 这里没有模式条补内边距，所以传 `false` 自己补（卡片分支传 `true` ——
+            // 不叠加才是「与图文同宽」，见那个函数的注释）。
+            modeDisclosureButton(hasBarCellPadding: false)
 
             // 通话在左侧那组（紧跟「视频」），语速在输入框那一行 —— 这一组只剩这三颗。
         }
@@ -492,7 +514,17 @@ struct VoiceChatSessionView: View {
     /// 标签是**当前正在跑的那一种**（用户要的正是这个信息：两行收起来之后，"现在是什么模式"
     /// 得有个地方看得见）。收起是默认态 —— 他说的是「把当前持续显示的状态改成通过下拉按钮
     /// 点击展开折叠」。
-    private var modeDisclosureButton: some View {
+    ///
+    /// ⭐ **宽度与图文页那颗「选项」一致**（2026-09-29 用户：「语音模式、视频模式下，
+    /// 右上角选项的宽度太大了，应该调整为图文模式下的宽度」）。根因是**内边距叠加**：
+    /// 按钮自带 12pt、模式条又给 optionsAccessory 统一补了 12pt —— 两页一比，这颗左右
+    /// 各宽出一倍。现在与图文的 `CardChatOptionsButton` 同形：**自身不带横向内边距**，
+    /// 间距全部由模式条那一格给（`hasBarCellPadding`）。
+    ///
+    /// - Parameter hasBarCellPadding: 挂在 `CardChatModeBar` 的 optionsAccessory 里传
+    ///   `true`（条已补内边距）；旧的「语音聊天」分区兜底那一处没有条，传 `false`
+    ///   自己补 —— 两条路各得其所，不再叠加。
+    private func modeDisclosureButton(hasBarCellPadding: Bool) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.16)) {
                 showsPresetRows.toggle()
@@ -506,14 +538,18 @@ struct VoiceChatSessionView: View {
                 // 原来只有全双工画对勾圆、三段式画空心圆 —— 而**这一页出现的模式本来就是
                 // 选中的那个**（两行收起时不可能选到别的），所以那个圈要么永远该是勾、
                 // 要么就是画错了。删掉最干净：整颗按钮的高亮自己就说明了它是当前模式。
-                Text(controller.selectedMode.displayName)
+                // ⚠️ **2026-09-29：标签从「全双工 / 三段式」改成了「选项」**（用户：
+                // 「把窗口右上角、角色左侧的全双工按钮移动到角色右侧，名字改成『选项』，
+                // 其他不变」）—— 与图文页那颗「选项」同名、同位置，两页看到的是同一个入口。
+                // 当前跑的是哪一种模式，点开之后那两行里看。
+                Text("选项")
                     .font(.system(size: Self.headerControlFontSize, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: showsPresetRows ? "chevron.up" : "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
             }
             .foregroundColor(DS.Colors.success)
-            .padding(.horizontal, Self.headerControlHorizontalPadding)
+            .padding(.horizontal, hasBarCellPadding ? 0 : Self.headerControlHorizontalPadding)
             .frame(height: Self.headerControlHeight)
             .fixedSize(horizontal: true, vertical: false)
             .contentShape(Rectangle())
@@ -558,6 +594,65 @@ struct VoiceChatSessionView: View {
     }
 
     /// 那半颗：亮着 = 这一路开着（绿底），点一下单独开关它。
+    /// ⭐ **工具调用那一节**（2026-09-29 用户定）。语音 / 视频够不着 Pi，所以是两个
+    /// 最简单的工具：**读文件 / 写文件**（`SimpleFileTools`，执行全在本地）。模型自己
+    /// 决定调不调 —— 「比如我写完一篇文章，让它保存到桌面上，其实也就这点需求」。
+    ///
+    /// 文件夹在这里与 设置 → Agent 两处都能改（用户：「文件夹位置可以在设置里面设置，
+    /// 也可以在这个选项里面设置」）—— 读写的是同一个设置，所以不存在两份真相。
+    private var voiceToolsSection: some View {
+        HStack(spacing: 10) {
+            Text("工具调用")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(DS.Colors.textPrimary)
+                .fixedSize()
+
+            Text("读文件 · 写文件")
+                .font(.system(size: 12))
+                .foregroundStyle(DS.Colors.success)
+                .fixedSize()
+
+            Spacer(minLength: 8)
+
+            // **保存文件夹** —— 只显示文件名那一段（全路径太长），完整路径在 help 里。
+            Button {
+                pickToolFolder()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 10.5))
+                    Text((voiceToolFolder as NSString).lastPathComponent)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundStyle(DS.Colors.success)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("写文件时只给文件名，就存到这里：\(voiceToolFolder)（点击更改）")
+        }
+        .onAppear { voiceToolFolder = SimpleFileTools.baseFolder }
+    }
+
+    /// 选工具文件夹 —— 落 `AppSettings.voiceToolWriteFolder`，`SimpleFileTools` 每次执行
+    /// 时**现读**，所以不需要通知谁：下一轮就生效。
+    private func pickToolFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "选择"
+        panel.message = "语音 / 视频写文件时的默认文件夹"
+        if panel.runModal() == .OK, let url = panel.url {
+            var settings = AppSettingsStore.snapshot()
+            settings.voiceToolWriteFolder = url.path
+            try? AppSettingsStore.save(settings)
+            voiceToolFolder = SimpleFileTools.baseFolder
+        }
+    }
+
     private func deviceHalf(title: String,
                             isOn: Bool,
                             isSupported: Bool,
@@ -569,13 +664,18 @@ struct VoiceChatSessionView: View {
             action()
         } label: {
             // **表格里的一格**：只有字、选中只剩颜色（这一排与左侧那张表、与模式行同一套）。
+            //
+            // ⚠️ **2026-09-29：字号与高度改成与这一行其他格完全一致**（用户：「屏幕、摄像头、
+            // 声音的字体不一致，字号也不一致」＋「输入框上面那一行内容的高度变高了」）。
+            // 它原来用的是**页头那套**（13pt / `headerControlHeight`=30）—— 从页头搬到
+            // 输入框这一行之后，就比旁边的「声音」大一档、也高一头，整行被它顶高。
             Text(title)
-                .font(.system(size: 13, weight: isOn ? .semibold : .regular))
+                .font(.system(size: 12.5, weight: isOn ? .semibold : .regular))
                 .lineLimit(1)
                 .foregroundColor(isSupported ? (isOn ? tint : .white.opacity(0.88))
                                              : Color.white.opacity(0.3))
-                .padding(.horizontal, Self.headerControlHorizontalPadding)
-                .frame(height: Self.headerControlHeight)
+                .padding(.horizontal, TableStyle.cellHorizontalPadding)
+                .frame(height: Self.composerControlsRowHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -2165,18 +2265,25 @@ struct VoiceChatSessionView: View {
     /// 每一轮都写回它的历史，没有第二个"临时"的去处 —— 摆两颗按不动的按钮比不摆更糟。
     /// 他要的话再说，那是一个新的子系统（临时语音会话不写历史），不是一行 UI。
     private var voiceComposerControlsRow: some View {
-        HStack(spacing: 6) {
-            // **四种模式的输入框上方是同一排**（用户 2026-09-26：「无论哪一种模式，文本、
+        HStack(spacing: 0) {
+            // **四个模式的输入框上方是同一排**（用户 2026-09-26：「无论哪一种模式，文本、
             // 图文、语音、视频，输入框上方都应该有一个"连续对话 / 临时对话 / 新建"的按钮，
             // 右侧都应该有一个"声音语速"的按钮」）。
+            //
+            // **2026-09-29 起这一行与图文页逐格一致**（用户：「以图文模式作为参考和标准，
+            // 去修改音频模式和视频模式」）：左侧三格、右侧几格，**无底色、无圆角**，
+            // 格与格之间一条 1pt 竖线，选中 = 绿字。分隔线由这一行的 `TableVerticalRule`
+            // 插，与图文页、与页头那排模式条都是同一套。
             //
             // 这一页的「临时对话」= **这一场不写回卡片的历史**（见
             // `VoiceChatController.isTemporaryVoiceConversation`）：语音这条路没有"另一段
             // 对话"可以去，而"临时"在这里的确切含义就是"不留下"。
             voiceConversationModeChip(title: "连续", isTemporary: false,
                                       help: "这一段会记进这张卡片的历史")
+            TableVerticalRule(rowHeight: Self.composerControlsRowHeight)
             voiceConversationModeChip(title: "临时", isTemporary: true,
                                       help: "这一段不写进任何历史，挂断就散了")
+            TableVerticalRule(rowHeight: Self.composerControlsRowHeight)
 
             composerChip(title: "新建",
                          systemImage: "plus",
@@ -2188,42 +2295,25 @@ struct VoiceChatSessionView: View {
                 ConversationSessionsStore.createSession()
             }
 
-            // **输入框上面也有一颗「通话」**（用户 2026-09-26：「图文模式、文本模式、视频模式、
-            // 语音模式，都应该在输入框上面、新建按钮右侧添加一个通话按钮。注意它的大小宽度
-            // 要跟新建按钮的样式一样」）。这一页它就是页头那颗「连接」的同一件事 ——
-            // 同一个 `connectToRole` / `disconnectCurrentSession`，两个入口，功能一致。
-            composerChip(title: controller.isCalling(cardID: cardID ?? "") ? "挂断" : "通话",
-                         systemImage: controller.isCalling(cardID: cardID ?? "")
-                             ? "phone.down.fill" : "phone.fill",
-                         isOn: controller.isCalling(cardID: cardID ?? ""),
-                         help: controller.isCalling(cardID: cardID ?? "")
-                             ? "挂断这一场语音聊天"
-                             : "开始这一场语音聊天") {
-                if controller.isCalling(cardID: cardID ?? "") {
-                    controller.disconnectCurrentSession()
-                } else {
-                    controller.connectToRole(
-                        roleIDForConnect,
-                        cardBinding: cardID.map {
-                            VoiceChatController.CardVoiceBinding(cardID: $0, cardKind: cardKind)
-                        }
-                    )
-                }
+            // ⚠️ **这一行原来还有一颗「通话」（通话中变「挂断」），2026-09-29 删掉了** ——
+            // 用户：「输入框上方按钮只保留连续、临时、新建三个按钮在左侧，**删掉通话按钮**」。
+            // 通话入口一个都没少：它现在统一在**面板顶部、刘海右翼那一格**
+            //（`NotchSheetRootView.notchTrailingWingOverlay`），三个模式共用同一颗，
+            // 点下去原地变挂断 —— 用户要的就是「通话、挂断在同一个位置」。
+
+            Spacer(minLength: 0)
+
+            // ⭐ **视频模式特有：摄像 ｜ 屏幕**（用户 2026-09-29：「把摄像头、屏幕两个按钮
+            // 放到声音、语速左边，它们和声音、视频、摄像头属于同一逻辑，且只有视频模式才有，
+            // 所以只在视频模式下调整」）—— 从页头搬到了这一行。
+            //
+            // 顺带删掉了「针对连续对话 / 针对临时对话」那一格（`Text("当前")`）——
+            // 用户：「去掉当前 / 不当前的区分」。那格字只是给下面两颗开关加注解，
+            // 而它们现在与图文页那一排长得一模一样，注解反而成了噪音。
+            if showsDeviceToggles {
+                deviceTogglesControl
+                TableVerticalRule(rowHeight: Self.composerControlsRowHeight)
             }
-
-            Spacer(minLength: 6)
-
-            // **「针对连续对话 / 针对临时对话」这一格语音 / 视频也要有**
-            //（用户 2026-09-27：「这个语音、视频这两个模式下，输入框的右上角，它应该有一个
-            // 备注叫针对什么对话……结果图文模式应该是一样的才对」）—— 文案、位置、字号与
-            // 图文 / 文本那一页完全相同，两边读的是同一个 `voiceConversationMode`。
-            // ⭐ 2026-09-29：与对话页同一套文案 —— 一律"当前"（见 `NotchHomeView` 那处注释）。
-            Text("当前")
-                .font(.system(size: 10.5))
-                .foregroundColor(controller.isTemporaryVoiceConversation
-                                 ? Color(red: 0.96, green: 0.72, blue: 0.32).opacity(0.75)
-                                 : .white.opacity(0.38))
-                .fixedSize()
 
             // 开 = 正常说话；关 = 只出文字（模型那边 `modalities: ["text"]`）。
             composerChip(title: "声音",
@@ -2234,61 +2324,32 @@ struct VoiceChatSessionView: View {
                              : "语音模型只出文字（点击：恢复发声）") {
                 controller.speaksReplies.toggle()
             }
+            TableVerticalRule(rowHeight: Self.composerControlsRowHeight)
 
             // **语速在「声音」右边**（用户 2026-09-26：「把语速按钮放在输入框的上面…放在
-            // 声音按钮的右侧，也做成一个菜单的形式」）。它打开的还是原来那块语速面板
-            //（`.speed` 锚点，位置由视图自己的 frame 发布上去 —— 换了个位置也跟得上）。
-            // **带上档位数字**（用户 2026-09-26：「要显示语速 6 或语速 7 什么的。但是现在
-            // 语音跟视频这两个模式下，语速应该调一下，应该显示语速 6 或语速 7 或语速 8
-            // 这个东西」）—— 与文本 / 图文那一排的 `SpeechSpeedChip` 一致，都用
-            // `SpeechSpeedLevels` 那一份表。
-            // **与图文 / 文本那一页同一个组件**（用户 2026-09-27：「语音模式或视频模式，
-            // 它的这个输入框的右上角这个语速的按钮，它应该是一个类似于下拉菜单的那个按钮…
-            // 把它做成一个图文模式和文本模式那样的按钮」）。
-            //
-            // 换掉的是原来那颗手写的 `composerChip(title: "语速 …")` + 浮层面板：浮层那条路
-            // 把面板定位到了 **y≈3606**（`.speed` 锚点量错了坐标系），面板整个画在窗口外面 ——
-            // 用户看到的「点击之后自动崩溃」就是它。`SpeechSpeedChip` 那条路是**内联画在
-            // 输入框上方**（见下面的 `speedPanelIfOpen`），没有锚点、没有浮层，四个模式共用
-            // 同一个组件，样式与行为因此不可能分家。
+            // 声音按钮的右侧，也做成一个菜单的形式」）。它打开的还是原来那块语速面板，
+            // 与图文 / 文本那一页用的是**同一个组件**（`SpeechSpeedChip` —— 内联画在输入框
+            // 上方，没有锚点、没有浮层；那两条路正是当初「点击之后自动崩溃」的来源）。
             SpeechSpeedChip(isPanelOpen: $isSpeedMenuOpen)
-
         }
     }
 
     /// 「连续对话 / 临时对话」那一对 —— 选中的那颗打勾并变绿（与关键词页那一对同一个样子）。
+    /// 「连续 / 临时」那一格 —— 走共用的 `MinimalComposerChip`（2026-09-29 起）：
+    /// **无底色、无圆角、选中 = 绿字**，与图文页那一行完全一套。
+    ///
+    /// 原来那版是"圆角 + 亮底 + 描边 + 对号"，用户这一轮把三个页面的这一行统一成了
+    /// 极简档（「以图文模式作为参考和标准，去修改音频模式和视频模式」）。
     private func voiceConversationModeChip(title: String,
                                            isTemporary: Bool,
                                            help: String) -> some View {
-        let isSelected = controller.isTemporaryVoiceConversation == isTemporary
-        return Button {
+        MinimalComposerChip(title: title,
+                            isHighlighted: controller.isTemporaryVoiceConversation == isTemporary,
+                            height: Self.composerControlsRowHeight,
+                            help: help) {
             SoundEffectPlayer.shared.play(.sidebarButton)
             controller.isTemporaryVoiceConversation = isTemporary
-        } label: {
-            HStack(spacing: 4) {
-                if isSelected {
-                    Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
-                }
-                Text(title).font(.system(size: 11.5))
-            }
-            .foregroundColor(isSelected ? DS.Colors.success : .white.opacity(0.65))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.white.opacity(isSelected ? 0.10 : 0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(isSelected ? DS.Colors.success.opacity(0.5)
-                                             : Color.white.opacity(0.08),
-                                  lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(help)
     }
 
     /// **气泡与它下面那行（复制 · 时间）之间的间距** —— 三个内容页同一个数。
@@ -2298,39 +2359,26 @@ struct VoiceChatSessionView: View {
     /// "某种模式的对话看起来被压扁了"。
     private static let bubbleToFooterSpacing: CGFloat = 4
 
-    /// 一行里的一颗（形状与另外两页那排一致：11.5pt 字、7pt 圆角、亮底 + 描边）。
+    /// 输入框上方那一行的高度 —— **与图文页那一行同一个值**（`NotchHomeView.composerControlsRowHeight`）。
+    /// 两页这一行必须一样高，否则同一条分隔线在两张页上会落在不同的高度。
+    private static let composerControlsRowHeight: CGFloat = 22
+
+    /// 输入框上方那一行里的一颗 —— 走共用的 `MinimalComposerChip`（2026-09-29 起）。
+    ///
+    /// 与图文页那一行同一套：无底色、无圆角、选中 = 绿字，分隔由调用方插
+    /// `TableVerticalRule`。**图标仍然固定 13pt 宽**（用户 2026-09-27：「这个声音按钮
+    /// 无论点击与否，它的宽度不应该变化」）—— 那一条由组件本身保证。
     private func composerChip(title: String,
                               systemImage: String,
                               isOn: Bool,
                               help: String,
                               action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                // **图标固定宽度**（用户 2026-09-27：「这个声音按钮无论点击与否，它的宽度
-                // 不应该变化」）—— `speaker.wave.2.fill` 与 `speaker.slash.fill` 字形宽度不同，
-                // 不钉住的话每点一次这一格就宽一点/窄一点。
-                Image(systemName: systemImage)
-                    .font(.system(size: 10.5))
-                    .frame(width: 13)
-                Text(title).font(.system(size: 11.5))
-            }
-            .foregroundColor(isOn ? DS.Colors.success : .white.opacity(0.65))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.white.opacity(isOn ? 0.10 : 0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(isOn ? DS.Colors.success.opacity(0.5) : Color.white.opacity(0.08),
-                                  lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(help)
+        MinimalComposerChip(title: title,
+                            systemImage: systemImage,
+                            isHighlighted: isOn,
+                            height: Self.composerControlsRowHeight,
+                            help: help,
+                            action: action)
     }
 
     /// 语速面板：**内联画在输入框上方**，与图文 / 文本那一页逐字相同的写法

@@ -46,33 +46,44 @@ import Foundation
 
 /// 通过 RPC 驱动一个常驻的 pi 进程，把这一轮任务跑完。
 ///
-/// ⭐ **双进程**（2026-09-29 用户定）：这个软件**同时开着两个 pi 进程**，从启动到退出
-/// 任何时候都必须活着，互相之间零混淆 ——
-/// · `.realtime`（`PiAgentRunner.realtime`）：**实时模式**专用。**思考关**（`--thinking off`）、
-///   模型可配（默认 deepseek-flash）—— 目的是"快速出结果，显示在鼠标右下角的卡片"。
-/// · `.execute`（`PiAgentRunner.shared`）：**执行模式**专用。**思考开**（不传 `--thinking`，
-///   走 pi 默认），模型可配 —— 让它"真正高效地解决问题"。
-/// 两者**MCP、技能完全相同**（同一份 `~/.pi/agent/` 配置），差的只有模型与思考开关。
+/// ⭐⭐ **一个进程，模型与思考档按"这一轮属于哪个模式"逐轮切**（2026-09-29 深夜合并，
+/// 用户：「你的意思单个进程就能实现是吗，那太好了……窗口中选择思考开，实际的时候，就思考开」）。
+///
+/// 在这之前是**两个常驻进程**（`.realtime` / `.execute` 各一个），差别只在启动参数
+/// `--model` 与 `--thinking` —— 而官方 RPC 本来就有 `set_model` / `set_thinking_level`
+/// 两条命令可以**在同一条进程上**换（`rpc-commands.md`；2026-09-29 实测：换完
+/// `get_state` 立刻是新值，错的 provider 只回 `success:false` 且不污染当前状态）。
+/// 于是"两个进程"唯一还站得住的理由只剩系统提示词不同 —— 而**一条进程只有一份系统提示词**
+/// （`--append-system-prompt` 只在启动那一刻读，RPC 里没有改它的命令）。
+///
+/// 那个差别这样处理：**系统提示词用 Wanna 那一份（唯一的），实时轮把"答得快、先别动手"
+/// 那一句放进这一轮的用户消息开头**（`CompanionManager.realtimeTurnFraming`）——
+/// 与 `<user_intent_tags>` / `<reference_materials>` / `<attachments>` 是同一个形状
+///（都是"这一轮的话"的一部分），不是新机制。
+///
+/// ⚠️ **合并安全的前提**：实时轮与执行轮**本来就不会同时跑** ——
+/// 实时轮只在 `!hasSubmittedToExecuteThisCycle` 时发生，一提交就不再发生；
+/// 看板那条链在 `isAgentModeActive` 时整个停表。所以 `isTurnRunning` 那道互斥不会
+/// 让任何一轮被丢掉（两条进程时代它们也各自串行）。
+///
 /// 会话文件靠前缀区分：执行 = 会话 UUID；实时 = `realtime-` 前缀。
 @MainActor
 final class PiAgentRunner {
 
+    /// **这一轮属于哪个模式**（不再是"哪条进程"）。
+    /// 它决定这一轮用哪个模型、开不开思考 —— 取值一律以 `PiModeSettings` 为准
+    ///（设置 → Agent →「Pi 模型」，或窗口里那颗「选项」按钮，两处是同一份）。
     enum ProcessRole {
-        /// 实时模式：思考关、要快。
+        /// 实时模式：默认思考关、要快。
         case realtime
-        /// 执行模式：思考开、可以配另一个模型。
+        /// 执行模式：默认思考开、可以配另一个模型。
         case execute
     }
 
-    /// 执行模式的常驻进程（原有那条链都走它）。
-    static let shared = PiAgentRunner(role: .execute)
-    /// 实时模式的常驻进程（2026-09-29 新增；与 shared 是**两个进程**）。
-    static let realtime = PiAgentRunner(role: .realtime)
+    /// **唯一那个常驻进程。** 从启动到退出一直开着（`warmUpProcess`）。
+    static let shared = PiAgentRunner()
 
-    let role: ProcessRole
-    private init(role: ProcessRole) {
-        self.role = role
-    }
+    private init() {}
 
     /// 一轮的开始到结束。
     struct TurnResult {
@@ -80,6 +91,23 @@ final class PiAgentRunner {
         let finalText: String
         /// 这一轮实际执行了几步（工具调用次数），用于日志与进度。
         let stepCount: Int
+    }
+
+    /// **随这一轮发过去的一张图**（2026-09-29 深夜）。
+    ///
+    /// 存在的理由：用户粘贴进输入框的图片，在换血之前是**真图片**进视觉请求的
+    ///（用户拍板：「图片给真图片，文件 / 文件夹只给绝对路径」），换血给 Pi 之后
+    /// 那条路断了 —— `attachmentImagePayloads` 只进了诊断日志，**模型一张都拿不到**，
+    /// 而 `<attachments>` 块里那一行还写着「随这条消息一起发给你了，直接看」✗。
+    ///
+    /// 官方 RPC 的 `prompt` 命令**本来就收图**（`rpc-commands.md` 的 prompt 一节：
+    /// `{"type":"prompt","message":"…","images":[{"type":"image","data":"<base64>",
+    /// "mimeType":"image/png"}]}`），所以这里不是新机制，是把官方那个字段用上。
+    struct ImagePayload {
+        /// 已经压过、可直接 base64 的 JPEG 字节（`ComposerAttachment.normalizedJPEG`）。
+        let data: Data
+        /// 形如 `image/jpeg`。**服务商靠它决定怎么解码**，给错会被拒。
+        let mimeType: String
     }
 
     // MARK: 路径与配置
@@ -106,51 +134,50 @@ final class PiAgentRunner {
         FileManager.default.isExecutableFile(atPath: piExecutablePath)
     }
 
-    /// **这个进程用哪个模型、开不开思考**（2026-09-29）。
-    ///
-    /// 两条规则（都是用户定的）：
-    /// · 模型 id 从设置读（`PiModeSettings`），默认 `deepseek-official/deepseek-flash`；
-    /// · **实时进程强制 `--thinking off`**（要快）；执行进程**不传 `--thinking`**
-    ///   （pi 默认 = 开思考）—— "执行要思考"是这次设计的前提，不给出错关掉它的入口。
-    func modelAndThinkingArguments() -> [String] {
-        let settings = PiModeSettingsStore.shared.snapshot()
-        var arguments = ["--model", settings.modelID(for: role)]
-        // **思考开 = 不传参数**（pi 默认就是开思考）；**关 = 显式 `--thinking off`**
-        //（它会发出 `reasoning_effort: none`，实测火山与 DeepSeek 都认）。
-        // 默认值仍是"实时关、执行开"，但用户可以在设置页 / 那颗「模型」面板里改
-        //（2026-09-29 用户：「它的思考都可以开或关……应该让用户可以选择」）。
-        if !settings.thinkingEnabled(for: role) {
-            arguments += ["--thinking", "off"]
-        }
-        return arguments
+    // MARK: 模型与思考档（**逐轮切，不是启动参数**）
+
+    /// 启动参数里那个 `--model` —— 只是**默认值**，真正的取值每一轮由
+    /// `applyModelAndThinking(for:)` 用官方 RPC 命令设下去。
+    /// 仍然要传它的理由：pi 不传 `--model` 时默认 provider 是 `google`，
+    /// 而它可能根本没配 —— 进程会起不来或第一轮就报错。给一个我们确定存在的模型兜底。
+    static var startupModelID: String {
+        PiModeSettingsStore.shared.snapshot().executeModelID
     }
 
-    /// ⭐ **启动即预热**（2026-09-29 用户定：两个进程"任何时候都必须要开"）。
+    /// `"provider/模型id"` → 两半。**按第一个 `/` 切**（官方：模型 id 自己可以含斜杠）。
+    nonisolated static func splitModelID(_ modelID: String) -> (provider: String, modelId: String)? {
+        guard let slash = modelID.firstIndex(of: "/") else { return nil }
+        let provider = String(modelID[modelID.startIndex..<slash])
+        let modelId = String(modelID[modelID.index(after: slash)...])
+        guard !provider.isEmpty, !modelId.isEmpty else { return nil }
+        return (provider, modelId)
+    }
+
+    /// 思考开 = `medium` —— **pi 自己的默认档**（官方 `settings.md` 的
+    /// `defaultThinkingLevel` 默认值就是 `"medium"`），所以这与合并前
+    /// "思考开 = 不传 `--thinking`"逐字等价，不是新选的档。
+    nonisolated static func thinkingLevel(forEnabled enabled: Bool) -> String {
+        enabled ? "medium" : "off"
+    }
+
+    /// ⭐ **启动即预热**（2026-09-29 用户定：进程"任何时候都必须要开"）。
     ///
-    /// 在 `CompanionManager.start()` 里各调一次 —— 进程在后台拉起来，等第一轮真的来时
+    /// 在 `CompanionManager.start()` 里调一次 —— 进程在后台拉起来，等第一轮真的来时
     /// 握手已经完成。进程挂了不在这里复活（`runTurn` 会看到 isRunning == false 自动重拉），
     /// 这里只负责"App 活着的时候进程也活着"。
     /// ⚠️ **失败必须留一行日志**（第一版 `try?` 把失败吞了 —— "起 Pi"日志打在 `run()`
     /// 之前，`run()` 抛错时既没有进程也没有退出日志，屏幕上与日志里都看不出任何异常）。
-    static func warmUpBothProcesses() {
+    static func warmUpProcess() {
         guard isConfigured else {
-            MainFlowDiagnostics.log("🥧 双进程预热跳过：pi 不在（\(piExecutablePath)）")
+            MainFlowDiagnostics.log("🥧 预热跳过：pi 不在（\(piExecutablePath)）")
             return
         }
         Task { @MainActor in
             do {
-                _ = try realtime.ensureProcess()
-                MainFlowDiagnostics.log("🥧 实时进程已预热（思考关）")
-            } catch {
-                MainFlowDiagnostics.log("🥧 ⚠️ 实时进程预热失败：\(error.localizedDescription)")
-            }
-        }
-        Task { @MainActor in
-            do {
                 _ = try shared.ensureProcess()
-                MainFlowDiagnostics.log("🥧 执行进程已预热（思考开）")
+                MainFlowDiagnostics.log("🥧 Pi 进程已预热")
             } catch {
-                MainFlowDiagnostics.log("🥧 ⚠️ 执行进程预热失败：\(error.localizedDescription)")
+                MainFlowDiagnostics.log("🥧 ⚠️ Pi 进程预热失败：\(error.localizedDescription)")
             }
         }
     }
@@ -179,6 +206,61 @@ final class PiAgentRunner {
         return home.appendingPathComponent("Library/Application Support/Wanna/pi-system-prompt.md")
     }
 
+    // MARK: 记忆（图文 / 执行模式的「记住最近多少轮对话」与「历史自动压缩」）
+
+    /// **每轮按多少 token 折算** —— 设置里的「记住最近 N 轮对话」是**轮**，
+    /// 而 pi 的保留量是**token**，两者之间只有这一个换算常数。
+    ///
+    /// 这个数**是量出来的，不是拍的**：读真实会话文件里每条 assistant 消息的 `usage`，
+    /// 用"最后一条的上下文 token ÷ 轮数"估每轮成本，三条真实会话分别得到
+    /// ≈1240 / ≈1613 / ≈866 token 每轮（2026-09-29，`pi-sessions/*.jsonl`）。
+    /// 取整到 **1000**，落在这三个数的中间偏保守一侧。
+    ///
+    /// ⚠️ 它当然是个近似 —— 一轮里调不调工具能差一个数量级。所以：
+    /// ① 设置页那一行的说明里**明写了这个折算**，用户看得见；
+    /// ② 这个设置本来就是"大概记住多少"的粗旋钮，不是精确配额。
+    static let tokensPerRememberedRound = 1000
+
+    /// pi 的**项目级设置文件** —— 写它，**不写** `~/.pi/agent/settings.json`。
+    ///
+    /// 为什么是项目级：`<cwd>/.pi/settings.json` 是官方支持的第二个位置
+    ///（`compaction.md`：「Configure compaction in `~/.pi/agent/settings.json`
+    /// **or `<project-dir>/.pi/settings.json`**」），而 cwd 就是我们自己的会话目录 ——
+    /// 于是 Wanna 改压缩设置**不会动你在终端里那份全局 pi 配置**。
+    ///
+    /// ⚠️ **必须带 `--approve` 才会被读到**（2026-09-29 实测，两条对照）：
+    /// 在同一个含 `.pi/settings.json`（写着 `defaultThinkingLevel: "off"`）的目录里启动，
+    /// **不带** `--approve` → 读到默认 `medium`；**带** `--approve` → 读到 `off`。
+    /// 这正是官方 `how-pi-works.md` 那条「先决定项目可不可信，再加载项目设置」。
+    static var projectSettingsURL: URL {
+        URL(fileURLWithPath: sessionsDirectory).appendingPathComponent(".pi/settings.json")
+    }
+
+    /// 把当前设置写成 pi 认识的那份文件，**返回它的哈希**（变了 → 重起进程，见 `runTurn`）。
+    ///
+    /// 映射一一对应，两边都是官方那个设置：
+    /// · 「历史自动压缩」 → `compaction.enabled`
+    /// · 「记住最近 N 轮对话」 → `compaction.keepRecentTokens` = N × `tokensPerRememberedRound`
+    @discardableResult
+    static func writeCompactionSettings() -> Int {
+        let settings = AppSettingsStore.snapshot()
+        let keepRecentTokens = max(0, settings.rememberedConversationRounds) * tokensPerRememberedRound
+        let payload: [String: Any] = [
+            "compaction": [
+                "enabled": settings.autoCompressesHistory,
+                "keepRecentTokens": keepRecentTokens,
+            ],
+        ]
+        let url = projectSettingsURL
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: payload,
+                                                  options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: url, options: .atomic)
+        }
+        return "\(settings.autoCompressesHistory)|\(keepRecentTokens)".hashValue
+    }
+
     // MARK: 常驻进程
 
     private var process: Process?
@@ -195,8 +277,13 @@ final class PiAgentRunner {
     /// ⭐ **此刻有没有一轮在跑**（2026-09-29）—— 常驻进程一次只能对准一个会话，
     /// 两轮并发会互相切走对方的会话（见 `runTurn` 门口那道 guard）。
     private var isTurnRunning = false
-    /// 起进程那一刻的"模型 + 思考"参数哈希（变了 → runTurn 门口重起，见 runTurn 注释）。
-    private var spawnedModelArgumentsHash: Int?
+    /// 起进程那一刻的压缩设置哈希（变了 → runTurn 门口重起，让 pi 重新读那份文件）。
+    private var spawnedCompactionHash: Int?
+    /// **这个进程此刻实际是哪个模型 / 哪个思考档** —— 用来跳过重复的 `set_model` /
+    /// `set_thinking_level`（每轮都发一遍会往会话文件里灌 `model_change` 噪声）。
+    /// 进程一重起就清空：新进程是启动参数给的那一份。
+    private var appliedModelID: String?
+    private var appliedThinkingLevel: String?
 
     /// pi 的 stderr 走诊断日志（官方：stdout 只走协议，日志走 stderr —— P6）。
     private func ensureProcess() throws -> (Process, FileHandle, PiRPCChannel) {
@@ -214,7 +301,9 @@ final class PiAgentRunner {
                                            atomically: true, encoding: .utf8)
         }
         spawnedSystemPromptHash = currentSystemPrompt.hashValue
-        spawnedModelArgumentsHash = modelAndThinkingArguments().hashValue
+        spawnedCompactionHash = Self.writeCompactionSettings()
+        appliedModelID = nil
+        appliedThinkingLevel = nil
 
         let newProcess = Process()
         newProcess.executableURL = URL(fileURLWithPath: Self.piExecutablePath)
@@ -223,6 +312,12 @@ final class PiAgentRunner {
             "--no-context-files",      // ⚠️ 仓库的 AGENTS.md 有 503KB —— 官方 security.md 写明
                                        // context 文件"regardless of project trust"照读，
                                        // 必须用 -nc 关掉（台账 P5'/12.1）
+            // ⚠️ **`--approve` 是压缩设置能不能生效的开关**（2026-09-29 实测，见
+            // `projectSettingsURL` 的注释）：项目级 `.pi/settings.json` 受"项目可不可信"
+            // 那道闸门管，不带它就**静默不读**。cwd 是我们自己的会话目录（只放 session
+            // 文件和我们写的那份设置），信任它没有别的副作用；`--no-context-files`
+            // 也已经把 AGENTS.md / CLAUDE.md 那类关掉了。
+            "--approve",
             "--exclude-tools", "bash,edit,write",
             // ⚠️⚠️ **为什么是"去掉三个"而不是 `--no-builtin-tools`（2026-09-29 实测定的）**
             //
@@ -245,11 +340,6 @@ final class PiAgentRunner {
             // `<name>`+`<description>`+`<location>` 绝对路径，正文靠 `read` 去读，正是三级披露）；
             // 去掉 `bash`/`edit`/`write` —— 那三个才是它"自己动手"和"满硬盘找"的来源。
             // 取舍就是这一条：**决策归 Pi，动手归 Wanna。**
-            // ⭐ **模型与思考开关按进程角色走设置**（2026-09-29 用户定）：
-            // 实时进程 = 思考**关**（快，显示在右下角卡片）、执行进程 = 思考**开**（默认）；
-            // 两者都可配模型，当前默认都是 deepseek-flash（用户："方便用户调试嘛，
-            // 未来可以让用户手动去设置"）。设置页在 设置 → Agent → 「Pi 模型」一节
-            //（`PiModeSettings`，读的是已保存的快照 —— 改了会**重起进程**，见上面的哈希检查）。
             //
             // 起因：用户报「点快捷键进实时模式说话能回，切进 agent 模式后没有返回、非常慢」。
             // 实时那半边走的是本地小模型那条快链，agent 这半边才走本文件这条 pi 链。
@@ -259,15 +349,12 @@ final class PiAgentRunner {
             // 于是这一轮永远等不到 `agent_settled`，表现就是「没有返回、非常慢（干等到超时）」。
             // 名字对齐配置里那一条即可（`~/.pi/agent/models.json` 的 providers 键名）。
             //
-            // ⚠️ **`--thinking off`：关掉思考**（用户点名「对 wanna 必须使用非思考模式」）。
-            //
-            // `deepseek-flash` 是推理模型（reasoning=true）：不关的话它先吐一大段 reasoning_content，
-            // 正文迟迟不来，用户端就是「慢、半天不出字」。官方 CLI 参数 `--thinking off` 会让
-            // openai-completions 那条链发出 `reasoning_effort: "none"`（deepseek 中转实测认这个字段）。
-            // 端到端实测（保持 stdin 开着、等到 agent_settled）：off = 0.8s 无思考流；
-            // 默认 medium = 1.6s 有思考流 —— 关掉既满足要求又更快一倍。
+            // ⭐⭐ **模型与思考档 2026-09-29 深夜改成逐轮切**（原来是启动参数、两条进程）：
+            // 现在这里传的 `--model` 只是**启动默认值**（`startupModelID`），
+            // 真正生效的取值由 `applyModelAndThinking(for:)` 在每一轮用官方
+            // `set_model` / `set_thinking_level` 设下去 —— 见那个方法的注释。
         ]
-        launchArguments += modelAndThinkingArguments()
+        launchArguments += ["--model", Self.startupModelID]
         // **Wanna 的规矩追加在 pi 自己的提示词后面**（官方机制 `--append-system-prompt`，非自造）。
         // 没注入提示词提供者时不加这个参数，退回原来的行为。
         if !currentSystemPrompt.isEmpty {
@@ -352,6 +439,81 @@ final class PiAgentRunner {
 
     // MARK: 跑一轮
 
+    /// 压缩设置的哈希（只读设置、**不写文件**）—— 给 `runTurn` 门口那道"变了就重起"用。
+    static func compactionSettingsHash() -> Int {
+        let settings = AppSettingsStore.snapshot()
+        let keepRecentTokens = max(0, settings.rememberedConversationRounds) * tokensPerRememberedRound
+        return "\(settings.autoCompressesHistory)|\(keepRecentTokens)".hashValue
+    }
+
+    /// ⭐⭐ **把这一轮的模型与思考档设下去 —— 用官方那两条 RPC 命令**（2026-09-29 深夜）。
+    ///
+    /// 这是"一个进程"能成立的关键：官方 `set_model` / `set_thinking_level`
+    ///（`rpc-commands.md` 的 Model / Thinking 两节）**在同一条常驻进程上换**，
+    /// 所以"实时用这个模型、执行用那个模型"不再需要两条进程。
+    ///
+    /// 2026-09-29 实测（真 RPC 进程，逐条读 `get_state` 确认）：
+    /// · `set_model` 换完，`get_state` 立刻是新 provider/模型 ✓
+    /// · `set_thinking_level(off)` 换完，`get_state` 立刻是 `off` ✓，切回 `medium` 也是 ✓
+    /// · provider 写错时只回 `success:false · Model not found: …`，
+    ///   **当前模型与思考档原样不动**（不是"换了一半"）✓
+    ///
+    /// 两条分寸：
+    /// · **只在变了的时候发**（`appliedModelID` / `appliedThinkingLevel`）—— 每轮都发会往
+    ///   会话文件里灌一串 `model_change` 记录；而且 `set_model` 是**记进会话的**，发多了很脏。
+    /// · **顺序：先模型、后思考档**。模型一换，它的可用思考档可能不同，所以思考档必须在
+    ///   模型之后设，否则会被新模型的默认值盖掉。
+    ///
+    /// ⚠️ **失败要大声**：模型配错（用户写了个不存在的 provider）时**抛错**，
+    /// 不让它悄悄用着旧模型跑完这一轮 —— 那正是这个仓库最不想再看到的那类静默失效。
+    private func applyModelAndThinking(for role: ProcessRole,
+                                       stdin: FileHandle,
+                                       channel: PiRPCChannel,
+                                       process: Process) async throws {
+        let settings = PiModeSettingsStore.shared.snapshot()
+        let wantedModelID = settings.modelID(for: role)
+        let wantedThinkingLevel = Self.thinkingLevel(forEnabled: settings.thinkingEnabled(for: role))
+
+        if appliedModelID != wantedModelID {
+            guard let halves = Self.splitModelID(wantedModelID) else {
+                throw PiAgentError.agentFailed(
+                    "模型名要写成「供应商/模型」（当前是「\(wantedModelID)」）")
+            }
+            requestSequence += 1
+            let requestID = "w-\(requestSequence)"
+            try sendCommand(stdin, id: requestID, object: [
+                "id": requestID,
+                "type": "set_model",
+                "provider": halves.provider,
+                "modelId": halves.modelId,
+            ])
+            do {
+                try await waitForResponse(channel, id: requestID, timeout: 15,
+                                          process: process, what: "换模型（\(wantedModelID)）")
+            } catch {
+                // **不记 `appliedModelID`** —— 下一次还要重试，不能因为这次失败就以为已经设上了。
+                throw error
+            }
+            appliedModelID = wantedModelID
+            appliedThinkingLevel = nil      // 换了模型，思考档要在新模型上重设
+            MainFlowDiagnostics.log("🥧 模型 → \(wantedModelID)")
+        }
+
+        if appliedThinkingLevel != wantedThinkingLevel {
+            requestSequence += 1
+            let requestID = "w-\(requestSequence)"
+            try sendCommand(stdin, id: requestID, object: [
+                "id": requestID,
+                "type": "set_thinking_level",
+                "level": wantedThinkingLevel,
+            ])
+            try await waitForResponse(channel, id: requestID, timeout: 15,
+                                      process: process, what: "换思考档（\(wantedThinkingLevel)）")
+            appliedThinkingLevel = wantedThinkingLevel
+            MainFlowDiagnostics.log("🥧 思考档 → \(wantedThinkingLevel)")
+        }
+    }
+
     /// 跑一轮任务。`onProgress` 每执行一步被叫一次（给界面显示"做到哪了"）。
     ///
     /// 取消：调用方取消它的 Task 时，会向 pi 发官方的 `abort` 命令并抛 `CancellationError`
@@ -360,6 +522,12 @@ final class PiAgentRunner {
     ///   「连续对话」= 同一个 UUID（同一个 pi 会话文件）；「新建对话」= 换一个。
     func runTurn(task: String,
                  sessionID: String,
+                 /// **这一轮属于哪个模式** —— 决定用哪个模型、开不开思考。
+                 /// 取值一律以 `PiModeSettings` 为准（设置页与窗口那颗「选项」按钮是同一份）。
+                 role: ProcessRole,
+                 // **用户粘贴进来的图片**（2026-09-29 深夜接上；官方 prompt 命令本来就收，
+                 // 见 `ImagePayload` 的注释）。空数组 = 不发这个字段，行为与从前一字不差。
+                 images: [ImagePayload] = [],
                  // 每一块文字到达时叫一次，给的是**累计全文**（与旧视觉那条 `onTextChunk` 同形）。
                  // 2026-09-29 补：官方 RPC 本来就是按 `text_delta` 逐块推的，不交出去的话
                  // 上游三个下游（卡片流式上屏 / 逐句快答喂字 / isAnswerStreamLive）
@@ -397,12 +565,12 @@ final class PiAgentRunner {
             stdinHandle = nil
             channel = nil
         }
-        // ⭐ **模型/思考开关变了也要重起**（2026-09-29 双进程）：它们也是**启动那一刻**
-        // 读一次的启动参数 —— 不重起的话，用户在设置页改了模型，屏幕上没有任何变化，
-        // 跑的还是旧模型（与提示词那条静默失效同一类，见 `PiModeSettings`）。
+        // ⭐ **压缩设置（=「记住最近多少轮 / 历史自动压缩」）变了也要重起**：
+        // 它是**启动那一刻**从项目级 `.pi/settings.json` 读一次的，不是逐轮可改的
+        //（模型与思考档有官方 RPC 命令，压缩没有 —— 所以它俩的处理方式不同）。
         if let runningProcess = process, runningProcess.isRunning,
-           spawnedModelArgumentsHash != modelAndThinkingArguments().hashValue {
-            MainFlowDiagnostics.log("🥧 模型配置变了 —— 重起 Pi 进程让它生效")
+           spawnedCompactionHash != Self.compactionSettingsHash() {
+            MainFlowDiagnostics.log("🥧 记忆（压缩）设置变了 —— 重起 Pi 进程让它生效")
             runningProcess.terminate()
             process = nil
             stdinHandle = nil
@@ -414,7 +582,7 @@ final class PiAgentRunner {
         // 上一轮可能留下的残余事件，全部倒掉再开始（防串台）。
         _ = channel.takeLines()
 
-        MainFlowDiagnostics.log("🥧 这一轮交给 Pi · 会话 \(sessionID.prefix(8)) · \(task.prefix(60))")
+        MainFlowDiagnostics.log("🥧 这一轮交给 Pi · \(role == .realtime ? "实时" : "执行") · 会话 \(sessionID.prefix(8)) · \(task.prefix(60))")
 
         // ① 会话对准 —— switch_session 指向不存在的路径会直接创建（实测）。
         requestSequence += 1
@@ -429,14 +597,31 @@ final class PiAgentRunner {
         try await waitForResponse(channel, id: sessionRequestID, timeout: 15,
                                   process: process, what: "切换会话")
 
+        // ② 模型与思考档 —— **官方两条 RPC 命令，逐轮按设置设下去**（2026-09-29 深夜）。
+        try await applyModelAndThinking(for: role, stdin: stdin, channel: channel, process: process)
+
         // ② 发 prompt（唯一保留 progress 通道的命令）。
         requestSequence += 1
         let promptRequestID = "w-\(requestSequence)"
-        try sendCommand(stdin, id: promptRequestID, object: [
+        var promptCommand: [String: Any] = [
             "id": promptRequestID,
             "type": "prompt",
             "message": task,
-        ])
+        ]
+        // **图走官方那个 `images` 字段**（`rpc-commands.md` 的 prompt 一节：
+        // `{"type":"image","data":"<base64>","mimeType":"image/png"}`）。
+        // 空数组时**不加这个键** —— 与从前逐字一致，免得给协议塞一个空壳。
+        if !images.isEmpty {
+            promptCommand["images"] = images.map { image in
+                [
+                    "type": "image",
+                    "data": image.data.base64EncodedString(),
+                    "mimeType": image.mimeType,
+                ] as [String: Any]
+            }
+            MainFlowDiagnostics.log("🥧 这一轮带图 \(images.count) 张（官方 prompt.images）")
+        }
+        try sendCommand(stdin, id: promptRequestID, object: promptCommand)
 
         // ③ 事件循环 —— 等 `agent_settled`，**不是** `agent_end`（官方 P4）。
         var finalText = ""
@@ -495,7 +680,7 @@ final class PiAgentRunner {
                 case "tool_execution_start":
                     stepCount += 1
                     let toolName = object["toolName"] as? String ?? "工具"
-                    onProgress("🔧 \(toolName)…")
+                    onProgress(Self.progressLabel(toolName: toolName, args: object["args"]))
 
                 case "tool_execution_end":
                     if object["isError"] as? Bool == true {
@@ -578,6 +763,50 @@ final class PiAgentRunner {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         throw PiAgentError.agentFailed("\(what)超时（\(Int(timeout))s）")
+    }
+
+    /// **进度行里那颗工具叫什么 —— 写全，不只写"MCP"三个字**（2026-09-29 用户：
+    /// 「现在只显示一个 MCP，就显示"MCP"三个字，这跟没写一样，没有意义，你要把它写全，
+    /// 显示在一行上」）。
+    ///
+    /// ⭐ **`case "mcp"` 现在是兜底，不是主路**（2026-09-29 当天稍晚）：适配器默认把
+    /// 全部工具折成**一个**通用工具 `mcp`（README 原话："Two calls instead of 26 tools
+    /// cluttering the context"），于是 `tool_execution_start` 的 `toolName` 是字面的
+    /// `"mcp"`、真正在调的工具藏在 `args` 里 —— 实测后果是模型要花好几轮
+    /// `mcp({search})` 才知道自己有什么工具（9-29 22:31 那次会话：18 步里 6 步在找工具，
+    /// 到第 16 步才拿到 `wanna_screenshot`）。
+    /// 现在 `~/.config/mcp/mcp.json` 打开了 `directTools`，21 个工具**各自是 pi 的真工具**
+    ///（走官方 `pi.registerTool`），所以 `toolName` 直接就是 `wanna_screenshot`，
+    /// 走下面的 `default` 分支。这里保留 `mcp` 那几支，是因为**缓存缺失时适配器会退回代理**
+    /// （`disableProxyTool` 在直连工具不齐时不会真的隐藏它），那时还得靠 `args` 捞名字。
+    ///
+    /// · 直连（现在）：`toolName = "wanna_screenshot"` → `🔧 wanna_screenshot…`
+    /// · 退回代理：`mcp({ tool: "wanna_screenshot", args: {…} })` → `🔧 wanna_screenshot`
+    /// · 退回代理：`mcp({ search: "screenshot" })` → `🔧 MCP 找工具「screenshot」`
+    /// · `mcpScript` → 带上 script 名（如果 args 里有）
+    /// · 普通工具（read / bash …）→ 原名
+    nonisolated static func progressLabel(toolName: String, args: Any?) -> String {
+        let argsObject = args as? [String: Any]
+        switch toolName {
+        case "mcp":
+            if let called = argsObject?["tool"] as? String, !called.isEmpty {
+                return "🔧 \(called)…"
+            }
+            if let query = argsObject?["search"] as? String, !query.isEmpty {
+                return "🔧 MCP 找工具「\(query)」…"
+            }
+            if let described = argsObject?["describe"] as? String, !described.isEmpty {
+                return "🔧 MCP 看工具「\(described)」…"
+            }
+            return "🔧 MCP…"
+        case "mcpScript":
+            if let script = argsObject?["script"] as? String, !script.isEmpty {
+                return "🔧 mcpScript:\(script)…"
+            }
+            return "🔧 mcpScript…"
+        default:
+            return "🔧 \(toolName)…"
+        }
     }
 }
 

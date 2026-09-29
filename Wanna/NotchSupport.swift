@@ -602,10 +602,11 @@ nonisolated enum NotchSupport {
     /// while resting, so the menu bar items underneath stay clickable.
     static let activeFlankWidth: CGFloat = 150
 
-    /// 点击展开的命中余量：pill 四周各放宽这么多，点击才算落在刘海上。
-    /// 原来还有一个更窄的「离开」余量，配合悬停计时的迟滞带防止进度环
-    /// 抖动；悬停触发已在 2026-09-22 整条移除（「鼠标滑动触发太影响体验」），
-    /// 迟滞带随之失去意义，只剩这一个点扩大命中区。
+    /// ⚠️ **2026-09-29 起命中不再放宽**（用户定的硬规矩：「只有鼠标点击刘海内部才能
+    /// 激活刘海……在下方或其他周围区域点击应该没有效果」）—— 旧的那 4pt 余量加上
+    /// pill frame 自带的 22pt 动画余量，把刘海下方约 26pt 的整条都变成了"点哪儿哪开"。
+    /// 现在命中判的是 `notchRect` 本身（见 `NotchWindowController.handleGlobalClick`），
+    /// 这个常量已无调用者，留在这里只为说明它去哪了。
     static let pillClickHitMargin: CGFloat = 4
 
     // MARK: - Notch detection

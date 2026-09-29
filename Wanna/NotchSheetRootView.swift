@@ -44,6 +44,13 @@ struct NotchSheetRootView: View {
     var toggleFullScreenAction: () -> Void
     var audioHistoryProvider: () -> [CGFloat]
 
+    /// **展开态那条状态带的几何**（2026-09-29 新增），逐字从 `NotchExpandedSheetView`
+    /// 透传下来。这一页要它们只为一件事：**把通话按钮画在刘海右翼那一格上**
+    ///（= 「挂断」出现的地方 —— 见 `notchTrailingWingOverlay`）。
+    /// 0 = 这块屏没有刘海（或还没算好）→ 那颗按钮不画。
+    var wingBandWidth: CGFloat = 0
+    var notchBandHeight: CGFloat = 0
+
     @StateObject private var sessionsModel = ConversationSessionsModel()
     @StateObject private var generalSettingsViewModel = GeneralSettingsViewModel()
     @StateObject private var modelSettingsViewModel = ModelSettingsViewModel()
@@ -80,7 +87,13 @@ struct NotchSheetRootView: View {
         hideSheetAction: @escaping () -> Void,
         revealSheetAction: @escaping () -> Void,
         toggleFullScreenAction: @escaping () -> Void,
-        audioHistoryProvider: @escaping () -> [CGFloat]
+        audioHistoryProvider: @escaping () -> [CGFloat],
+        // ⚠️ **这两个必须在这里也写一遍**（2026-09-29 踩到）：这个 struct 用的是
+        // **手写 init**，在属性上写 `= 0` 只是给了它一个默认值，**不会**让它出现在
+        // 构造函数里 —— 只加属性的话，调用方那句 `wingBandWidth:` 会被判成
+        // 「extra arguments at positions #8, #9」。
+        wingBandWidth: CGFloat = 0,
+        notchBandHeight: CGFloat = 0
     ) {
         self.panelModel = panelModel
         self.companionManager = companionManager
@@ -96,6 +109,8 @@ struct NotchSheetRootView: View {
         self.revealSheetAction = revealSheetAction
         self.toggleFullScreenAction = toggleFullScreenAction
         self.audioHistoryProvider = audioHistoryProvider
+        self.wingBandWidth = wingBandWidth
+        self.notchBandHeight = notchBandHeight
     }
 
     // MARK: - 当前卡片与它的聊天模式（2026-09-26）
@@ -166,8 +181,9 @@ struct NotchSheetRootView: View {
                                 companionManager: companionManager,
                                 showsSettings: $showsSettings,
                                 toggleSidebarCollapseAction: {
-                                    isSessionSidebarCollapsed.toggle()
-                                    SoundEffectPlayer.shared.play(.sidebarButton)
+                                    // 走这一个函数而不是直接 toggle：它顺手把折叠状态落盘
+                                    //（右上角那颗「收起侧栏」删掉之后，这里成了唯一的调用者）。
+                                    setSessionSidebarCollapsed(!isSessionSidebarCollapsed)
                                 }
                             )
                         } else {
@@ -199,8 +215,9 @@ struct NotchSheetRootView: View {
                                     showsSettings = true
                                 },
                                 toggleSidebarCollapseAction: {
-                                    isSessionSidebarCollapsed.toggle()
-                                    SoundEffectPlayer.shared.play(.sidebarButton)
+                                    // 走这一个函数而不是直接 toggle：它顺手把折叠状态落盘
+                                    //（右上角那颗「收起侧栏」删掉之后，这里成了唯一的调用者）。
+                                    setSessionSidebarCollapsed(!isSessionSidebarCollapsed)
                                 },
                                 addCardAction: {
                                     // 建卡片这件事只有这一处入口：侧栏那颗「添加」。
@@ -310,17 +327,15 @@ struct NotchSheetRootView: View {
                             // 做法是一层透明的背板垫在面板**下面**：点它 = 点到面板外面。
                             // 底下的两列因此在这一刻收不到点击（这正是弹出菜单该有的行为 ——
                             // 第一下是"关掉菜单"），而面板本身在它上面，照常可点。
-                            if cardChatPreferences.openRoleListCardID != nil || isVoicePickerPresented
-                                || modelPickerState.isExpanded {
+                            // ⚠️ **2026-09-29：模型 / 音色那两个面板不在这套浮层里了** ——
+                            // 它们和语速合并成了「选项」，面板画在 `NotchHomeView` 的内容列
+                            // 顶上（**参与布局**）。所以它不需要"点外面关掉"这一套：
+                            // 再点一次页头那颗按钮就收。留在这里的只有角色清单。
+                            if cardChatPreferences.openRoleListCardID != nil {
                                 Color.clear
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         cardChatPreferences.openRoleListCardID = nil
-                                        setVoicePickerPresented(false)
-                                        // ⭐ **模型那两行也吃这一下**（2026-09-29 用户：
-                                        // 「现在的弹窗无法自动隐藏，用户点击弹窗外应该自动隐藏」）。
-                                        modelPickerState.isExpanded = false
-                                        modelPickerState.expandedRow = nil
                                     }
                             }
                             // ⚠️ **模型 / 音色的面板 2026-09-29 从这里搬走了** ——
@@ -399,8 +414,21 @@ struct NotchSheetRootView: View {
                         .frame(maxWidth: .infinity, alignment: .topLeading)
 
                     HStack(spacing: 6) {
-                        sidebarCollapseButton
-                        hideSheetButton
+                        // ⭐ **2026-09-29：右上角只剩这一颗了**（用户：「窗口右上角只保留
+                        // 展开按钮，不要『展开』两个字，只留一个按钮，宽度控制成长方形」＋
+                        // 「取消右侧那两个按钮，让展开按钮变成多功能按钮：当前状态下是展开，
+                        // 展开之后是缩小」）。
+                        //
+                        // 拿掉的两颗是「收起侧栏」和「收回刘海」—— 两个动作都还有别的入口，
+                        // 所以删掉的是"这一个入口"，不是那个能力：
+                        // · **收起侧栏**：侧栏自己的第 1 行就是同一颗，走同一个
+                        //   `setSessionSidebarCollapsed`（折叠状态照样落盘）；
+                        // · **收回刘海**：Esc 与"点面板外"两条路一直都在，动作是同一个
+                        //   `collapseAction`。
+                        //
+                        // 「多功能」本来就是它的行为（`toggleFullScreenAction` 在两档之间切，
+                        // 图标与 help 都跟着状态走）—— 这一轮只是去掉文字、把它撑成长方形。
+                        //
                         // **最外那颗的右上角更圆**（用户：「因为咱们这个主窗口是有圆角的，所以
                         // 你这个对应的展开的按钮，它的右上角这个圆角应该更大一点…就是不要让他
                         // 这个按钮显示到外面」）—— 它落在面板 36pt 的顶角圆弧里，外角跟着圆一点
@@ -432,6 +460,12 @@ struct NotchSheetRootView: View {
         }
         .onChange(of: panelModel.requestedSettingsPage) { _, _ in
             consumeRequestedSettingsPageIfNeeded()
+        }
+        // ⭐ **通话按钮压在面板顶部、刘海右翼那一格上**（2026-09-29）——
+        // 挂在这里是因为 `Group` 与 sheet 同宽同高，而 `alignment: .top` 让横向偏移
+        // **只需要相对于中心**（见 `notchTrailingWingOverlay` 那段）。
+        .overlay(alignment: .top) {
+            notchTrailingWingOverlay
         }
     }
 
@@ -489,39 +523,17 @@ struct NotchSheetRootView: View {
 
     private static let cornerControlTopInset: CGFloat = 5
 
-    /// 「收起侧栏」——纯图标，左右各一颗，动作完全相同。
+    /// 「展开 / 收缩」——**右上角现在只剩这一颗**，在全屏与刘海下方小窗两档之间切。
+    /// 图标与 help 都跟着状态走，所以按下去之前就能看出下一次会变成哪一档。
     ///
-    /// 用户 2026-09-26：右边那颗「只有图标，没有名称、没有文字」，左边那颗
-    /// 「同样是纯图标」。一颗按钮一个定义、两处放，避免左右两颗哪天改得不一样。
-    private var sidebarCollapseButton: some View {
-        NotchBarActionButton(
-            systemImage: "sidebar.left",
-            isHighlighted: isSessionSidebarCollapsed,
-            help: isSessionSidebarCollapsed ? "展开侧栏" : "收起侧栏（只留图标）",
-            usesMinimalStyle: true
-        ) {
-            setSessionSidebarCollapsed(!isSessionSidebarCollapsed)
-        }
-    }
-
-    /// 「隐藏整个窗口」——把面板收回刘海。动作就是 `collapseAction`，与 Esc /
-    /// 点面板外 / 设置页的「关闭」同一条路，不另开一条收起路径。
-    private var hideSheetButton: some View {
-        NotchBarActionButton(
-            systemImage: "chevron.up",
-            help: "把窗口收回刘海",
-            usesMinimalStyle: true
-        ) {
-            collapseAction()
-        }
-    }
-
-    /// 「展开 / 收缩」——全屏与刘海下方小窗之间切。文案与图标都跟着状态走，
-    /// 所以按下去之前就能看出下一次会变成哪一档。
+    /// ⚠️ **2026-09-29 改了两处**（用户）：
+    /// · **文字去掉**（「不要『展开』两个字，只留一个按钮」）—— `title` 不传就是
+    ///   `NotchBarActionButton` 的纯图标形态；
+    /// · **宽度撑成长方形**（「宽度控制成长方形」）—— 纯图标形态默认给的是正方形，
+    ///   这里钉一个更宽的宽度，图标仍然居中。
     private var fullScreenToggleButton: some View {
         let isFullscreen = panelModel.isSheetFullscreen
         return NotchBarActionButton(
-            title: isFullscreen ? "收缩" : "展开",
             systemImage: isFullscreen
                 ? "arrow.down.right.and.arrow.up.left"
                 : "arrow.up.left.and.arrow.down.right",
@@ -531,7 +543,16 @@ struct NotchSheetRootView: View {
         ) {
             toggleFullScreenAction()
         }
+        .frame(width: Self.fullScreenToggleButtonWidth)
     }
+
+    /// 右上角那颗按钮的宽度 —— 比它的高度宽，所以是**长方形**而不是正方形。
+    private static let fullScreenToggleButtonWidth: CGFloat = 52
+
+    // ⚠️ **`sidebarCollapseButton` 与 `hideSheetButton` 在 2026-09-29 删掉了** ——
+    // 用户要求「窗口右上角只保留展开按钮……取消右侧那两个按钮」。两个动作都还有别的入口
+    //（侧栏第 1 行那颗收起侧栏；Esc / 点面板外收起整个面板），所以删掉的是这两个入口，
+    // 不是那两个能力。
 
     private func setSessionSidebarCollapsed(_ isCollapsed: Bool) {
         SoundEffectPlayer.shared.play(.sidebarButton)
@@ -551,243 +572,11 @@ struct NotchSheetRootView: View {
     /// 一条路——那本来就是主路径，而且侧栏的列表能显示预览与时间，比这颗只
     /// 放得下标题的胶囊好用。✕ 去掉不影响收起：Esc、点面板外、失活三条路都
     /// 还在。
-    // MARK: - 音色（2026-09-26 从输入框那行搬到页头）
-    //
-    // 用户：「音色按钮放在复制原文按钮的左侧」—— 仓库里没有「复制原文」，
-    // 页头右上角那颗是「复制全文」，所以音色就插在它左边。
-    // 搬家的理由不是排版：音色是**播报**的属性，而播报属于整条会话，
-    // 不属于某一次输入。
-    /// 音色弹窗开着没有。
-    /// ⚠️ **2026-09-29 改成读那个单例**：那颗「音色」按钮现在住在输入框那一行
-    ///（`VoiceChipButton`），状态必须两边共用一个（见 `VoicePickerState`）。
-    private var isVoicePickerPresented: Bool { VoicePickerState.shared.isPresented }
-    private func setVoicePickerPresented(_ isPresented: Bool) {
-        VoicePickerState.shared.isPresented = isPresented
-        if isPresented { loadCustomVoicesForPickerIfNeeded() }
-    }
-    /// ⭐ **模型选择面板的展开状态**（2026-09-29）。
-    /// ⚠️ **必须 `@ObservedObject` 观察它** —— 只读 `.isExpanded` 的话，那颗按钮改了状态
-    /// 这个视图**不会重绘**（第一次实现就踩了：按钮的 chevron 翻了，面板一个像素都没出现）。
-    @ObservedObject private var modelPickerState = CardChatModelPickerState.shared
-    /// ⚠️ **音色面板的状态也在这里观察**（那颗按钮在 `NotchHomeView`，状态是单例 ——
-    /// 不观察的话点开按钮这块面板不会重绘，与模型面板同一个坑）。
-    @ObservedObject private var voicePickerState = VoicePickerState.shared
-    /// 音色面板当前看的是哪一栏（系统 / 克隆）—— 与语音页那块同一个分法。
-    @State private var voicePickerCategory: String = "system"
 
     /// 新建卡片那张表单开着没有（「添加」按下去就开）。
     @State private var isAddCardFormOpen = false
     /// 临时对话（阶段 4）：它自己的会话，**不碰主对话的任何状态**。
     @StateObject private var temporaryConversation = TemporaryConversationModel()
-    /// 克隆音色（打开弹窗时拉一次；拉不到就只显示系统音色 + 一行说明）。
-    @State private var customVoicesForPicker: [CustomVoice] = []
-    @State private var voicePickerFailureText: String?
-    /// 试听代次：换一个音色试听就作废上一段（与「音色查看」页同一个做法）。
-    @State private var voicePreviewGeneration = 0
-
-    /// 「音色」——点开选择这一条回复用哪个音色（用户：「点击后展开弹窗，根据当前
-    /// 接入的语音合成服务展示支持的音色」；服务商就是百炼，音色表就是 `VoiceCatalog`）。
-    /// 样式照着旁边那颗「复制全文」写（同一个 34pt 高、10pt 圆角、同样的底），
-    /// 因为它现在就在它左边，两颗不一样高会很难看。
-    private var voiceChip: some View {
-        Button {
-            setVoicePickerPresented(!isVoicePickerPresented)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "waveform")
-                    .font(.system(size: 12))
-                Text(currentVoiceDisplayName)
-                    .tableCellText(isOn: isVoicePickerPresented, fontSize: 13)
-            }
-            .padding(.horizontal, TableStyle.cellHorizontalPadding)
-            .frame(height: NotchSupport.contentHeaderControlHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help("选择回复用哪个音色（默认用设置里配的那个）")
-    }
-
-    /// 那一格显示什么字：选了就显示它的名字，没选就显示「音色」。
-    private var currentVoiceDisplayName: String {
-        guard let voiceID = companionManager.replyVoiceOverride else { return "音色" }
-        if let systemVoice = VoiceCatalog.threeStageVoices.first(where: { $0.id == voiceID }) {
-            return systemVoice.displayName
-        }
-        if let nickname = VoiceLibraryStore.nickname(forCustomVoiceID: voiceID) {
-            return nickname
-        }
-        return "音色"
-    }
-
-    /// **面板右上那串绿色 = 当下真正会用的音色**（与语音页那块面板的绿字同一个表达：
-    /// 显示的和引擎用的是同一个数）。
-    ///
-    /// 不能直接用 `currentVoiceDisplayName` —— 那个是**标签**用的，没有覆盖时返回「音色」
-    /// 这两个字（它是按钮上的字），挂在面板上就成了"当前音色叫音色"（实测看到的就是这个）。
-    /// 这里改成：覆盖 > 设置里配的那个 > 原 id。
-    private var effectiveSpeechVoiceLabel: String {
-        let voiceID = companionManager.replyVoiceOverride
-            ?? BailianConfiguration.resolvedSpeech?.speechVoiceID
-            ?? ""
-        guard !voiceID.isEmpty else { return "未配置" }
-        if let systemVoice = VoiceCatalog.threeStageVoices.first(where: { $0.id == voiceID }) {
-            return systemVoice.displayName
-        }
-        return VoiceLibraryStore.nickname(forCustomVoiceID: voiceID) ?? voiceID
-    }
-
-    private func loadCustomVoicesForPickerIfNeeded() {
-        guard customVoicesForPicker.isEmpty else { return }
-        Task { @MainActor in
-            do {
-                customVoicesForPicker = try await CustomVoiceLibraryClient.listCustomVoices()
-                voicePickerFailureText = nil
-            } catch {
-                voicePickerFailureText = "克隆音色没拉下来：\(error.localizedDescription)"
-            }
-        }
-    }
-
-    /// 音色弹窗 —— **观感照语音页那块音色面板**（用户 2026-09-26：「图文模式、文本模式下，
-    /// 音色按钮点击之后的效果，应该参考语音模式下的音色按钮，看它的下拉菜单是怎么设计的」）：
-    /// 同一层皮、同一排分类标签（系统音色 / 克隆音色）、同一行说明、同一种卡片。
-    ///
-    /// 数据没变：系统音色来自 `VoiceCatalog`（当前合成模型支持的那些），克隆音色来自云端列表
-    /// —— 与「设置 → 音色查看」读的是同一批。
-    private var voicePickerPanel: some View {
-        PopupPanelSurface(width: 360) {
-            PopupPanelTabRow(tabs: [.init(id: "system", title: "系统音色"),
-                                    .init(id: "cloned", title: "克隆音色")],
-                             selectedID: voicePickerCategory,
-                             onSelect: { voicePickerCategory = $0 }) {
-                // 最右边那串绿色 = **当下真正会用的音色**（与语音页那块同一个表达）。
-                HStack(spacing: 4) {
-                    Rectangle().fill(DS.Colors.success).frame(width: 2, height: 12)
-                    Text(effectiveSpeechVoiceLabel)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(DS.Colors.success)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .frame(maxWidth: 150, alignment: .trailing)
-            }
-
-            PopupPanelHint(text: voicePickerCategory == "system"
-                           ? "这一族模型自己的系统音色，跟着「模型」页里 👄 那个模型走。"
-                           : "你自己克隆出来的音色（官方那边不存备注，所以显示的是本地昵称）。")
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    if voicePickerCategory == "system" {
-                        ForEach(VoiceCatalog.threeStageVoices) { voice in
-                            voicePickerRow(voiceID: voice.id,
-                                           model: currentSpeechModelID,
-                                           displayName: voice.displayName)
-                        }
-                        voicePickerRow(voiceID: nil, displayName: "默认（设置里那一个）")
-                    } else if let voicePickerFailureText {
-                        Text(voicePickerFailureText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange.opacity(0.85))
-                            .padding(.top, 6)
-                    } else if customVoicesForPicker.isEmpty {
-                        Text("还没有克隆音色（「设置 → 音色查看 → 声音克隆」可以做一个）")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DS.Colors.textTertiary)
-                            .padding(.top, 6)
-                    } else {
-                        ForEach(customVoicesForPicker) { voice in
-                            // `CustomVoice` 只有 id / targetModel / createdAt / status
-                            // —— 官方那边**不存备注**，所以显示名只能取本地昵称，没有再退回 id
-                            //（与「设置 → 音色查看」同一套三级回落）。
-                            voicePickerRow(
-                                voiceID: voice.id,
-                                model: voice.targetModel.isEmpty ? currentSpeechModelID : voice.targetModel,
-                                displayName: VoiceLibraryStore.nickname(forCustomVoiceID: voice.id) ?? voice.id
-                            )
-                        }
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
-            }
-            .frame(maxHeight: 260)
-        }
-    }
-
-    private func voicePickerSectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10.5, weight: .semibold))
-            .foregroundColor(.white.opacity(0.40))
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 2)
-    }
-
-    /// 试听用的合成模型 = 「模型」页里 👄 那个（与「音色查看」页同一处取值，
-    /// 包括那条 `?? BailianConfiguration.Models.textToSpeech` 回落）。
-    private var currentSpeechModelID: String {
-        ModelConfigurationStore.snapshot().status(of: .speech).resolvedRole?.modelID
-            ?? BailianConfiguration.Models.textToSpeech
-    }
-
-    private func voicePickerRow(voiceID: String?, model: String = "", displayName: String) -> some View {
-        let isSelected = companionManager.replyVoiceOverride == voiceID
-        return PopupPanelCard(title: displayName,
-                              subtitle: voiceID ?? "设置里配的那一个",
-                              isSelected: isSelected) {
-            if let voiceID {
-                PopupPanelCardButton(systemImage: "play.fill",
-                                     kind: .secondary,
-                                     helpText: "试听") {
-                    SoundEffectPlayer.shared.play(.sidebarButton)
-                    previewVoice(voiceID, model: model)
-                }
-            }
-            PopupPanelCardButton(systemImage: isSelected ? "checkmark" : "checkmark.circle",
-                                 kind: isSelected ? .primary : .secondary,
-                                 helpText: isSelected ? "正在用它" : "用这个音色") {
-                SoundEffectPlayer.shared.play(.sidebarButton)
-                companionManager.replyVoiceOverride = voiceID
-                setVoicePickerPresented(false)
-            }
-        }
-        .onTapGesture {
-            SoundEffectPlayer.shared.play(.sidebarButton)
-            companionManager.replyVoiceOverride = voiceID
-            setVoicePickerPresented(false)
-        }
-    }
-
-    /// 试听：走「设置 → 音色查看」同一条链 —— `VoicePreviewService` 合成（结果进
-    /// `VoicePreviews/` 缓存）+ `CompanionManager.playVoicePreview` 播放。
-    ///
-    /// 代次计数与那一页同义：**换一个音色试听 = 停掉上一段**，而不是两段叠在一起。
-    /// （自己再写一条播放通路的话，两处会各自漂。）
-    private func previewVoice(_ voiceID: String, model: String) {
-        companionManager.stopVoicePreview()
-        voicePreviewGeneration += 1
-        let generation = voicePreviewGeneration
-        Task { @MainActor in
-            do {
-                let appSettings = AppSettingsStore.snapshot()
-                let audioData = try await VoicePreviewService.previewAudioData(
-                    engine: .threeStage,
-                    voice: voiceID,
-                    model: model.isEmpty ? currentSpeechModelID : model,
-                    speechRate: appSettings.speechPlaybackRate,
-                    speechVolumePercent: appSettings.speechPlaybackVolumePercent,
-                    styleInstruction: "")
-                guard generation == voicePreviewGeneration else { return }
-                try await companionManager.playVoicePreview(wavData: audioData)
-            } catch {
-                guard generation == voicePreviewGeneration else { return }
-                voicePickerFailureText = "试听失败：\(error.localizedDescription)"
-            }
-        }
-    }
 
     /// 对话页分割线之上那一行 —— **只剩模式条**（用户 2026-09-26）。
     ///
@@ -808,11 +597,13 @@ struct NotchSheetRootView: View {
                         // `leadingAccessory`：语音 / 视频页那颗 connect 按钮就住在这个槽里
                         //（`VoiceChatSessionView` 的 `leadingAccessory: connectButton`），
                         // 两种模式下按钮落在同一个像素位置上。
-                        callAccessory: AnyView(textCallChip),
-                        // ⭐ **音色不再画在页头**（2026-09-29 用户：「图文模式（音色，放在
-                        // 输入框的上面，右上角，放在：声音右侧）」）—— 它搬到了输入框那一行，
-                        // 由 `NotchHomeView` 画（`VoiceChipButton`）。
+                        // ⭐ **通话按钮不在这一排里了**（2026-09-29）—— 它搬到了
+                        // 面板顶部、刘海右翼那一格，理由是用户要「通话、挂断在同一个
+                        // 位置」：挂断是展开态那条带子的右翼画的，而带子在**上面一行**。
+                        // 见 `notchTrailingWingOverlay`。
                         trailingAccessory: nil,
+                        // ⭐ **这一排的最后一格** —— 用户从对比页里选的「在『角色』的右边」。
+                        optionsAccessory: AnyView(CardChatOptionsButton()),
                         preferences: cardChatPreferences)
     }
 
@@ -824,31 +615,81 @@ struct NotchSheetRootView: View {
     /// 走的是这张卡片原本的文本管线（主循环卡片带工具、能执行；Claude Code 卡片跑它自己的
     /// agent）。这正是他要这个按钮的理由 —— 「文本模式跟图片模式使用的上下文或者整个环境是
     /// 主 Agent，它具备执行能力」。两者共用刘海那套通话状态与挂断。
-    private var textCallChip: some View {
-        let isCalling = textCallController.isCalling(cardID: activeCardID ?? "")
-        return Button {
-            SoundEffectPlayer.shared.play(.sidebarButton)
-            guard let cardID = activeCardID else { return }
-            if isCalling {
-                companionManager.hangUpAnyActiveCall()
-                return
+    /// ⭐ **通话按钮 —— 画在展开面板顶部那条带子的右翼上**（2026-09-29 用户定）。
+    ///
+    /// 用户的原话：「将（通话按钮），无论是（图文、音频、视频），全部放在（刘海的右侧）……
+    /// 窗口展开后，窗口内，但是位置 = 刘海的右侧（因为点击通话后，会显示动画效果，
+    /// 这个动画效果刚好是挂断，这样就是：通话、挂断在同一个位置）」。
+    ///
+    /// **为什么非得是这一格**：通话中那颗「挂断」（红电话）是 `NotchExpandedWingBand`
+    /// 的右翼画的，而两者几何同源 —— 都用 `wingBandWidth` 和「右翼是带子的最后一段」
+    /// 这一条算出来。所以点下去之后，图标在**同一个像素位置**换成挂断，不换行、不跳。
+    /// （在这之前它在页头模式条上 —— 那是**下面一行**，所以点下去看起来像"跑到别处去了"。）
+    ///
+    /// **横向偏移不用量窗口宽度**：带子居中在刘海中心上，而这块面板又居中在屏幕上
+    ///（`NotchSupport.expandedSheetFrame`），所以「刘海中心 = 面板中心」——
+    /// 右翼中心相对面板中心的位置就是 `(wingBandWidth − trailingWingWidth) / 2`。
+    ///
+    /// **通话中它自己让位**：那时右翼由 `NotchExpandedWingBand` 画成挂断
+    ///（`externalChatting` 相位），两个都画就会叠在一起。
+    @ViewBuilder
+    private var notchTrailingWingOverlay: some View {
+        if wingBandWidth > 0, notchBandHeight > 0, !showsSettings, !isAnyCallActive {
+            Button {
+                SoundEffectPlayer.shared.play(.sidebarButton)
+                startOrEndCallForCurrentCard()
+            } label: {
+                CallChipLabel(isCalling: false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .frame(width: NotchSupport.trailingWingWidth, height: notchBandHeight)
+            .offset(x: (wingBandWidth - NotchSupport.trailingWingWidth) / 2)
+            .help("跟当前这张卡片通话：图文 = 说话自动转成文字发出去；语音 / 视频 = 直接连上语音聊天")
+        }
+    }
+
+    /// 现在有没有一通电话在打（文本通话或语音聊天）—— 它决定那颗通话按钮显不显示。
+    private var isAnyCallActive: Bool {
+        textCallController.isActive || voiceChatController.connectionPhase != .idle
+    }
+
+    /// 点那颗按钮：没通话就开始，通话中不会走到这里（那时按钮已经让位给挂断了）。
+    ///
+    /// **按当前卡片的模式分派**（用户要的「无论是图文、音频、视频」）—— 所以这一个入口
+    /// 同时是"文本通话"和"语音聊天"的开机键，而不是两颗。
+    private func startOrEndCallForCurrentCard() {
+        guard !isAnyCallActive else {
+            companionManager.hangUpAnyActiveCall()
+            return
+        }
+        guard let cardID = activeCardID else { return }
+        let mode = cardChatPreferences.mode(forCardID: cardID, kind: activeCardKind)
+
+        switch mode {
+        case .imageText:
+            // 文本通话：说一句 → 转成文字自动发出去，回答走这张卡片自己的管线。
             let cardKind = activeCardKind
             Task { @MainActor in
                 await textCallController.start(cardID: cardID, cardKind: cardKind)
             }
-        } label: {
-            CallChipLabel(isCalling: isCalling)
-            // **与语音页那颗同一个内边距**（差 4pt 就是用户看到的"飘"）。
-            .padding(.horizontal, TableStyle.cellHorizontalPadding)
-            .frame(height: NotchSupport.contentHeaderControlHeight)
-            .contentShape(Rectangle())
+
+        case .voice, .video:
+            // 语音聊天：连上这张卡片绑定的那个角色（聊天类型由模式决定，
+            // 所以「语音聊天永不开画面」那条闸门自动生效）。
+            let roleID = cardChatPreferences.resolvedRole(forCardID: cardID,
+                                                          kind: activeCardKind,
+                                                          mode: mode).id
+            voiceChatController.connectToRole(
+                roleID,
+                // 从卡片进来才带绑定：它决定系统提示词里有没有这段会话的记录、
+                // 以及回话写回哪张卡片。
+                cardBinding: VoiceChatController.CardVoiceBinding(cardID: cardID,
+                                                                  cardKind: activeCardKind)
+            )
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(isCalling
-              ? "挂断这通「文本通话」"
-              : "文本通话：说话就自动转成文字发出去，不用手打。回答还是走这张卡片自己的管线")
     }
     // MARK: - 新建卡片（「添加」那张表单的三件事）
 

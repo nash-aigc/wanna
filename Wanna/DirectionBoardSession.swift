@@ -1264,10 +1264,12 @@ final class DirectionBoardSession: ObservableObject {
         guard let temporarySessionID else { return nil }
         guard PiAgentRunner.isConfigured else { return nil }
         do {
-            let result = try await PiAgentRunner.realtime.runTurn(
+            let result = try await PiAgentRunner.shared.runTurn(
                 task: question,
                 // ⭐ 临时会话的文件名与主会话区分开（同一个目录、不同前缀）。
                 sessionID: "realtime-\(temporarySessionID)",
+                // 窗口里这一列属于**实时模式**（模型与思考档按设置里实时那一行）。
+                role: .realtime,
                 onTextDelta: { [weak self] accumulatedText in
                     self?.applyStreamingAnswer(accumulatedText)
                 },

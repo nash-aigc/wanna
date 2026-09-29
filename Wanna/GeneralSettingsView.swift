@@ -437,6 +437,8 @@ struct GeneralSettingsView: View {
                 SettingsRow(
                     label: "记住最近 \(generalSettingsViewModel.draftSettings.rememberedConversationRounds) 轮对话",
                     description: "更早的问答直接丢弃。调大记得更久，但每次提问更慢、更费 token。"
+                        + "图文 / 执行模式走 Pi 自己的记忆：这一轮按约 1000 token 折算成它的保留量"
+                        + "（改完会自动重起 Pi，约 1 秒）。"
                 ) {
                     SettingsStepper(
                         value: generalSettingsViewModel.binding(\.rememberedConversationRounds),
@@ -454,6 +456,7 @@ struct GeneralSettingsView: View {
                 SettingsRow(
                     label: "历史自动压缩",
                     description: "快超出轮数时，把最旧的几轮压缩成一段摘要留在提示词里，长对话不失忆。代价：偶尔多一次隐藏请求。"
+                        + "图文 / 执行模式直接开关 Pi 自己的压缩（官方机制），关掉它就不会再自动压缩。"
                 ) {
                     SettingsSwitch(isOn: generalSettingsViewModel.binding(\.autoCompressesHistory))
                 }
@@ -1660,6 +1663,62 @@ struct GeneralSettingsView: View {
                     )
                 }
             }
+
+            // ⭐ **工具调用（语音 / 视频）**（2026-09-29 用户定）：语音 / 视频模式的模型
+            // 也调工具 —— 读写文件两个（`SimpleFileTools`）。这一页管的是**写文件的
+            // 基准文件夹**；「选项」面板里也能改，两边读写的是同一个设置。
+            SettingsGroupLabel("工具调用（语音 / 视频）")
+            SettingsCard {
+                SettingsRow(
+                    label: "写文件的默认文件夹",
+                    description: "语音 / 视频模式的模型有两个工具：读文件、写文件。它只给文件名时存到这里；给了绝对路径（比如「保存到桌面上 xx.md」）就照用。选完立即生效。"
+                ) {
+                    Button(action: pickVoiceToolFolder) {
+                        Text(voiceToolFolderButtonLabel)
+                            .font(.system(size: 12))
+                            .foregroundColor(DS.Colors.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(width: 210, alignment: .trailing)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(DS.Colors.surface2)
+                            .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous)
+                                    .stroke(DS.Colors.borderSubtle, lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help("选择工具文件夹")
+                }
+            }
+        }
+    }
+
+    private var voiceToolFolderButtonLabel: String {
+        AppSettingsStore.snapshot().voiceToolWriteFolder ?? SimpleFileTools.defaultFolder
+    }
+
+    /// 工具文件夹的选择器 —— 与上面 `pickDefaultProjectFolder` 同一套（先激活 App、
+    /// 再抬面板层级，见那边的注释：LSUIElement + 刘海面板都压着 NSOpenPanel）。
+    /// **当场落盘**，不走草稿 —— `SimpleFileTools` 现读，下一轮就生效。
+    private func pickVoiceToolFolder() {
+        NSApp.activate()
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "使用"
+        panel.message = "语音 / 视频写文件时的默认文件夹"
+        panel.level = NotchSupport.modalFileDialogWindowLevel
+        if panel.runModal() == .OK, let url = panel.url {
+            var settings = AppSettingsStore.snapshot()
+            settings.voiceToolWriteFolder = url.path
+            try? AppSettingsStore.save(settings)
         }
     }
 

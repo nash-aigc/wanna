@@ -1132,11 +1132,12 @@ final class CompanionManager: ObservableObject {
         // **主 Agent 这条链的诊断日志 + 主线程看门狗**（2026-09-27 新建）。
         // 用户报过「连续问到第六七轮就卡死、界面没有任何变化」，而那条路当时**一个字都没落盘**
         //（双击启动的 App，`print` 进不了任何地方），所以只能猜。见 `MainFlowDiagnostics` 文件头。
-        // ⭐ **两个 Pi 进程都从启动就预热**（2026-09-29 用户定："这两个进程是一直开的，
-        // 任何时候都必须要开"）。执行进程挂主提示词（原来的那条链）；实时进程挂**轻量提示词**
-        //（它只做"快速回答"，不需要执行那套规矩）。
-        PiAgentRunner.realtime.systemPromptProvider = { Self.realtimeProcessSystemPrompt }
-        PiAgentRunner.warmUpBothProcesses()
+        // ⭐ **一个 Pi 进程，从启动就预热**（2026-09-29 深夜合并；用户：
+        // 「你的意思单个进程就能实现是吗，那太好了」）。在这之前是两条进程，
+        // 差别只在启动参数里的模型与思考档 —— 而那两样官方 RPC 本来就**逐轮可改**
+        //（`set_model` / `set_thinking_level`），所以"两条进程"只剩系统提示词这一个理由，
+        // 而那个差别改成**实时轮用户消息开头那一行**（`realtimeTurnFraming`）。
+        PiAgentRunner.warmUpProcess()
 
         MainFlowDiagnostics.startMainThreadWatchdog()
 
@@ -2739,12 +2740,13 @@ final class CompanionManager: ObservableObject {
     /// pending question exactly where it was, so a user whose first attempt was not
     /// heard can hold the key again and try again without losing what they said.
     /// ⭐ **实时轮**（2026-09-29 两段式恢复）：静音 1 秒自动发送的那一句，交给
-    /// **实时进程**（`PiAgentRunner.realtime`，思考关、快），结果**流式**显示在
-    /// 鼠标右下角卡片（窗口开着时，窗口底部显示**同一份** —— 两个位置读同一个字段）。
+    /// **实时模式**（`role: .realtime` —— 模型与思考档都按设置里那一行，
+    /// 默认思考关、快），结果**流式**显示在鼠标右下角卡片
+    ///（窗口开着时，窗口底部显示**同一份** —— 两个位置读同一个字段）。
     ///
     /// 与执行轮（`sendTranscriptToVisionChatWithScreenshot`）的四点不同，都是用户定的：
     /// · **不播报**（实时是"预演"，答案在屏幕上看）；
-    /// · **不截图**（实时进程自己要看屏幕可以调 `screenshot` 工具）；
+    /// · **不截图**（模型要看屏幕可以自己调 `wanna_screenshot` 工具）；
     /// · **不进对话历史**（它不是一次正式对话）；
     /// · **会话 = `realtime-<大轮id>`** —— 同一个大轮里连续多轮问答落同一个 pi 会话，
     ///   "追问时记得前几轮"由 pi 的会话文件自己完成（这正是"全部使用 pi agent"的收益）。
@@ -2758,12 +2760,15 @@ final class CompanionManager: ObservableObject {
             return
         }
         let sessionID = "realtime-" + (realtimeSessionID ?? currentVoiceCycleID ?? UUID().uuidString)
-        MainFlowDiagnostics.log("🥧 实时轮 → 实时进程（思考关）· 会话 \(sessionID.prefix(16)) · \(transcript.prefix(40))")
+        MainFlowDiagnostics.log("🥧 实时轮 → 会话 \(sessionID.prefix(16)) · \(transcript.prefix(40))")
         Task { @MainActor [weak self] in
             do {
-                let result = try await PiAgentRunner.realtime.runTurn(
-                    task: transcript,
+                let result = try await PiAgentRunner.shared.runTurn(
+                    // **框架句放在用户消息最前面**（见 `realtimeTurnFraming` 的注释：
+                    // 合并成一条进程之后，"实时该短、先别动手"只能在这里说）。
+                    task: Self.realtimeTurnFraming + "\n\n" + transcript,
                     sessionID: sessionID,
+                    role: .realtime,
                     onTextDelta: { accumulatedText in
                         DirectionBoardSession.shared.noteRealtimeAnswerChunk(accumulatedText)
                     },
@@ -2894,17 +2899,19 @@ final class CompanionManager: ObservableObject {
     /// Not `private`, because 对话与记忆 → 「系统提示词」 shows this text in an editor
     /// and offers a 「恢复默认」 button that writes it back. That editor is the only
     /// other reader, and it reads `AppSettings.customSystemPrompt ?? this`.
-    /// ⭐ **实时进程的提示词**（2026-09-29）—— 它只做一件事：**快**。
-    /// 思考已由 `--thinking off` 关掉；提示词只管"答得短、答得对、别啰嗦"。
-    /// MCP / 技能与执行进程完全相同（同一份 `~/.pi/agent/` 配置）。
-    static let realtimeProcessSystemPrompt = """
-    you're Wanna's realtime companion. the user is speaking and every pause becomes a question that arrives here. answer FAST and SHORT — this is a live preview of what a fuller agent could do, not the full job.
-
-    rules:
-    - reply in the user's language (chinese stays chinese).
-    - one to three sentences by default. no preamble, no restating the question.
-    - if the question needs a real action (open an app, click something, write a file), you may use the tools — but prefer answering or pointing over doing; the execute stage handles real work.
-    - no markdown, no lists, write for reading at a glance.
+    /// ⭐ **实时轮的框架句**（2026-09-29 深夜，双进程合并之后）。
+    ///
+    /// 合并前实时进程有**自己的**轻量系统提示词（"答得快、先别动手"），而**一条进程只有
+    /// 一份系统提示词**（`--append-system-prompt` 只在启动那一刻读，RPC 里没有改它的命令）。
+    /// 所以那句话改成**这一轮用户消息的开头一行** —— 与 `<user_intent_tags>` /
+    /// `<reference_materials>` / `<attachments>` 是同一个形状（都是"这一轮的话"的一部分），
+    /// 不是新机制。措辞照搬原来那份提示词里唯一真正不同的两条：快、先别动手。
+    ///
+    /// 它只出现在**实时会话**里（会话文件名带 `realtime-` 前缀），执行会话不会看到它。
+    static let realtimeTurnFraming = """
+    (realtime preview — answer FAST and SHORT, one to three sentences, no preamble. \
+    if this needs a real action (opening an app, clicking, writing a file), prefer answering \
+    or pointing over doing: the execute stage handles real work.)
     """
 
     /// 主 agent 的**基础提示词**：它是谁、以及怎么跟人说话。    /// 主 agent 的**基础提示词**：它是谁、以及怎么跟人说话。
@@ -2925,13 +2932,13 @@ final class CompanionManager: ObservableObject {
     - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
     - if the user's question relates to what's on their screen, reference specific things you see.
     - if the screenshot is irrelevant to the question — general knowledge, coding, writing, planning, small talk — answer the question directly and completely, and say NOTHING about the screen: do not describe what you see, do not mention the app or window in front, do not open with "on your screen…", do not append a "by the way, I can also see…" tail. the screenshot exists only for questions that need it; an unrelated question gets a pure answer with zero screen commentary.
-    - **the screenshot is never the answer to a question about the outside world.** when the user asks you to find something out, look it up, search, check, compare, or research, the answer is not on their screen — the screen is just where some other window (often one of your own earlier answers) happens to be. do not describe what you see as if it were the result. **do the job with the tools you have, in this turn** — and for anything about files or folders use the file tools (`create_folder` / `write_file` / `read_file` / `list_folder`), never by driving the terminal or Finder through clicks and keystrokes: that path depends on whatever the screen happens to show and it fails. **and never say something is done before you have looked and seen it** — call `list_folder` (or read the file back) first. "nothing ran and you said it did" is the worst answer you can give, because the user hears a promise and watches nothing happen.
+    - **the screenshot is never the answer to a question about the outside world.** when the user asks you to find something out, look it up, search, check, compare, or research, the answer is not on their screen — the screen is just where some other window (often one of your own earlier answers) happens to be. do not describe what you see as if it were the result. **do the job with the tools you have, in this turn** — and for anything about files or folders use the file tools (`wanna_create_folder` / `wanna_write_file` / `wanna_read_file` / `wanna_list_folder`), never by driving the terminal or Finder through clicks and keystrokes: that path depends on whatever the screen happens to show and it fails. **and never say something is done before you have looked and seen it** — call `wanna_list_folder` (or read the file back) first. "nothing ran and you said it did" is the worst answer you can give, because the user hears a promise and watches nothing happen.
     - you can help with anything — coding, writing, general knowledge, brainstorming.
     - never say "simply" or "just".
     - don't read out code verbatim. describe what the code does or what needs to change conversationally.
     - focus on giving a thorough, useful explanation. don't end with simple yes/no questions like "want me to explain more?" or "should i show you?" — those are dead ends that force the user to just say yes.
     - instead, when it fits naturally, end by planting a seed — mention something bigger or more ambitious they could try, a related concept that goes deeper, or a next-level technique that builds on what you just explained. make it something worth coming back for, not a question they'd just nod to. it's okay to not end with anything extra if the answer is complete on its own. never do this on a turn where you acted on the computer, and never when the user asked you to do something — those turns end with the receipt and nothing else.
-    - if you receive multiple screen images, the one labeled "primary focus" is where the cursor is — prioritize that one but reference others if relevant.
+    - **no screenshot arrives by itself — call `wanna_screenshot` whenever the question is about the screen.** it returns every display with its pixel size and the normalized 0-1000 grid that `wanna_click` / `wanna_point` take, so always screenshot before acting on something you can see described but have not looked at.
     """
 
 
@@ -4365,7 +4372,7 @@ final class CompanionManager: ObservableObject {
                     print("🧠 本轮上下文：系统提示词 \(Self.companionSystemPrompt(for: appSettings).count) 字 · 截图 \(labeledImages.count) 张 · 屏幕上下文 \((pendingAccessibilityContext?.count ?? 0)) 字 · 会话=\(turnSessionID.uuidString.prefix(8))")
 
                     var announcedAnswerStart = false
-                    MainFlowDiagnostics.log("⏱️ 环节：请求已发出（图 \(labeledImages.count) 张）")
+                    MainFlowDiagnostics.log("⏱️ 环节：请求已发出（发给 Pi 的是纯文本；本轮截屏 \(labeledImages.count) 张只用于指位与历史）")
                     // ⭐ 2026-09-29：**这一轮的决策交给谁** —— 二选一，不是叠加。
                     //
                     // 打开「用 Python 决策大脑」之后，`wanna_agent.py` 用 OpenAI 的
@@ -4410,6 +4417,19 @@ final class CompanionManager: ObservableObject {
                         // 「连续对话」= 同一个 UUID；「新建对话」= 换一个。
                         // 历史与压缩全归 pi（compaction 默认开启），Swift 侧不再管。
                         sessionID: turnSessionID.uuidString,
+                        // **执行模式**：模型与思考档按设置里「执行」那一行
+                        //（默认思考开）—— 官方 RPC 逐轮设下去，见 `applyModelAndThinking`。
+                        role: .execute,
+                        // ⭐ **用户粘贴进来的图片走官方 `prompt.images`**（2026-09-29 深夜补）。
+                        //
+                        // 在这之前它**一张都没到过模型**：`attachmentImagePayloads` 只被拼进
+                        // `labeledImages`，而那个数组的读者只有一行诊断日志 ——
+                        // 于是 `<attachments>` 里那行「随这条消息一起发给你了，直接看」是假的 ✗。
+                        // 用户拍板过的规矩是「图片给真图片，文件 / 文件夹只给绝对路径」，
+                        // 所以这里给的是 `ComposerAttachment.normalizedJPEG`（长边 ≤1280、质量 0.8）。
+                        images: attachmentImagePayloads.map {
+                            PiAgentRunner.ImagePayload(data: $0.data, mimeType: "image/jpeg")
+                        },
                         // ⚠️⚠️ **这一段是 2026-09-29 补的 —— 「agent 模式没有回复」的另一半。**
                         //
                         // 换血前，这里的流式回调（旧视觉 API 的 `onTextChunk`）干三件事：

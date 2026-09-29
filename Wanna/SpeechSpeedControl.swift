@@ -44,29 +44,34 @@ struct SpeechSpeedChip: View {
     @Binding var isPanelOpen: Bool
 
     var body: some View {
-        let level = SpeechSpeedLevels.currentLevel(
-            forRate: AppSettingsStore.snapshot().speechPlaybackRate)
-
         Button {
             SoundEffectPlayer.shared.play(.sidebarButton)
             isPanelOpen.toggle()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "gauge.with.needle").font(.system(size: 10.5))
-                Text("语速 \(level)").font(.system(size: 11.5))
+                // **只写「语速」，不带档位数字**（2026-09-29 用户：「把语速右侧的数字 7 删掉，
+                // 只显示语速，一个图标加一个语速就对了。后面无论选择什么，都不要显示这些数字」）。
+                // 当前档位在点开的那十档里看得到 —— 选中那档是绿的。
+                Text("语速").font(.system(size: 12.5))
                 Image(systemName: isPanelOpen ? "chevron.up" : "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
             }
             .foregroundColor(isPanelOpen ? DS.Colors.success : .white.opacity(0.65))
-            // ⭐ **极简**（2026-09-29）：内边距 0、无底色无边框 —— 分隔交给那一行的白竖线。
-            .padding(.horizontal, 0)
-            .padding(.vertical, 4)
+            // **内边距与那一行其他格一致**（2026-09-29 用户：「声音和语速中间要有一个分割线
+            // 分隔开，现在没有分开」）—— 原来是 0，语速因此紧贴着左边那条分隔线，看上去
+            // 两颗"相挨着"。分隔线本身一直在（调用方那一行插的 `TableVerticalRule`）。
+            .padding(.horizontal, TableStyle.cellHorizontalPadding)
+            .frame(height: Self.rowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerCursor()
         .help("十档语速，直接改全局「说（播报）」的语速")
     }
+
+    /// 与调用方那一行里其他格同一个高度 —— 图文 / 语音 / 视频三页的输入框上方那一行都是 22。
+    private static let rowHeight: CGFloat = 22
 
     /// 十档列表。选中那档打勾，点一下落到 `speechPlaybackRate` 并收起。
     static func panel(isPanelOpen: Binding<Bool>) -> some View {

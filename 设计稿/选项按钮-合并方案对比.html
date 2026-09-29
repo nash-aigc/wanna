@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模型 / 音色 / 语速 —— 合并成一颗按钮：三种放法</title>
+<style>
+  :root {
+    --bg: #050506;
+    --surface1: #18181c;
+    --surface2: #0c0c0e;
+    --border: #2a2a2e;
+    --text: #f2f2f4;
+    --text-dim: #b9b9c2;
+    --text-faint: #8a8a93;
+    --success: #4ade80;
+    --accent: #0a84ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 28px 80px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 8px; letter-spacing: .02em; }
+  .lead { color: var(--text-dim); margin: 0 0 6px; }
+  .lead b { color: var(--success); font-weight: 600; }
+  .hint { color: var(--text-faint); font-size: 13px; margin: 0 0 34px; }
+
+  .plans { display: flex; flex-direction: column; gap: 44px; }
+  .plan { border-top: 1px solid var(--border); padding-top: 20px; }
+  .plan h2 { font-size: 16px; margin: 0 0 4px; }
+  .plan h2 .tag {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 5px; margin-right: 8px;
+    background: rgba(74,222,128,.14); color: var(--success);
+    vertical-align: 2px;
+  }
+  .why { color: var(--text-dim); margin: 0 0 16px; font-size: 13.5px; }
+  .why b { color: var(--text); font-weight: 600; }
+
+  /* ── 模拟的界面 ───────────────────────────────── */
+  .mock {
+    position: relative;
+    width: 100%; max-width: 760px;
+    background: var(--surface1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .bar {
+    display: flex; align-items: center; gap: 0;
+    padding: 0 14px; height: 46px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+  .bar .sep { width: 1px; height: 18px; background: rgba(255,255,255,.14); }
+  .cell {
+    padding: 4px 10px; color: var(--text-dim);
+    display: flex; align-items: center; gap: 5px;
+    white-space: nowrap;
+  }
+  .cell.on { color: var(--success); font-weight: 600; }
+  .cell.ghost { color: rgba(255,255,255,.42); }
+  .grow { flex: 1 1 auto; }
+
+  .stage {
+    height: 128px; display: flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,.16); font-size: 12px;
+    background: linear-gradient(180deg, rgba(255,255,255,.012), transparent);
+  }
+
+  .foot { padding: 10px 14px 14px; border-top: 1px solid var(--border); }
+  .controls {
+    display: flex; align-items: center; height: 24px; font-size: 12px;
+    margin-bottom: 8px;
+  }
+  .controls .cell { padding: 3px 9px; }
+  .inputbox {
+    height: 42px; border: 1px solid var(--border); border-radius: 9px;
+    display: flex; align-items: center; padding: 0 12px;
+    color: rgba(255,255,255,.28); font-size: 12.5px;
+    background: rgba(0,0,0,.25);
+  }
+
+  .picker {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px; border: 1px dashed rgba(74,222,128,.5);
+    border-radius: 6px; background: rgba(74,222,128,.07);
+    color: var(--success); font-size: 12.5px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+  }
+  .picker:hover { background: rgba(74,222,128,.14); }
+  .picker .caret { font-size: 9px; }
+
+  /* ── 展开的面板 ───────────────────────────────── */
+  .panel {
+    position: absolute; left: 14px; right: 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    padding: 4px 12px;
+    z-index: 5;
+  }
+  .panel.hidden { display: none; }
+  .panel-row {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; font-size: 12.5px;
+  }
+  .panel-row + .panel-row { border-top: 1px solid var(--border); }
+  .panel-row .label { color: var(--text-dim); }
+  .panel-row .value {
+    color: var(--success); font-weight: 600;
+    border-bottom: 1px dashed rgba(74,222,128,.5);
+    cursor: pointer;
+  }
+  .panel-row .value.ro {
+    color: var(--text-faint); font-weight: 400; border-bottom: none; cursor: default;
+  }
+  .panel-row .thin { width: 1px; height: 14px; background: rgba(255,255,255,.14); }
+
+  .sub {
+    margin-top: 16px; max-width: 760px;
+    background: rgba(255,255,255,.03); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; font-size: 13px; color: var(--text-dim);
+  }
+  .sub h3 { margin: 0 0 8px; font-size: 13.5px; color: var(--text); }
+  .sub ul { margin: 6px 0 0; padding-left: 20px; }
+  .sub li { margin: 3px 0; }
+  .sub code {
+    background: rgba(255,255,255,.07); padding: 1px 6px;
+    border-radius: 4px; font-size: 12px; color: var(--text);
+  }
+  .kbd { color: var(--success); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>「模型 / 音色 / 语速」合并成一颗按钮 —— 三种放法，你选一个</h1>
+  <p class="lead">
+    三张图都能点：点那颗 <b>「选项 ⌄」</b> 就会展开。
+    图里画的就是合并之后的样子，虚线绿框那颗是我新加的按钮。
+  </p>
+  <p class="hint">
+    现在的样子（三颗分开、都在输入框那一行）在最后一张图下面。<br>
+    你说的「右上角顶部角色按钮的右侧」我拿不准是哪种 —— 因为页头最右那颗**就是「角色」**，它右边目前没有位置了，所以我把三种可能都画出来。
+  </p>
+
+  <div class="plans">
+
+    <!-- ══════════ 方案 A ══════════ -->
+    <section class="plan">
+      <h2><span class="tag">A</span>搬到页头最右 —— 在「角色」的右边</h2>
+      <p class="why">
+        字面上最贴近你那句话。代价：<b>「角色」不再是页头最右那一颗</b>（你 2026-09-26 定过「角色放在最右侧」），
+        新按钮把它挤开了。输入框那一行则清爽了：只剩「屏幕 ｜ 声音」。
+      </p>
+      <div class="mock">
+        <div class="bar">
+          <span class="cell on">图文</span><span class="sep"></span>
+          <span class="cell">语音</span><span class="sep"></span>
+          <span class="cell">视频</span>
+          <span class="grow"></span>
+          <span class="cell">通话</span><span class="sep"></span>
+          <span class="cell">角色</span><span class="sep"></span>
+          <button class="picker" onclick="togglePanel(this)">选项 <span class="caret">⌄</span></button>
+        </div>
+        <div class="stage">（对话内容）</div>
+        <div class="footer-marker"></div>
+        <div class="foot">
+          <div class="controls">
+            <span class="cell on">连续</span><span class="sep"></span>
+            <span class="cell">临时</span><span class="sep"></span>
+            <span class="cell">新建</span>
+            <span class="grow"></span>
+            <span class="cell on">屏幕</span><span class="sep"></span>
+            <span class="cell on">声音</span>
+          </div>
+          <div class="inputbox">输入问题，回车发送…</div>
+        </div>
+        <div class="panel hidden" style="top: 52px;">
+          <div class="panel-row">
+            <span class="label">模型</span><span class="grow"></span>
+            <span class="value">doubao-seed-2.0-mini ⌄</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">音色</span>
+            <span class="value">赵今麦 ⌄</span>
+            <span class="grow"></span>
+            <span class="label">语速</span>
+            <span class="value">1.2× ⌄</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════ 方案 B ══════════ -->
+    <section class="plan">
+      <h2><span class="tag">B</span>搬到页头，但在「角色」的左边</h2>
+      <p class="why">
+        也属于「右上角顶部」那一排。<b>「角色」保持最右不变</b>，新按钮紧挨着它 ——
+        页头右边就是「通话 ｜ 选项 ｜ 角色」三颗。输入框那一行同样只剩「屏幕 ｜ 声音」。
+      </p>
+      <div class="mock">
+        <div class="bar">
+          <span class="cell on">图文</span><span class="sep"></span>
+          <span class="cell">语音</span><span class="sep"></span>
+          <span class="cell">视频</span>
+          <span class="grow"></span>
+          <span class="cell">通话</span><span class="sep"></span>
+          <button class="picker" onclick="togglePanel(this)">选项 <span class="caret">⌄</span></button>
+          <span class="sep"></span>
+          <span class="cell">角色</span>
+        </div>
+        <div class="stage">（对话内容）</div>
+        <div class="foot">
+          <div class="controls">
+            <span class="cell on">连续</span><span class="sep"></span>
+            <span class="cell">临时</span><span class="sep"></span>
+            <span class="cell">新建</span>
+            <span class="grow"></span>
+            <span class="cell on">屏幕</span><span class="sep"></span>
+            <span class="cell on">声音</span>
+          </div>
+          <div class="inputbox">输入问题，回车发送…</div>
+        </div>
+        <div class="panel hidden" style="top: 52px;">
+          <div class="panel-row">
+            <span class="label">模型</span><span class="grow"></span>
+            <span class="value">doubao-seed-2.0-mini ⌄</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">音色</span>
+            <span class="value">赵今麦 ⌄</span>
+            <span class="grow"></span>
+            <span class="label">语速</span>
+            <span class="value">1.2× ⌄</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════ 方案 C ══════════ -->
+    <section class="plan">
+      <h2><span class="tag">C</span>不搬，就在输入框那一行原地合并</h2>
+      <p class="why">
+        三颗变一颗、位置不动 —— 那一行成为「屏幕 ｜ 声音 ｜ 选项」。
+        点开后面板从<b>输入框上方</b>往上涨（跟现在「语速」面板一样的位置和做法）。
+        页头一个像素都不动。
+      </p>
+      <div class="mock">
+        <div class="bar">
+          <span class="cell on">图文</span><span class="sep"></span>
+          <span class="cell">语音</span><span class="sep"></span>
+          <span class="cell">视频</span>
+          <span class="grow"></span>
+          <span class="cell">通话</span><span class="sep"></span>
+          <span class="cell">角色</span>
+        </div>
+        <div class="stage">（对话内容）</div>
+        <div class="foot">
+          <div class="controls">
+            <span class="cell on">连续</span><span class="sep"></span>
+            <span class="cell">临时</span><span class="sep"></span>
+            <span class="cell">新建</span>
+            <span class="grow"></span>
+            <span class="cell on">屏幕</span><span class="sep"></span>
+            <span class="cell on">声音</span><span class="sep"></span>
+            <button class="picker" onclick="togglePanel(this)">选项 <span class="caret">⌄</span></button>
+          </div>
+          <div class="inputbox">输入问题，回车发送…</div>
+        </div>
+        <div class="panel hidden" style="bottom: 92px;">
+          <div class="panel-row">
+            <span class="label">模型</span><span class="grow"></span>
+            <span class="value">doubao-seed-2.0-mini ⌄</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">音色</span>
+            <span class="value">赵今麦 ⌄</span>
+            <span class="grow"></span>
+            <span class="label">语速</span>
+            <span class="value">1.2× ⌄</span>
+          </div>
+        </div>
+      </div>
+      <p class="why" style="margin-top:14px">
+        <b>现在的样子</b>（没合并）：那一行是「屏幕 ｜ 声音 ｜ <s>模型</s> ｜ <s>音色</s> ｜ <s>语速</s>」三颗分开。
+      </p>
+    </section>
+  </div>
+
+  <!-- ══════════ 第二个要你定的 ══════════ -->
+  <div class="sub">
+    <h3>另一件事：面板里右边那个「当前值」，点它能不能就地改？</h3>
+    <p style="margin:0">
+      不管选 A / B / C，展开后都是这两行。差别在于右边那些绿字是<b>能点开直接换</b>，还是<b>只告诉你现在是什么</b>：
+    </p>
+    <ul>
+      <li><span class="kbd">能直接改（我推荐）</span> —— 点「音色」右边就列出所有音色、点「语速」出档位、点「模型」出模型清单。
+        等于把原来三个面板收进这一个，<b>三颗按钮才算真的合成了一颗</b>。</li>
+      <li><span class="kbd">只显示，不能改</span> —— 面板只告诉你现在用的是哪个；要改还得另找地方。
+        （但三颗按钮已经合并了，那就没地方可找了 —— 所以我建议上一条。）</li>
+    </ul>
+    <p style="margin:10px 0 0;color:var(--text-faint);font-size:12.5px">
+      图里我画的是<b>能直接改</b>那种（绿字 + 底下一条虚线）。
+    </p>
+  </div>
+
+</div>
+
+<script>
+  function togglePanel(button) {
+    var panel = button.closest('.mock').querySelector('.panel');
+    if (panel) panel.classList.toggle('hidden');
+  }
+</script>
+</body>
+</html>

@@ -94,11 +94,13 @@ struct NotchHomeView: View {
         return cardChatPreferences.mode(forCardID: cardID, kind: .mainLoop).sendsScreenshot
     }
 
-    /// 「语速」那一列档位开没开（输入框上方那一行的最右一颗）。
+    /// ⭐ **「选项」面板的开关**（2026-09-29）：那颗按钮住在**页头的最后一格**，而面板画在
+    /// **内容列的最顶上**（`optionsPanelIfOpen`）—— 两处两个对象，所以状态只能是单例。
+    @ObservedObject private var optionsState = CardChatOptionsState.shared
+
+    /// 「语速」十档列表开没开 —— 恢复输入框右上角那颗常驻语速按钮时一并恢复
+    ///（面板画在输入框上方、参与布局，见 `speedPanelIfOpen`）。
     @State private var isSpeedPanelOpen = false
-    /// 模型 / 音色两个面板的开关状态（单例 —— 按钮与面板分处两个对象，见各自的注释）。
-    @ObservedObject private var modelPickerState = CardChatModelPickerState.shared
-    @ObservedObject private var voicePickerState = VoicePickerState.shared
 
     @State private var composerDraft: String = ""
 
@@ -137,12 +139,6 @@ struct NotchHomeView: View {
     /// 是上一段说明里那个「列变窄卡片不肯跟着窄」的修复，不能丢。
     @MainActor private static var rememberedContentColumnWidth: CGFloat = 0
 
-    /// 上面那个宽度**给模型面板读**（2026-09-29）：面板要"占满一整行"，
-    /// 而内容列宽度只有这一处量过（每次布局都会更新）。
-    @MainActor static var rememberedContentColumnWidthForModelPanel: CGFloat {
-        rememberedContentColumnWidth
-    }
-
     @State private var contentColumnWidth: CGFloat = NotchHomeView.rememberedContentColumnWidth
 
     /// 对话流一次渲染多少个回合 —— 窗口化的上限。
@@ -169,6 +165,11 @@ struct NotchHomeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // ⭐ **「选项」面板**（2026-09-29）—— 画在内容列最顶上，视觉上正好接在页头那排
+            // 下面（那颗按钮就住在页头的最后一格）。它**参与布局**，所以点击收得到；
+            // 浮层挂在 36pt 高的页头条上会画得出、点不到（见 D14）。
+            optionsPanelIfOpen
+
             if isEmptySession {
                 emptySessionHero
             } else {
@@ -195,7 +196,6 @@ struct NotchHomeView: View {
             // `silenceActiveReplyAudio` 的门禁是「这一条回复还在跑（或还在播）」，
             // 情况 1 下两者都不成立，它是 no-op。
             speedPanelIfOpen
-            modelAndVoicePanelsIfOpen
             composerRow
 
             // The last error's verbatim API text. The deleted menu bar panel
@@ -737,6 +737,12 @@ struct NotchHomeView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.black.opacity(0.26))
             )
+            // ⭐ **整行都能点**（2026-09-29 用户：「在折叠这一行都能够点击折叠、展开，
+            // 而不是只能在最左侧这个位置点击」）—— `DisclosureGroup` 默认只有 label 那一小块
+            // 吃点击，右边一整条空白点了没反应。加一层 `contentShape` + `onTapGesture`
+            // 让整块圆角底都翻开关。
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .onTapGesture { isExpanded.wrappedValue.toggle() }
 
             Spacer(minLength: 48)
         }
@@ -927,21 +933,18 @@ struct NotchHomeView: View {
 
             Spacer(minLength: 0)
 
-            // 右组：屏幕 ｜ 声音（「屏幕」只在图文模式 / 临时对话下画 —— 语音 / 视频的模型不吃图）。
+            // 右组：屏幕 ｜ 声音 ｜ 语速（「屏幕」只在图文模式 / 临时对话下画 ——
+            // 语音 / 视频的模型不吃图）。
+            //
+            // ⭐ **「语速」2026-09-29 恢复在这一行**（用户当场纠正：合并「选项」时把
+            // 语速整颗拿掉是不对的 —— 语速是高频调的，必须常驻在输入框右上角；
+            // 选项面板里那一份是面板的一部分，不顶替这一颗）。与语音 / 视频页
+            // 同一颗 `SpeechSpeedChip`，十档列表照旧画在输入框上方。
             if composerConversationMode == .temporary || showsScreenshotChipForContinuous {
                 screenshotChip
                 TableVerticalRule(rowHeight: composerControlsRowHeight)
             }
             soundChip
-
-            // 模型 / 音色 / 语速（下拉类）—— 暂留最右；
-            // 「选项」弹窗接入后这三颗会搬进弹窗。
-            TableVerticalRule(rowHeight: composerControlsRowHeight)
-            if showsModelPickerForContinuous {
-                CardChatModelPickerButton()
-                TableVerticalRule(rowHeight: composerControlsRowHeight)
-            }
-            VoiceChipButton(companionManager: companionManager)
             TableVerticalRule(rowHeight: composerControlsRowHeight)
             SpeechSpeedChip(isPanelOpen: $isSpeedPanelOpen)
         }
@@ -976,29 +979,24 @@ struct NotchHomeView: View {
     }
 
     private func conversationModeChip(_ mode: ComposerConversationMode) -> some View {
-        let isSelected = composerConversationMode == mode
-        return Button(action: {
+        // ⭐ **与语音 / 视频页同一颗组件**（2026-09-29 用户：「连续、临时、新建的字体
+        // 大小总是不一样，总是在变，需要把它们定死，相同的用相同的大小，以语音页面为准。
+        // 颜色也要定死，必须相同」）。
+        //
+        // "总是变"的两个来源都在旧实现里：① `minimumScaleFactor(0.8)` —— 空间一紧
+        // 字就缩，字号成了变量；② 选中加粗（semibold）—— 点一下字宽就变，右边跟着挪。
+        // 现在三个页面都走 `MinimalComposerChip`（语音页那一份）：**同一字号、同一
+        // 颜色、同一内边距**，由同一份代码保证，不可能再分叉。
+        MinimalComposerChip(title: mode.displayName,
+                            isHighlighted: composerConversationMode == mode,
+                            height: composerControlsRowHeight,
+                            help: mode.helpText) {
             SoundEffectPlayer.shared.play(.sidebarButton)
             // **用完即弃**：进临时对话给一份干净的，离开时把内容扔掉
             //（用户：「临时对话内容…关掉就没了」）。
             temporaryConversation.discardEverything()
             composerConversationMode = mode
-        }) {
-            // 极简（2026-09-29）：与页头那排「图文 / 语音 / 视频」同一套 ——
-            // 只有文字，没有底色、没有圆角、没有对号（对号会让选中那颗变宽、右边跟着挪）；
-            // 分隔交给行里的 `TableVerticalRule`；选中 = 绿字。
-            Text(mode.displayName)
-                .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .foregroundColor(isSelected ? DS.Colors.success : .white.opacity(0.88))
-                .padding(.horizontal, TableStyle.cellHorizontalPadding)
-                .frame(height: composerControlsRowHeight)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(mode.helpText)
     }
 
 
@@ -1016,21 +1014,16 @@ struct NotchHomeView: View {
                                      isHighlighted: Bool = false,
                                      helpText: String,
                                      action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 10.5))
-                    .frame(width: 13)
-                Text(title).font(.system(size: 12))
-            }
-            .foregroundColor(isHighlighted ? composerHighlightColor : .white.opacity(0.65))
-            .padding(.horizontal, TableStyle.cellHorizontalPadding)
-            .frame(height: composerControlsRowHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(helpText)
+        // ⭐ **转发到共用组件**（2026-09-29）：与「连续 / 临时 / 新建」、与语音 / 视频页
+        // 的同一行，都是 `MinimalComposerChip` —— 字号 / 颜色由一份代码保证。
+        // （琥珀高亮仍保留给临时对话那一路，见 `composerTemporaryTint`。）
+        MinimalComposerChip(title: title,
+                            systemImage: systemImage,
+                            isHighlighted: isHighlighted,
+                            highlightColor: composerHighlightColor,
+                            height: composerControlsRowHeight,
+                            help: helpText,
+                            action: action)
     }
 
 
@@ -1100,13 +1093,6 @@ struct NotchHomeView: View {
         }
     }
 
-    /// 连续对话这一档要不要画那颗「模型」—— 同样只在图文模式。
-    private var showsModelPickerForContinuous: Bool {
-        guard composerConversationMode == .continuous,
-              let cardID = sessionsModel.activeSessionID?.uuidString else { return false }
-        return cardChatPreferences.mode(forCardID: cardID, kind: .mainLoop) == .imageText
-    }
-
     /// 连续对话这一档要不要画那颗「屏幕」—— **只在图文模式**（语音 / 视频模式的模型不吃图）。
     private var showsScreenshotChipForContinuous: Bool {
         guard composerConversationMode == .continuous,
@@ -1144,9 +1130,26 @@ struct NotchHomeView: View {
         })
     }
 
-    /// 语速那一列，画在输入框上方（**参与布局、往上顶**，与设置里那块「音色」面板同一套）——
-    /// 内容列底部没有空间往下弹，而 `.overlay` 伸到父视图外面的部分收不到点击
-    ///（见 开发经验/10-踩过的坑.md D14），所以不参与布局的浮层在这一行行不通。
+    /// ⭐ **「选项」面板**（模型 / 音色 / 语速三合一，2026-09-29 用户定）。
+    ///
+    /// 按钮在**页头最后一格**（`CardChatModeBar.optionsAccessory`，在「角色」右边），
+    /// 面板画在这儿 —— 内容列的最顶上，也就是页头正下方。
+    ///
+    /// **为什么不把面板挂在按钮自己的 `.overlay` 上**：页头那排只有
+    /// `NotchSupport.cardChatModeBandHeight` 高，伸出去的部分**收不到点击**（D14）。
+    /// 画在这里则是参与布局的，点击一定收得到。
+    @ViewBuilder
+    private var optionsPanelIfOpen: some View {
+        if optionsState.isExpanded {
+            CardChatOptionsPanel(companionManager: companionManager)
+                .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
+                .padding(.bottom, 8)
+        }
+    }
+
+    /// 语速十档，画在输入框上方（**参与布局、往上顶**）—— 内容列底部没有空间往下弹，
+    /// 而 `.overlay` 伸到父视图外面的部分收不到点击（见 开发经验/10-踩过的坑.md D14），
+    /// 所以不参与布局的浮层在这一行行不通。
     @ViewBuilder
     private var speedPanelIfOpen: some View {
         if isSpeedPanelOpen {
@@ -1156,40 +1159,6 @@ struct NotchHomeView: View {
             }
             .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
             .padding(.bottom, 6)
-        }
-    }
-
-    /// ⭐ **模型 / 音色两个面板也画在这里**（2026-09-29 用户：「音色和模型这两个按钮，
-    /// 参考**语速按钮把下拉弹窗放在下面**的做法。现在音色和模型的下拉弹窗还在顶部，
-    /// 还是之前的样式。既然按钮在下面，这两个下拉弹窗也应该在下面，**最好占据整个
-    /// 绘画的宽度来显示内容**」）。
-    ///
-    /// 所以它们从 `NotchSheetRootView` 的浮层搬到了这里：**参与布局、往上顶**、
-    /// **占满内容列宽度** —— 与语速那块同一个位置、同一套理由（`.overlay` 伸到父视图
-    /// 外面的部分收不到点击，见 `开发经验/10-踩过的坑.md` D14）。
-    @ViewBuilder
-    private var modelAndVoicePanelsIfOpen: some View {
-        if modelPickerState.isExpanded {
-            CardChatModelPickerPanel()
-                .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
-                .padding(.bottom, 6)
-        }
-        if voicePickerState.isPresented {
-            // `VoicePickerPanel` 是自包含的（分类 + 克隆音色加载 + 试听都在它里面）——
-            // 这里只把"当前这一条回复用哪个音色"那三个值喂进去。
-            VoicePickerPanel(
-                engine: .threeStage,
-                modelID: ModelConfigurationStore.snapshot().status(of: .speech).resolvedRole?.modelID
-                    ?? BailianConfiguration.Models.textToSpeech,
-                selectedVoiceID: companionManager.replyVoiceOverride ?? "",
-                onSelectVoice: { voiceID in
-                    SoundEffectPlayer.shared.play(.sidebarButton)
-                    companionManager.replyVoiceOverride = voiceID.isEmpty ? nil : voiceID
-                    voicePickerState.isPresented = false
-                },
-                onClose: { voicePickerState.isPresented = false })
-                .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
-                .padding(.bottom, 6)
         }
     }
 

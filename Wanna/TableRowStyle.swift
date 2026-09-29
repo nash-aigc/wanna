@@ -108,3 +108,54 @@ struct CallChipLabel: View {
         .foregroundColor(isCalling ? Self.hangUpColor : DS.Colors.success)
     }
 }
+
+/// **输入框上方那一行里的一格**（极简档）—— 只有文字（可选带一个图标），**无底色、
+/// 无圆角**，选中 = 绿字；格与格之间由调用方插一条 `TableVerticalRule`。
+///
+/// 这套样式是用户 2026-09-29 定的（原话：「把图文模式下输入框左侧连续、临时、新建这
+/// 三个按钮的样式，做成跟导航栏顶部图文、音频、视频样式一样，极简风格，每个按钮之间
+/// 用分割线分隔，选中的点亮变成绿色」），随后扩到了语音 / 视频页 ——
+/// 「以图文模式作为参考和标准，去修改音频模式和视频模式」。
+///
+/// **为什么是一个共用组件**：三个内容列的输入框上方都是同一行，各写一份必然会漂
+///（`NotchSupport.contentColumnHorizontalMargin` 那条注释里记着同一个教训）。
+/// 图文页与语音 / 视频页现在读的都是这一个。
+struct MinimalComposerChip: View {
+
+    let title: String
+    /// 图标（可选）—— 固定 13pt 宽，所以点击前后这一格不会变宽变窄。
+    var systemImage: String? = nil
+    /// 选中 / 打开态：亮色字。不选中 = 暗白。
+    var isHighlighted: Bool = false
+    /// 选中时用什么颜色 —— 默认绿；图文页的「临时」那一格用琥珀（`composerTemporaryTint`）。
+    var highlightColor: Color = DS.Colors.success
+    /// 这一格的高度 —— 由调用方给，同一行里的每一格必须是同一个值。
+    var height: CGFloat
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10.5))
+                        .frame(width: 13)
+                }
+                Text(title)
+                    // **12.5** —— 与图文页「连续 / 临时」那颗同一个号（`NotchHomeView`）。
+                    // 三个模式这一行必须同号：2026-09-29 用户报过「语音模式下这个字体明显
+                    // 变小了」，根因就是这里给的 12 比图文页那颗小半号。
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+            }
+            .foregroundColor(isHighlighted ? highlightColor : .white.opacity(0.65))
+            .padding(.horizontal, TableStyle.cellHorizontalPadding)
+            .frame(height: height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help(help)
+    }
+}

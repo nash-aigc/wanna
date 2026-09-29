@@ -747,6 +747,11 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 默认开 —— 语音聊天的默认形态就是说话。
     var voiceChatSpeaksReplies: Bool = true
 
+    /// ⭐ **语音 / 视频模式写文件的基准文件夹**（2026-09-29，工具调用那两个工具用的）。
+    /// 模型给的相对路径落在这里；绝对路径照用（「保存到桌面上」就是绝对路径）。
+    /// nil = 用 `SimpleFileTools.defaultFolder`（`~/Desktop/Wanna`）。
+    var voiceToolWriteFolder: String?
+
     /// ⭐ **每张卡片的「屏幕」开关**（2026-09-29）：图文模式下**默认开**（带截图提问）；
     /// 关掉 = 不参考屏幕，纯文字提问 —— 这正是原来那个"文本模式"的效果，
     /// 文本模式删掉之后它降级成了一颗开关（用户：「用户默认在图文模式下屏幕是开的，
@@ -1776,6 +1781,7 @@ nonisolated extension AppSettings {
         case cardVoiceRoleIDs
         case cardVisionModelOverrides
         case voiceChatSpeaksReplies
+        case voiceToolWriteFolder
         case reviewAgentReadsProject
         case reviewAgentWritesProject
         case transcriptionLanguage
@@ -1943,6 +1949,9 @@ nonisolated extension AppSettings {
                                                                  forKey: .cardVisionModelOverrides)
         voiceChatSpeaksReplies = try container.decodeIfPresent(Bool.self,
                                                               forKey: .voiceChatSpeaksReplies) ?? defaults.voiceChatSpeaksReplies
+        // ⚠️ **必须在这里单独解一次**（同上面那条 2026-09-26 的教训：手写 init + 合成编码器，
+        // 只进 CodingKeys 的字段写得进、读不出）。
+        voiceToolWriteFolder = try container.decodeIfPresent(String.self, forKey: .voiceToolWriteFolder)
         // 两个都是"没设过 = 关"（仓规 E1：`Bool?` + `decodeIfPresent`）。
         reviewAgentReadsProject = try container.decodeIfPresent(Bool.self, forKey: .reviewAgentReadsProject)
         reviewAgentWritesProject = try container.decodeIfPresent(Bool.self, forKey: .reviewAgentWritesProject)
