@@ -186,6 +186,58 @@
 Pi **先决定项目可不可信，再加载项目设置与资源**，之后才加载 context 文件。
 工具用 **Pi 进程的操作系统权限**；扩展**在那个进程里执行**（= 扩展是可信代码）。
 
+## 8.7 ⭐ 配置在哪、技能怎么指、系统提示词怎么换（官方 `configuration.md` + `settings.md`）
+
+### Agent 目录 = `~/.pi/agent/`（用户级配置都在这）
+
+| 路径 | 管什么 |
+|---|---|
+| `settings.json` | 偏好、**资源路径**、Pi 包声明 |
+| **`models.json`** | **兼容端点 / 模型** ← **DeepSeek 配在这** |
+| `auth.json` | 保存的 API key 与 OAuth 凭据 |
+| `AGENTS.md` / **`CLAUDE.md`** | 跨工作目录的用户指令 ⚠️ **见下面的风险** |
+| **`SYSTEM.md`** | ⭐ **替换掉 Pi 的默认系统提示词** |
+| `APPEND_SYSTEM.md` | 往系统提示词**追加** |
+| `extensions/` · `skills/` · `prompts/` · `themes/` | 各资源的默认位置 |
+
+**项目级**在 `.pi/`（**要等项目被信任之后才加载**）。
+
+### ⭐ 技能不用挪目录 —— 用绝对路径指过去就行
+
+官方 `settings.md` 逐字：
+
+> `skills` \| `string[]` \| `[]` \| **Skill files or directories.**
+> *"Resource paths in user settings resolve from the agent directory. **Absolute paths and `~` are supported.**"*
+
+```json
+{ "skills": ["/Users/mjm/Documents/SuperAgent/APP/Design/wanna/skills"] }
+```
+
+**→ 之前说"技能目录要挪到 `~/.agents/skills/`"是不必要的。** 指绝对路径即可，
+而且是**用户级**设置（对所有工作目录生效）。
+
+同理：`extensions` / `prompts` / `themes` / **`packages`** 都是同一张表里的数组，
+都支持绝对路径与 `~`，也都支持 glob 排除 `!pattern`。
+
+### ⭐ 系统提示词可以整个换掉
+
+`SYSTEM.md` —— 官方表里逐字：*"**Replaces** Pi's default system prompt."*
+**这正是你要的"系统提示词就是机械化的一句话"** —— 而且 Pi 还留了 `APPEND_SYSTEM.md` 做追加。
+
+### ⚠️ 一个**必须处理的风险**：Pi 会自动读 `CLAUDE.md` / `AGENTS.md`
+
+官方表里逐字：`<agent-dir>/AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, **`CLAUDE.md`**, or `CLAUDE.MD`
+→ *"User instructions applied across working directories."*
+
+**而 Wanna 仓库里那个 `AGENTS.md`（=CLAUDE.md 的真身）实测 `wc -c` = 515 542 字节 ≈ 503 KB
+（≈ 12.5 万 token）。**
+如果 Pi 在 Wanna 目录下跑，**它会把这一整份读进上下文** —— 那是灾难性的。
+
+**动手时必须处理**（几个方向，动手时定）：
+- Pi 跑在**别的工作目录**（不是 Wanna 仓库）
+- 或者用 `AGENTS.override.md` / 配置把 context 文件关掉
+- ⚠️ **这条在动手前必须验证**：Pi 到底在什么条件下读、读哪个目录的
+
 ## 9. 命令行（官方 `cli.md`）
 
 **三种非交互模式**（决定我们怎么起 Pi）：
