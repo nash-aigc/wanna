@@ -46,6 +46,8 @@ from agents import Agent, Runner, set_default_openai_api, set_default_openai_cli
 from agents.mcp import MCPServerStreamableHttp
 from openai import AsyncOpenAI
 
+from local_trace import install_local_trace_processor
+
 HERE = Path(__file__).resolve().parent
 WANNA_TOKEN = Path.home() / "Library/Application Support/Wanna/mcp-token"
 WANNA_MCP_URL = "http://127.0.0.1:8765/mcp"
@@ -119,6 +121,18 @@ async def main() -> int:
     client = AsyncOpenAI(base_url=BASE_URL, api_key=load_key())
     set_default_openai_client(client, use_for_tracing=False)
     set_default_openai_api("chat_completions")
+
+    # **追踪写到本地文件、一个字节都不外发**（2026-09-29 用户选的方案②）。
+    #
+    # 官方给非 OpenAI 模型的首选是"给 exporter 一个 OpenAI key、用官方 Traces 面板"，
+    # 但那条会把每个 span POST 到 api.openai.com —— 而 span 里装的是工具参数
+    # 与**工具返回**（对我们就是整棵界面文本、读到的文件内容）。
+    # 这个仓库已经因为同样的理由删过一次 PostHog，所以走官方明写的第二条路：
+    # "custom trace processors to push traces to other destinations (as a replacement…)"。
+    #
+    # ⚠️ 必须是 `set_trace_processors`（替换）而不是 `add_trace_processor`（追加）——
+    # 追加的话默认那个往 OpenAI 发的 exporter 还在，等于没改。
+    install_local_trace_processor()
 
     # **只有 Wanna 自己这一个 MCP**（2026-09-29 用户拍板删掉 firecrawl）。
     #
