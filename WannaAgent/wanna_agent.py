@@ -44,6 +44,7 @@ from pathlib import Path
 
 from agents import Agent, Runner, set_default_openai_api, set_default_openai_client
 from agents.mcp import MCPServerStreamableHttp
+from agents.memory import SQLiteSession
 from openai import AsyncOpenAI
 
 from local_trace import install_local_trace_processor
@@ -51,6 +52,8 @@ from local_trace import install_local_trace_processor
 HERE = Path(__file__).resolve().parent
 WANNA_TOKEN = Path.home() / "Library/Application Support/Wanna/mcp-token"
 WANNA_MCP_URL = "http://127.0.0.1:8765/mcp"
+# 会话历史落这里 —— 与另外几条诊断日志同目录（都在 Application Support/Wanna）。
+SQLITE_SESSION_PATH = Path.home() / "Library/Application Support/Wanna/agent-sessions.sqlite3"
 
 MODEL = os.environ.get("WANNA_AGENT_MODEL", "deepseek-flash")
 BASE_URL = os.environ.get("WANNA_AGENT_BASE_URL", "https://api.deepseek.com/v1")
@@ -107,6 +110,10 @@ async def main() -> int:
     parser.add_argument("task", nargs="?", default="")
     parser.add_argument("--task", dest="task_opt", default="")
     parser.add_argument("--max-steps", type=int, default=20)
+    # **官方状态机制**（2026-09-29）：一个 session id = 一段对话。
+    # Wanna 传的是会话记录的 UUID —— 和「卡片 id = 实体 UUID」同一个做法。
+    # 不给就落到 `default`，于是「没指定会话」也有一个稳定的家。
+    parser.add_argument("--session-id", dest="session_id", default="default")
     args = parser.parse_args()
     task = (args.task_opt or args.task).strip()
     if not task:
@@ -185,7 +192,22 @@ async def main() -> int:
             agent = Agent(name="Wanna", instructions=instructions,
                           model=MODEL, mcp_servers=[hand])
 
-            result = await Runner.run(agent, task, max_turns=args.max_steps)
+            # **官方 Sessions**（2026-09-29 用户：「全部换成官方」）。
+            #
+            # ⚠️ `db_path` **必须给文件路径** —— 官方默认是 `:memory:`，
+            # 而我们是每轮一个新进程，用默认值等于**每一轮记忆都从零开始**，
+            # 而且屏幕上完全看不出来（它不报错，只是"记不住"）。
+            #
+            # 官方对状态策略的分类（`running_agents` 页）：`session` 是
+            # **client-managed**，与 `conversation_id` / `previous_response_id`
+            # （仅 OpenAI Responses API）不同 —— 所以它在非 OpenAI provider 上可用。
+            # 实测确认：`SQLiteSession` 只往 SQLite 里存消息列表，没有任何
+            # OpenAI 专属调用，与用哪家模型无关。
+            session = SQLiteSession(
+                session_id=args.session_id,
+                db_path=SQLITE_SESSION_PATH,
+            )
+            result = await Runner.run(agent, task, max_turns=args.max_steps, session=session)
 
             for item in result.new_items:
                 described = describe(item)
