@@ -647,6 +647,17 @@ nonisolated enum WannaMCPTools {
     }
 
     private static func listSkills() async throws -> [String: Any] {
+        // **每次现读，不吃缓存**（2026-09-29 实测修的一处静默陷阱）。
+        //
+        // `SkillCatalog` 把结果缓存在 `cachedSkills` 里，而 `invalidateCache()`
+        // **一个调用点都没有** —— 所以它是"启动读一次、之后永远不变"。
+        // 后果：**改了技能的描述，不重启 App 就看不到任何变化**，而屏幕和日志
+        // 都完全正常（实测：改完跑 `list_skills`，返回的还是旧描述、字符数一个不差）。
+        // 这正是本仓最忌讳的那类失败 —— 改了没反应，还不报错。
+        //
+        // 技能目录只有十来个文本文件，现读一次是毫秒级；而这个函数在整个流程里
+        // 只在 Python 启动时调一次，缓存本来也省不下什么。
+        SkillCatalog.invalidateCache()
         let skills = SkillCatalog.allSkills()
         let lines = skills.map { "· \($0.name) —— \($0.description)" }
         let text = skills.isEmpty
