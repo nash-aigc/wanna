@@ -281,7 +281,61 @@ export default function (pi: ExtensionAPI) {
 → **我们那 11 个技能可以显式列进设置里**，不必非得挪到 `~/.agents/skills/`
 （挪目录是"约定位置"，列进设置是"显式指定"，两条路都行 —— 动手时选一条并写明）。
 
-## 12. 读完了 —— 这批文档到此为止
+## 12. ⭐ 第二轮扫出的关键项（`security.md` · `message-types.md` · 源码 `cli/args.ts`）
+
+### 12.1 ⚠️→✅ AGENTS.md 风险**已解除**：官方开关 `--no-context-files`
+
+官方 `security.md` 逐字（把风险钉死了）：
+
+> *"Context files such as `AGENTS.override.md`, `AGENTS.md`, and `CLAUDE.md` load
+> **regardless of project trust** unless you disable context loading."*
+
+**拒绝信任也没用，context 文件照读。** 但源码里有官方开关（`cli/args.ts:204`）：
+
+```
+-nc, --no-context-files     # 不读 AGENTS.md / CLAUDE.md
+-ne, --no-extensions        # 不装扩展
+-ns, --no-skills            # 不读技能
+-np, --no-prompt-templates  # 不读提示模板
+--no-themes
+```
+
+→ **RPC 起手命令定为：`pi --mode rpc --no-session -nc`** —— 503 KB 的 AGENTS.md 不会进上下文，
+技能仍由我们显式指的路径加载。**风险解除。**
+
+### 12.2 消息形状（`message-types.md` —— Swift 解析事件时的直接依据）
+
+- 时间戳 = **Unix 毫秒**（session 条目才是 ISO 8601 —— 两套并存，别混）
+- `UserMessage.content` = `string | (TextContent | ImageContent)[]`
+- `AssistantMessage.content` = `(TextContent | ThinkingContent | ToolCall)[]`，带 `usage`
+  （`input`/`output`/`cost.total` —— **token 与成本 Pi 顺手就给了**）
+- `ImageContent` = `base64 data + mimeType`（Wanna 的截图走这里）
+- `ThinkingContent` 带 `thinkingSignature`（provider 私有，**当不透明数据别解析**）
+
+### 12.3 压缩是可调的（`settings.md`）
+
+| 设置 | 默认 | 说明 |
+|---|---|---|
+| `compaction.enabled` | `true` | 自动压缩总开关 |
+| `compaction.reserveTokens` | `16384` | 给模型回复留的 token |
+| `compaction.keepRecentTokens` | `20000` | 最近这段不参与摘要 |
+
+### 12.4 有用的环境变量（`environment-variables.md`）
+
+`PI_CODING_AGENT_DIR`（改配置目录）· `PI_SESSION_ID` / `PI_SESSION_FILE`（当前会话）·
+`PI_PROVIDER` / `PI_MODEL` · `PI_OFFLINE=1`（禁一切自动联网）· `PI_SKIP_VERSION_CHECK` ·
+`PI_TELEMETRY=0`（关遥测）
+
+## 13. 其余文档的排查结论（都看过了，判定如下）
+
+- `agent/docs/` 12 份 —— **内部存储规范**（harness.md = 实现规格、values.md = typed storage
+  primitive、pico 系列是内部设计稿）—— 与集成无关，不读
+- `durable/docs/` 4 份 —— pico 设计稿，同上
+- `usage.md` / `slash-commands.md` / `themes.md` / `keybindings.md` / `terminal-setup.md` /
+  `windows.md` / `tmux.md` / `termux.md` —— 交互终端体验，RPC 集成用不上
+- `virtual-models.md` · `containerization.md` · `shell-aliases.md` —— 按需再翻
+
+**至此扫完：`coding-agent/docs` 38 份全部过了一遍，另两包的 docs 判定为内部资料。**
 
 `rpc.md` · `rpc-commands.md` · `json.md` · `cli.md` · `skills.md` · `custom-provider.md` ·
 `models.md` · `sessions.md` · `compaction.md` · `extensions.md` · `settings.md` —— **全读过。**
