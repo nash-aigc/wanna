@@ -69,6 +69,47 @@
 3. **只在 LF 上切帧**
 4. **stdout 只走协议**
 
+## 3.5 ⚠️⚠️ 工具怎么给：**只能去掉三个，不能全关**（2026-09-29 实测，改之前必读）
+
+**一条线记住：留 `read`，去掉 `bash,edit,write`。** 启动参数就是那一个：
+
+```
+--exclude-tools bash,edit,write
+```
+
+**为什么不能图省事写 `--no-builtin-tools`（内置全关）** —— 官方源码
+`src/core/system-prompt.ts:165` 是个**写死的两个字面量数组**：
+
+```ts
+const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
+if (skillFileReadTool && skills.length > 0) { …写入 <available_skills>… }
+```
+
+**没有 `read` 也没有 `bash` → 技能段整段不出现，而且不报错、不写日志。**
+（金丝雀实测：放一条提到"紫色犀牛协议"的技能，问它认不认得 → 「没有」；留 `read` → 「有」。）
+扩展/自定义工具**顶不上去** —— 那是个字面量数组，不查扩展。
+
+**为什么又要去掉那三个** —— 它们是 Pi"用自己的手"的来源。用户报
+「点快捷键进入 agent 模式，没有返回」那一轮，会话文件实证 Pi **完全没用我们给的 MCP 工具**：
+
+```
+bash  open -a Calculator && osascript …     ← 自己开计算器
+bash  screencapture -x /tmp/calc.png        ← 自己截图
+read  /tmp/calc.png                         ← 自己看图
+bash  grep -rl "平凡" … find … url-tool      ← 满硬盘找目录，再也不回来
+```
+
+它是个 coding agent，**只要手里有 bash，它就会用自己的手**，而不是我们给的那 19 个工具。
+去掉 `bash`/`edit`/`write` 之后，真机同一件事：**9 秒返回**，工具调用只有 MCP。
+
+**留下的 `read` 不是妥协，是技能那条官方机制的必需品**：官方 `formatSkillsForPrompt`
+给模型的是 `<name>` + `<description>` + `<location>`（**绝对路径**），正文由模型自己
+用 `read` 去读 —— 正是三级披露。所以这一条同时保住了"技能能用"和"它不会自己动手"。
+
+**改这里之后怎么验**（别只看日志）：`bash scripts/agent-mode-return-check.sh` —— 它跑一轮
+真的带截图的任务，断言三件事：这一轮真的交给了 Pi / 有返回 / 那一轮新追加的帧里
+**一次 `bash`/`edit`/`write` 都没有**（会话文件是累积历史，必须只看新增帧，否则永远红）。
+
 ## 4. 接 DeepSeek（不用写扩展）
 
 ```json

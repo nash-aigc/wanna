@@ -884,6 +884,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         onUtteranceFinalized: @escaping (String) -> Void,
         onUtteranceDropped: @escaping (String) -> Void
     ) async {
+        // 🩺 麦克风即将打开：先体检（静音 / 低音量就地修掉）。连续追问这条路和
+        // 按住说话共用同一个设备，所以音量被压到 0 时两条一起哑。
+        Self.healDefaultInputGainIfNeeded()
+
         // ⚠️ 这两个 guard 是**静默返回**，而调用方很容易把「窗口开着」当成
         // 「我开成功了」。语音聊天就踩过这个：它连到对话页面已经开着的窗口上，
         // 回调是别人的，于是用户说话页面上什么都不显示（2026-09-24 查实的可达路径）。
@@ -1848,7 +1852,51 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         )
     }
 
+
+    // MARK: - 🩺 起录体检（按住说话 / 连续追问）
+
+    /// **在用户开口之前**修掉「输入静音 / 音量被压到极低」，并只在真改了的时候留一行日志。
+    ///
+    /// ## 为什么 2026-09-29 才加（这个缺口是查出来的，不是设计出来的）
+    ///
+    /// D45 那次（2026-09-26，系统把输入音量留在 0.275）之后建的三层防线
+    /// —— 起录体检 / 录制中复查 / 空报说明 —— **当时只装到了长录音那条路**
+    /// （`LongFormRecorderController`），**按住说话这条被漏了**。
+    /// 于是 2026-09-29 同一种故障再来一次（这次音量被改成 **0.000**）时：
+    /// 快捷键、主 Agent、录音**三个一起静默失效** —— 说了等于没说、转写为空，
+    /// 屏幕上只表现为"没反应"，而日志里一个 🩺 都不会有。
+    ///
+    /// 动作与长录音那条**完全一致**（复用它验证过的读/写与"回读确认"）：
+    /// 静音 → 打开；音量 < 0.5 → 调到 1.0；**只在真动手改了时才说话**
+    /// （例行"一切正常"不刷屏，否则真告警会被淹没）。
+    static func healDefaultInputGainIfNeeded() {
+        let deviceID = AudioInputDeviceCatalog.systemDefaultInputDeviceID()
+        guard deviceID != 0 else { return }
+
+        var notes: [String] = []
+        if AudioInputDeviceCatalog.isInputMuted(of: deviceID) == true,
+           AudioInputDeviceCatalog.setInputMuted(false, on: deviceID) {
+            notes.append("输入本来是静音的，已替你打开")
+        }
+        // 判据取音量本身而不是电平 —— 分工的理由见 `LongFormRecorderController`：
+        // 故障态（说话只有 0.002）与低音量房间底噪（0.004）**交叉**，
+        // 任何电平门槛都只能当"去看一眼"的触发器，音量才是可执行的那一个。
+        if let volumeBefore = AudioInputDeviceCatalog.inputVolume(of: deviceID),
+           volumeBefore < LongFormRecorderController.lowInputVolumeThreshold,
+           AudioInputDeviceCatalog.setInputVolume(LongFormRecorderController.healedInputVolume,
+                                                  on: deviceID) {
+            notes.append(String(format: "输入音量只有 %.2f，已调到 %.2f",
+                                volumeBefore, LongFormRecorderController.healedInputVolume))
+        }
+        guard !notes.isEmpty else { return }
+        MainFlowDiagnostics.log("🩺 起录体检（按住说话/追问）· " + notes.joined(separator: "；"))
+    }
+
     private func startRecognitionSession() async throws {
+        // 🩺 麦克风即将打开：先体检（静音/低音量就地修掉）—— 2026-09-29 补的缺口，
+        // 见 `healDefaultInputGainIfNeeded` 的注释。
+        Self.healDefaultInputGainIfNeeded()
+
         activeTranscriptionSession?.cancel()
         activeTranscriptionSession = nil
 

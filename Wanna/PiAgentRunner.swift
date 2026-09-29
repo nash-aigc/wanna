@@ -107,9 +107,34 @@ final class PiAgentRunner {
             "--no-context-files",      // ⚠️ 仓库的 AGENTS.md 有 503KB —— 官方 security.md 写明
                                        // context 文件"regardless of project trust"照读，
                                        // 必须用 -nc 关掉（台账 P5'/12.1）
+            "--exclude-tools", "bash,edit,write",
+            // ⚠️⚠️ **为什么是"去掉三个"而不是 `--no-builtin-tools`（2026-09-29 实测定的）**
+            //
+            // 起因：用户报「点快捷键进入 agent 模式，没有返回」。会话文件实证，那一轮 Pi 拿
+            // **自己内置的 bash** 把整件事重做了一遍，而不是用我们给的 19 个 MCP 工具：
+            //     bash  open -a Calculator && osascript …   ← 自己开计算器
+            //     bash  screencapture -x /tmp/calc.png      ← 自己截图
+            //     read  /tmp/calc.png                       ← 自己看图
+            //     bash  grep -rl "平凡" … find … url-tool   ← 满硬盘找目录，再也不回来
+            // 它是个 coding agent，**只要手里有 bash，它就会用自己的手**。
+            //
+            // 第一版改法是 `--no-builtin-tools`（内置全关），结果**技能整批消失** ——
+            // 官方源码 `core/system-prompt.ts:165`：
+            //     const skillFileReadTool = (["read","bash"] as const).find(t => selectedTools.includes(t));
+            //     if (skillFileReadTool && skills.length > 0) { …写入提示词… }
+            // **只认这两个名字、扩展工具顶不上去**，所以关掉内置 = 技能段整段不出现，
+            // 而且**不报错**（金丝雀实测：放一条"紫色犀牛协议"，问它认不认得 → 「没有」）。
+            //
+            // 所以留 `read` —— 技能那条官方机制要它（官方 `formatSkillsForPrompt` 给的是
+            // `<name>`+`<description>`+`<location>` 绝对路径，正文靠 `read` 去读，正是三级披露）；
+            // 去掉 `bash`/`edit`/`write` —— 那三个才是它"自己动手"和"满硬盘找"的来源。
+            // 取舍就是这一条：**决策归 Pi，动手归 Wanna。**
             "--model", "deepseek/deepseek-flash",
             "--session-dir", Self.sessionsDirectory,
         ]
+        // 工作目录给一个**我们自己的空目录**，不是随 App 继承来的 `/` ——
+        // 万一还有任何按路径的动作，范围也可控。
+        newProcess.currentDirectoryURL = URL(fileURLWithPath: Self.sessionsDirectory)
 
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
