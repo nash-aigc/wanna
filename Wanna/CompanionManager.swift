@@ -4269,19 +4269,16 @@ final class CompanionManager: ObservableObject {
                     // 它回来的文字里**不会有动作标签**（活它自己干完了），所以下面那个
                     // "一步一截图"的动作循环会自然地空转一轮就结束。
                     var fullResponseText = ""
-                    guard PythonAgentRunner.isConfigured else {
-                        throw PythonAgentError.notConfigured(
-                            python: PythonAgentRunner.pythonExecutablePath,
-                            script: PythonAgentRunner.agentScriptPath)
+                    guard PiAgentRunner.isConfigured else {
+                        throw PiAgentError.notConfigured(path: PiAgentRunner.piExecutablePath)
                     }
-                    MainFlowDiagnostics.log("🐍 这一轮的决策交给 Python（OpenAI Agents SDK）")
-                    fullResponseText = try await PythonAgentRunner.shared.runTurn(
+                    MainFlowDiagnostics.log("🥧 这一轮的决策交给 Pi（pi.dev RPC）")
+                    fullResponseText = try await PiAgentRunner.shared.runTurn(
                         task: userPromptForThisTurn,
-                        // 这一轮属于哪段对话 —— 官方 Sessions 的 session id。
+                        // 这一轮属于哪段对话 —— Wanna 会话 UUID → pi 的一个会话文件。
+                        // 「连续对话」= 同一个 UUID；「新建对话」= 换一个。
+                        // 历史与压缩全归 pi（compaction 默认开启），Swift 侧不再管。
                         sessionID: turnSessionID.uuidString,
-                        // 历史窗口：认的就是设置页「记住最近多少轮对话」那个值，
-                        // 由 Python 换算成官方的 `SessionSettings(limit:)`。
-                        memoryRounds: appSettings.rememberedConversationRounds,
                         onProgress: { [weak self] note in
                             Task { @MainActor in self?.liveJobProgressSteps.append(note) }
                         }
