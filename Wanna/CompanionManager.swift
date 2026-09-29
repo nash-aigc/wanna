@@ -2376,6 +2376,14 @@ final class CompanionManager: ObservableObject {
                    || buddyDictationManager.isPreparingToRecord {
                 pendingKeyboardShortcutStartTask?.cancel()
                 pendingKeyboardShortcutStartTask = nil
+                // ⭐ **这一下就是"再按一下 = 进执行模式"**（2026-09-29 两段式，实测补上）：
+                // 点两下模式里第二下 = 说完了、提交，**语义上等于显式提交** ——
+                // 所以它必须在这里置执行旗标，否则定稿会落进实时轮 ✗
+                //（用户报的「进入执行模式也没有任何反应」有一半出在这里：
+                //  第二下走的是实时轮，而实时轮那一轮又因为模型报错而空手而归）。
+                // 原来只写在"连续监听窗口里的发送"那一条分支上 —— 那条是**追问窗口**的路，
+                // 按住说话这条根本不经过它。
+                hasSubmittedToExecuteThisCycle = true
                 buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
                 return
             }
@@ -2763,8 +2771,14 @@ final class CompanionManager: ObservableObject {
                 DirectionBoardSession.shared.settleRealtimeAnswer(result.finalText)
                 MainFlowDiagnostics.log("🥧 实时轮回来了：\(result.finalText.count) 字")
             } catch {
-                // 忙（执行轮正在跑）或失败：右下角什么都不画，留一行日志。下一句继续。
-                MainFlowDiagnostics.log("🥧 实时轮没答（\(error.localizedDescription.prefix(80))）")
+                // ⚠️ **失败要让用户看见，不能只进日志**（2026-09-29 实测教训）：
+                // 模型报错（如 DeepSeek 402 余额不足）时 pi 不发任何 text_delta，
+                // 原来这条 catch 只写诊断日志 —— 屏幕上的表现是"等一秒什么都没出来"，
+                // 用户完全不知道为什么（他报的正是这个）。现在同一句话也写进
+                // `lastErrorMessage`（刘海面板对话页顶部那行红字，点一下消失）。
+                let reason = String(describing: error)
+                MainFlowDiagnostics.log("🥧 实时轮没答：\(reason.prefix(200))")
+                self?.lastErrorMessage = "实时模式没答上：" + reason
             }
         }
     }

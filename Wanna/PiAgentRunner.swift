@@ -499,6 +499,27 @@ final class PiAgentRunner {
                         onProgress("⚠️ 工具出错")
                     }
 
+                case "message_end":
+                    // ⚠️⚠️ **这一支是 2026-09-29 实测补上的，它挡的是"静默失败"**：
+                    // 模型调用出错时 pi **不发任何 `text_delta`**，只在 `message_end` 里
+                    // 带 `stopReason: "error"` + `errorMessage`。原来这里不读它 ——
+                    // 于是"DeepSeek 余额不足（402）"被整条吞掉，`agent_settled` 照常到达，
+                    // `finalText` 为空 → 抛 `noAnswer`，**屏幕上和日志里都看不出真正的原因**
+                    //（用户报的"实时模式等一秒没输出、执行模式也没反应"就是这个）。
+                    guard let message = object["message"] as? [String: Any],
+                          (message["role"] as? String) == "assistant" else { continue }
+                    if let stopReason = message["stopReason"] as? String, stopReason == "error" {
+                        let detail = (message["errorMessage"] as? String)
+                            ?? "模型调用失败（没有给出原因）"
+                        throw PiAgentError.agentFailed(detail)
+                    }
+                    // **文本兜底**：非流式回复（或 text_delta 缺失时）文本在 `content` 里，
+                    // 只收 `text_delta` 的话这种回复会被当成"没有答复"。
+                    if finalText.isEmpty,
+                       let parts = message["content"] as? [[String: Any]] {
+                        finalText = parts.compactMap { $0["text"] as? String }.joined()
+                    }
+
                 case "agent_settled":
                     sawSettled = true
 
@@ -559,7 +580,7 @@ final class PiAgentRunner {
 
 // MARK: - 错误
 
-nonisolated enum PiAgentError: Error, CustomStringConvertible {
+nonisolated enum PiAgentError: Error, CustomStringConvertible, LocalizedError {
     case notConfigured(path: String)
     case agentFailed(String)
     case noAnswer(disposition: String)
@@ -574,6 +595,12 @@ nonisolated enum PiAgentError: Error, CustomStringConvertible {
             return "决策大脑没有给出答复（disposition：\(disposition)）"
         }
     }
+
+    /// ⚠️ **必须实现 `errorDescription`**（2026-09-29 实测教训）：只有 `description` 时，
+    /// 日志里打 `error.localizedDescription` 会显示成
+    /// `The operation couldn't be completed. (Wanna.PiAgentError error 2.)`
+    /// —— **完全看不出是什么错**（那次排查就因为这一行多绕了一圈）。
+    var errorDescription: String? { description }
 }
 
 // MARK: - 字节 → 行的通道（**绝不能是 MainActor**）
