@@ -108,6 +108,58 @@ fi
 #
 # ⚠️ 它**只**管能用机器数出来的东西。措辞对不对、这张图讲清楚没有、
 # 某个说法是不是已经过期 —— 仍然只能靠人（也仍然会错）。
+# ══════════════════════════════════════════════════════════════════════════
+# 闸门四：官方依据台账（用户 2026-09-29 要求"强迫自己去看官方"）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 用户原话：「你在设计任何东西之前是不是没有这个习惯？我发现你**总是看一下，但没有看全**。
+# ……这个问题应该通过**系统级的方法、代码的方法、强制的方法或闸门的方法**，强迫自己去做。」
+#
+# 同一天我犯了三次形状完全一样的错（读了但没读全）：技能加载反着实现、
+# 自己发明"MCP 三级披露"、没读 MCP 规范页就下结论。规矩早就写在 CLAUDE.md 里，
+# **问题是规矩没有强制力** —— 而闸门在这个仓库里被证明有效。
+#
+# 这一道管两件事：
+#   ① 碰了 agent 框架的代码（WannaAgent/**.py 或 Wanna 的 MCP 工具）
+#      → 台账《全局框架/官方依据.md》必须同一次提交里更新
+#   ② 台账里每一条 QUOTE，闸门会**真的 fetch 那个 URL** 去核对
+#      （2026-09-29 实测：编一条假的当场被拒）
+#
+# 跳过：WANNA_SKIP_EVIDENCE_GATE=1
+LEDGER="全局框架/官方依据.md"
+FRAMEWORK_PATTERN='^WannaAgent/.*\.py$|^Wanna/WannaMCP(Tools|Server)\.swift$'
+
+if [ "${WANNA_SKIP_EVIDENCE_GATE:-0}" = "1" ]; then
+    echo "⚠️ 跳过了官方依据闸门（WANNA_SKIP_EVIDENCE_GATE=1）—— 请确认这次确实没动框架行为。"
+else
+    touched_framework="$(echo "$STAGED_FILES" | grep -E "$FRAMEWORK_PATTERN" || true)"
+    if [ -n "$touched_framework" ] && ! echo "$STAGED_FILES" | grep -qF "$LEDGER"; then
+        echo
+        echo "⛔ 提交被拒：改了 agent 框架的代码，但没更新《官方依据台账》。"
+        echo
+        echo "   这次碰到的文件："
+        echo "$touched_framework" | sed 's/^/     /'
+        echo
+        echo "   动手之前先回答：**这个做法在官方是怎么定义的？**"
+        echo "   把官方原文抄进 ${LEDGER}（SOURCE / QUOTE / WHY 三行），"
+        echo "   闸门会真的 fetch 那个 URL 核对原文在不在。"
+        echo
+        echo "   查官方用 AnySearch（不要用内置搜索）。**要看全，不是看一屏。**"
+        echo "   确实没动框架行为（注释 / typo）：WANNA_SKIP_EVIDENCE_GATE=1 git commit ..."
+        echo
+        exit 1
+    fi
+
+    EVIDENCE_CHECK="$ROOT/scripts/official-evidence-check.py"
+    if echo "$STAGED_FILES" | grep -qF "$LEDGER" && [ -f "$EVIDENCE_CHECK" ]; then
+        if ! python3 "$EVIDENCE_CHECK"; then
+            echo "⛔ 提交被拒：台账里有原文跟来源对不上（见上）。"
+            echo
+            exit 1
+        fi
+    fi
+fi
+
 FACTCHECK="$ROOT/scripts/overview-fact-check.sh"
 if echo "$STAGED_FILES" | grep -qF "全局框架/00-项目全貌.md" && [ -x "$FACTCHECK" ]; then
     if ! "$FACTCHECK"; then
