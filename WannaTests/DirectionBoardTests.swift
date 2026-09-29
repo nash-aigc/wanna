@@ -1120,3 +1120,39 @@ struct DirectionBoardTests {
         #expect(BoardPasteShortcut(rawValue: "commandReturn") == .commandReturn)
     }
 }
+
+    /// ⭐ **按住说话那条路的"说完 N 秒就发"判据**（2026-09-29 恢复，9.61 加过、9.63 撤回过）。
+    ///
+    /// 撤回的原因是**语义**错了（那次"自动发送"= 提交给 agent 执行，用户纠正说
+    /// "按下快捷键是进实时模式"）；现在两段式回来了，自动发送走
+    /// `hasSubmittedToExecuteThisCycle` 分派 → 未提交过 = **实时轮** ✓。
+    ///
+    /// 这条测试钉住判据本身（纯函数，不碰音频）：**与字数无关**（用户 2026-09-28
+    /// 「跟说话字数完全无关」），唯一与文本有关的是"认出过内容"。
+    @Test func pushToTalkAutoSubmitIsSilenceBasedNotWordCountBased() throws {
+        let now = Date()
+        let justSpoke = now.addingTimeInterval(-0.5)
+        let longAgo = now.addingTimeInterval(-5)
+
+        // 刚说过、还没到点 → 不发
+        #expect(!BuddyDictationManager.shouldAutoSubmitPushToTalk(
+            now: now, lastTranscriptUpdate: justSpoke,
+            transcript: "一", transcriptAlreadySubmitted: "", silenceSeconds: 1.5))
+        // 静音够久 → 发（**一个字也算** —— 与字数无关）
+        #expect(BuddyDictationManager.shouldAutoSubmitPushToTalk(
+            now: now, lastTranscriptUpdate: longAgo,
+            transcript: "一", transcriptAlreadySubmitted: "", silenceSeconds: 1.5))
+        // 一个字都没认出来 → 没有"说完"可言
+        #expect(!BuddyDictationManager.shouldAutoSubmitPushToTalk(
+            now: now, lastTranscriptUpdate: longAgo,
+            transcript: "，。", transcriptAlreadySubmitted: "", silenceSeconds: 1.5))
+        // 这一句已经因为静音到点发过一次 → 不重复发（定稿回来之前电平回调还会跑几十次）
+        #expect(!BuddyDictationManager.shouldAutoSubmitPushToTalk(
+            now: now, lastTranscriptUpdate: longAgo,
+            transcript: "帮我看一下桌面", transcriptAlreadySubmitted: "帮我看一下桌面",
+            silenceSeconds: 1.5))
+        // 还没收到过任何转写 → 不发
+        #expect(!BuddyDictationManager.shouldAutoSubmitPushToTalk(
+            now: now, lastTranscriptUpdate: nil,
+            transcript: "帮我看一下桌面", transcriptAlreadySubmitted: "", silenceSeconds: 1.5))
+    }
