@@ -220,6 +220,108 @@
   而且**跟框架后续的工具加载设计不兼容** —— 用户用的是官方框架，
   官方哪天改了加载方式，我自己那套就废了，还得再拆一遍。
 
+##### 📚 官方文档必须先「落地到本地」再读（2026-09-29 用户定，最高）
+
+> 用户原话：「**你在本地的文档一定要有一个非常全的、对官方文档的全局了解**……
+> 先看本地文档，为什么呢？因为**本地文档极简，你能够一次性看到全览**；
+> 如果看官方文档，你可能今天看到这个页面，明天看到另外一个页面，**你没有一个全局观**。」
+> 「**既然是要高频研发，不如直接 clone 到本地，clone 到当前项目里**，
+> 这样未来参考、查看都非常简单。」
+
+**这是所有"看官方"动作的入口。** 以前那套（每次去 fetch 一页）**今天被证明不管用** ——
+一页一页看，永远拼不出全局，而且每次都要等网络。
+
+###### 固定流程（五步，顺序不能换）
+
+1. **读全** —— 把官方文档**全部**读一遍（不是读一页就动手）。
+2. **提炼目录树** —— 官方文档里**有哪些功能、哪些内容**，列成一份带说明的树。
+3. **下载到本地** —— `git clone` / 下 tar 到本仓库的 `reference/<项目>/`。
+   先测速选源（官方直连经常失败，`ghfast.top` / `gh-proxy.com` 实测 ~1.7 MB/s）。
+4. **本地读** —— 之后一律读本地那份。**每次思考或设计一个工具之前，先看本地文档。**
+5. **汇总成一篇** —— 从目录树里**提炼关键点**，汇到**一个**文档里，
+   通过**一篇**看到全局观，再决定用哪一个。**重点参考官方文档，看有没有相关内容。**
+
+###### 落地在哪
+
+| 东西 | 位置 |
+|---|---|
+| 官方文档全文（本地副本） | `<仓库>/reference/<项目>/` |
+| 汇总那一篇（全局观） | `全局框架/<项目>-全览.md` |
+| 逐条官方依据（出处可核对） | `全局框架/官方依据.md`（闸门会 fetch 核对） |
+
+⚠️ **`reference/` 里是别人的代码和文档** —— 读它、引用它，**但不改它**，
+也不要把它当成我们这个仓库的一部分（它是副本，不是源码）。
+
+###### 为什么这条要写在最高优先级这一节
+
+因为**今天所有"我给你一个功能、你做得不对"的根子都在这里**：
+我每次只读到"够回答眼前这个问题"的那一页就停手。**本地有一份全的，就不会再停在那里。**
+
+###### 已落地：Pi（2026-09-29，换血的官方依据全在本地）
+
+- **完整仓库**：`reference/pi/`（8.0 MB，166 份 markdown；`ghfast.top` 下载）
+- **核心文档 38 份**：`reference/pi/packages/coding-agent/docs/`
+- **它自己的技能样例**：`reference/pi/.pi/skills/` ——
+  ⭐ **格式是 YAML frontmatter（`name` + `description`）+ 正文，和我们那 11 个技能一模一样**
+
+**最要紧的几份**（换血直接依赖）：
+
+| 文档 | 为什么它要紧 |
+|---|---|
+| `rpc.md` | 接进 Swift 的**全部协议依据**（已读，台账 P1–P7） |
+| `rpc-commands.md` | `prompt` 的**全部 disposition 值** |
+| `json.md` | 事件流的完整定义（`message_update` / `agent_settled` …） |
+| `cli.md` | 全部命令行选项 |
+| `skills.md` | ⭐ **我们那 11 个技能能不能直接用** |
+| `custom-provider.md` · `models.md` · `providers.md` | ⭐ **接 DeepSeek**（走三方 OpenAI 协议） |
+| `extensions.md` | ⭐ **MCP 扩展怎么装** |
+| `compaction.md` | 它自己的上下文压缩（我们刚删掉那套的官方对应物） |
+| `sessions.md` · `session-format.md` | 会话（树结构，可回退） |
+
+| 文档（`reference/pi/packages/coding-agent/docs/`） | 是什么 |
+|---|---|
+| `cli-integration.md` | By default, running `pi` opens the interactive terminal interface. When input  |
+| `cli.md` | This page documents Pi's built-in command-line commands and options. Run `pi - |
+| `compaction.md` | This reference describes automatic compaction, branch summarization, persisted |
+| `configuration.md` | Pi supports user-level and project configuration. User-level configuration liv |
+| `containerization.md` | Use an isolated environment to limit the files, credentials, processes, and ne |
+| `custom-provider.md` | A provider extension connects Pi to a model service that needs custom authenti |
+| `environment-variables.md` | Pi uses environment variables in three ways: |
+| `extensions.md` | Extensions are TypeScript modules that add executable behavior to Pi. Use one  |
+| `how-pi-works.md` | Pi coordinates model requests, tool execution, context assembly, and session s |
+| `index.md` | Pi is an extensible AI agent that works from your terminal. Give it a goal and |
+| `json.md` | JSON mode emits structured progress for one invocation: |
+| `keybindings.md` | Pi exposes named actions, such as `app.session.new`, that can be assigned keyb |
+| `llama-cpp.md` | Pi supports the llama.cpp router server. The router discovers multiple GGUF mo |
+| `message-types.md` | Pi uses `AgentMessage` values in SDK state, lifecycle events, RPC responses, a |
+| `models.md` | For a built-in provider, start with `/login`, then choose a model with `/model |
+| `packages.md` | Pi packages install and distribute extensions, skills, prompt templates, and t |
+| `prompt-templates.md` | Prompt templates turn Markdown files into reusable `/` commands. Use one when  |
+| `providers.md` | Most hosted providers support one or both of these authentication methods: |
+| `quickstart.md` | Pi runs in your terminal and works with files on your machine. To use it, you  |
+| `rpc-commands.md` | This reference lists commands accepted on stdin in RPC mode. Each command and  |
+| `rpc-extension-ui.md` | Extensions can request user interaction through `ctx.ui`. In RPC mode, support |
+| `rpc.md` | RPC mode runs Pi as a long-lived subprocess controlled through JSON records on |
+| `sdk.md` | Use the SDK for in-process TypeScript integration. For a language-independent  |
+| `security.md` | Treat model-generated commands and code as untrusted. Pi can read, change, and |
+| `session-format.md` | Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object wi |
+| `sessions.md` | Pi saves a conversation as a session. The active branch of that session suppli |
+| `settings.md` | This reference lists user-configurable settings, their types, defaults, and pu |
+| `shell-aliases.md` | Pi starts a separate non-interactive shell process for each Bash command. Non- |
+| `skills.md` | Skills give Pi specialized instructions and supporting files for a particular  |
+| `slash-commands.md` | Type `/` in Pi's terminal editor to search the commands available in the curre |
+| `terminal-setup.md` | Most modern terminals work with Pi without additional setup. Use this page whe |
+| `termux.md` | Pi runs on Android through Termux, a terminal emulator and Linux environment.  |
+| `themes.md` | Themes control the colors Pi uses in interactive mode and HTML exports. Pi inc |
+| `tmux.md` | Pi works inside tmux, but tmux can report `Shift+Enter`, `Ctrl+Enter`, and pla |
+| `tui.md` | Start with `ctx.ui` methods from an extension. Build a custom component only w |
+| `usage.md` | Run `pi` from the folder you want to work in. Pi uses that folder to discover  |
+| `virtual-models.md` | A virtual model is a selectable model that picks a physical model for each req |
+| `windows.md` | Run Pi either as a native Windows process or inside Windows Subsystem for Linu |
+
+⚠️ 上表是**从文件里生成的**（取每份文档的标题与首段），不是我凭印象写的 ——
+所以它和本地那份永远对得上。**文档更新后重新生成，不要手改。**
+
 ##### ⛔⛔ 凡是官方有的机制，一律用官方的 —— **不要问，直接改**（2026-09-29 用户定，最高）
 
 > 用户原话：「**撤销，不需要问我，全是换成【官方】**，同时把这个要求，直接写入 claude.md
