@@ -208,11 +208,10 @@ struct BlueCursorView: View {
         if !companionManager.streamingAnswerText.isEmpty {
             return companionManager.streamingAnswerText
         }
-        // **说话期间的答案预览**（用户 2026-09-27：「右下角这卡片其实就是一个答案的预览区」）——
-        // 它在真正的答案开始流之后自然让位（上一行的优先级更高）。
-        if !companionManager.answerPreviewText.isEmpty {
-            return companionManager.answerPreviewText
-        }
+        // ⭐ **"说话期间的答案预览"那条分支 2026-09-29 删掉了** —— 答案现在流式写进
+        // **实时窗口底部**（`DirectionBoardSession.previewAnswer`），鼠标右下角这张卡片
+        // 从今以后**只放 agent 模式的回复**（用户：「实时模式中，之前右下角的卡片，
+        // 显示回复结果这个问题」—— 那个位置的实时答案没有了）。
         return companionManager.liveTranscriptText
     }
 
@@ -231,10 +230,9 @@ struct BlueCursorView: View {
     private var answerCardBubble: some View {
         AnswerCardView(
             text: conversationBubbleText,
-            // 主 Agent 那条管线在流，**或者看板正在流式写这条预览** —— 两种都是流式，
-            // 卡片都该用模糊焦点那套渲染（用户 2026-09-27：「像流式输出，然后加上渲染逻辑」）。
-            isStreaming: companionManager.isAnswerStreamLive
-                || companionManager.isBoardPreviewStreaming,
+            // 主 Agent 那条管线在流（⭐ 2026-09-29：看板那条"预览流式"标志删掉了，
+            // 答案搬进了实时窗口，这张卡片只剩 agent 模式自己的流）。
+            isStreaming: companionManager.isAnswerStreamLive,
             style: AppSettingsStore.snapshot().answerCardStyle
         )
         .frame(maxWidth: NotchSupport.answerCardMaximumWidth, alignment: .leading)
@@ -478,10 +476,8 @@ struct BlueCursorView: View {
                 Color.clear
                     .overlay(alignment: .topLeading) {
                         Group {
-                            // 预览与最终结果**用同一张卡片**（用户：「跟正常的任务执行之后返回结果的
-                            // 卡片的动效、文字的效果渲染效果是一样的」）。
-                            if !companionManager.streamingAnswerText.isEmpty
-                                || !companionManager.answerPreviewText.isEmpty {
+                            // ⭐ 2026-09-29：只剩 agent 模式的流（实时答案搬进了实时窗口）。
+                            if !companionManager.streamingAnswerText.isEmpty {
                                 answerCardBubble
                             } else {
                                 liveTranscriptBubble

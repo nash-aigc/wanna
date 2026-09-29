@@ -114,6 +114,9 @@ final class PiAgentRunner {
     private var stdinHandle: FileHandle?
     private var channel: PiRPCChannel?
     private var requestSequence = 0
+    /// ⭐ **此刻有没有一轮在跑**（2026-09-29）—— 常驻进程一次只能对准一个会话，
+    /// 两轮并发会互相切走对方的会话（见 `runTurn` 门口那道 guard）。
+    private var isTurnRunning = false
 
     /// pi 的 stderr 走诊断日志（官方：stdout 只走协议，日志走 stderr —— P6）。
     private func ensureProcess() throws -> (Process, FileHandle, PiRPCChannel) {
@@ -281,6 +284,19 @@ final class PiAgentRunner {
         guard Self.isConfigured else {
             throw PiAgentError.notConfigured(path: Self.piExecutablePath)
         }
+
+        // ⭐ **一轮一开，同一时刻只允许一轮**（2026-09-29，实时窗口那条临时会话加进来的）。
+        //
+        // 常驻进程的 `switch_session` 是**全局**的 —— 临时轮和 agent 轮共用同一个 pi 进程，
+        // 同时跑两次 `runTurn` 会互相把对方的会话切走（临时轮正说着话，agent 轮把会话切到
+        // agent 那个文件上，临时轮的回复就落进别人的会话里）。所以进门前先看旗标：
+        // 忙就抛错 —— 实时窗口那一侧**有意**把它当"这一拍跳过"处理（下一拍再试），
+        // agent 那一侧（用户提交的那一轮）照常 throw，因为它等的是用户的结果，不该静默。
+        guard !isTurnRunning else {
+            throw PiAgentError.agentFailed("Pi 正在跑另一轮（同一进程一次只能跑一轮）")
+        }
+        isTurnRunning = true
+        defer { isTurnRunning = false }
 
         // **提示词变了就重起。（2026-09-29）**
         // 进程是常驻的，而 `--append-system-prompt` 只在**启动那一刻**读一次 ——

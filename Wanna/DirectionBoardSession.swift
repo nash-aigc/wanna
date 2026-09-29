@@ -192,14 +192,9 @@ final class DirectionBoardSession: ObservableObject {
         if didChange { understandingLines = merged }
         streamingUpdateCount += 1
 
-        // 答案：**边出边写**（`parseAnswer` 对半截文本也成立 —— 它取的是「答案：」那一行到行尾）。
-        if let answer = DirectionBoardPrompt.parseAnswer(partial),
-           answer != streamingAnswerText {
-            streamingAnswerText = answer
-            answerPreviewWriter?(answer)
-            // 告诉右下角那张卡片"现在这条是流式的"→ 它才会用模糊焦点那套渲染。
-            boardPreviewStreamingWriter?(true)
-        }
+        // ⭐ 2026-09-29：这里原来还有一条"边收边把答案写进预览"的分支 —— 那是第二次调用
+        // 还产「答案：」行年代的残留。现在梳理（第一次调用）只出**总结/矛盾/疑问**三行，
+        // 答案归**临时 Pi 会话**（`answerWithTemporaryPiSession`），两路不再共用这一个解析。
     }
 
     /// 这一轮流式渲染写了几次（只用来核对"它真的在流"）。
@@ -209,8 +204,6 @@ final class DirectionBoardSession: ObservableObject {
     /// 这一轮流式写到右下角的那段（用于去重）。
     private var streamingAnswerText = ""
 
-    /// **告诉右下角那张卡片"这条是流式的"**（注入，见 `answerPreviewWriter` 的同一个先例）。
-    var boardPreviewStreamingWriter: ((Bool) -> Void)?
 
     /// **前五轮**拼成提示词的一段（用户说的 + 你回的），最近的在前。
     ///
@@ -259,12 +252,39 @@ final class DirectionBoardSession: ObservableObject {
         return latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// **把答案预览写到右下角那张卡片上**（由 `CompanionManager` 注入，与 `voiceIdleProvider` /
-    /// `sharedVoicePlaybackEngineProvider` 同一个先例：跨子系统只走注入的闭包，不让对方去猜）。
-    /// 传 `nil` = 清掉那张卡片（发送、取消、新一轮都从这里清）。
-    var answerPreviewWriter: ((String?) -> Void)?
-
     // MARK: - 界面读的状态
+
+    /// ⭐ **实时窗口开着没有 —— 这条链唯一的开关**（2026-09-29 用户定）。
+    ///
+    /// 用户的原话：「**只有点击 listening，才需要发送 API 等内容**……在不点击 listening 的时候，
+    /// **无论用户是否说话，是否停顿，都不发送，处于停止状态**」＋
+    /// 「窗口持续显示 = **持续让程序运行**……关闭后，**对应的请求停止运行**」。
+    ///
+    /// 所以 2026-09-29 之后这里**只有一个开关**：节拍表跟着它起落、
+    /// `requestIfTheTranscriptChanged` 拿它当第一道闸门。
+    /// 它**取代**了旧的两个判据（`isListening` + `isAgentModeActive`）：
+    /// 「按下快捷键就自动跑实时」这件事取消了，而"进 agent 模式就一律不跑"也取消了
+    ///（用户 2026-09-29：两层**能同时活着**）。
+    ///
+    /// ⚠️ **窗口的开合与"一大轮结束"是两件事**，故意解耦：
+    /// 窗口由用户点开/点关（`setWindowOpen`），而 `endBigRound` **只清内容、不碰窗口** ——
+    /// 否则"按 ESC 清空"会把用户刚打开的窗口一起收掉。
+    @Published private(set) var isWindowOpen = false
+
+    /// 用户点开 / 点关实时窗口。幂等。
+    func setWindowOpen(_ open: Bool) {
+        guard open != isWindowOpen else { return }
+        isWindowOpen = open
+        if open {
+            // 开窗 = 这条链开始跑（起点就是这一刻，不是"用户说过话"）。
+            latestTranscriptUpdateAt = Date()
+            startCadenceTimer()
+            MainFlowDiagnostics.log("🧭 实时窗口：已打开 —— 这条链开始跑")
+        } else {
+            stopDetection()
+            MainFlowDiagnostics.log("🧭 实时窗口：已关闭 —— 请求停止，结果留着")
+        }
+    }
 
     @Published private(set) var isListening = false
     /// **他此刻正在说话吗** —— 左下角那颗折叠钮的**呼吸灯**就是看它
@@ -281,11 +301,16 @@ final class DirectionBoardSession: ObservableObject {
     /// 突然间没有，这对体验影响太差了」—— 行的集合恒定，卡片的高度才恒定。
     @Published private(set) var understandingLines: [(label: String, value: String)] =
         DirectionBoardPrompt.understandingLabels.map { ($0, "") }
-    /// **答案预览** —— 用户 2026-09-27：「鼠标右下角这部分显示的是对用户提示词回复的一个结果」。
+    /// ⭐ **回复结果** —— 窗口**最下面那一块**就是读它（2026-09-29）。
     ///
-    /// 它由 `answerPreviewWriter` 写给 `CompanionManager`（右下角那张卡片与最终结果**同一张**），
-    /// 不在这里画。只在模型判断"这一轮包含一个能当场回答的问题"时才有值。
+    /// 用户 2026-09-29：「底部的回复结果（**保留**，独立 API 调用），**流式输出**」。
+    /// 它以前经 `answerPreviewWriter` 注入写给 `CompanionManager.answerPreviewText`、
+    /// 画在**鼠标右下角那张卡片**上；现在**那条路整条删掉**，窗口直接读这个字段
+    ///（少一层注入、少一份状态 —— `CLAUDE.md` §0.8）。
+    /// 只在模型判断"这一轮包含一个能当场回答的问题"时才有值。
     @Published private(set) var previewAnswer: String?
+    /// 正在流式写进上面那个字段（窗口据此决定要不要用模糊焦点那套渲染）。
+    @Published private(set) var isPreviewStreaming = false
     /// **内容更新了几次** —— 视图拿它触发那一下"淡入"动画（用户：「我希望让它有一种动画效果，
     /// 而不是突然间显示出来」）。每次模型回复落下来就 +1。
     @Published private(set) var contentRevision = 0
@@ -533,7 +558,7 @@ final class DirectionBoardSession: ObservableObject {
     func applyUnderstandingForTesting(mindMap: String, question: String) {
         understandingLines = DirectionBoardPrompt.understandingLabels.map { label in
             switch label {
-            case DirectionBoardView.mindMapLabel: return (label, mindMap)
+            case DirectionBoardPrompt.mindMapLabel: return (label, mindMap)
             case DirectionBoardPrompt.questionLabel: return (label, question)
             default: return (label, "")
             }
@@ -557,6 +582,9 @@ final class DirectionBoardSession: ObservableObject {
             //（幂等，且能盖住"上一次结束没走到那个出口"的情形）。
             cancelledForThisCycle = false
             endBigRound(reason: "新的一次按下（新的大轮）")
+            // ⭐ **一次大轮 = 一个新的临时 Pi 会话**（2026-09-29）——
+            // 窗口底部那条"回复结果"的上下文从这里开始重新记。
+            temporarySessionID = UUID().uuidString
         }
         currentCycleID = cycleID
         refreshCancellationState()
@@ -581,7 +609,7 @@ final class DirectionBoardSession: ObservableObject {
         //（`understandingLines` 是整块赋值的，不存在"新旧混在一起"）。
         // 新一轮开始 = 上一轮的答案预览作废（这里是"真的换了一轮"，不是同一轮的提交）。
         previewAnswer = nil
-        answerPreviewWriter?(nil)
+        isPreviewStreaming = false
         contentRevision = 0
         previousRoundItems = []
         jevProbabilities = [:]
@@ -589,7 +617,9 @@ final class DirectionBoardSession: ObservableObject {
         typedInput = ""
         isListening = true
         refreshDisplayedItems()
-        startCadenceTimer()
+        // ⚠️ **这里不再起节拍表**（2026-09-29）：这条链现在只由**窗口开着**驱动
+        //（`setWindowOpen(true)` 起表、`false` 停表）。按下快捷键只是"开始听"，
+        // 它**不等于**"实时模式开始"—— 那正是用户要取消的那件事。
     }
 
     /// 识别文本更新：本地关键词立刻匹配（免费），Jev 的概率随后到。
@@ -614,9 +644,10 @@ final class DirectionBoardSession: ObservableObject {
 
     func noteLiveTranscript(_ transcriptText: String) {
         guard isListening else { return }
-        // **agent 模式下这一整条都不跑**（用户：「代码也不需要运行」）——
-        // 他打断 agent 说的那句话会落进追问窗口，但那不是"实时模式"。
-        guard !isAgentModeActive else { return }
+        // ⚠️ **这里原来还有一道 `!isAgentModeActive` 的闸**（"agent 模式下这条链一个字都不跑"）——
+        // 2026-09-29 **删掉**：用户改成「两层**能同时活着**」，发不发请求由**窗口开着没有**说了算
+        //（见 `requestIfTheTranscriptChanged` 的第一道闸门）。
+        // 这里只记文本（几微秒），窗口没开时它不会有任何请求。
         if DirectionBoardMatching.spokenCancelBoardRequested(in: transcriptText) {
             cancelForThisCycle()
             return
@@ -644,20 +675,18 @@ final class DirectionBoardSession: ObservableObject {
     func endListening(keepPreview: Bool = false) {
         if !keepPreview {
             previewAnswer = nil
-            answerPreviewWriter?(nil)
+            isPreviewStreaming = false
         }
         roundGeneration += 1
-        cadenceTimer?.invalidate()
-        cadenceTimer = nil
-        // ⚠️ **不 cancel 那次调用**（2026-09-27 深夜）：它的产物是**累积的那张图**，
-        // 晚到几秒照样有用 —— 而 cancel 掉就等于"用户按了快捷键之后，图永远停在上一版"
-        // （他报的「卡完之后就不显示了」正是这一半）。它自己落地时会按 cycle 判要不要。
+        // ⚠️ **不收节拍表**（2026-09-29）：表归**窗口**（`setWindowOpen`）管。
+        // 「提交了但窗口还开着」是合法状态（用户 2026-09-29：两层**能同时活着**），
+        // 这里收表就等于"一提交实时链就死"，窗口开着也没用。
         requestTask = nil
         isRequesting = false
         isListening = false
         isUserSpeaking = false
         speakingGeneration += 1
-        boardPreviewStreamingWriter?(false)
+        isPreviewStreaming = false
         streamingAnswerText = ""     // 作废在途的那次"熄灭"（它已经没有对象了）
         // 这一轮结束了：把面板上那一列**快照**留给下一次（用户对方向的评论指的是它）。
         previousRoundItems = displayedItems
@@ -689,15 +718,10 @@ final class DirectionBoardSession: ObservableObject {
         typedInput = ""
         paragraph = ""
         displayedItems = []
-        // **交给 agent 了**：从这一刻起实时模式全部收摊（看板不显示、那条链也不跑）。
-        isAgentModeActive = true
-        // ⚠️ **这里不收右下角的预览**（`previewAnswer` / `answerPreviewWriter` 都不动）：
-        // 提交之后真答案要 1~2 秒才到，这一刻收掉的话卡片会先消失再冒出来 ——
-        // 用户报的「显示了个回复，然后没过半秒钟它又显示了一个全新的回复」就是这个。
-        // 交接在 `CompanionManager` 里：真答案的第一个字到达时（`clearAnswerPreview()`），
-        // 或这一轮被打断时（`clearAnswerBubble()`）。
-        // 收尾（见上）：停表、不再听、在飞的请求作废。
-        // **keepPreview: true** —— 这一轮是"提交"，真答案马上就来，卡片要留着交接。
+        // ⚠️ **这里原来会置 `isAgentModeActive = true`**（"交给 agent 了，实时全部收摊"）——
+        // 2026-09-29 **删掉**：用户改成「两层**能同时活着**」，交出去不再关掉实时那条链。
+        // 现在这里不再动任何开关，链的生杀只由 `isWindowOpen` 一个判据管。
+        // **keepPreview: true** —— 这一轮是"提交"，真答案马上就来（它现在写进窗口底部）。
         endListening(keepPreview: true)
         return decision
     }
@@ -887,8 +911,12 @@ final class DirectionBoardSession: ObservableObject {
 
     private func requestIfTheTranscriptChanged() {
         guard !suppressesRequestsForSelfCheck else { return }
-        // 同上：agent 模式下不发任何请求（JEV / 梳理 / 截图全套都不跑）。
-        guard !isAgentModeActive else { return }
+        // ⭐ **第一道闸门：窗口没开就一次都不发**（2026-09-29 用户定）。
+        //
+        // 「只有点击 listening，才需要发送 API 等内容……在不点击 listening 的时候，
+        // **无论用户是否说话，是否停顿，都不发送，处于停止状态**」。
+        // 这一道**取代**了旧的 `!isAgentModeActive` 那道闸（那个规则用户已经改成"能同时活着"）。
+        guard isWindowOpen else { return }
         refreshCancellationState()
         // 三道闸门没过也要留一行（每 3 秒最多一行，且只在"有话说"时才可能重复）——
         // 「看板不动了」到底是闸门没过、还是请求没回来，只有这一行能分辨。
@@ -983,14 +1011,18 @@ final class DirectionBoardSession: ObservableObject {
             let screenshots = latestScreenGroup.map { (data: $0.imageData, label: $0.label) }
             let state = "用户这一轮说的话：\n\(newQuestion.prefix(500))"
 
-            // **三条并行**（用户 2026-09-27 深夜定的形状）：
+            // **三条并行**（⭐ 2026-09-29 改了第 ③ 条 —— 用户的原话：
+            // 「实时结果（不要使用 API 的方式调用……）更换成：**临时对话的模式**……
+            // 每次（按下快捷键，到进入 agent 模式）中间 = 一次临时会话，包含 session，
+            // 就能**自动使用 pi agent 的上下文管理**，不用自己设计 API 的数据请求」）：
             // ① Jev 判方向（便宜、给概率）；
-            // ② **第一次大模型调用**：只看那份完整转写、**没有任何上下文** → 细节 / 矛盾 / 歧义；
-            // ③ **第二次大模型调用**：带上下文，**只回答最近这一问** → 答案 / 选择。
+            // ② **第一次大模型调用**：只看那份完整转写、**没有任何上下文** → 总结 / 矛盾 / 疑问；
+            // ③ **Pi 临时会话**：带它自己的上下文（一个临时 session 文件，一大轮一个），
+            //    **只回答最近这一问** → 回复结果（流式写进窗口底部）。
             //
-            // 拆成两次的理由是他的原话：「因为刚才提示词是**既要让 AI 忽略之前的内容来回复最近的
-            // 一个问题，又要让 AI 参考之前的内容来总结所有的问题**……**每一个 AI 调用，
-            // 都是在回复一个方向的问题**」。
+            // 拆开的理由还是他那句「**每一个 AI 调用，都是在回复一个方向的问题**」——
+            // 而第 ③ 条换成 Pi 之后，"之前几轮问过什么/回过什么"**不用再手工拼进提示词**：
+            // pi 的会话文件自己记着（这正是用户说的"上下文管理自动有了"）。
             async let probabilitiesTask = self.judgeWithJevIfConfigured(state: state, directions: directions)
             // ⚠️ 2026-09-28：**这一轮一定连梳理一起发**。原来那道"更粗的闸"
             //（`max(10×2, 20)` 个字才重画那张图）正是"说短句时右上角不动"的另一半原因 ——
@@ -1001,9 +1033,7 @@ final class DirectionBoardSession: ObservableObject {
             async let analysisTask = shouldAnalyze
                 ? self.analyzeTranscriptWithModel()
                 : String?.none
-            async let answerTask = self.answerWithModel(newQuestion: newQuestion,
-                                                        directions: directions,
-                                                        screenshots: screenshots)
+            async let answerTask = self.answerWithTemporaryPiSession(question: newQuestion)
             let probabilities = await probabilitiesTask
             let analysisText = await analysisTask
             let answerText = await answerTask
@@ -1068,7 +1098,6 @@ final class DirectionBoardSession: ObservableObject {
                 MainFlowDiagnostics.log("🧭 看板：流式渲染完毕 —— 边收边画了 \(self.streamingUpdateCount) 次"
                                         + "（0 次＝分片被丢掉，只有整段上屏）")
                 self.streamingUpdateCount = 0
-                self.boardPreviewStreamingWriter?(false)
                 self.streamingAnswerText = ""
 
                 // **把这一轮那张图存成"到目前为止的汇总"**（下一轮在它上面继续并）。
@@ -1117,20 +1146,19 @@ final class DirectionBoardSession: ObservableObject {
     /// **唯一的信息源**（他 2026-09-27 深夜报的「我追问之前的问题，我发现他无法知道我上一次
     /// 回复了什么，这是不可以的」）。所以这两件事**与梳理解耦**：各自成功就各自落地。
     private func settleRound(newQuestion: String, analysisText: String?, answerText: String?) {
-        let answer = answerText.flatMap(DirectionBoardPrompt.parseAnswer)
+        // ⭐ 2026-09-29：Pi 给的就是**纯正文**（不再有「答案：」那一层包装），
+        // 所以这里不再走 `parseAnswer`。
+        let answer = answerText
         if answer == nil {
-            // **"这一轮没有答案"也留一行**：它和"调用失败"在屏幕上是同一个样子（右下角空着 ✗），
+            // **"这一轮没有答案"也留一行**：它和"调用失败"在屏幕上是同一个样子（窗口底部空着 ✗），
             // 但原因完全不同 —— 没有这一行就只能猜（用户报的正是"第一次总不回复"）。
-            MainFlowDiagnostics.log("🧭 看板：这一轮**没解析出「答案：」那一行**"
-                                    + "（原文 \(answerText?.count ?? 0) 字）")
+            MainFlowDiagnostics.log("🧭 看板：这一轮**没有回复结果**"
+                                    + "（Pi 没答 / 正在跑 agent 轮让位 / 调用失败 —— 原文 \(answerText?.count ?? 0) 字）")
         }
         if let answer {
             previewAnswer = answer
-            answerPreviewWriter?(answer)
-            // **记下"我刚才回过这一条"** —— 下一轮他对着它追问（「重新换行列出」）时，
-            // 请求里得带上它（`previousCornerAnswersPromptBlock`）。
-            noteCornerAnswerShown(answer)
-            print("🧭 方向看板：答案预览 = \(answer.prefix(60))")
+            isPreviewStreaming = false
+            print("🧭 方向看板：回复结果 = \(answer.prefix(60))")
         }
         // **记下这一轮**（他说的 + 你回的），最近的在前 —— 下一轮请求带着最近三轮当参考。
         // ⚠️ 记的是**这一轮问的那段**（`newQuestion`），不是整段累积转写 ——
@@ -1180,86 +1208,54 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    /// **第二次调用的背景**（全部进系统提示词）：参考材料 + 最近几轮 + 上一轮那一列方向。
-    ///
-    /// 顺序按"离得越近越靠后"排：参考材料 → 之前几轮的问答 → 上一轮王看板上那一列（它最具体，
-    /// 用户可能正在评论它）。
-    private func answerContextBlocks() -> String {
-        var blocks: [String] = []
-        if let materials = TurnReferenceCollector.shared.promptBlock() { blocks.append(materials) }
-        if let turns = previousTurnsPromptBlock() { blocks.append(turns) }
-        if let answers = previousCornerAnswersPromptBlock() { blocks.append(answers) }
-        if !previousRoundItems.isEmpty {
-            let lines = previousRoundItems.map { item -> String in
-                let mark: String
-                switch item.state {
-                case .confirmed: mark = "（用户已确认是对的）"
-                case .denied: mark = "（用户已否认）"
-                case .pending: mark = ""
-                }
-                return "\(item.number). \(item.keyword)\(mark)"
-            }
-            blocks.append("""
-            【上一轮你在看板上显示的是这几条（编号是上一轮的）】
-            \(lines.joined(separator: "\n"))
-
-            如果他这一轮在评论这些方向（「第几个对 / 第几个不对 / 取消第几个」），
-            按上面这套编号理解，写在「选择：」那一行里。
-            """)
-        }
-        return blocks.joined(separator: "\n\n")
-    }
-
-    /// 第二次调用的流式：**只往右下角那张卡片写**    /// 第二次调用的流式：**只往右下角那张卡片写**（那三行归第一次调用，别混）。
+    /// 临时 Pi 会话的流式：**只往窗口底部那一块写**（那三行归第一次调用，别混）。
+    /// ⭐ 2026-09-29：Pi 给的是**纯正文**（没有「答案：」那一层包装），所以不再走
+    /// `parseAnswer` —— 那一层是给 Bailian 那个三节输出格式用的，Pi 不需要。
     private func applyStreamingAnswer(_ partial: String) {
-        guard let answer = DirectionBoardPrompt.parseAnswer(partial), answer != streamingAnswerText else { return }
+        let answer = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty, answer != streamingAnswerText else { return }
         streamingAnswerText = answer
-        answerPreviewWriter?(answer)
-        boardPreviewStreamingWriter?(true)
+        previewAnswer = answer
+        isPreviewStreaming = true
     }
 
-    /// **第二次调用**：带着上下文，**只回答最近这一问** —— 产出**答案 / 选择**。
+    /// ⭐ **这一大轮的临时 Pi 会话 id**（nil = 没开 —— 窗口底部的回复结果此时不会发）。
+    /// 生命周期见 `answerWithTemporaryPiSession` 的注释。
+    private var temporarySessionID: String?
+
+    /// ⭐ **临时 Pi 会话**（2026-09-29，用户的原话：
+    /// 「实时结果……更换成：**临时对话的模式**……每次（按下快捷键，到进入 agent 模式）
+    /// 中间 = 一次临时会话，包含 session，就能**自动使用 pi agent 的上下文管理**……
+    /// 不用自己设计 API 的数据请求」）。
     ///
-    /// 它拿到的是：屏幕截图（参考材料）+ 最近三轮问答（标好"最近一轮/二轮/三轮"）+
-    /// 代码切出来的"他这一轮问的那一段"（标成重点）。判据只有一条：
-    /// **跟参考内容有关系就结合着答，没关系就只答最近这一问**。
-    private func answerWithModel(newQuestion: String,
-                                 directions: [(id: String, keyword: String, detail: String)],
-                                 screenshots: [(data: Data, label: String)]) async -> String? {
-        // **背景全部进系统提示词**，用户消息里只留那一句问题（见 `answerSystemPrompt`）。
-        // ⚠️ 这条提示词**只问答案** —— 脑图/矛盾是**第一次调用**的活儿（`analyzeTranscriptWithModel`）。
-        // 喂给它 "细节/矛盾" 会让模型把输出花在画图上、**答案那一行写不出来** ✗
-        //（用户报的「第一次提问总是不回复」，见 `answerSystemPrompt` 的注释与 `开发经验/20` 9.76）。
-        let systemPrompt = DirectionBoardPrompt.answerSystemPrompt(
-            directions: directions,
-            context: answerContextBlocks())
-        let userPrompt = DirectionBoardPrompt.understandingUserPrompt(newQuestion: newQuestion)
+    /// · **一大轮一个临时会话**：`beginListening` 换了大轮时新建（`temporarySessionID`），
+    ///   `endBigRound` 关闭（置 nil）—— 追问窗口里连续说的每一问都落在**同一个**会话里，
+    ///   所以"他追问时记得上一轮"这件事由 **pi 的会话文件自己**完成，
+    ///   不再需要手工拼 `<previous_turns>` / `<previous_answers>` 那一套（那两块已删）。
+    /// · **不需要新进程**：pi 是常驻 RPC，`runTurn(sessionID:)` 就是 `switch_session`
+    ///   到另一个会话文件 —— 一个进程管 N 个会话（用户自己也猜到了："也许不需要……别被我误导"）。
+    /// · **与 agent 轮互斥**：同一个常驻进程一次只能对准一个会话，`PiAgentRunner.runTurn`
+    ///   门口那道新 guard 忙时抛错 —— 这里**有意**把它当"这一拍跳过"（下一拍再试），
+    ///   agent 那一轮（用户提交的）优先。
+    private func answerWithTemporaryPiSession(question: String) async -> String? {
+        guard let temporarySessionID else { return nil }
+        guard PiAgentRunner.isConfigured else { return nil }
         do {
-            let (text, _) = try await visionChatAPI.analyzeImageStreaming(
-                images: screenshots,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                roleOverride: CompanionManager.visionRoleOverride(
-                    forCardID: ConversationSessionsStore.activeSession().id.uuidString),
-                // **答案边出边写进右下角那张卡片**（与主 Agent 那条路同一种手感）。
-                onTextChunk: { [weak self] partial in
-                    self?.applyStreamingAnswer(partial)
-                })
-            let cleaned = DirectionBoardPrompt.cleanRawResponse(text)
-            // **第二次调用的原文必须落进诊断日志**（2026-09-28 补）。
-            // 用户报「实时模式下**第一次提问总是不回复**，第二次以后才正常」—— 那一刻能区分
-            // "模型没写答案" / "解析器没认出来" / "调用失败了" 的**只有这一行** ✗，
-            // 而它原来只走 `print`（双击启动的 App 里 `print` 进不了任何地方 ✗，这条教训
-            // 本仓库已经吃过一次）。
-            // **换行数也量出来**（用户 2026-09-28：「让他换行他都去堆叠起来」）——
-            // 只打前 60 字看不出"到底有没有换行"，而"有没有换行"正是那一问的判据 ✗。
-            MainFlowDiagnostics.log("🧭 看板：第二次调用回来了 —— 原文 \(cleaned.count) 字"
-                                    + "（换行 \(cleaned.filter { $0 == "\n" }.count) 处）"
-                                    + "｜前 60 字：\(cleaned.prefix(60).replacingOccurrences(of: "\n", with: "⏎"))")
-            return cleaned
+            let result = try await PiAgentRunner.shared.runTurn(
+                task: question,
+                // ⭐ 临时会话的文件名与主会话区分开（同一个目录、不同前缀）。
+                sessionID: "realtime-\(temporarySessionID)",
+                onTextDelta: { [weak self] accumulatedText in
+                    self?.applyStreamingAnswer(accumulatedText)
+                },
+                onProgress: { _ in })
+            MainFlowDiagnostics.log("🧭 实时窗口：Pi 临时会话回复 \(result.finalText.count) 字"
+                                    + "（换行 \(result.finalText.filter { $0 == "\n" }.count) 处）")
+            return result.finalText
         } catch {
-            MainFlowDiagnostics.log("🧭 看板：第二次调用（回答）**失败** —— \(error.localizedDescription)")
-            print("🧭 方向看板：第二次调用（回答）失败 —— \(error.localizedDescription)")
+            // **忙 = 这一拍跳过**（agent 那一轮在跑 —— 它优先，见上）。别的错也要留一行。
+            MainFlowDiagnostics.log("🧭 实时窗口：Pi 临时会话这一轮没答（\(error.localizedDescription.prefix(80))）"
+                                    + " —— 下一拍再试")
             return nil
         }
     }
@@ -1279,23 +1275,17 @@ final class DirectionBoardSession: ObservableObject {
         }
     }
 
-    /// 那段"AI 怎么理解"：**只用方向清单 + 用户的话**（不再发主 Agent 那 5000 字提示词）。
-    /// **一大轮结束**：清掉临时那份类型文件（用户：「临时文件在每一轮对话结束时清掉。
-    /// 是每一大轮……中间可能有打断，这算一个轮，不算两轮」）。
-    /// **这一大轮已经交给 agent 了**（用户 2026-09-28：「进入 Agent 模式后，**实时模式相关的
-    /// 任何东西都不显示，代码也不需要运行**，右上角的卡片应该不显示……因为 Agent 模式只有
-    /// 右下角一个卡片」）。
-    ///
-    /// 什么时候置上：问题**交出去**那一刻（`consumeTurnDecision`，五条路唯一的收口）。
-    /// 什么时候清掉：**一次全新的按下**（`beginListening` 换了大轮）或一大轮结束（`endBigRound`）。
-    /// 用它挡两件事：**看板不再显示**（`NotchWindowController` 的判据）与
-    /// **看板那条链一个字都不跑**（`noteLiveTranscript` / `requestIfTheTranscriptChanged` ——
-    /// 他的原话是"代码也不需要运行"：没有 JEV、没有梳理、没有截图那一套）。
-    ///
-    /// ⚠️ 为什么不能只靠 `isListening`：追问窗口一武装（回答开播时），`isListening` 又会变 true，
-    /// 而他**在 agent 模式里打断**时说的那句话正落在这个窗口上 —— 光看 `isListening`
-    /// 就会让看板在他打断的那一瞬间冒出来（他报的「偶尔有一次看到它显示了一下」）。
-    @Published private(set) var isAgentModeActive = false
+    // ⭐ **`isAgentModeActive` 这一整块 2026-09-29 删掉了。**
+    //
+    // 它当年管两件事：① agent 模式下那块看板**不显示**；② 那条链**一个字都不跑**
+    //（用户 2026-09-28：「进入 Agent 模式后，实时模式相关的任何东西都不显示，代码也不需要运行」）。
+    //
+    // 用户 2026-09-29 把这条规矩**改成相反的一条**：「两层**能同时活着**」——
+    // 窗口开着只是让实时那条链跑，按快捷键照样起一轮 agent，互不干扰。
+    // 于是"是不是 agent 模式"不再决定任何事，**唯一的开关是 `isWindowOpen`**（见上面那一节）。
+    //
+    // 删掉而不是留着：留着它就得解释"为什么有这么个字段谁都不读"，
+    // 而这个仓库的复杂度正是这么一次次攒出来的（`CLAUDE.md` §0.8）。
 
     /// **一大轮结束（追问窗口关闭 / 任务完成 / 用户按 ESC 取消）：卡片回到"从来没有过"的状态。**
     ///
@@ -1320,20 +1310,24 @@ final class DirectionBoardSession: ObservableObject {
     /// ⚠️ **固定状态（`TaskDirectionPins.json`）不动** —— 用户选的是「一直保留到他说取消」，
     /// 所以这里一个字都不写（这也是它没有临时文件的原因）。
     func endBigRound(reason: String = "追问窗口关闭") {
-        // 一大轮结束 = 回到"从来没有过"（与看板那几行同一条规矩）。
+        // 一大轮结束 = 回到"从来没有过"（与窗口那几行同一条规矩）。
         matchedHarness = HarnessMatchSummary()
         requestTask?.cancel()
         requestTask = nil
-        cadenceTimer?.invalidate()
-        cadenceTimer = nil
+        // ⚠️ **不收节拍表**（2026-09-29）：节拍表归**窗口**管。用户把窗口开着、
+        // 一大轮结束（比如追问窗口自然到期）时，窗口不该跟着死 —— 他再按一次快捷键
+        // 就该在这块窗口里接着长。
         isRequesting = false
         isListening = false
         isUserSpeaking = false
         speakingGeneration += 1
-        boardPreviewStreamingWriter?(false)
+        isPreviewStreaming = false
 
         currentCycleID = nil
-        isAgentModeActive = false
+        // ⭐ **临时 Pi 会话关闭**（2026-09-29）—— 用户定的边界：
+        // 「进入 agent 之后 = 发送提示词 = 进入 agent 模式 = **关闭临时会话**」。
+        // 一次全新的大轮（`beginListening`）会开下一个。
+        temporarySessionID = nil
         accumulatedMindMap = ""
         spokenTranscript = []
         recentTurns = []
@@ -1348,7 +1342,7 @@ final class DirectionBoardSession: ObservableObject {
         streamingAnswerText = ""
         understandingLines = DirectionBoardPrompt.understandingLabels.map { ($0, "") }
         previewAnswer = nil
-        answerPreviewWriter?(nil)
+        isPreviewStreaming = false
         contentRevision += 1
         MainFlowDiagnostics.log("🧭 看板：一大轮结束（\(reason)）→ 卡片与上下文全部清空，下一次按下从零开始")
     }

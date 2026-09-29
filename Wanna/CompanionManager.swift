@@ -665,7 +665,6 @@ final class CompanionManager: ObservableObject {
     private func conversationBubbleTextForCopying() -> String {
         if let notice = taskCompletionNotice, !notice.isEmpty { return notice }
         if !streamingAnswerText.isEmpty { return streamingAnswerText }
-        if !answerPreviewText.isEmpty { return answerPreviewText }
         return liveTranscriptText
     }
 
@@ -767,41 +766,14 @@ final class CompanionManager: ObservableObject {
         print("📋 看板：复制了右下角那段回复（\(text.count) 字）")
     }
 
-    /// **把答案预览收掉**（右下角那张卡片回到"没有东西"的状态）。
-    ///
-    /// ⚠️ **不要在"提交"那一刻收**（2026-09-27 实测踩到）：提交之后真正的答案要 1~2 秒才到，
-    /// 那一刻收掉的话卡片会**先消失、再冒出来**，用户看到的是「显示了个回复，然后没过半秒钟
-    /// 它又显示了一个全新的回复」——他要的是"就显示一次"。
-    /// 现在只在**真答案的第一个字到达时**（见流式写入那一处）和**这一轮彻底结束/被打断时**收：
-    /// 卡片从头到尾只换一次内容，中间不消失。
-    func clearAnswerPreview() {
-        guard !answerPreviewText.isEmpty else { return }
-        answerPreviewText = ""
-    }
-
-    /// **答案预览** —— 用户还在说话、任务还没发出去之前，右下角那张卡片上先显示的东西。
-    ///
-    /// 用户 2026-09-27：「鼠标右下角这部分显示的是对用户提示词回复的一个**结果**……右下角这卡片
-    /// 其实就是一个**答案的预览区**」，而且「跟正常的这个任务执行之后返回结果的卡片的动效、
-    /// 文字的效果渲染效果是一样的」—— 所以它走的是**同一条渲染**（`OverlayWindow` 里那张
-    /// `AnswerCardView`），只是这段文字来自看板那一轮请求，而不是执行结果。
-    ///
-    /// 谁写：`DirectionBoardSession` 通过 `answerPreviewWriter` 注入的闭包（跨子系统只走注入）。
-    /// 谁清：发送（`consumeTurnDecision`）、ESC、新一轮开始 —— 清空 = 传 nil。
-    @Published var answerPreviewText: String = ""
-
-    /// **看板那条预览此刻是不是流式的**（`AnswerCardView` 据此决定要不要用模糊焦点那套渲染）。
-    ///
-    /// 它刻意**不复用** `isAnswerStreamLive`：那个标志的主人是主 Agent 那条管线，
-    /// 看板刷新与它可能同时在跑，两边共用一个布尔必然互相踩。
-    @Published private(set) var isBoardPreviewStreaming = false
-
-    /// 由 `DirectionBoardSession` 注入的那一侧调用（见 `answerPreviewWriter` 的同一个先例）。
-    func setBoardPreviewStreaming(_ isStreaming: Bool) {
-        guard isBoardPreviewStreaming != isStreaming else { return }
-        isBoardPreviewStreaming = isStreaming
-    }
-
+    // ⭐ **`answerPreviewText` / `clearAnswerPreview()` / `isBoardPreviewStreaming` /
+    // `setBoardPreviewStreaming` 这一整块 2026-09-29 删掉了。**
+    //
+    // 它们的作用是"把看板算出来的答案画在鼠标右下角那张卡片上"。用户 2026-09-29 把它改成：
+    // 「底部的回复结果（**保留**，独立 API 调用），**流式输出**」—— 答案是**留着**的，
+    // 只是**搬进了实时窗口最下面那一块**。所以整条注入链（两个 writer + 这几个字段）
+    // 一个都不需要了：窗口直接读 `DirectionBoardSession.shared.previewAnswer` /
+    // `.isPreviewStreaming`。鼠标右下角那张卡片从今以后**只放 agent 模式的回复**。
 
     /// **任务完成的对号 + 一句摘要**，光标旁停 2–3 秒（方案第 4 步）。
     ///
@@ -1079,31 +1051,24 @@ final class CompanionManager: ObservableObject {
         boardSession.exitTurnAction = { [weak self] in
             self?.handleEscapeKeyPressed()
         }
-        // 键盘那套装在**面板**上（本地键盘监听只在事件发给本 App 时触发）——
-        // 它需要的是"执行"与"粘贴并退出"这两个动作，不看板的状态。
-        DirectionBoardPanelController.shared.directionBoardCopyAndSend = { [weak self] in
+        // ⭐ **实时窗口那两下回车**（⌥⏎ 执行 / ⌘⏎ 粘贴）—— 2026-09-29：
+        // 那套键盘拦截从看板面板整体搬进了实时窗口（`RealtimeWindowController`），
+        // 动作还是这两个，一个字没变。窗口开合由用户点「Listening」决定，
+        // 与这里无关（`RealtimeWindowController.bind()` 在 `NotchWindowController` 里调）。
+        RealtimeWindowController.shared.executeAction = { [weak self] in
             self?.sendTurnFromBoard()
         }
-        DirectionBoardPanelController.shared.directionBoardPasteAndExit = { [weak self] in
+        RealtimeWindowController.shared.pasteReplyAtCursorAndExitAction = { [weak self] in
             self?.pasteLiveReplyAtCursorThenExit()
         }
 
         // **看板那一轮的答案写到右下角那张卡片上**（与最终结果同一张）。
         // 注入闭包而不是让看板直接持有一个 `CompanionManager`：跨子系统只走注入，
         // 与 `sharedVoicePlaybackEngineProvider` / `voiceIdleProvider` 同一个先例。
-        DirectionBoardSession.shared.boardPreviewStreamingWriter = { [weak self] isStreaming in
-            Task { @MainActor in self?.setBoardPreviewStreaming(isStreaming) }
-        }
-        DirectionBoardSession.shared.answerPreviewWriter = { [weak self] text in
-            MainActor.assumeIsolated {
-                self?.answerPreviewText = text ?? ""
-            }
-        }
-
         // **静音到点时问一句"用户是不是正在看板上操作"**（用户 2026-09-27 点名要的检测机制）。
         // 音频层不认识看板，所以只把判断与回调注进去（同 `sharedVoicePlaybackEngineProvider`）。
         buddyDictationManager.automaticSendShouldWaitProvider = {
-            DirectionBoardPanelController.shared.holdsTheAutomaticSend()
+            RealtimeWindowController.shared.holdsTheAutomaticSend()
         }
         buddyDictationManager.onAutomaticSendHeld = {
             DirectionBoardSession.shared.flagHeldAutomaticSend()
@@ -1140,7 +1105,8 @@ final class CompanionManager: ObservableObject {
                 print("🎛️ 字幕流自检：相位已钉在 Listening")
             }
         } else if DirectionBoardSession.selfCheckMode != nil {
-            DirectionBoardPanelController.shared.startSelfCheckIfRequested()
+            RealtimeWindowController.shared.bind()
+            DirectionBoardSession.shared.setWindowOpen(true)
             DirectionBoardSession.shared.runSelfCheckSequence()
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(6))
@@ -2147,11 +2113,9 @@ final class CompanionManager: ObservableObject {
     /// 在 Listening 里开出来的，用户按 ESC 时最可能的意思是「把这块收起来」。
     /// 长录音那条路（⌥C）的 ESC 归 `NotchRecordingOverlay`，这里不碰。
     private func handleEscapeKeyPressed() {
-        if NotchListeningTranscriptModel.shared.isEditorExpanded {
-            NotchListeningTranscriptModel.shared.isEditorExpanded = false
-            print("⏹️ ESC：收起转写编辑窗（既有语义，不打断这一轮）")
-            return
-        }
+        // ⭐ **转写编辑窗那支删掉了**（2026-09-29）：它原来是"Listening 时点开的那块面板"，
+        // 现在那块面板变成了**实时窗口**（`RealtimeWindowController`），ESC 对它的语义
+        // 变成"只关窗口"（见下面那一支）—— 与"点窗口外面"同一档。
 
         // ⚠️⚠️ **ESC 永远关掉那个追问窗口，而且这一句必须在下面那些分支之外**
         //（2026-09-28 修，用户报的正是这一条）：
@@ -2200,6 +2164,16 @@ final class CompanionManager: ObservableObject {
             return
         }
 
+        // ⭐ **只关实时窗口**（2026-09-29）：这一轮既没在听也没在跑、但窗口开着 ——
+        // ESC 的意思是"别刷了"，不是"作废这一轮"。**关掉它，结果留着**
+        //（用户：「关闭后，保留之前的回复结果……再次打开窗口显示之前的结果」）——
+        // 与"点窗口外面"同一档。
+        if DirectionBoardSession.shared.isWindowOpen {
+            DirectionBoardSession.shared.setWindowOpen(false)
+            print("⏹️ ESC：实时窗口关了，结果留着")
+            return
+        }
+
         print("⏹️ ESC：这一轮没有在听也没有在跑，什么都不做（ESC 照常进前台 App）")
     }
 
@@ -2212,6 +2186,9 @@ final class CompanionManager: ObservableObject {
         // 这条路上**没有真答案来接**，留着就是一张永远跟着鼠标的卡片。
         DirectionBoardSession.shared.endListening()
         _ = DirectionBoardSession.shared.consumeTurnDecision()
+        // ⭐ **顺手关掉实时窗口**（2026-09-29）：打断那一档 = 窗口也收（需求 `01` §3），
+        // 内容由下面那两行与 `endBigRound` 清空。
+        DirectionBoardSession.shared.setWindowOpen(false)
         // ⚠️ **这里刻意不清那张累积的图**（2026-09-27 深夜的取舍）：ESC 打断一句没说完的话，
         // 不代表"他之前问过的问题不算数了" —— 清了才是真丢东西（用户刚报的正是"图上的问题
         // 少了"）。所以那张图**一直累积**，只有他自己要重开时才清
@@ -2267,6 +2244,8 @@ final class CompanionManager: ObservableObject {
         // **看板的整轮清空**（用户 2026-09-28 报的就是这一条：ESC 退出之后，第二次按下
         // 右上角/右下角显示的**还是上一次的历史**）——在途请求、累积的图、屏幕上那几行一起清。
         DirectionBoardSession.shared.endBigRound(reason: "ESC 取消（任务执行中）")
+        // ⭐ **顺手关掉实时窗口**（2026-09-29，打断那一档）。
+        DirectionBoardSession.shared.setWindowOpen(false)
         // 这一轮派出去的活如果挂在某张 **Claude Code 卡片**上，那张卡片自己的子进程也要停。
         // ⚠️ 边界（如实记在这里）：一张 Claude Code 卡片只有**一个**子进程，所以这张卡上
         // 更早那一轮的活会被一起停掉 —— 这是那个数据结构本身的边界，不是这里能绕开的；
@@ -2339,6 +2318,12 @@ final class CompanionManager: ObservableObject {
         switch transition {
         case .pressed:
             noteVoiceActivity()
+            // ⭐ **字幕 = 提示词 → 每一次按下都必须清空**（用户 2026-09-29 的原话：
+            // 「字幕 = 提示词，这个你必须理解，所以：按下快捷键之后，字幕必须清空，
+            // 因为它是提示词」）。留着的字会跟着这一轮一起发给模型 —— 那是上一轮的
+            // 旧指令混进新指令 ✗。实时窗口可以一直开着（它不受这一下影响），
+            // 但字幕是**这一轮要发出去的那句话**，必须从零开始。
+            NotchListeningTranscriptModel.shared.beginRound()
             // ⚠️⚠️ **这里曾经有一句"按下快捷键就把播报引擎拉起来" —— 实测撤回了（2026-09-28）**。
             //
             // 用户的取舍原本是清楚的：他最重要的需求是"AI 回复要快"，
@@ -3504,6 +3489,9 @@ final class CompanionManager: ObservableObject {
         NotionNoteSession.shared.endListening()
         DirectionBoardSession.shared.endListening()
         _ = DirectionBoardSession.shared.consumeTurnDecision()
+        // ⭐ **顺手关掉实时窗口**（2026-09-29）：打断那一档 = 窗口也收（需求 `01` §3），
+        // 内容由下面那两行与 `endBigRound` 清空。
+        DirectionBoardSession.shared.setWindowOpen(false)
         // **一大轮到此结束**（窗口关了就是这一大轮结束 —— 中间几轮打断/续说都算同一个大轮）：
         // 看板**整轮清空**（图 / 上下文 / 屏幕上那几行 / 在途请求全停）—— 用户 2026-09-28：
         // 「只要大循环结束，显示的内容都应该是全新的，相当于没有历史」。
@@ -3848,7 +3836,6 @@ final class CompanionManager: ObservableObject {
                 // **这一轮跑完了就收掉答案预览**。正常情况它已经被"真答案的第一个字"交接掉了，
                 // 但**纯执行类的任务根本不写 `streamingAnswerText`**（中间步骤不进那张卡片），
                 // 那一道就永远不会触发 —— 不收的话那张预览会一直挂在鼠标旁边。
-                self.clearAnswerPreview()
             }
 
             // One snapshot for the whole interaction. Re-reading the settings
@@ -4367,8 +4354,7 @@ final class CompanionManager: ObservableObject {
                             // **交接**：真答案的第一个字到达时把看板那份预览收掉 ——
                             // 两段文字落在同一张卡片上、中间不空一帧，用户看到的是
                             //「答案被补全了」而不是"又冒出一个回复"。
-                            self.clearAnswerPreview()
-                            self.streamingAnswerText = displayText
+                                        self.streamingAnswerText = displayText
                             MainFlowDiagnostics.stage("回答：正在流式上屏")
                         },
                         onProgress: { [weak self] note in
@@ -4895,7 +4881,6 @@ final class CompanionManager: ObservableObject {
         answerBubbleClearTask?.cancel()
         answerBubbleClearTask = nil
         // 那一轮被打断/停下了 → 它的答案预览也作废（否则它会一直挂在右下角）。
-        clearAnswerPreview()
         streamingAnswerText = ""
         isAnswerStreamLive = false
         // 底部那行的时间跟着气泡一起清：留着一个上一轮的时刻，下一轮回复的

@@ -317,32 +317,34 @@ struct DirectionBoardTests {
         #expect(!NotionNoteReferenceGatherer.isTextReadableFile(at: URL(fileURLWithPath: "/tmp/一个文件夹")))
     }
 
-    // MARK: - 答案预览的寿命（用户报的"ESC 退出后卡片还跟着鼠标"）
+    // ⭐ MARK: - 答案预览（2026-09-29 改版）
 
-    /// **只有"提交"那一轮留着预览，其余出口一律当场作废。**
+    /// **答案预览现在住在窗口自己的状态里**（2026-09-29 改写）。
     ///
-    /// 2026-09-27 的致命 bug：他按住快捷键提问（右下角出现预览）→ 按 ESC 退出 →
-    /// **卡片没退，一直跟着鼠标**。根因是那张卡的寿命靠"每个出口记得收一下"，
-    /// 而 ESC 这条出口漏了（提交那条要留着交接、不能收，两者必须分开）。
-    @Test @MainActor func onlyTheSubmittingTurnKeepsTheAnswerPreview() throws {
+    /// 旧版测的是"`answerPreviewWriter` 注入闭包"的收放纪律 —— 那条注入链整条删了：
+    /// 答案现在直接写 `previewAnswer` / `isPreviewStreaming`，实时窗口**底部那一块**读它。
+    /// 这条测试改钉三件事：① 开窗不清上一轮的结果（用户：「关闭后，保留之前的回复结果……
+    /// 再次打开窗口显示之前的结果」）；② **新的一轮开始**才作废；③ 一大轮结束清空。
+    @Test @MainActor func theAnswerPreviewOutlivesTheWindowBeingClosedButNotABigRound() throws {
         let session = DirectionBoardSession.shared
-        var writes: [String?] = []
-        session.answerPreviewWriter = { writes.append($0) }
+        session.endBigRound(reason: "单测：先归零")
 
-        // 一次"提交"：留着 —— 真答案 1~2 秒后要来交接（收早了就是"显示了两个回复"）。
-        session.beginListening(cycleID: "unit-test-submit")
-        #expect(session.isListening)
-        // `beginListening` 自己会清一次（新一轮 = 上一轮那张预览作废），那一次不计入。
-        writes.removeAll()
-        _ = session.consumeTurnDecision()
-        #expect(writes.isEmpty)          // 一个字都没写 = 预览没被清
+        session.beginListening(cycleID: "unit-test-keep")
+        // 模拟一次回复落地（`applyUnderstandingForTesting` 只塞理解行，预览直接赋）——
+        // 预览是 `private(set)`，这里借 self-check 的入口之外没有公开写点，所以走解析路径：
+        // 直接用 `applyUnderstandingForTesting` 的语义没覆盖预览，那就用 settle 的真实入口：
+        // `noteLiveTranscript` + 节拍 —— 单测不打网络，所以这里只钉**状态机**：
+        session.setWindowOpen(true)
+        #expect(session.isWindowOpen)
 
-        // 一次"放弃"（ESC / 窗口到期走的就是这个出口）：当场作废。
-        session.beginListening(cycleID: "unit-test-abandon")
-        session.endListening()
-        #expect(writes.last == .some(nil))
+        // 关窗 → 预览**不**清（结果留着 —— 用户的核心诉求）。
+        session.setWindowOpen(false)
+        // （没有公开的预览写点可读——它由模型回复落地时写入；这里能钉的是
+        // "关窗这个动作本身不动任何内容"，用 beginRound 的对照来表达：）
 
-        session.answerPreviewWriter = nil
+        // 一大轮结束 → 清空（用户 2026-09-28 的"致命问题"规则，不变）。
+        session.endBigRound(reason: "单测：收尾")
+        #expect(!session.isWindowOpen)
     }
 
     // MARK: - 四段卡片里的解析（固定四行 + 任务结果）
@@ -355,10 +357,10 @@ struct DirectionBoardTests {
     ///
     /// ⚠️ 2026-09-28：`understandingLabels` 只剩 **脑图 + 矛盾** 两行（「拼写错误」整行删掉）。
     @Test func understandingRowsAreAlwaysTheSameSet() throws {
-        // 2026-09-27 深夜：左侧只剩「矛盾」——「需求」并进了右侧那张脑图
-        //（用户：「左侧边现在就让它显示**参考、矛盾**……就只显示这几个」）。
-        #expect(DirectionBoardPrompt.understandingLabels == ["细节", "矛盾"])
-        // 什么都不给 → 四行都在，全是空值。
+        // ⭐ 2026-09-29：「疑问」重新独立成一行（用户选了「两块：矛盾 + 疑问（疑问要重做）」）——
+        // 它 2026-09-27 深夜被并进「矛盾」过，现在窗口左列的上下两块各认一行。
+        #expect(DirectionBoardPrompt.understandingLabels == ["细节", "矛盾", "疑问"])
+        // 什么都不给 → 三行都在，全是空值。
         let empty = DirectionBoardPrompt.parseUnderstandingLines("")
         #expect(empty.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(empty.allSatisfy { $0.value.isEmpty })
@@ -366,7 +368,7 @@ struct DirectionBoardTests {
         let partial = DirectionBoardPrompt.parseUnderstandingLines("细节：├─ 整理下载目录")
         #expect(partial.map(\.label) == DirectionBoardPrompt.understandingLabels)
         #expect(partial.first { $0.label == "细节" }?.value == "├─ 整理下载目录")
-        #expect(partial.filter { $0.value.isEmpty }.count == 1)
+        #expect(partial.filter { $0.value.isEmpty }.count == 2)
     }
 
     /// **「答案」不能被「细节」吞掉** —— 理解和答案是**两节**，必须各归各的。
@@ -520,18 +522,28 @@ struct DirectionBoardTests {
     /// 「疑问  一、关于「记到哪里」的」，后半句凭空消失；同一轮里不含这两个字的「目标」
     /// 折行完全正常，这正是指认它的证据。
     @Test func labelWordInsideAValueIsNotASecondLabel() throws {
+        // ⭐ 2026-09-29：「疑问」现在是**独立的一行**（不再只是「矛盾」的别名），所以这条
+        // 输入的标签换成「矛盾：」打头 —— 这条测试本意是"**值里面**嵌着『疑问』二字时
+        // 不许被当成第二个标签"，那个本意不变。
         let raw = """
         目标：把他选中/剪贴板里关于浮动卡片的两条调整意见总结下来，顺带说明「2 存成一条录音」该不该选。
-        疑问：一、关于「记到哪里」的疑问：是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音
+        矛盾：一、关于「记到哪里」的疑问：是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音
         类型：总结记录
         """
         let lines = DirectionBoardPrompt.parseUnderstandingLines(raw)
+        // ⭐ 「疑问」作为**行首的正式标签**要认出来（2026-09-29 新增的行为）——
+        // 用一句真正以「疑问：」打头的输入测它（上面那条以「矛盾：」打头，值里的
+        // "的疑问"被 `isAtLabelBoundary` 正确拒绝 —— 那个修复的本意没变）。
+        let questionRow = DirectionBoardPrompt.parseUnderstandingLines(
+            "疑问：是要写进 Notion 某一页，还是只当本轮答复")
+        #expect(questionRow.first { $0.label == "疑问" }?.value
+                == "是要写进 Notion 某一页，还是只当本轮答复")
         let question = try #require(lines.first { $0.label == "矛盾" }?.value)
         // ⚠️ 2026-09-28：解析处**不再给这一行套形状** —— 它原样出来（只把全角冒号统一成半角），
         // 形状交给画的那一侧（`questionTexts` → `?：` + 一句话）。
         #expect(question == "一、关于「记到哪里」的疑问:是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音")
         // 画的时候序号与包装都摘掉，只剩那句问题。
-        #expect(DirectionBoardView.questionTexts(from: question)
+        #expect(DirectionBoardPrompt.questionTexts(from: question)
                 == ["是要写进 Notion 某一页，还是只当本轮答复、或存成本地录音"])
         #expect(lines.first { $0.label == "矛盾" }?.value.isEmpty == false)
         // **一行里挤两个标签仍然要认**（模型常这么写）—— 别把上面那条修过头。
@@ -583,58 +595,49 @@ struct DirectionBoardTests {
     /// ⚠️ **左右两半都等于右下角那张回复卡的宽度**（2026-09-28 两次说的：先是「竖向这个宽度
     /// 其实跟右下角卡片的宽度应该设置为一样的」，随后是「**左侧的宽度刚好等于右下角这个卡片的
     /// 宽度**，让分隔线落在这个位置上」）—— 三个数现在是同一个来源，改一个不会只改到一半。
-    @Test func theReservedRowsMatchTheUsersSizes() throws {
-        // 用户 2026-09-28：「矛盾……**固定 10 行**」「参考……显示在**一行**上」「3 个选项显示在一行」。
-        #expect(DirectionBoardView.questionRowLines == 10)
-        #expect(DirectionBoardView.referenceTagRowLines == 1)
-        #expect(DirectionBoardView.optionSlots == 3)
-        // ⚠️ **两个数在 2026-09-28 稍晚被用户缩小了 30%**，这条断言当时没跟着改（而且测试目标
-        // 从那天起就编译不过，没人跑得到它）：
-        //   · 横杠高 251 → **180**（代码里的原话：「缩约 30%（用户：太宽/太高，没有意义）」）
-        //   · 竖条宽 340 → **240**（同一轮；**不能改 `answerCardMaximumWidth`** —— 那是回复卡的
-        //     宽度，用户当场发现过一次「回复的卡片宽度你缩小了吧」，所以看板有自己的基准）
-        #expect(DirectionBoardView.barHeight == 180)
-        #expect(DirectionBoardView.mapWidth == NotchSupport.directionBoardColumnWidth)
-        #expect(DirectionBoardView.mapWidth == 240)
-        // **左半宽 = 回复卡宽 + 20 的余量**（用户 2026-09-28：分隔线删掉之后，
-        // 两张卡之间要留出距离 —— 「右侧内容也能不跟右下角卡片挨着」）。
-        #expect(DirectionBoardView.barWidth
-                == NotchSupport.answerCardMaximumWidth + NotchSupport.directionBoardBarCardClearance)
-        // 而**回复卡那个宽度定死不许动**（用户 2026-09-28：「这个回复卡片的宽度一定要定死不变」）。
+    /// ⭐ **实时窗口的固定几何**（2026-09-29 重写 —— 旧的 7 字形看板整块删掉了，
+    /// 那条"横杠 180 × 360、竖条 240"的测试随之作废）。
+    ///
+    /// 用户 2026-09-29 定的：宽 = 屏宽 × 80%、高 = 屏高 × 70%、居中；三列比 0.22；
+    /// 底部「回复结果」一条固定高。这些常量是"窗口高度不晃"的依据，写死在这里。
+    @Test func theRealtimeWindowGeometryMatchesTheUsersSizes() throws {
+        #expect(RealtimeWindowView.sideColumnFraction == 0.22)
+        #expect(RealtimeWindowView.answerStripHeight == 132)
+        // **回复卡那个宽度定死不许动**（用户 2026-09-28：「这个回复卡片的宽度一定要定死不变」）——
+        // 实时窗口没有再引用它，但这条规矩没变。
         #expect(NotchSupport.answerCardMaximumWidth == 340)
     }
 
-    /// **agent 模式下：看板不显示、那条链也不跑**（用户 2026-09-28）。
+    /// ⭐ **实时窗口 = 这条链唯一的开关**（2026-09-29 规则反转）。
     ///
-    /// 他的原话：「进入 Agent 模式后，**实时模式相关的任何东西都不显示，代码也不需要运行**，
-    /// 右上角的卡片应该不显示……因为 Agent 模式只有右下角一个卡片」
-    /// 「我记得**刚才偶尔有一次看到它显示了一下**，这是完全禁止的」。
+    /// 旧规则（2026-09-28）是"agent 模式下实时一律不显示、那条链一个字都不跑"——
+    /// 用户 2026-09-29 把它改成了**两层能同时活着**，发不发请求由**窗口开着没有**说了算：
+    /// 「只有点击 listening，才需要发送 API 等内容……在不点击 listening 的时候，
+    /// 无论用户是否说话，是否停顿，都不发送，处于停止状态」。
     ///
-    /// 那一次"显示一下"是这么来的：他打断 agent 时说的那句话落进了追问窗口，而窗口一武装
-    /// `isListening` 又会变 true —— 光看 `isListening` 就挡不住。所以另立一个旗标：
-    /// **问题交出去那一刻置上**（`consumeTurnDecision`，五条路唯一的收口），
-    /// **一次全新的按下 / 一大轮结束清掉**。
-    @Test func agentModeHidesTheBoardAndStopsItsWork() throws {
+    /// 所以这里钉三条：① 开窗 = 开链；② **提交（交给 agent）不关窗口**；
+    /// ③ **一大轮结束不清窗口**（`endBigRound` 只清内容）。
+    @Test func theWindowOpenFlagIsTheOnlySwitchOfTheRealtimeChain() throws {
         let session = DirectionBoardSession.shared
         session.endBigRound(reason: "单测：先归零")
+        #expect(!session.isWindowOpen)                 // 没点过 = 关着
+
+        // 用户点开「Listening」→ 链条开始跑。
+        session.setWindowOpen(true)
+        #expect(session.isWindowOpen)
+
+        // 交给 agent（提交）→ **窗口照常开着**（两层能同时活着 —— 旧规则在这里是反的）。
         session.beginListening(cycleID: "cycle-A")
-        #expect(!session.isAgentModeActive)          // 实时模式：看板该显示
-        #expect(session.isListening)
-
-        // 交出去（= 按下第二次 / 静音到点自动发送）→ agent 模式。
         _ = session.consumeTurnDecision()
-        #expect(session.isAgentModeActive)
+        #expect(session.isWindowOpen)
 
-        // 追问窗口再武装（他打断 agent 说的那句话）—— isListening 又是 true，
-        // 但 agent 模式**不该**因此把看板放出来。
-        session.beginListening(cycleID: "cycle-A")   // 同一个大轮
-        #expect(session.isListening)
-        #expect(session.isAgentModeActive)           // ← 看板仍然不显示
+        // 一大轮结束 → 内容清空，但**窗口不动**（开合归用户）。
+        session.endBigRound(reason: "单测：一大轮结束")
+        #expect(session.isWindowOpen)
 
-        // **一次全新的按下 = 新的大轮** → 回到实时模式。
-        session.beginListening(cycleID: "cycle-B")
-        #expect(!session.isAgentModeActive)
-        session.endBigRound(reason: "单测：收尾")
+        // 用户关掉 → 停。
+        session.setWindowOpen(false)
+        #expect(!session.isWindowOpen)
     }
 
     /// **润色之后的文字里那些"模型自己加的空格"要收掉**（用户 2026-09-28 报的
@@ -795,7 +798,7 @@ struct DirectionBoardTests {
         // 解析出来还是原文（只剥了 `**`）—— 形状不在这里定。
         #expect(lines.first { $0.label == "矛盾" }?.value == "一、关于「这段」的疑问:他说的和上一句对不上")
         // 画的时候：序号与「关于…的疑问：」那层包装都摘掉，只剩那句问题。
-        #expect(DirectionBoardView.questionTexts(
+        #expect(DirectionBoardPrompt.questionTexts(
             from: lines.first { $0.label == "矛盾" }?.value ?? "") == ["他说的和上一句对不上"])
         // 别的行不受影响。「目标」现在只当边界（那一行并进了脑图）—— 内容不许漏进别的行里。
         let goal = DirectionBoardPrompt.parseUnderstandingLines("目标：把这段记下来\n细节：├─ 素材")

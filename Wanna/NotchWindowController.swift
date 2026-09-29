@@ -119,10 +119,9 @@ final class NotchPanelModel: ObservableObject {
     /// 所以这条黑带的下边缘要按它变：**为真时整条带子的底边收成一条直线**（两翼外端那 14pt
     /// 圆角归零，见 `NotchWingView.squaresBottomOuterCorner`），为假时保持原来的圆角外观。
     ///
-    /// **它和「那行字幕显不显示」必须是同一个判据。** 字幕由
-    /// `NotchListeningTranscriptPanelController` 按 `syncListeningTranscriptPanel()`
-    /// 显示，那一个读的就是这里 —— 两处共用一个属性，所以不会出现「字幕在、角还是圆的」
-    /// 或者反过来（那两种都会让接缝重新露出空隙）。
+    /// **它和「那行字幕显不显示」必须是同一个判据。** 字幕画在刘海面板里
+    ///（`NotchPillRootView`），读的就是这个属性 —— 两处共用一个属性，所以不会出现
+    /// 「字幕在、角还是圆的」或者反过来（那两种都会让接缝重新露出空隙）。
     /// **相位被强制按在 idle 上**（2026-09-27，ESC 打断"没瞬间消失"）。
     ///
     /// `forceActivityPhaseIdle()` 只把当前这一刻置 idle —— 而 ESC 落在"用户正在说话"时
@@ -282,6 +281,12 @@ final class NotchWindowController {
         rebuildScreenPresences()
         installMonitorsIfNeeded()
         bindListeningTranscriptPanel()
+        // ⭐ **实时窗口的绑定**（2026-09-29）：它只听 `DirectionBoardSession.isWindowOpen`，
+        // 不归相位机管 —— "什么时候在"由用户点没点那颗「Listening」决定。
+        RealtimeWindowController.shared.isSuppressedProvider = { [weak self] in
+            self?.panelModel.isFullscreenSuppressed ?? false
+        }
+        RealtimeWindowController.shared.bind()
 
         if !screenPresences.isEmpty && !hasPlayedBootChime {
             hasPlayedBootChime = true
@@ -306,10 +311,9 @@ final class NotchWindowController {
         // 临时 agent 那一排也撤掉：它的点击是这两个监听接的（`handleGlobalClick`），
         // 监听一撤，留在屏幕上的按钮就变成了点不动的装饰。
         AgentStripPanelController.shared.teardown()
-        // 刘海下面那行字幕同理 —— 入口关掉之后它不该还留一块面板在屏幕上。
-        NotchListeningTranscriptPanelController.shared.hide()
-        // 任务方向看板同理（同一批屏幕参数变化也走 `rebuildScreenPresences`，见上面那句）。
-        DirectionBoardPanelController.shared.sync(isVisible: false, isSheetExpanded: false)
+        // ⭐ 实时窗口同理 —— 入口关掉之后它不该还留一块面板在屏幕上（2026-09-29）。
+        // 刘海下面那行字幕不受影响：它画在刘海面板里，跟着这个控制器的重建走。
+        RealtimeWindowController.shared.hide()
         removeMonitors()
         hasPlayedBootChime = false
     }
@@ -810,7 +814,13 @@ final class NotchWindowController {
            let wings = NotchSupport.recordingWingFrames(on: presence.screen),
            wings.leading.contains(clickLocation) {
             SoundEffectPlayer.shared.play(.recordingEditorOpened)
-            NotchListeningTranscriptModel.shared.isEditorExpanded = true
+            // ⭐ **它现在开的是"实时窗口"**（2026-09-29）：那块面板取代了原来的转写编辑窗，
+            // 而**开合本身就是实时那条链的开关**（`isWindowOpen`，见它的声明）。
+            // 所以这里不是"展开一个编辑框"，是"让实时模式开始工作 / 停下来"——
+            // 用户的原话：「只有点击 listening，才需要发送 API 等内容……
+            // 在不点击 listening 的时候，无论用户是否说话，是否停顿，都不发送，处于停止状态」。
+            // **再点一次 = 关**（与点窗口外面、按 ESC 三条出口一致）。
+            DirectionBoardSession.shared.setWindowOpen(!DirectionBoardSession.shared.isWindowOpen)
             return
         }
 
@@ -1896,31 +1906,16 @@ final class NotchWindowController {
         // 那一行本来只在相位是 Listening 时出现，而自检没有真实语音、相位永远到不了 ——
         // 于是"量这一行的卡顿"这件事**根本没有可复现的入口**（这个仓库为它猜过两次动画时长，
         // 两次都不对，就是因为量不到）。给自检开一道门，卡顿就能在机器上复现、用 `sample` 量。
+        // ⭐ **这里原来管两块面板**：刘海下面那行字幕（展开后的编辑窗那块），和
+        // 鼠标右上角的看板 —— **2026-09-29 两块都不归这里了**：
+        // · 那行字幕本身仍然存在，但它画在刘海面板里（`NotchPillRootView`），
+        //   由 `notchBandSitsAboveTranscriptLine` 直接驱动，不需要一块独立面板；
+        // · 看板换成了**实时窗口**（`RealtimeWindowController`），它自己听
+        //   `isWindowOpen`，与相位无关。
+        // 所以这个函数现在什么都不做 —— **保留它**是因为相位机的十几个路径都在调它，
+        // 拆掉那些调用点比留一个空函数贵。
         let forcesTranscriptRowForProfiling = DirectionBoardSession.selfCheckMode == "stream"
-        if panelModel.notchBandSitsAboveTranscriptLine || forcesTranscriptRowForProfiling {
-            NotchListeningTranscriptPanelController.shared.show()
-        } else {
-            NotchListeningTranscriptPanelController.shared.hide()
-        }
-        // **任务方向看板走同一个判据**（2026-09-27）：说话期间才出现，提交/说完就收起。
-        // 用户：「当用户按住快捷键时，即用户说话时，就持续显示，直到用户按下快捷键发送问题，
-        // 或等待 2 秒自动发送问题后才不显示」。写在这一处，两者不可能不一致。
-        // ⚠️ **再加一道"它自己还在实时模式吗"**（2026-09-27）。相位的判据不够：
-        // 追问窗口是在**回答一开始播**就武装的，那一刻相位会回到 `.listening`，
-        // 于是这块板子会在 agent 正在干活/正在回答的时候又冒出来 —— 用户报的
-        // 「agent 模式下它还是显示右上角的内容」就是这个。
-        // 看板自己的 `isListening` 是**唯一**说得清"现在是实时模式还是 agent 模式"的东西：
-        // 按下快捷键开始说话 → 起表；问题交给 agent（`consumeTurnDecision`）→ 停表。
-        DirectionBoardPanelController.shared.sync(
-            isVisible: panelModel.notchBandSitsAboveTranscriptLine
-                && DirectionBoardSession.shared.isListening
-                // ⚠️ **agent 模式那一层判据不在这里**（2026-09-28 修）：它要在
-                // `DirectionBoardPanelController.applyVisibility()` 里**现读** ——
-                // 因为这半句挂在 `sync(...)` 的参数上时，"交给 agent 了"那一刻没人重新调
-                // `sync`，参数里的旧值照样放行（用户报的「进入 Agent 模式后卡片没消失」
-                // 就是它）。这里只留相位与 `isListening`。
-                ,
-            isSheetExpanded: panelModel.isExpanded)
+        _ = forcesTranscriptRowForProfiling
     }
 
     private var latestVoiceState: CompanionVoiceState = .idle
@@ -2061,13 +2056,9 @@ final class NotchWindowController {
     /// 于是又回到用户报的"显示了两个回复"（卡片先消失再冒出来）。
     /// `.idle` 的含义才是"这一轮什么都没在跑" —— 那正是该把预览收掉的唯一时刻。
     ///
-    /// （另一道是 `CompanionManager` / `DirectionBoardSession` 自己的：提交那一轮 `keepPreview: true`
-    ///   留着交接，其余出口（ESC、窗口到期、空转写）直接清；管线收尾时也清一次 ——
-    ///   覆盖"提交了但根本没答案"（纯执行类任务不写 `streamingAnswerText`）。）
+    /// （⚠️ **这里原来还会顺手清"右下角的答案预览"** —— 2026-09-29 那条预览整条下线了
+    ///（答案搬进了实时窗口），所以这一道不用了。相位的其它职责不变。）
     private func setActivityPhase(_ phase: NotchActivityPhase) {
-        if phase == .idle {
-            companionManager.clearAnswerPreview()
-        }
         panelModel.activityPhase = phase
     }
 
