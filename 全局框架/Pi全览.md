@@ -104,10 +104,48 @@
 | 调用 | **`PiAgentRunner.swift`（新写）** |
 | 模型 | **`models.json`** |
 
-## 7. 还没读的
+## 7. 会话：存储、续接、分叉（官方 `sessions.md`）
 
-`cli.md`（全部命令行选项）· `sessions.md` · `compaction.md`（内置压缩怎么调）·
-`extensions.md`（扩展怎么写）· `configuration.md` / `settings.md`
+**存在哪**：`~/.pi/agent/sessions/`（按工作目录分组）。
+改位置：`--session-dir` / `PI_CODING_AGENT_SESSION_DIR` / `sessionDir` 设置（**命令行优先级最高**）。
+
+| 命令行 | 作用 |
+|---|---|
+| `--continue` | 打开当前目录**最近**的那个会话 |
+| `--resume` | 开会话选择器（交互模式里是 `/resume`；`/new` 开新的） |
+| `--session <路径或 ID>` | 你已经知道是哪个 |
+| `--fork` | 交互模式开始前，从既有会话分叉出一个新的 |
+| **`--no-session`** | **临时运行**，退出后不能续 ← RPC 起手用的就是它 |
+
+**记忆模型**：*"The **active branch** of that session supplies conversation history for the next model request."*
+—— **是"当前分支"供上下文**，不是整棵树。
+
+**分叉三种**（`/tree` 在同一文件内移动 · `/fork` 从更早的消息开新会话 · `/clone` 复制当前分支）
+—— 对应 Wanna 的「新建对话」应该是哪一种，动手时要定。
+
+## 8. 压缩：**Pi 内置**（官方 `compaction.md`）
+
+⚠️ **推翻我们之前的结论** —— 之前说"官方没有压缩机制、要自己做"，那是
+**OpenAI Agents SDK** 的情况；**Pi 有，而且不用你管。**
+
+| 机制 | 触发 |
+|---|---|
+| **Compaction** | **上下文超阈值**，或 `/compact` |
+| Branch summarization | `/tree` 切分支时 |
+
+**自动压缩什么时候跑**（官方逐字）：
+- 多轮 run 里，**工具跑完、结果追加之后**、下一个 assistant 回应开始之前
+- 每次**新用户提问之前**
+- **provider 报上下文溢出** 时，做**一次** compact-and-retry 恢复
+
+**手动**：`/compact [instructions]` —— 可选指令用来**指定摘要聚焦什么**。
+**反复压缩**时，摘要起点是**上一次压缩保留的边界**（`firstKeptEntryId`），
+不是压缩条目本身 —— **这样上一次压缩后活下来的消息会被再带进下一轮摘要**。
+
+## 9. 还没读的
+
+`cli.md`（全部命令行选项）· `extensions.md`（扩展怎么写）·
+`configuration.md` / `settings.md`
 
 ## 8. 官方文档目录树（38 份）
 
