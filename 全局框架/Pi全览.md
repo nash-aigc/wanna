@@ -347,3 +347,37 @@ export default function (pi: ExtensionAPI) {
 ## 8. 官方文档目录树（38 份）
 
 见 `AGENTS.md` 里那张表（**从文件生成**，不是凭印象写的）。
+
+---
+
+# 迁移进度（2026-09-29 开始动手）
+
+## 已完成并验证
+
+| 步 | 结果 |
+|---|---|
+| 装 Pi | `pi 0.87.1`（npm 全局，node v26.8.1） |
+| 接 DeepSeek | `~/.pi/agent/models.json`：provider `deepseek`、api `openai-completions`、**apiKey 用 `!cat` 命令**（key 不落明文）。`deepseek-flash` 出现在 `--list-models`（1M 上下文 / thinking / 图片） |
+| 装 MCP 扩展 | `pi install npm:pi-mcp-adapter` → Pi 自动把它记进 settings 的 `packages` |
+| 接 Wanna 的 19 个工具 | `~/.config/mcp/mcp.json`：`{url: http://127.0.0.1:8765/mcp, headers: {Authorization: "!echo Bearer $(cat …mcp-token)"}}`（headers 支持 `!命令`，token 不落明文） |
+| **端到端** | `pi -p "调 screenshot"` → **真的截了屏并描述了真实屏幕** ✓ |
+| RPC 冒烟 | `get_state` ✓ / prompt 接受 ✓ / `text_delta` +0.7s ✓ / **`agent_end` 后继续等到 `agent_settled`** ✓ / 关 stdin 有序退出(0) ✓ |
+| 技能改名 | 4 个中文名 → `graphics` / `computer-use` / `writing` / `retrospective`（目录+frontmatter 都改，中文名挪进 description 保路由） |
+| 技能加载验证 | **RPC 模式 3.6s 跑通，11 个技能全部被列进系统提示词** ✓ |
+| Swift 侧不受影响 | 改名后 `list_skills` 照常返回 11 个 ✓ |
+
+## ⚠️ 踩到的坑（只有真跑才发现）
+
+1. **print 模式（`-p`）+ settings 声明技能 = 无 TTY 挂死**：零输出卡 5 分钟；用 `script` 给个 pty 就正常。
+   **RPC 模式完全正常**（它本来就是给管道设计的）—— 我们的集成路走 RPC，不受影响，但**别用 `-p` 做脚本调用**。
+2. **机器全局技能会混进来**：Pi 还自动发现 `~/.agents/skills/`（Agent Skills 规范的全局位置），
+   里面有 `bailian-*` / `arkcli-*` 等一大批（别的工具装的）。它们每轮都进系统提示词。
+   没动它们（别的工具在用）；要省上下文得单独处理。
+3. `settings.json` 里 Pi 自己会写 `defaultProvider` / `defaultModel` / `packages` —— 别手工覆盖整个文件，只改自己的键。
+
+## 未完成
+
+- [ ] `PiAgentRunner.swift`（RPC 客户端：订阅→prompt→`agent_settled`→解析 text_delta / tool_execution_*）
+- [ ] CompanionManager 切到 PiAgentRunner
+- [ ] 删 `wanna_agent.py` / `local_trace.py` / `PythonAgentRunner.swift` / venv / 我们接的 Session
+- [ ] 「新建对话」映射到 Pi 的哪种分叉（/fork vs /clone vs new_session）—— 动手时定
