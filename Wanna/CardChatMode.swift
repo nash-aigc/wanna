@@ -2,7 +2,13 @@
 //  CardChatMode.swift
 //  Wanna
 //
-//  **每张卡片的「用哪种方式跟它对话」**：文本 / 图文 / 语音 / 视频。
+//  **每张卡片的「用哪种方式跟它对话」**：图文 / 语音 / 视频。
+//
+//  ⚠️ **2026-09-29：「文本」模式删掉了**（用户：「把文本模式删掉，因为文本模式太墨迹，
+//  没有太大必要，只留图文、语音、视频三个模式」）。它的功能**没有消失** ——
+//  变成了图文模式里输入框上方那颗「屏幕」开关（默认开；关掉 = 不参考屏幕，
+//  正是原来文本模式的效果）。所以「要不要截图」从"一个模式"降级成"一个开关"，
+//  而 agent 能力那一族只剩图文一个入口。
 //
 //  用户 2026-09-26 的设计（原话）：
 //
@@ -34,9 +40,8 @@ import Combine
 
 /// 一张卡片的聊天模式。
 nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identifiable {
-    /// 纯文字：不截屏，走 Agent 原本的管线。
-    case text
-    /// 图文：截屏 + 文字，走 Agent 原本的管线（**主循环的默认**）。
+    /// 图文：截屏 + 文字，走 Agent 原本的管线（**唯一的 agent 族模式，也是所有卡片的默认**）。
+    /// 不想要截图时用输入框上方那颗「屏幕」开关（2026-09-29 起 —— 它取代了旧的文本模式）。
     case imageText
     /// 语音聊天：`VoiceChatController`，聊天类型 = 语音聊天。
     case voice
@@ -46,7 +51,6 @@ nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identi
     /// 两字，因为这一排要跟「角色」「音色」挤在侧栏那么宽的地方（用户：「标签宽度可缩小」）。
     var displayName: String {
         switch self {
-        case .text: return "文本"
         case .imageText: return "图文"
         case .voice: return "语音"
         case .video: return "视频"
@@ -59,8 +63,6 @@ nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identi
 
     var helpText: String {
         switch self {
-        case .text:
-            return "只发文字，不截屏。用这个 Agent 的全部能力（工具、MCP、技能）"
         case .imageText:
             return "带上屏幕截图提问，用这个 Agent 的全部能力（工具、MCP、技能）"
         case .voice:
@@ -75,7 +77,7 @@ nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identi
         self == .voice || self == .video
     }
 
-    /// 文本 / 图文 —— 走 Agent 自己的管线，工具与系统提示词都在。
+    /// 图文 —— 走 Agent 自己的管线，工具与系统提示词都在。
     var usesAgentCapability: Bool { !isVoiceLike }
 
     /// **这个模式的模型吃不吃图。** 只有图文（截图）与视频（摄像头 / 屏幕）吃。
@@ -94,7 +96,8 @@ nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identi
         self == .imageText || self == .video
     }
 
-    /// 这一轮要不要截图。只有图文要 —— 文本「即不截屏」是用户的原话。
+    /// 这一轮要不要截图 —— 只有图文要（它的"不要截图"由那颗「屏幕」开关管，见
+    /// `AppSettings.cardScreenshotEnabled`）。
     var sendsScreenshot: Bool { self == .imageText }
 
     /// 语音 / 视频分别对应该子系统里的哪种聊天类型。
@@ -105,16 +108,17 @@ nonisolated enum CardChatMode: String, CaseIterable, Sendable, Equatable, Identi
         switch self {
         case .voice: return .voice
         case .video: return .video
-        case .text, .imageText: return nil
+        case .imageText: return nil
         }
     }
 
-    /// **没存过模式时用哪个** —— 用户逐字指定过：主循环默认图文（= 今天的行为，他察觉不到
-    /// 变化），Claude Code 默认文本。
+    /// **没存过模式时用哪个** —— 两张卡片都默认**图文**（2026-09-29 起：
+    /// 文本模式删掉之后，Claude Code 的默认也从"文本"改成"图文"；
+    /// 不想要截图就关掉输入框上方那颗「屏幕」开关）。
     static func defaultMode(for cardKind: CardKind) -> CardChatMode {
         switch cardKind {
         case .mainLoop: return .imageText
-        case .claudeCode: return .text
+        case .claudeCode: return .imageText
         }
     }
 }

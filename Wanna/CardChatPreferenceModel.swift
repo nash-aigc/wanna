@@ -54,6 +54,22 @@ final class CardChatPreferenceModel: ObservableObject {
 
     // MARK: - 模式
 
+    /// ⭐ **这张卡片的「屏幕」开关**（2026-09-29，图文模式输入框上面那颗）。
+    /// 默认开；关掉 = 不参考屏幕（原"文本模式"的效果）。
+    func isScreenshotEnabled(forCardID cardID: String) -> Bool {
+        AppSettingsStore.snapshot().cardScreenshotEnabled(forCardID: cardID)
+    }
+
+    func setScreenshotEnabled(_ isEnabled: Bool, forCardID cardID: String) {
+        var settings = AppSettingsStore.snapshot()
+        var map = settings.cardScreenshotEnabledByCardID ?? [:]
+        map[cardID] = isEnabled
+        settings.cardScreenshotEnabledByCardID = map
+        try? AppSettingsStore.save(settings)
+        // 主循环那条截图闸门读的就是这份设置 —— 存完要让界面重算。
+        objectWillChange.send()
+    }
+
     func mode(forCardID cardID: String, kind: CardKind) -> CardChatMode {
         AppSettingsStore.snapshot().cardChatMode(forCardID: cardID, kind: kind)
     }
@@ -68,7 +84,9 @@ final class CardChatPreferenceModel: ObservableObject {
         //
         // 落到 `voiceReplyMuted` 上 —— 与设置页、输入框上方那颗「声音」是**同一个开关**，
         // 所以切换模式之后那颗按钮显示的也是静音态，不会两处打架。切到别的模式就回到默认开。
-        settings.voiceReplyMuted = (mode == .text)
+        // ⚠️ **2026-09-29：这一行原来是 `voiceReplyMuted = (mode == .text)`
+        // （"文本模式默认静音"）** —— 文本模式删掉之后它没有对象了，所以不再自动改静音。
+        // 用户手动设的静音不受影响（那是他自己的选择）。
         save(settings, what: "聊天模式（\(mode.displayName)）")
     }
 

@@ -747,6 +747,20 @@ nonisolated struct AppSettings: Codable, Sendable, Equatable {
     /// 默认开 —— 语音聊天的默认形态就是说话。
     var voiceChatSpeaksReplies: Bool = true
 
+    /// ⭐ **每张卡片的「屏幕」开关**（2026-09-29）：图文模式下**默认开**（带截图提问）；
+    /// 关掉 = 不参考屏幕，纯文字提问 —— 这正是原来那个"文本模式"的效果，
+    /// 文本模式删掉之后它降级成了一颗开关（用户：「用户默认在图文模式下屏幕是开的，
+    /// 点击它之后就不参考屏幕内容了」）。
+    ///
+    /// 存法与其他几个按卡片字典一致（key = 卡片 id，值 = 原始 Bool）；
+    /// **缺省 = 开**（所以老用户升级上来行为不变）。
+    var cardScreenshotEnabledByCardID: [String: Bool]?
+
+    /// 这张卡片的「屏幕」开关（没存过 = 开）。
+    func cardScreenshotEnabled(forCardID cardID: String) -> Bool {
+        cardScreenshotEnabledByCardID?[cardID] ?? true
+    }
+
     /// **每张卡片各自记住选了哪个语音角色**（只在语音 / 视频模式下有意义）。
     /// 存的是 `VoiceChatRole.id`；nil = 没选过 = 该模式下的第一个可用角色。
     var cardVoiceRoleIDs: [String: String]?

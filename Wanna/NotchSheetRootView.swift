@@ -310,21 +310,24 @@ struct NotchSheetRootView: View {
                             // 做法是一层透明的背板垫在面板**下面**：点它 = 点到面板外面。
                             // 底下的两列因此在这一刻收不到点击（这正是弹出菜单该有的行为 ——
                             // 第一下是"关掉菜单"），而面板本身在它上面，照常可点。
-                            if cardChatPreferences.openRoleListCardID != nil || isVoicePickerPresented {
+                            if cardChatPreferences.openRoleListCardID != nil || isVoicePickerPresented
+                                || modelPickerState.isExpanded {
                                 Color.clear
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         cardChatPreferences.openRoleListCardID = nil
-                                        isVoicePickerPresented = false
+                                        setVoicePickerPresented(false)
+                                        // ⭐ **模型那两行也吃这一下**（2026-09-29 用户：
+                                        // 「现在的弹窗无法自动隐藏，用户点击弹窗外应该自动隐藏」）。
+                                        modelPickerState.isExpanded = false
+                                        modelPickerState.expandedRow = nil
                                     }
                             }
-                            if isVoicePickerPresented {
-                                // 与角色面板同一套几何：贴右上、开在模式行下面那一格。
-                                voicePickerPanel
-                                    .padding(.trailing, NotchSupport.contentColumnHorizontalMargin)
-                                    .padding(.top, NotchSupport.sheetHeaderTopInset
-                                              + NotchSupport.cardChatModeBandHeight)
-                            }
+                            // ⚠️ **模型 / 音色的面板 2026-09-29 从这里搬走了** ——
+                            // 它们现在画在**输入框上方**（`NotchHomeView.modelAndVoicePanelsIfOpen`），
+                            // 与「语速」那块同一个位置。用户的原话：「音色和模型这两个按钮，
+                            // 参考**语速按钮把下拉弹窗放在下面**的做法……既然按钮在下面，
+                            // 这两个下拉弹窗也应该在下面，**最好占据整个绘画的宽度**」。
                             if isAddCardFormOpen {
                                 AddCardFormView(
                                     dismissAction: { isAddCardFormOpen = false },
@@ -353,6 +356,7 @@ struct NotchSheetRootView: View {
                                     .padding(.top, NotchSupport.sheetHeaderTopInset
                                               + NotchSupport.cardChatModeBandHeight)
                             }
+                            // ⚠️ **模型面板也搬去输入框上方了**（见上面那条注释）。
                           }
                         }
                     }
@@ -554,7 +558,20 @@ struct NotchSheetRootView: View {
     // 搬家的理由不是排版：音色是**播报**的属性，而播报属于整条会话，
     // 不属于某一次输入。
     /// 音色弹窗开着没有。
-    @State private var isVoicePickerPresented = false
+    /// ⚠️ **2026-09-29 改成读那个单例**：那颗「音色」按钮现在住在输入框那一行
+    ///（`VoiceChipButton`），状态必须两边共用一个（见 `VoicePickerState`）。
+    private var isVoicePickerPresented: Bool { VoicePickerState.shared.isPresented }
+    private func setVoicePickerPresented(_ isPresented: Bool) {
+        VoicePickerState.shared.isPresented = isPresented
+        if isPresented { loadCustomVoicesForPickerIfNeeded() }
+    }
+    /// ⭐ **模型选择面板的展开状态**（2026-09-29）。
+    /// ⚠️ **必须 `@ObservedObject` 观察它** —— 只读 `.isExpanded` 的话，那颗按钮改了状态
+    /// 这个视图**不会重绘**（第一次实现就踩了：按钮的 chevron 翻了，面板一个像素都没出现）。
+    @ObservedObject private var modelPickerState = CardChatModelPickerState.shared
+    /// ⚠️ **音色面板的状态也在这里观察**（那颗按钮在 `NotchHomeView`，状态是单例 ——
+    /// 不观察的话点开按钮这块面板不会重绘，与模型面板同一个坑）。
+    @ObservedObject private var voicePickerState = VoicePickerState.shared
     /// 音色面板当前看的是哪一栏（系统 / 克隆）—— 与语音页那块同一个分法。
     @State private var voicePickerCategory: String = "system"
 
@@ -574,8 +591,7 @@ struct NotchSheetRootView: View {
     /// 因为它现在就在它左边，两颗不一样高会很难看。
     private var voiceChip: some View {
         Button {
-            isVoicePickerPresented.toggle()
-            if isVoicePickerPresented { loadCustomVoicesForPickerIfNeeded() }
+            setVoicePickerPresented(!isVoicePickerPresented)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "waveform")
@@ -735,13 +751,13 @@ struct NotchSheetRootView: View {
                                  helpText: isSelected ? "正在用它" : "用这个音色") {
                 SoundEffectPlayer.shared.play(.sidebarButton)
                 companionManager.replyVoiceOverride = voiceID
-                isVoicePickerPresented = false
+                setVoicePickerPresented(false)
             }
         }
         .onTapGesture {
             SoundEffectPlayer.shared.play(.sidebarButton)
             companionManager.replyVoiceOverride = voiceID
-            isVoicePickerPresented = false
+            setVoicePickerPresented(false)
         }
     }
 
@@ -792,8 +808,11 @@ struct NotchSheetRootView: View {
                         // `leadingAccessory`：语音 / 视频页那颗 connect 按钮就住在这个槽里
                         //（`VoiceChatSessionView` 的 `leadingAccessory: connectButton`），
                         // 两种模式下按钮落在同一个像素位置上。
-                        leadingAccessory: AnyView(textCallChip),
-                        trailingAccessory: AnyView(voiceChip),
+                        callAccessory: AnyView(textCallChip),
+                        // ⭐ **音色不再画在页头**（2026-09-29 用户：「图文模式（音色，放在
+                        // 输入框的上面，右上角，放在：声音右侧）」）—— 它搬到了输入框那一行，
+                        // 由 `NotchHomeView` 画（`VoiceChipButton`）。
+                        trailingAccessory: nil,
                         preferences: cardChatPreferences)
     }
 

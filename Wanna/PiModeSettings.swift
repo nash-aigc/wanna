@@ -29,6 +29,19 @@ nonisolated struct PiModeSettings: Codable, Equatable {
     /// 执行进程的模型 id。
     var executeModelID: String = "deepseek-official/deepseek-flash"
 
+    /// ⭐ **思考开关**（2026-09-29 用户：「每一个模式……它的思考都可以开或关。
+    /// 现在做成了默认，默认状态是正确的，但**应该让用户可以选择**」）。
+    /// 默认就是两个进程各自的默认（实时关 = 快、执行开 = 想得清楚），但**可以改**。
+    var realtimeThinkingEnabled: Bool = false
+    var executeThinkingEnabled: Bool = true
+
+    func thinkingEnabled(for role: PiAgentRunner.ProcessRole) -> Bool {
+        switch role {
+        case .realtime: return realtimeThinkingEnabled
+        case .execute: return executeThinkingEnabled
+        }
+    }
+
     func modelID(for role: PiAgentRunner.ProcessRole) -> String {
         switch role {
         case .realtime: return realtimeModelID
@@ -45,6 +58,10 @@ nonisolated struct PiModeSettings: Codable, Equatable {
             ?? Self().realtimeModelID
         executeModelID = try container.decodeIfPresent(String.self, forKey: .executeModelID)
             ?? Self().executeModelID
+        realtimeThinkingEnabled = try container.decodeIfPresent(Bool.self, forKey: .realtimeThinkingEnabled)
+            ?? Self().realtimeThinkingEnabled
+        executeThinkingEnabled = try container.decodeIfPresent(Bool.self, forKey: .executeThinkingEnabled)
+            ?? Self().executeThinkingEnabled
     }
 }
 

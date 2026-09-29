@@ -419,7 +419,7 @@ struct VoiceChatSessionView: View {
                 // 分隔线的上面，然后放在「全双工」这个按钮的右侧」）。
                 CardChatModeBar(cardID: cardID,
                                 cardKind: cardKind,
-                                leadingAccessory: AnyView(connectButton),
+                                callAccessory: AnyView(connectButton),
                                 trailingAccessory: AnyView(headerTrailingControls),
                                 onModeSelected: { _ in syncChannelToCardChatMode() },
                                 preferences: cardChatPreferences)
@@ -2173,9 +2173,9 @@ struct VoiceChatSessionView: View {
             // 这一页的「临时对话」= **这一场不写回卡片的历史**（见
             // `VoiceChatController.isTemporaryVoiceConversation`）：语音这条路没有"另一段
             // 对话"可以去，而"临时"在这里的确切含义就是"不留下"。
-            voiceConversationModeChip(title: "连续对话", isTemporary: false,
+            voiceConversationModeChip(title: "连续", isTemporary: false,
                                       help: "这一段会记进这张卡片的历史")
-            voiceConversationModeChip(title: "临时对话", isTemporary: true,
+            voiceConversationModeChip(title: "临时", isTemporary: true,
                                       help: "这一段不写进任何历史，挂断就散了")
 
             composerChip(title: "新建",
@@ -2217,7 +2217,8 @@ struct VoiceChatSessionView: View {
             //（用户 2026-09-27：「这个语音、视频这两个模式下，输入框的右上角，它应该有一个
             // 备注叫针对什么对话……结果图文模式应该是一样的才对」）—— 文案、位置、字号与
             // 图文 / 文本那一页完全相同，两边读的是同一个 `voiceConversationMode`。
-            Text(controller.isTemporaryVoiceConversation ? "针对临时对话" : "针对连续对话")
+            // ⭐ 2026-09-29：与对话页同一套文案 —— 一律"当前"（见 `NotchHomeView` 那处注释）。
+            Text("当前")
                 .font(.system(size: 10.5))
                 .foregroundColor(controller.isTemporaryVoiceConversation
                                  ? Color(red: 0.96, green: 0.72, blue: 0.32).opacity(0.75)

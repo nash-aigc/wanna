@@ -115,8 +115,11 @@ final class PiAgentRunner {
     func modelAndThinkingArguments() -> [String] {
         let settings = PiModeSettingsStore.shared.snapshot()
         var arguments = ["--model", settings.modelID(for: role)]
-        // 实时进程强制关思考；执行进程不传（pi 默认 = 开）。
-        if role == .realtime {
+        // **思考开 = 不传参数**（pi 默认就是开思考）；**关 = 显式 `--thinking off`**
+        //（它会发出 `reasoning_effort: none`，实测火山与 DeepSeek 都认）。
+        // 默认值仍是"实时关、执行开"，但用户可以在设置页 / 那颗「模型」面板里改
+        //（2026-09-29 用户：「它的思考都可以开或关……应该让用户可以选择」）。
+        if !settings.thinkingEnabled(for: role) {
             arguments += ["--thinking", "off"]
         }
         return arguments

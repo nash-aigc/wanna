@@ -58,19 +58,10 @@ struct SpeechSpeedChip: View {
                     .font(.system(size: 8, weight: .semibold))
             }
             .foregroundColor(isPanelOpen ? DS.Colors.success : .white.opacity(0.65))
-            .padding(.horizontal, 8)
+            // ⭐ **极简**（2026-09-29）：内边距 0、无底色无边框 —— 分隔交给那一行的白竖线。
+            .padding(.horizontal, 0)
             .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.white.opacity(isPanelOpen ? 0.10 : 0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(isPanelOpen ? DS.Colors.success.opacity(0.5)
-                                              : Color.white.opacity(0.08),
-                                  lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerCursor()

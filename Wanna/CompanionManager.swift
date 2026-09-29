@@ -3345,9 +3345,12 @@ final class CompanionManager: ObservableObject {
     /// 拿不到活动会话时返回 true —— 那种情况下的行为与加这个判断之前完全一致。
     private var mainLoopChatModeCarriesImages: Bool {
         let sessionID = ConversationSessionsStore.activeSession().id.uuidString
-        return AppSettingsStore.snapshot()
-            .cardChatMode(forCardID: sessionID, kind: .mainLoop)
-            .carriesImages
+        let settings = AppSettingsStore.snapshot()
+        // ⭐ **还要过"这张卡片的「屏幕」开关"**（2026-09-29）：图文模式默认开，
+        // 用户点掉之后这一轮不带截图（= 原来那个"文本模式"的效果，见
+        // `AppSettings.cardScreenshotEnabledByCardID`）。
+        return settings.cardChatMode(forCardID: sessionID, kind: .mainLoop).carriesImages
+            && settings.cardScreenshotEnabled(forCardID: sessionID)
     }
 
     /// **按快捷键说出来的那一轮永远是「图文」**（用户 2026-09-28 口述）。

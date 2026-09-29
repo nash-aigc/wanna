@@ -51,8 +51,10 @@ struct NotchHomeView: View {
         var id: String { rawValue }
         var displayName: String {
             switch self {
-            case .continuous: return "连续对话"
-            case .temporary: return "临时对话"
+            // ⭐ **2026-09-29：去掉"对话"两个字**（用户：「把"连续对话""临时对话"改成
+            // "连续""临时"，删掉"对话"两个字……这样整个这一行的按钮就能正常显示出来了」）。
+            case .continuous: return "连续"
+            case .temporary: return "临时"
             }
         }
         var helpText: String {
@@ -94,6 +96,9 @@ struct NotchHomeView: View {
 
     /// 「语速」那一列档位开没开（输入框上方那一行的最右一颗）。
     @State private var isSpeedPanelOpen = false
+    /// 模型 / 音色两个面板的开关状态（单例 —— 按钮与面板分处两个对象，见各自的注释）。
+    @ObservedObject private var modelPickerState = CardChatModelPickerState.shared
+    @ObservedObject private var voicePickerState = VoicePickerState.shared
 
     @State private var composerDraft: String = ""
 
@@ -131,6 +136,12 @@ struct NotchHomeView: View {
     /// 真正的宽度变化（收起侧栏、全屏切换）照样让 `.id` 变、照样重建 —— 那条语义
     /// 是上一段说明里那个「列变窄卡片不肯跟着窄」的修复，不能丢。
     @MainActor private static var rememberedContentColumnWidth: CGFloat = 0
+
+    /// 上面那个宽度**给模型面板读**（2026-09-29）：面板要"占满一整行"，
+    /// 而内容列宽度只有这一处量过（每次布局都会更新）。
+    @MainActor static var rememberedContentColumnWidthForModelPanel: CGFloat {
+        rememberedContentColumnWidth
+    }
 
     @State private var contentColumnWidth: CGFloat = NotchHomeView.rememberedContentColumnWidth
 
@@ -184,6 +195,7 @@ struct NotchHomeView: View {
             // `silenceActiveReplyAudio` 的门禁是「这一条回复还在跑（或还在播）」，
             // 情况 1 下两者都不成立，它是 no-op。
             speedPanelIfOpen
+            modelAndVoicePanelsIfOpen
             composerRow
 
             // The last error's verbatim API text. The deleted menu bar panel
@@ -888,64 +900,54 @@ struct NotchHomeView: View {
     /// **「屏幕」只给临时对话留着了**（2026-09-26）：主对话带不带截图搬去了卡片页最上面
     /// 那排模式（图文 / 文本）—— 同一件事不该有两个开关。临时对话不是卡片，所以它那颗
     /// 还在，而且只在临时模式下画。
+    /// 输入框这一行按钮的高度（极简那套：格线与字高都按它对齐）。
+    private let composerControlsRowHeight: CGFloat = 22
+
     private var composerControlsRow: some View {
-        HStack(spacing: 6) {
+        // ⭐ 极简（2026-09-29 用户）：「把图文模式下输入框左侧连续、临时、新建这三个按钮的样式，
+        // 做成跟导航栏顶部图文、音频、视频样式一样，极简风格，每个按钮之间用分割线分隔，
+        // 选中的点亮变成绿色。图文模式下，左边靠左对齐的是这三个按钮，
+        // 屏幕、声音这两个按钮靠右对齐，风格一致。」
+        //
+        // 所以这一行只两件东西：**无底色、无圆角**，
+        // 格与格之间一条 1pt 竖线（`TableVerticalRule`，与顶部模式条同一套），
+        // 选中 = 绿字。左组 = 「换一段对话」（连续 / 临时 / 新建）；
+        // 右组 = 「这一次对话怎么看」（屏幕 / 声音）。
+        HStack(spacing: 0) {
+            // 左组：连续 ｜ 临时 ｜ 新建
             ForEach(ComposerConversationMode.allCases) { mode in
                 conversationModeChip(mode)
+                TableVerticalRule(rowHeight: composerControlsRowHeight)
             }
-
-            // **「新建」紧挨着「临时对话」**（用户 2026-09-26：「临时对话右侧挨着应该是
-            // 新建按钮，你现在把新建按钮靠右对齐了」）—— 它属于左边这组"换一段对话"，
-            // 不属于右边那组"这一次对话怎么看"。
-            composerRowButton(title: "新建", systemImage: "plus",
-                              helpText: "新建主对话（当前这条会自动归档）") {
+            composerMinimalChip(title: "新建", systemImage: "plus",
+                                helpText: "新建主对话（当前这条会自动归档）") {
                 sessionsModel.createSession()
                 composerConversationMode = .continuous
             }
 
-            // **输入框上面也有一颗「通话」**（用户 2026-09-26：「文本模式、图文模式下，通话
-            // 按钮除了在视频模式右侧显示，还要显示在输入框的上面，显示到新建按钮的右侧。
-            // 因为用户的场景本质上就是输入，方便用户快速点击。」）。
-            //
-            // **和页头那颗是两颗，都要留着**（他的原话：「我是故意留两个通话按钮和挂断按钮的，
-            // 注意不要删除某一个，要两个都保留，它们功能是一致的」）—— 所以这里直接复用
-            // 同一个控制器与同一个挂断入口，不另写一套。
-            composerRowButton(title: isTextCallActive ? "挂断" : "通话",
-                              systemImage: isTextCallActive ? "phone.down.fill" : "phone.fill",
-                              isHighlighted: isTextCallActive,
-                              helpText: isTextCallActive
-                                  ? "挂断这通「文本通话」"
-                                  : "文本通话：说话就自动转成文字发出去，不用手打") {
-                toggleTextCall()
-            }
+            Spacer(minLength: 0)
 
-            // **这一组靠右**（用户 2026-09-26：「针对连续对话 / 屏幕 / 声音这几个，
-            // 靠右对齐」）：左边管"我在哪一段对话"，右边管"这一段对话怎么看"。
-            Spacer(minLength: 6)
-
-            // **这两颗设置只作用于哪一种对话，必须先写出来。**
-            // 用户：「在新建按钮的右侧添加一个『针对……』，会让用户知道其实这个设置
-            // 只针对于当前这个状态」—— 临时对话的「语音」关掉**不影响**主对话，
-            // 不写清楚，用户会以为它是个全局开关。
-            Text(composerConversationMode == .continuous ? "针对连续对话" : "针对临时对话")
-                .font(.system(size: 10.5))
-                .foregroundColor(composerConversationMode == .continuous
-                                 ? .white.opacity(0.38) : composerTemporaryTint.opacity(0.75))
-                .fixedSize()
-
-            if composerConversationMode == .temporary {
+            // 右组：屏幕 ｜ 声音（「屏幕」只在图文模式 / 临时对话下画 —— 语音 / 视频的模型不吃图）。
+            if composerConversationMode == .temporary || showsScreenshotChipForContinuous {
                 screenshotChip
+                TableVerticalRule(rowHeight: composerControlsRowHeight)
             }
-
-            // **「语速」在「声音」右边**（用户 2026-09-26：「无论哪一种模式……右侧都应该有
-            // 一个"声音语速"的按钮」）。十档与「说（播报）」那一页读同一个设置，
-            // 档位表在 `SpeechSpeedLevels` 里只写了一遍。
-            // **「声音」在左、「语速」在右**（用户 2026-09-26：「分别是声音、语速这两个按钮，
-            // 声音在左边，语速在右边」）—— 原来是反的。
             soundChip
+
+            // 模型 / 音色 / 语速（下拉类）—— 暂留最右；
+            // 「选项」弹窗接入后这三颗会搬进弹窗。
+            TableVerticalRule(rowHeight: composerControlsRowHeight)
+            if showsModelPickerForContinuous {
+                CardChatModelPickerButton()
+                TableVerticalRule(rowHeight: composerControlsRowHeight)
+            }
+            VoiceChipButton(companionManager: companionManager)
+            TableVerticalRule(rowHeight: composerControlsRowHeight)
             SpeechSpeedChip(isPanelOpen: $isSpeedPanelOpen)
         }
     }
+
+
 
     /// 这一页那颗「通话」现在是不是通的（主循环卡片 = 当前活动会话）。
     private var isTextCallActive: Bool {
@@ -982,37 +984,55 @@ struct NotchHomeView: View {
             temporaryConversation.discardEverything()
             composerConversationMode = mode
         }) {
-            HStack(spacing: 4) {
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                }
-                Text(mode.displayName)
-                    .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
-            }
-            .foregroundColor(isSelected ? DS.Colors.success : .white.opacity(0.55))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.white.opacity(isSelected ? 0.10 : 0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(isSelected ? DS.Colors.success.opacity(0.55) : Color.white.opacity(0.08),
-                                  lineWidth: 1)
-            )
+            // 极简（2026-09-29）：与页头那排「图文 / 语音 / 视频」同一套 ——
+            // 只有文字，没有底色、没有圆角、没有对号（对号会让选中那颗变宽、右边跟着挪）；
+            // 分隔交给行里的 `TableVerticalRule`；选中 = 绿字。
+            Text(mode.displayName)
+                .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .foregroundColor(isSelected ? DS.Colors.success : .white.opacity(0.88))
+                .padding(.horizontal, TableStyle.cellHorizontalPadding)
+                .frame(height: composerControlsRowHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerCursor()
         .help(mode.helpText)
     }
 
+
     /// 高亮色跟着模式走：连续对话用绿（`DS.Colors.success`），临时对话用琥珀 ——
     /// 见 `composerTemporaryTint`。
     private var composerHighlightColor: Color {
         composerConversationMode == .continuous ? DS.Colors.success : composerTemporaryTint
     }
+
+    /// ⭐ **极简版那一行的按钮**（2026-09-29 用户：「按钮全部切换成极简风格，内边距为 0，
+    /// 用几条白色竖线作为分隔」）：没有底色、没有圆角、没有左右内边距 ——
+    /// 分隔交给行里的 `TableVerticalRule`（与顶部模式条同一套）。
+    private func composerMinimalChip(title: String,
+                                     systemImage: String,
+                                     isHighlighted: Bool = false,
+                                     helpText: String,
+                                     action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10.5))
+                    .frame(width: 13)
+                Text(title).font(.system(size: 12))
+            }
+            .foregroundColor(isHighlighted ? composerHighlightColor : .white.opacity(0.65))
+            .padding(.horizontal, TableStyle.cellHorizontalPadding)
+            .frame(height: composerControlsRowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help(helpText)
+    }
+
 
     private func composerRowButton(title: String,
                                    systemImage: String,
@@ -1052,16 +1072,46 @@ struct NotchHomeView: View {
     /// 主对话带不带截图现在是卡片页最上面那排模式里的事（**图文** = 带截图，**文本** =
     /// 不带）—— 用户把这两个做成了显式模式之后，这一格就是同一个问题的第二个答案。
     /// 临时对话不是卡片（它用完即弃、不写任何会话），所以它仍然要自己那颗。
+    /// **「屏幕」开关**（两段对话各管各的）：
+    /// · **临时对话** → `temporaryConversation.sendsScreenshot`（一直就有）；
+    /// · **连续对话（图文模式）** → `AppSettings.cardScreenshotEnabledByCardID`
+    ///   （2026-09-29 新加：默认开；关掉 = 不参考屏幕，就是原来"文本模式"的效果）。
     private var screenshotChip: some View {
-        let isOn = temporaryConversation.sendsScreenshot
-        return composerRowButton(title: "屏幕",
+        if composerConversationMode == .temporary {
+            let isOn = temporaryConversation.sendsScreenshot
+            return composerMinimalChip(title: "屏幕",
+                                     systemImage: isOn ? "checkmark" : "rectangle.slash",
+                                     isHighlighted: isOn,
+                                     helpText: isOn
+                                         ? "临时对话每次发送都会带上截图（点击：不看屏幕）"
+                                         : "临时对话不看屏幕，纯文字提问（点击：恢复带截图）") {
+                temporaryConversation.sendsScreenshot.toggle()
+            }
+        }
+        let cardID = sessionsModel.activeSessionID?.uuidString ?? ""
+        let isOn = cardChatPreferences.isScreenshotEnabled(forCardID: cardID)
+        return composerMinimalChip(title: "屏幕",
                                  systemImage: isOn ? "checkmark" : "rectangle.slash",
                                  isHighlighted: isOn,
                                  helpText: isOn
-                                     ? "临时对话每次发送都会带上截图（点击：不看屏幕）"
-                                     : "临时对话不看屏幕，纯文字提问（点击：恢复带截图）") {
-            temporaryConversation.sendsScreenshot.toggle()
+                                     ? "每次提问都会带上屏幕截图（点击：不看屏幕，纯文字提问）"
+                                     : "不看屏幕，纯文字提问（点击：恢复带截图）") {
+            cardChatPreferences.setScreenshotEnabled(!isOn, forCardID: cardID)
         }
+    }
+
+    /// 连续对话这一档要不要画那颗「模型」—— 同样只在图文模式。
+    private var showsModelPickerForContinuous: Bool {
+        guard composerConversationMode == .continuous,
+              let cardID = sessionsModel.activeSessionID?.uuidString else { return false }
+        return cardChatPreferences.mode(forCardID: cardID, kind: .mainLoop) == .imageText
+    }
+
+    /// 连续对话这一档要不要画那颗「屏幕」—— **只在图文模式**（语音 / 视频模式的模型不吃图）。
+    private var showsScreenshotChipForContinuous: Bool {
+        guard composerConversationMode == .continuous,
+              let cardID = sessionsModel.activeSessionID?.uuidString else { return false }
+        return cardChatPreferences.mode(forCardID: cardID, kind: .mainLoop) == .imageText
     }
 
     /// 「声音」——就是原来输入框右下角那个静音开关，搬到这一行（用户要求）。
@@ -1070,7 +1120,7 @@ struct NotchHomeView: View {
         // 连续对话用的是全局那个静音开关（`voiceReplyMuted`，播报的总闸）；
         // 临时对话用它自己那份。两者互不影响。
         if composerConversationMode == .temporary {
-            return AnyView(composerRowButton(title: "声音",
+            return AnyView(composerMinimalChip(title: "声音",
                                              systemImage: temporaryConversation.speaksReply
                                                  ? "speaker.wave.2.fill" : "speaker.slash.fill",
                                              isHighlighted: temporaryConversation.speaksReply,
@@ -1080,7 +1130,7 @@ struct NotchHomeView: View {
                 temporaryConversation.speaksReply.toggle()
             })
         }
-        return AnyView(composerRowButton(title: "声音",
+        return AnyView(composerMinimalChip(title: "声音",
                           systemImage: companionManager.voiceReplyMuted
                               ? "speaker.slash.fill" : "speaker.wave.2.fill",
                           isHighlighted: !companionManager.voiceReplyMuted,
@@ -1106,6 +1156,40 @@ struct NotchHomeView: View {
             }
             .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
             .padding(.bottom, 6)
+        }
+    }
+
+    /// ⭐ **模型 / 音色两个面板也画在这里**（2026-09-29 用户：「音色和模型这两个按钮，
+    /// 参考**语速按钮把下拉弹窗放在下面**的做法。现在音色和模型的下拉弹窗还在顶部，
+    /// 还是之前的样式。既然按钮在下面，这两个下拉弹窗也应该在下面，**最好占据整个
+    /// 绘画的宽度来显示内容**」）。
+    ///
+    /// 所以它们从 `NotchSheetRootView` 的浮层搬到了这里：**参与布局、往上顶**、
+    /// **占满内容列宽度** —— 与语速那块同一个位置、同一套理由（`.overlay` 伸到父视图
+    /// 外面的部分收不到点击，见 `开发经验/10-踩过的坑.md` D14）。
+    @ViewBuilder
+    private var modelAndVoicePanelsIfOpen: some View {
+        if modelPickerState.isExpanded {
+            CardChatModelPickerPanel()
+                .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
+                .padding(.bottom, 6)
+        }
+        if voicePickerState.isPresented {
+            // `VoicePickerPanel` 是自包含的（分类 + 克隆音色加载 + 试听都在它里面）——
+            // 这里只把"当前这一条回复用哪个音色"那三个值喂进去。
+            VoicePickerPanel(
+                engine: .threeStage,
+                modelID: ModelConfigurationStore.snapshot().status(of: .speech).resolvedRole?.modelID
+                    ?? BailianConfiguration.Models.textToSpeech,
+                selectedVoiceID: companionManager.replyVoiceOverride ?? "",
+                onSelectVoice: { voiceID in
+                    SoundEffectPlayer.shared.play(.sidebarButton)
+                    companionManager.replyVoiceOverride = voiceID.isEmpty ? nil : voiceID
+                    voicePickerState.isPresented = false
+                },
+                onClose: { voicePickerState.isPresented = false })
+                .padding(.horizontal, NotchSupport.contentColumnHorizontalMargin)
+                .padding(.bottom, 6)
         }
     }
 

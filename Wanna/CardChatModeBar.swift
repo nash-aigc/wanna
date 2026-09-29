@@ -27,7 +27,9 @@ struct CardChatModeBar: View {
     let cardKind: CardKind
 
     /// 模式右边那一格（语音 / 视频页放「音色」；其余页留空）。
-    var leadingAccessory: AnyView? = nil
+    /// ⭐ **通话那一格**（2026-09-29 从 `leadingAccessory` 改名而来 —— 它的位置从
+    /// "模式右边"搬到了"右侧、角色左边"，所以旧名字（leading）已经不对了）。
+    var callAccessory: AnyView? = nil
 
     /// 靠右那一组（语音页的摄像头 / 屏幕 / 模式下拉 / 通话，对话页的音色）。
     var trailingAccessory: AnyView? = nil
@@ -56,15 +58,20 @@ struct CardChatModeBar: View {
                 TableVerticalRule(rowHeight: NotchSupport.contentHeaderControlHeight)
             }
 
-            if let leadingAccessory {
-                leadingAccessory
-                TableVerticalRule(rowHeight: NotchSupport.contentHeaderControlHeight)
-            }
-
             Spacer(minLength: 0)
 
             if let trailingAccessory {
                 trailingAccessory
+            }
+
+            // ⭐ **通话按钮全部搬到页头右侧**（2026-09-29 用户：「将【图文、音频、视频】所有模式，
+            // 通话按钮，全部放在（导航栏的：右侧），分别是：（通话、角色）按钮」）——
+            // 它原来在左侧（`leadingAccessory` 那个槽），现在**右侧、角色之前**。
+            // 三个页面通过同一个参数传自己的那一颗（图文 = `textCallChip`、
+            // 语音 / 视频 = `connectButton`），所以三个模式的通话键落在**同一个位置** ✓。
+            if let callAccessory {
+                callAccessory
+                TableVerticalRule(rowHeight: NotchSupport.contentHeaderControlHeight)
             }
 
             // **「角色」在最右**（用户 2026-09-26：「把角色按钮放在右侧…最右侧」）——
