@@ -23,6 +23,7 @@
 //
 
 import Foundation
+import SQLite3
 
 /// 工具声明与分发。声明是 `nonisolated` 的纯数据；执行要碰 App 内部，所以是 `@MainActor`。
 nonisolated enum WannaMCPTools {
@@ -36,7 +37,8 @@ nonisolated enum WannaMCPTools {
          setValueDeclaration, pressAXDeclaration, setSelectedDeclaration,
          pointDeclaration, drawDeclaration,
          drawFigureDeclaration, spawnAgentDeclaration, sendAgentDeclaration,
-         listSkillsDeclaration, readFileDeclaration, writeFileDeclaration]
+         listSkillsDeclaration, readFileDeclaration, writeFileDeclaration,
+         searchHistoryDeclaration]
     }
 
     /// 坐标参数的措辞，七处重复所以抽出来 —— 它必须**逐字一致**，
@@ -269,6 +271,7 @@ nonisolated enum WannaMCPTools {
         case "press_ax": return try await run(
             .pressAccessibility(at: try coordinate(arguments)), arguments)
         case "list_skills": return try await listSkills()
+        case "search_history": return try await searchHistory(arguments: arguments)
         case "read_file": return try await readFile(arguments: arguments)
         case "write_file": return try await writeFile(arguments: arguments)
         case "draw_figure": return try await run(.runFigureAgent(task: try string(arguments, "task")),
@@ -604,6 +607,27 @@ nonisolated enum WannaMCPTools {
         ]
     }
 
+    private static var searchHistoryDeclaration: [String: Any] {
+        [
+            "name": "search_history",
+            "description": """
+                在**完整**的对话历史里翻找（不只最近那几轮）。\n\
+                你默认只看到最近的若干轮；如果用户问的是更早说过的事、\n\
+                而你在当前上下文里找不到，就用这个去翻。\n\
+                参数 query 是关键词（留空 = 直接列最近若干条）。\n\
+                返回命中的那几条原文，带时间。
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "query": ["type": "string", "description": "关键词；留空则返回最近若干条"],
+                    "limit": ["type": "integer", "description": "最多返回几条，默认 20"],
+                ],
+                "required": [String](),
+            ],
+        ]
+    }
+
     private static var readFileDeclaration: [String: Any] {
         [
             "name": "read_file",
@@ -664,6 +688,129 @@ nonisolated enum WannaMCPTools {
             ? "现在一个技能都没有（技能目录：\(SkillCatalog.skillsRootPath)）。"
             : "共 \(skills.count) 个技能（用 read_file 读正文）：\n" + lines.joined(separator: "\n")
         return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+
+    /// **在完整对话历史里翻找**（2026-09-29 加）。
+    ///
+    /// ## 为什么需要它 —— 官方没有这个机制
+    ///
+    /// 官方的 `Session` 只有 `get_items(limit)`：**"最近 N 条"**，没有任何检索或翻页接口
+    /// （源码 `agents/memory/session.py` 的 `Session` Protocol 就那四个方法）。
+    /// 官方唯一带检索的是 `FileSearchTool`，但它是 **OpenAI 托管的 vector store**，
+    /// 非 OpenAI provider 用不了。
+    ///
+    /// 所以"查更多"这件事**官方在这个 provider 上没有机制** —— 属应用层决定，
+    /// 台账里记着这条判定。**形状照抄技能那套三级披露**：
+    /// 常驻少量（最近 N 轮 → 官方 `SessionSettings(limit:)`），需要时**模型自己来翻**。
+    ///
+    /// ## 数据源为什么是 SQLite 而不是 ConversationSessions.json
+    ///
+    /// `ConversationSessions.json` 那份**已经被裁到最近 N 轮了**
+    /// （`trimConversationHistory` 每轮把裁剪过的 entries 写回磁盘），
+    /// 所以它里面**没有完整历史**。真正完整的是官方 Session 落的那张表 ——
+    /// 它的 `limit` **只作用于读取**，不删数据。
+    /// `SQLITE_TRANSIENT` 是 SQLite 的 C 宏，Swift 看不见 —— 官方推荐的做法是
+    /// 把 -1 转成 `sqlite3_destructor_type`。用它绑定字符串，SQLite 会**自己复制**
+    /// 一份（而不是持有我们那块内存的指针），所以绑完就可以放手。
+    private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    private static func searchHistory(arguments: [String: Any]) async throws -> [String: Any] {
+        let query = ((arguments["query"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedLimit = (arguments["limit"] as? Int) ?? 20
+        let maximumRows = min(max(requestedLimit, 1), 200)
+
+        let databasePath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Wanna/agent-sessions.sqlite3").path
+        guard FileManager.default.fileExists(atPath: databasePath) else {
+            return ["content": [["type": "text",
+                                 "text": "还没有历史记录（\(databasePath) 不存在）。"]], "isError": false]
+        }
+
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(databasePath, &handle, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              let database = handle else {
+            let reason = handle.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "未知"
+            if let handle { sqlite3_close(handle) }
+            return ["content": [["type": "text",
+                                 "text": "打不开历史数据库：\(reason)（库：\(databasePath)）"]], "isError": false]
+        }
+        defer { sqlite3_close(database) }
+
+        // 关键词为空 = 直接给最近若干条；否则在 message_data 里做包含匹配。
+        // ⚠️ 用参数绑定（`?`）而不是拼字符串 —— message_data 里是模型原文，
+        // 拼进去一个引号就会把 SQL 弄坏。
+        let hasQuery = !query.isEmpty
+        let sql = hasQuery
+            ? """
+              SELECT session_id, message_data, created_at FROM agent_messages
+              WHERE message_data LIKE ? ORDER BY id DESC LIMIT ?
+              """
+            : """
+              SELECT session_id, message_data, created_at FROM agent_messages
+              ORDER BY id DESC LIMIT ?
+              """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            let reason = sqlite3_errmsg(database).map { String(cString: $0) } ?? "未知"
+            return ["content": [["type": "text",
+                                 "text": "历史查询失败：\(reason)（库：\(databasePath)）"]], "isError": false]
+        }
+        defer { sqlite3_finalize(statement) }
+
+        if hasQuery {
+            // `%` 和 `_` 是 LIKE 的通配符，用户给的关键词里若有要转义掉，否则
+            // 搜 "a_b" 会命中 "axb" —— 静默返回不相关的结果。
+            let escaped = query
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_")
+            sqlite3_bind_text(statement, 1, "%\(escaped)%", -1, sqliteTransient)
+            sqlite3_bind_int(statement, 2, Int32(maximumRows))
+        } else {
+            sqlite3_bind_int(statement, 1, Int32(maximumRows))
+        }
+
+        var lines: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let sessionID = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? "?"
+            let payload = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+            let createdAt = sqlite3_column_text(statement, 2).map { String(cString: $0) } ?? ""
+            // message_data 是 JSON（官方 `Session` 存的就是 TResponseInputItem）。
+            // 只抽出说话的人 + 正文，别把整个 JSON 倒给模型 —— 里面还带 tool_call 之类。
+            lines.append("· [\(createdAt)] 会话 \(sessionID.prefix(8)) — \(summarizeHistoryPayload(payload))")
+        }
+
+        let header = hasQuery
+            ? "在完整历史里搜「\(query)」，命中 \(lines.count) 条（最多 \(maximumRows) 条）："
+            : "完整历史里最近 \(lines.count) 条："
+        let text = lines.isEmpty ? "没找到。（搜的是完整历史，含当前上下文里看不到的更早轮次。）"
+                                 : header + "\n" + lines.joined(separator: "\n")
+        return ["content": [["type": "text", "text": text]], "isError": false]
+    }
+
+    /// 把官方 `Session` 存的那条 JSON 压成一行「角色：正文」。
+    ///
+    /// 它是 `TResponseInputItem`，形状有好几种（message / function_call /
+    /// function_call_output …）。这里**只挑有人话的那些**，其余用类型名带过 ——
+    /// 目的是让模型看清"谁说过什么"，不是把原始结构倒给它。
+    private static func summarizeHistoryPayload(_ payload: String) -> String {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return String(payload.prefix(200))
+        }
+        let role = (object["role"] as? String) ?? (object["type"] as? String) ?? "?"
+        var text = ""
+        if let content = object["content"] as? String {
+            text = content
+        } else if let parts = object["content"] as? [[String: Any]] {
+            text = parts.compactMap { $0["text"] as? String }.joined(separator: " ")
+        } else if let output = object["output"] as? String {
+            text = output
+        }
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean.isEmpty ? "<\(role)（非文本）>" : "\(role)：\(clean.prefix(400))"
     }
 
     private static func readFile(arguments: [String: Any]) async throws -> [String: Any] {
