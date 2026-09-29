@@ -44,7 +44,7 @@ from pathlib import Path
 
 from agents import Agent, Runner, set_default_openai_api, set_default_openai_client
 from agents.mcp import MCPServerStreamableHttp
-from agents.memory import SQLiteSession
+from agents.memory import SessionSettings, SQLiteSession
 from openai import AsyncOpenAI
 
 from local_trace import install_local_trace_processor
@@ -114,6 +114,11 @@ async def main() -> int:
     # Wanna 传的是会话记录的 UUID —— 和「卡片 id = 实体 UUID」同一个做法。
     # 不给就落到 `default`，于是「没指定会话」也有一个稳定的家。
     parser.add_argument("--session-id", dest="session_id", default="default")
+    # **历史窗口**（2026-09-29）：官方 `SessionSettings.limit` 数的是**条目**，
+    # 而 Wanna 那个设置项数的是**轮**（用户能理解的单位）。这里做一次换算，
+    # **不自己编一个数** —— 认的就是设置页「记住最近多少轮对话」那个值。
+    # 一轮 ≈ 1 条用户 + 1 条助手 + 少量工具调用，取 4。
+    parser.add_argument("--memory-rounds", dest="memory_rounds", type=int, default=10)
     args = parser.parse_args()
     task = (args.task_opt or args.task).strip()
     if not task:
@@ -203,9 +208,13 @@ async def main() -> int:
             # （仅 OpenAI Responses API）不同 —— 所以它在非 OpenAI provider 上可用。
             # 实测确认：`SQLiteSession` 只往 SQLite 里存消息列表，没有任何
             # OpenAI 专属调用，与用哪家模型无关。
+            # ⚠️ **必须设 limit**：官方默认 `limit=None` = "retrieves all items"，
+            # 会话越聊越长，每一轮都要把整段历史重发 —— 功能照常，只是越来越慢越来越贵，
+            # **屏幕上完全看不出来**。这也是撤掉 Swift 那套窗口/压缩之后唯一的护栏。
             session = SQLiteSession(
                 session_id=args.session_id,
                 db_path=SQLITE_SESSION_PATH,
+                session_settings=SessionSettings(limit=max(args.memory_rounds, 1) * 4),
             )
             result = await Runner.run(agent, task, max_turns=args.max_steps, session=session)
 

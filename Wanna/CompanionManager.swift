@@ -4275,6 +4275,11 @@ final class CompanionManager: ObservableObject {
                     MainFlowDiagnostics.log("🐍 这一轮的决策交给 Python（OpenAI Agents SDK）")
                     fullResponseText = try await PythonAgentRunner.shared.runTurn(
                         task: userPromptForThisTurn,
+                        // 这一轮属于哪段对话 —— 官方 Sessions 的 session id。
+                        sessionID: turnSessionID.uuidString,
+                        // 历史窗口：认的就是设置页「记住最近多少轮对话」那个值，
+                        // 由 Python 换算成官方的 `SessionSettings(limit:)`。
+                        memoryRounds: appSettings.rememberedConversationRounds,
                         onProgress: { [weak self] note in
                             Task { @MainActor in self?.liveJobProgressSteps.append(note) }
                         }

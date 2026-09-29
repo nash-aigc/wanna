@@ -88,7 +88,12 @@ final class PythonAgentRunner {
     ///
     /// 取消：调用方取消它的 Task 时，子进程会被终止 —— 用户按 ESC 打断必须真的停掉它，
     /// 否则一个在后台点鼠标的进程会继续动用户的电脑。
+    /// - Parameter sessionID: **哪一段对话** —— 官方 Sessions 的 session id。
+    ///   传的是 `ConversationSession` 的 UUID，和「卡片 id = 实体 UUID」同一个做法。
+    ///   「连续对话」= 同一个 id；「新建对话」= 换一个。
     func runTurn(task: String,
+                 sessionID: String,
+                 memoryRounds: Int,
                  onProgress: @escaping (String) -> Void) async throws -> TurnResult {
 
         guard Self.isConfigured else {
@@ -98,7 +103,9 @@ final class PythonAgentRunner {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: Self.pythonExecutablePath)
-        process.arguments = [Self.agentScriptPath, "--task", task]
+        process.arguments = [Self.agentScriptPath, "--task", task,
+                           "--session-id", sessionID,
+                           "--memory-rounds", String(memoryRounds)]
         // 关掉 Python 自己的缓冲，否则 stdout 会攒着不吐 → 进度要等结束才看得到。
         process.environment = ProcessInfo.processInfo.environment.merging(
             ["PYTHONUNBUFFERED": "1"]) { _, new in new }
