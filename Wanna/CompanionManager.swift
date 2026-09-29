@@ -4011,7 +4011,12 @@ final class CompanionManager: ObservableObject {
                 let freshTurnEntries = ConversationSessionsStore.allSessionsIncludingArchived()
                     .first(where: { $0.id == turnSessionID })?.entries ?? []
                 conversationHistory = freshTurnEntries
-                var stepHistory = freshTurnEntries.filter { $0.recordedWithActionTags == true }
+                // **`stepHistory` 删掉了**（2026-09-29）：它组装了"要重放的历史轮次"，
+                // 但**从来没有传给 Python** —— `runTurn` 只收 task / sessionID /
+                // memoryRounds，历史由官方的 Session 自己带。所以它是纯死代码：
+                // 组装、打印、追加，一步都没进模型。
+                // ⚠️ 上面那行 `conversationHistory = freshTurnEntries` **要留** ——
+                // 那是给**界面看的镜像**（侧栏 / 归档 / 搜索），不是给模型的历史。
 
                 // The screenshots the job started against — what the user was looking
                 // at when they asked — are what the history entry carries. Later
@@ -4229,7 +4234,7 @@ final class CompanionManager: ObservableObject {
                     // 一条记录、summary 也是空的 —— 也就是说**如果还有残留，它在别处**。
                     // 这一行把"送出去的那两样"打印出来：带了几轮、摘要多长、系统提示词多长、
                     // 有没有截图、有没有屏幕上下文。下一次提问就能定位它到底藏在哪里。
-                    print("🧠 本轮上下文：历史 \(stepHistory.count) 轮 · 摘要 \(compressedHistorySummary.count) 字 · 系统提示词 \(Self.companionSystemPrompt(for: appSettings).count) 字 · 截图 \(labeledImages.count) 张 · 屏幕上下文 \((pendingAccessibilityContext?.count ?? 0)) 字 · 会话=\(turnSessionID.uuidString.prefix(8))")
+                    print("🧠 本轮上下文：系统提示词 \(Self.companionSystemPrompt(for: appSettings).count) 字 · 截图 \(labeledImages.count) 张 · 屏幕上下文 \((pendingAccessibilityContext?.count ?? 0)) 字 · 会话=\(turnSessionID.uuidString.prefix(8))")
 
                     var announcedAnswerStart = false
                     MainFlowDiagnostics.log("⏱️ 环节：请求已发出（图 \(labeledImages.count) 张）")
@@ -4353,14 +4358,8 @@ final class CompanionManager: ObservableObject {
                     // continuation request — and only it, this array is local to the
                     // job — can see what was already done and decided.
                     if !fullResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        stepHistory.append(
-                            ConversationHistoryEntry(
-                                userTranscript: userPromptForThisTurn,
-                                assistantResponse: fullResponseText,
-                                userScreenshots: [],
-                                recordedWithActionTags: true
-                            )
-                        )
+                        // （原先这里往 `stepHistory` 追加这一轮 —— 那个数组没喂模型，
+                        //   2026-09-29 连同它的声明一起删了。）
                     }
 
                     // Parse every tag out of the model's response: the [POINT:…] the
