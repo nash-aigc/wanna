@@ -32,6 +32,18 @@ struct TemporaryConversationOverlay: View {
     var controlsRow: AnyView
 
     @State private var draft = ""
+    // ⭐ **焦点必须给真绑定**（2026-09-30 用户报「输入或粘贴后光标自动消失、回车没意义」的根因）。
+    //
+    // 原来传的是 `.constant(false)` —— 一个**永远是假**的绑定。而 `MessageComposerField`
+    // 的 `updateNSView` 里有这样一条：`!isFocused && isEditing` → `makeFirstResponder(nil)`
+    //（那是给"发送后收起焦点"用的）。于是**每打一个字 → 草稿变 → 刷新 → 焦点被拽出输入框**：
+    // 后续的键全落空（「打字输不上去」）、回车没有意义（「enter 无法发送」）。
+    // 用户 2026-09-30 的排查逐字：「光标为什么会自动取消？正常情况下它应该在输入框里，
+    // 但输入或粘贴完成后，它就不在输入框里了，也就是聚焦点不在输入框里」—— 就这一个根因。
+    //
+    // 给真绑定之后：`reportFocusChange` 会把"现在有焦点"写回来（true），下一次刷新
+    // `isFocused == isEditing`，谁也不拽谁 —— 焦点留在框里，回车就能发。
+    @State private var isComposerFocused = false
     @State private var isComposerExpanded = false
     @State private var contentColumnHeight: CGFloat = 0
 
@@ -151,7 +163,7 @@ struct TemporaryConversationOverlay: View {
         MessageComposerField(
             placeholder: "临时问一句，回车发送…",
             draft: $draft,
-            isFocused: .constant(false),
+            isFocused: $isComposerFocused,
             height: composerHeight,
             isExpanded: isComposerExpanded,
             canToggleExpansion: contentColumnHeight > 0,

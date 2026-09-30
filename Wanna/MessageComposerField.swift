@@ -481,7 +481,27 @@ private struct ComposerTextView: NSViewRepresentable {
         // 绑定，所以这里什么都不用做就是对的。程序性改动（提交后清空）走的是另外的
         // 顺序 —— 清除时同时把 `isFocused` 置假，视图先退出第一响应者，下一次更新
         // 就走下面这条分支把新值写进来了。
-        if !isEditing, textView.string != text {
+        //
+        // ⭐ **程序性改值（发送后清空）与"编辑中"解耦**（2026-09-30 用户报：
+        // 「我输入问题之后，我的提示词还在输入框里面……提示词应该为空，
+        // 然后光标还是应该定位在输入框里面」）。原来写回卡着 `!isEditing` ——
+        // 而"清空"又搭在"收焦点"那条分支上（调用方把 isFocused 置假才会清）。
+        // 于是「发送后清空 + 焦点留在框里」这个组合永远清不了框：焦点在 →
+        // isEditing 真 → 写回被跳过 → 字留在框里。
+        // 解法：写回只看"视图内容与绑定不一致"。打字期间两者由 `textDidChange`
+        // 恒同步，不一致只有一种情况 —— 调用方程序性改了绑定（清空/顶替），写进去就是对的。
+        //
+        // IME 保护：拼音预输入期间不碰内容，不打断组字。⚠️ 判据是
+        // **`markedRange().length == 0`，不是 `markedRange() == nil`** ——
+        // `NSTextView.markedRange()` 返回的是**非可选** `NSRange`，写 `== nil`
+        // 编译器只给一条 warning（"comparing non-optional value … always returns false"）
+        // 然后**恒为假**，整道写回一次都不会执行。2026-09-30 就是这么把
+        // 「发送后清空」做成了 no-op：临时对话那一路刻意保留焦点、不走下面
+        // "收焦点后补写"的兜底，于是只有它一直把上一句留在框里（用户：
+        // 「临时输入框，输入问题之后，（之前的提示词）还是在输入框」）。
+        // 实测：没有预输入时 `markedRange()` 是 `{0,0}`（空串）/ `{11,0}`（"hello world"）
+        // —— 位置随文本走，**只有 length 恒为 0**，所以长度才是判据。
+        if textView.string != text, textView.markedRange().length == 0 {
             textView.string = text
         }
 

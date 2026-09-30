@@ -1233,6 +1233,24 @@ struct NotchHomeView: View {
 
     private func submitComposerDraft() {
         guard !composerDraftIsEmpty else { return }
+        // ⭐ **临时对话 → 临时管线**（2026-09-30 用户报「enter 无法发送」的根因修复）。
+        //
+        // 在这之前**不管什么模式都走主管线** —— 临时模式下的那句去了主会话（连移交块
+        // 都被它消耗了），而主管线的答案又因为「面板展开时右下角气泡不显示」被吞掉，
+        // 屏幕上**任何地方都不出现** = 看起来"发不出去"。实测日志（2026-09-30 14:35:43）：
+        // `▶️ 提交一轮：转写 7 字` → `这一轮交给 Pi · 执行 · 会话 CADCE19A · <history>`，
+        // 而 `TemporaryConversationModel.turns` 始终为空（浮层还在画那句占位提示）。
+        //
+        // 临时对话的答案本来就有自己的家：`TemporaryConversationModel.turns`，
+        // 由 `TemporaryConversationOverlay` 渲染（2026-09-26 用户定的：
+        // 「临时对话内容显示在临时弹窗中，覆盖在当前会话上方」）。路由到它就是了。
+        if composerConversationMode == .temporary {
+            let text = composerDraft
+            composerDraft = ""
+            composerFieldIsFocused = false
+            temporaryConversation.send(text, companionManager: companionManager)
+            return
+        }
         companionManager.submitTypedQuestion(composerDraft,
                                             sendsScreenshot: sendsScreenshotWithQuestion)
         composerDraft = ""
