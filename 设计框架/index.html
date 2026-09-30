@@ -121,6 +121,36 @@
   .dcard.open .dbody{display:block;animation:fade .22s ease-out}
   .dcard .now-st{font-family:var(--mono);font-size:11.5px;color:var(--ink3);margin-top:7px}
 
+  /* ── 04 同步机制 ── */
+  .tri{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+  .tbtn{appearance:none;font:inherit;text-align:left;background:var(--surface2);
+    border:1px solid var(--line);border-radius:11px;padding:14px 16px;cursor:pointer;
+    transition:border-color .15s,background .15s}
+  .tbtn:hover{border-color:#3C3C42}
+  .tbtn.on{border-color:rgba(10,132,255,.7);background:rgba(10,132,255,.10)}
+  .tbtn b{display:block;font-size:14.5px;color:var(--ink);font-weight:600;margin-bottom:4px}
+  .tbtn span{display:block;font-size:12.5px;color:var(--ink3);line-height:1.55}
+  .tbtn.on b{color:#CFE4FF}
+  .triout{margin-top:12px;border:1px solid var(--line);border-radius:11px;
+    background:var(--surface2);padding:17px 20px;min-height:132px}
+  .triout .verdict{font-family:var(--mono);font-size:12.5px;display:inline-block;
+    padding:3px 9px;border-radius:6px;margin-bottom:9px}
+  .triout h4{margin:0 0 7px;font-size:15px;font-weight:600}
+  .triout p{margin:0 0 9px;font-size:13.5px;color:var(--ink2);line-height:1.75}
+  .triout p:last-child{margin-bottom:0}
+  .triout .steps{font-family:var(--mono);font-size:12.5px;color:var(--ink3);
+    border-top:1px dashed var(--line);padding-top:9px;line-height:1.85}
+  pre{background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:13px 16px;
+    overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.8;color:var(--ink2);margin:12px 0 0}
+  pre .c{color:var(--ink3)}
+  .flow{margin-top:12px;display:flex;flex-direction:column;gap:0;align-items:stretch}
+  .fstep{border:1px solid var(--line);border-radius:10px;background:var(--surface2);
+    padding:12px 16px;display:grid;grid-template-columns:210px 1fr;gap:4px 16px;align-items:center}
+  .fstep .fk{grid-row:1/3;font-family:var(--mono);font-size:11.5px;color:#8FC6FF;
+    border-right:1px solid var(--line);padding-right:14px}
+  .fstep b{font-size:14px;font-weight:600}
+  .fstep span:last-child{font-size:12.5px;color:var(--ink3)}
+  .farr{text-align:center;font-family:var(--mono);font-size:11.5px;color:var(--ink3);padding:5px 0}
   .foot{margin-top:64px;padding-top:20px;border-top:1px solid var(--line2);
     font-size:12.5px;color:var(--ink3);font-family:var(--mono);line-height:1.9}
   @media (max-width:720px){
@@ -327,7 +357,7 @@
           <tr><td>需求 → 源码</td><td class="p">需求/90 部分行</td>
             <td><span class="pill o">⚠ 部分</span> 只有移植类需求写了出处</td></tr>
           <tr><td><b class="hi">原型 → Swift 落地</b></td><td class="p">——</td>
-            <td><span class="pill r">❌ 缺</span> 唯一缺的一环，三个选项待你拍板（见 05）</td></tr>
+            <td><span class="pill r">❌ 缺</span> 唯一缺的一环，三个选项待你拍板（见 06）</td></tr>
         </tbody>
       </table>
     </div>
@@ -345,7 +375,75 @@
 
   <!-- ══ 4 ══ -->
   <div class="sec">
-    <p class="eyebrow">04 · 速查</p>
+    <p class="eyebrow">04 · 原型更新怎么同步</p>
+    <h2>原型改了，怎么追到 Swift？</h2>
+    <p><b class="hi">这一环之前没有</b> —— 03 节那条链是<b class="hi">单向</b>的（需求 → 原型 → 落地），
+    缺反向那一半。你问「不一定要实时，但改得特别大或有颠覆性创新时要转过来」——
+    机制在 <a href="02-原型同步.md"><code>02-原型同步.md</code></a>，这里是摘要。</p>
+
+    <p style="margin-top:18px"><b class="hi">核心判据：三分法。</b>点下面三类里的一类，看怎么处置 ——
+    <b class="hi">不是所有改动都要同步</b>：</p>
+
+    <div class="tri" id="tri">
+      <button class="tbtn" data-k="style">
+        <b>改了样式</b>
+        <span>颜色 · 字号 · 间距 · 文案措辞</span>
+      </button>
+      <button class="tbtn on" data-k="inter">
+        <b>改了交互</b>
+        <span>点哪出什么 · 状态流转 · 增删面板</span>
+      </button>
+      <button class="tbtn" data-k="struct">
+        <b>改了结构</b>
+        <span>信息架构重排 · 颠覆性创新</span>
+      </button>
+    </div>
+
+    <div class="triout" id="triout"></div>
+
+    <p style="margin-top:20px"><b class="hi">怎么发现原型变了</b> —— 用现成的 git，不新增任何东西：</p>
+    <pre>git log --oneline -20 -- index.html app.js app.css   <span class="c"># 原型变更史，每条带 §NN</span></pre>
+
+    <p style="margin-top:16px"><b class="hi"><code>§NN</code> 是贯穿三层的钥匙</b> —— 这是反查的入口，
+    三层用的是同一个编号：</p>
+
+    <div class="flow" id="flow">
+      <div class="fstep"><span class="fk">app.js 注释</span><b>§23.4</b><span>我改的这处属于哪一批</span></div>
+      <div class="farr">↓</div>
+      <div class="fstep"><span class="fk">需求/07 §23.4</span><b>你的原话 + 判据</b><span>验收标准在这，别只看代码</span></div>
+      <div class="farr">↓</div>
+      <div class="fstep"><span class="fk">需求/90 的 23.4.x 行</span><b>怎么验 + 状态</b><span>这一栏就是 Swift 侧的验收用例</span></div>
+      <div class="farr">↓ 判据是交互 → 必须同步</div>
+      <div class="fstep"><span class="fk">Wanna/*.swift</span><b>改这里</b><span>先读 全局框架/NN-*.md，再 grep 功能名兜底</span></div>
+    </div>
+
+    <p style="margin-top:18px"><b class="hi">欠账表</b> —— 「不要求实时」的代价是允许欠账，
+    但欠账必须登记，否则三个月后没人记得 Swift 落后了多少。只记<b class="hi">交互级</b>的：</p>
+
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>§NN</th><th>原型改了什么</th><th>该改的 Swift 落点</th><th>提交于</th><th>同步状态</th></tr></thead>
+        <tbody>
+          <tr><td>—</td>
+            <td colspan="4" style="color:var(--ink3)">（当前为空 —— 截至 2026-10-01，原型改动都还停留在 HTML 侧，未进 Swift）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="gapbox" style="margin-top:16px;border-color:rgba(249,115,22,.45);background:rgba(249,115,22,.05)">
+      <b style="color:var(--warn)">已知边界：这张表没有闸门</b>
+      <p style="margin:7px 0 0;font-size:13.5px">它靠第 ④ 步的自觉。真要硬化，可以像仓库里其它闸门那样
+      挂进 <code>scripts/git-hooks/pre-commit</code>（「改原型的提交必须回答要不要同步」）——
+      但按 §0.8 极简：非高频问题不提前防范，<b class="hi">等它真的失守过一次再做</b>。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ══ 5 ══ -->
+  <div class="sec">
+    <p class="eyebrow">05 · 速查</p>
     <h2>具体参考哪份源码</h2>
     <p><b class="hi">Orca 源码只在 <code>Clone_From/Orca</code></b> —— <code>reference/orca</code> 已不存在。
     拿到一个功能，先去 <code>app.js</code> 搜功能名，注释会直接告诉你照的哪个文件第几行，
@@ -385,9 +483,9 @@
 
   <div class="rule"></div>
 
-  <!-- ══ 5 ══ -->
+  <!-- ══ 6 ══ -->
   <div class="sec">
-    <p class="eyebrow">05 · 待你拍板</p>
+    <p class="eyebrow">06 · 待你拍板</p>
     <h2>四件我<b style="color:var(--warn)">没有</b>替你决定的事</h2>
     <p class="quiet">都是「改仓库内容 / 改代码」级别的，点了展开看代价。我只做了零风险的那部分
     （路径修正、gitignore、新建本目录）。</p>
@@ -445,9 +543,9 @@
 
   <div class="rule"></div>
 
-  <!-- ══ 6 ══ -->
+  <!-- ══ 7 ══ -->
   <div class="sec">
-    <p class="eyebrow">06 · 硬规矩</p>
+    <p class="eyebrow">07 · 硬规矩</p>
     <h2>三条，加新东西之前过一遍</h2>
     <div class="tblwrap">
       <table>
@@ -468,7 +566,7 @@
   </div>
 
   <div class="foot">
-    设计框架/ · 00-目录地图.md ｜ 01-设计框架.md ｜ 本页 index.html<br>
+    设计框架/ · 00-目录地图.md ｜ 01-设计框架.md ｜ <b style="color:#B9B9C2">02-原型同步.md</b> ｜ 本页 index.html<br>
     相关：<a href="../架构说明/index.html">架构说明（多语言分工）</a> ｜
     <a href="../需求/90-实现映射.md">需求/90 实现映射</a> ｜
     <a href="../全局框架/00-项目全貌.md">全局框架/00 项目全貌</a>
@@ -500,6 +598,33 @@
       if(!was) s.classList.add('open');
     });
   });
+
+  /* 04 三分法 */
+  var TRI = {
+    style:{ v:'❌ 不同步', c:'#F87171', t:'样式级 —— 什么都不做',
+      p:'颜色、字号、间距、文案措辞。Swift 有自己的设计令牌，跟着 <b>需求/02-界面契约.md</b> 走。',
+      s:'原型的样式是给我调效果用的，<b>不是规格</b>。<br>判据一句话：这个改动如果 Swift 没跟，用户会不会看出两边行为不一致？—— 不会 → 不同步。'},
+    inter:{ v:'✅ 必须同步', c:'#4ADE80', t:'交互级 —— 要追到 Swift',
+      p:'点哪里出什么、状态怎么流转、快捷键语义、<b>新增/删除一个面板或菜单分组</b>。<b>需求/90 的「怎么验」那栏写的全是交互判据</b> —— 不同步，Swift 侧就跟需求脱钩了。',
+      s:'① git log 看属于哪个 §NN → ② 三分法定级 → ③ 按下面的 §NN 链反查并改 Swift<br>→ ④ 跑 90 表「怎么验」那一栏验收 → <b>⑤ 这次没跟的记进欠账表</b>'},
+    struct:{ v:'⬆ 先回需求层', c:'#F97316', t:'结构级 —— 这不是同步，是重做',
+      p:'信息架构重排、布局骨架换掉、一整块功能重来 —— 也就是你说的<b>「颠覆性创新」</b>。',
+      s:'它可能<b>推翻已有的需求条目</b>，直接改 Swift 会做出「原型想要、但需求没定」的东西。<br><b>做法</b>：回 <b>需求/07</b> 改判据 → 重新走 03 节的正向四层链。<br>硬要走同步，结果是需求文档和实际行为分叉。'}
+  };
+  var triBtns = document.querySelectorAll('#tri .tbtn');
+  var triOut = document.getElementById('triout');
+  function paintTri(k){
+    var d = TRI[k];
+    triOut.innerHTML = '<span class="verdict" style="color:'+d.c+';border:1px solid '+d.c+'55;background:'+d.c+'18">'+d.v+'</span>'
+      + '<h4>'+d.t+'</h4><p>'+d.p+'</p><div class="steps">'+d.s+'</div>';
+  }
+  triBtns.forEach(function(b){
+    b.addEventListener('click', function(){
+      triBtns.forEach(function(x){ x.classList.toggle('on', x===b); });
+      paintTri(b.dataset.k);
+    });
+  });
+  paintTri('inter');
 
   /* 待拍板展开 */
   document.querySelectorAll('#decide .dcard').forEach(function(c){
