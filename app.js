@@ -169,6 +169,14 @@ function toast(html) {
 }
 
 /* ── 本软件风格的模态（§12.3：不许再用系统 prompt / confirm） ── */
+// §19.2：「重点 N」展开 —— **document 级委托 + capture**。
+// 不绑在按钮身上：按钮的 onclick 可能因为绑定时机/重建而失效（用户报"点了没反应"）；
+// capture 先于气泡阶段的"点外面就关"跑，所以不会被自己关掉。
+document.addEventListener('click', e => {
+  const btn = e.target && e.target.closest && e.target.closest('#btnFocusMore');
+  if (btn) { e.stopPropagation(); toggleFocusList(); }
+}, true);
+
 // §17.1：点菜单外面（任何地方）就关掉所有菜单 —— 独立于 bind，断链也生效
 document.addEventListener('mousedown', () => {
   document.querySelectorAll('.menu').forEach(m => { if (m) m.hidden = true; });
@@ -1844,11 +1852,6 @@ function bind() {
     $('#btnRestoreFile').onclick = e => { e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget, true); };
   } catch (e) { console.error('[bind] 提交/恢复 绑定失败', e); }
 
-  // 重点折叠开关（§18.6：以前"点不开" —— 绑一次，不靠每次渲染才生效）
-  try {
-    const fm = $('#btnFocusMore');
-    if (fm) fm.onclick = e => { e.stopPropagation(); toggleFocusList(); };
-  } catch (e) { console.error('[bind] 重点开关绑定失败', e); }
 
   try {
   $$('#modeChips .chip').forEach(c => c.onclick = () => {
@@ -2039,6 +2042,8 @@ function bind() {
     toast(`已适应窗口 · ${Math.round(S.mindZoom * 100)}%`);
   };
 
+  const hg = $('#btnHistRestoreGit');
+  if (hg) hg.onclick = e => { e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget, true); };
   $('#btnHistClear').onclick = () => {
     const rel = histFile(); if (!rel) return;
     confirmModal({ title: '清空这个文件的全部历史？', text: rel, okText: '清空', onOk: () => {

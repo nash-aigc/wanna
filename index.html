@@ -196,7 +196,10 @@
             <div class="hist-file" id="histFile">—</div>
             <div class="hist-note">任何一次编辑（手改 / 对话改 / 恢复）自动存一版，<strong>每文件最近 10 次</strong>。</div>
           </div>
-          <button class="btn btn-ghost" id="btnHistClear">清空本文件历史</button>
+          <div class="hist-acts-top">
+            <button class="btn btn-mini hi-restore" id="btnHistRestoreGit" title="提交记录 · 恢复到某一版">恢复到提交…</button>
+            <button class="btn btn-ghost" id="btnHistClear">清空本文件历史</button>
+          </div>
         </div>
         <ul class="hist-list" id="histList"></ul>
       </div>

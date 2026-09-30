@@ -781,3 +781,9 @@ code{font-family:var(--mono);font-size:11.5px}
 .fchip .fproj{font-size:10px;color:#8A6E42;border-left:1px solid rgba(245,184,81,.35);
   padding-left:5px;margin-left:1px;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .focus-item .fproj{font-size:10.5px;color:#5D5D66;margin-left:auto;flex:0 0 auto}
+/* §19 历史页顶部动作行 + 重点列表抬到最上层 */
+.hist-acts-top{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+.focus-list{z-index:70}
+/* §19.1 真根因：focus-row 自己 overflow:hidden 会把向上弹的列表裁掉 → "点了没显示" */
+.focus-row{overflow:visible}
+.focus-chips{overflow:hidden;min-width:0}
