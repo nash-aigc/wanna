@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设计框架 · 这个项目怎么整理、怎么设计 · Wanna</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230A84FF'/%3E%3Cpath d='M4 6h8M4 8.5h8M4 11h5' stroke='%23fff' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#050506; --surface:#18181C; --surface2:#0C0C0E; --line:#2A2A2E; --line2:#1D1D21;
+    --ink:#F2F2F4; --ink2:#B9B9C2; --ink3:#8A8A93;
+    --accent:#0A84FF; --ok:#4ADE80; --warn:#F97316; --bad:#EF4444;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:56px 24px 96px}
+  .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);
+    font-family:var(--mono);margin:0 0 14px}
+  h1{font-size:31px;line-height:1.35;font-weight:650;margin:0 0 16px;letter-spacing:-.01em}
+  h2{font-size:20px;font-weight:600;margin:0 0 6px;letter-spacing:-.005em}
+  p{margin:0 0 16px;color:var(--ink2)}
+  .lead{font-size:16.5px;color:var(--ink);line-height:1.8}
+  .sec{margin-top:70px}
+  .rule{height:1px;background:var(--line2);margin:70px 0 0}
+  .quiet{color:var(--ink3);font-size:13.5px}
+  b.hi{color:var(--ink);font-weight:600}
+  code{font-family:var(--mono);font-size:.9em;background:#0F0F11;border:1px solid var(--line2);
+    border-radius:4px;padding:1px 5px;color:#8FC6FF}
+  a{color:#8FC6FF;text-decoration:none;border-bottom:1px solid rgba(143,198,255,.3)}
+  a:hover{border-bottom-color:#8FC6FF}
+
+  /* ── 什么时候整理 ── */
+  .now{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .now > div{border:1px solid var(--line);border-radius:12px;padding:18px 20px;background:var(--surface2)}
+  .now h3{margin:0 0 8px;font-size:14.5px;display:flex;align-items:center;gap:8px}
+  .now p{margin:0;font-size:13.5px;color:var(--ink2);line-height:1.7}
+  .pick{border-color:rgba(74,222,128,.35)!important;background:rgba(74,222,128,.05)!important}
+  .pill{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;
+    padding:2px 8px;border-radius:5px;border:1px solid var(--line);color:var(--ink3)}
+  .pill.g{color:var(--ok);border-color:rgba(74,222,128,.4);background:rgba(74,222,128,.10)}
+  .pill.r{color:#F87171;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.10)}
+  .pill.o{color:var(--warn);border-color:rgba(249,115,22,.4);background:rgba(249,115,22,.10)}
+  .pill.b{color:#8FC6FF;border-color:rgba(10,132,255,.4);background:rgba(10,132,255,.10)}
+
+  /* ── 目录地图 ── */
+  .filters{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 14px}
+  .fbtn{appearance:none;font:inherit;font-size:13px;color:var(--ink2);background:#141416;
+    border:1px solid var(--line);border-radius:8px;padding:7px 13px;cursor:pointer;
+    transition:border-color .14s,background .14s,color .14s}
+  .fbtn:hover{border-color:#3C3C42;color:var(--ink)}
+  .fbtn.on{border-color:rgba(10,132,255,.7);background:rgba(10,132,255,.14);color:#CFE4FF}
+  .map{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:10px}
+  .node{border:1px solid var(--line);border-radius:10px;background:var(--surface2);
+    padding:13px 15px;transition:opacity .22s,transform .22s,border-color .22s;position:relative}
+  .node.dim{opacity:.22;transform:scale(.985)}
+  .node .nm{font-family:var(--mono);font-size:13px;color:var(--ink);font-weight:600;
+    display:block;margin-bottom:5px;word-break:break-all}
+  .node .ds{font-size:12.5px;color:var(--ink3);line-height:1.6;display:block}
+  .node .st{position:absolute;top:11px;right:12px;font-family:var(--mono);font-size:10px}
+  .node .ref{display:block;margin-top:7px;font-family:var(--mono);font-size:10.5px;
+    color:var(--ink3);border-top:1px dashed var(--line);padding-top:6px}
+  .node[data-cat="doc"]{border-left:3px solid var(--accent)}
+  .node[data-cat="code"]{border-left:3px solid var(--ok)}
+  .node[data-cat="runtime"]{border-left:3px solid var(--warn)}
+  .node[data-cat="third"]{border-left:3px solid #8B5CF6}
+  .node[data-cat="junk"]{border-left:3px solid var(--bad)}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:12.5px;color:var(--ink3)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;
+    vertical-align:-1px}
+
+  /* ── 四层链 ── */
+  .chain{margin-top:18px;display:flex;flex-direction:column;gap:0}
+  .cstep{display:grid;grid-template-columns:52px 1fr 108px;gap:16px;align-items:center;
+    border:1px solid var(--line);background:var(--surface2);padding:15px 18px;cursor:pointer;
+    transition:border-color .15s,background .15s}
+  .cstep:hover{border-color:#3C3C42;background:#131317}
+  .cstep:first-child{border-radius:12px 12px 0 0}
+  .cstep:last-child{border-radius:0 0 12px 12px}
+  .cstep.open{border-color:rgba(10,132,255,.55);background:#131317}
+  .cnum{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;
+    justify-content:center;font-family:var(--mono);font-weight:600;font-size:14px;
+    background:rgba(10,132,255,.15);color:#8FC6FF}
+  .cmain b{display:block;font-size:14.5px;font-weight:600}
+  .cmain span{font-size:13px;color:var(--ink3)}
+  .cstat{text-align:right;font-family:var(--mono);font-size:11.5px}
+  .cbody{grid-column:1/-1;display:none;padding-top:14px;margin-top:4px;
+    border-top:1px dashed var(--line);font-size:13.5px;color:var(--ink2);line-height:1.75}
+  .cstep.open .cbody{display:block;animation:fade .25s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .cbody .where{font-family:var(--mono);font-size:12px;color:#8FC6FF;margin-top:6px}
+  .gapbox{margin-top:14px;border:1px dashed rgba(239,68,68,.45);border-radius:11px;
+    padding:15px 18px;background:rgba(239,68,68,.05)}
+  .gapbox b{color:#F87171}
+
+  /* ── 源码表 ── */
+  .tblwrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface2);margin-top:16px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line2);vertical-align:top}
+  th{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);
+    font-family:var(--mono);font-weight:500;background:#141416}
+  td{color:var(--ink2)}
+  td:first-child{color:var(--ink);font-weight:550;width:30%}
+  td.p{font-family:var(--mono);font-size:12px;color:#8FC6FF}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover td{background:#101014}
+
+  /* ── 拍板 ── */
+  .decide{margin-top:16px;display:flex;flex-direction:column;gap:10px}
+  .dcard{border:1px solid var(--line);border-radius:11px;background:var(--surface2);
+    padding:15px 18px;cursor:pointer;transition:border-color .15s}
+  .dcard:hover{border-color:#3C3C42}
+  .dcard.open{border-color:rgba(249,115,22,.5)}
+  .dhead{display:flex;align-items:center;gap:10px;justify-content:space-between}
+  .dhead b{font-size:14px;font-weight:600}
+  .dhead .cost{font-family:var(--mono);font-size:11px;color:var(--warn);flex:0 0 auto}
+  .dbody{display:none;font-size:13.5px;color:var(--ink2);margin-top:9px;line-height:1.75}
+  .dcard.open .dbody{display:block;animation:fade .22s ease-out}
+  .dcard .now-st{font-family:var(--mono);font-size:11.5px;color:var(--ink3);margin-top:7px}
+
+  .foot{margin-top:64px;padding-top:20px;border-top:1px solid var(--line2);
+    font-size:12.5px;color:var(--ink3);font-family:var(--mono);line-height:1.9}
+  @media (max-width:720px){
+    .now{grid-template-columns:1fr}
+    .cstep{grid-template-columns:40px 1fr;gap:12px}
+    .cstat{grid-column:2;text-align:left}
+    h1{font-size:25px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Wanna · 设计框架 · 2026-10-01</p>
+  <h1>这个项目怎么整理，<br>怎么从需求走到落地</h1>
+  <p class="lead">两件事：<b class="hi">文件夹怎么分</b>（含现在就该动的和现在不能动的），
+  和 <b class="hi">四层对照链</b>（需求 → 原型 → 源码 → 落地，每层文档在哪、缺哪一环）。
+  本页是 `设计框架/` 两份 markdown 的可视化版，能点开看细节。</p>
+
+  <!-- ══ 1 ══ -->
+  <div class="sec">
+    <p class="eyebrow">01 · 先回答时机问题</p>
+    <h2>现在整理，还是等改项目时再整理？</h2>
+    <p>这两个选项差别很大 —— 因为「整理」在本项目里其实是<b class="hi">两件不同风险的事</b>，
+    必须拆开决定，不能一句「现在/以后」说完。</p>
+
+    <div class="now">
+      <div class="pick">
+        <h3><span class="pill g">现在做</span> 文档结构 · 路径错误 · gitignore</h3>
+        <p>已经在造成损失：<code>reference/orca</code> 这个路径指向不存在的地方，
+        13 处引用指空（5 处直接显示给用户看）；29 MB 日志和 1967 个第三方文件误入库；
+        根目录散着 5 个无主文件。你现在正处在<b class="hi">设计原始稿阶段</b>，
+        结构定型的成本是最低的 —— 越晚，被引用固化得越多。</p>
+      </div>
+      <div>
+        <h3><span class="pill o">等改项目时做</span> 运行时目录归堆</h3>
+        <p><code>Wanna录音/</code> <code>Wanna图形/</code> <code>Wanna复盘/</code>
+        <code>WannaAgents/</code> —— 它们看起来像临时文件，你想归到一处是对的，
+        但路径<b class="hi">散写在多个 Swift 文件里</b>（如 <code>RecordingLibrary.swift:88</code>
+        「checkout 里的 Wanna录音/」）。挪 = 改代码 + 迁移用户数据。这是改项目本身，
+        不该混进整理文档这一轮。</p>
+      </div>
+    </div>
+
+    <p style="margin-top:18px">结论：<b class="hi">现在就把「不碰代码」的那部分做掉，碰代码的列清单让你拍板。</b>
+    理由是你说的那句 —— 「防止未来修改时找不到位置、改错路径」：这一轮已经抓到 13 处指空的路径，
+    说明这类错误<b class="hi">不是理论风险，是正在发生</b>。</p>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ══ 2 ══ -->
+  <div class="sec">
+    <p class="eyebrow">02 · 目录地图</p>
+    <h2>根目录 48 个条目，按「能不能动」分成五类</h2>
+    <p class="quiet">点下面的类别筛选 —— 灰掉的是不属于该类的。注意 <b class="hi">橙色那类最危险</b>：
+    它长得最像临时文件，却是代码写死路径的运行时数据。</p>
+
+    <div class="filters" id="filters">
+      <button class="fbtn on" data-f="all">全部</button>
+      <button class="fbtn" data-f="code">工程本体</button>
+      <button class="fbtn" data-f="doc">文档</button>
+      <button class="fbtn" data-f="runtime">运行时数据 ⚠️</button>
+      <button class="fbtn" data-f="third">第三方只读</button>
+      <button class="fbtn" data-f="junk">散落待清</button>
+    </div>
+
+    <div class="map" id="map">
+      <div class="node" data-cat="code"><span class="st">🔒</span><span class="nm">Wanna/</span>
+        <span class="ds">Swift 主程序 · 191 文件</span><span class="ref">Wanna.xcodeproj 引用</span></div>
+      <div class="node" data-cat="code"><span class="st">🔒</span><span class="nm">index.html · app.js</span>
+        <span class="ds">需求07 原型三件套 · 不是产品</span><span class="ref">⚠ 别覆盖这个 index.html</span></div>
+      <div class="node" data-cat="code"><span class="st">🔒</span><span class="nm">geometry-dsl/</span>
+        <span class="ds">画图技能子项目（自带上游 .git）</span><span class="ref">MacosUseController 调 CLI</span></div>
+      <div class="node" data-cat="code"><span class="st">🔒</span><span class="nm">scripts/ · tools/</span>
+        <span class="ds">探针、自检、录音健康闸门</span><span class="ref">AGENTS.md 引用</span></div>
+      <div class="node" data-cat="code"><span class="st">🔒</span><span class="nm">AGENTS.md</span>
+        <span class="ds">行为契约 · 每次启动都读</span><span class="ref">516 KB</span></div>
+
+      <div class="node" data-cat="doc"><span class="st">✅</span><span class="nm">需求/</span>
+        <span class="ds">用户要什么 · 原话+判据 · 含 90-实现映射</span><span class="ref">契约，00-交互标准锁死只读</span></div>
+      <div class="node" data-cat="doc"><span class="st">✅</span><span class="nm">全局框架/</span>
+        <span class="ds">系统现在长什么样 · 一文件一子系统</span><span class="ref">改了功能必须同批改</span></div>
+      <div class="node" data-cat="doc"><span class="st">✅</span><span class="nm">开发经验/</span>
+        <span class="ds">坑与实测数字 · 不重复说现状</span><span class="ref">314 文件（含运行日志）</span></div>
+      <div class="node" data-cat="doc"><span class="st">✅</span><span class="nm">设计框架/</span>
+        <span class="ds">本页所在 · 怎么整理 + 怎么设计</span><span class="ref">本批新建</span></div>
+      <div class="node" data-cat="doc"><span class="st">✅</span><span class="nm">架构说明/</span>
+        <span class="ds">多语言分工图解（HTML）</span><span class="ref">上一批建</span></div>
+      <div class="node" data-cat="doc"><span class="st">✅</span><span class="nm">设计稿/</span>
+        <span class="ds">给用户拍板的样式稿 · 40 文件</span><span class="ref">Swift 注释引用</span></div>
+      <div class="node" data-cat="junk"><span class="st">⚠️</span><span class="nm">design-preview/</span>
+        <span class="ds">调效果用的过程页 · 39 文件 · 不入库</span><span class="ref">与 设计稿/ 名像但职责不同 · 不合并</span></div>
+
+      <div class="node" data-cat="runtime"><span class="st">🚫 移动即坏</span><span class="nm">Wanna录音/</span>
+        <span class="ds">169 MB · 3997 文件 · 用户真实录音</span><span class="ref">RecordingLibrary.swift:88 写死路径</span></div>
+      <div class="node" data-cat="runtime"><span class="st">🚫</span><span class="nm">Wanna图形/</span>
+        <span class="ds">画图产物落盘处</span><span class="ref">MacosUseController · TaskDirectionStore</span></div>
+      <div class="node" data-cat="runtime"><span class="st">🚫</span><span class="nm">Wanna复盘/</span>
+        <span class="ds">复盘 agent 的项目文件夹</span><span class="ref">AppSettings.swift:689</span></div>
+      <div class="node" data-cat="runtime"><span class="st">🚫</span><span class="nm">WannaAgents/</span>
+        <span class="ds">后台 agent 的工作目录</span><span class="ref">AgentSessionManager:244</span></div>
+      <div class="node" data-cat="runtime"><span class="st">✅</span><span class="nm">.cache/</span>
+        <span class="ds">散装临时文件（本批新建）</span><span class="ref">截图 / OCR / profraw 归这里</span></div>
+
+      <div class="node" data-cat="third"><span class="st">🚫 不入库</span><span class="nm">Clone_From/</span>
+        <span class="ds">975 MB · 第三方源码克隆</span><span class="ref">★ Orca 源码在这里：Clone_From/Orca</span></div>
+      <div class="node" data-cat="third"><span class="st">⚠️ 实际入库</span><span class="nm">reference/</span>
+        <span class="ds">29 MB · 官方文档本地副本</span><span class="ref">gitignore 写了但 1967 文件已入库</span></div>
+      <div class="node" data-cat="third"><span class="st">✅</span><span class="nm">参考资料/ · pi二次开发/</span>
+        <span class="ds">调研素材 · 已 gitignore</span><span class="ref">体积大且含第三方内容</span></div>
+      <div class="node" data-cat="third"><span class="st">✅</span><span class="nm">mini-agent/ · voice-agent/</span>
+        <span class="ds">独立小实验 · 含明文 key</span><span class="ref">已 gitignore</span></div>
+    </div>
+
+    <div class="legend">
+      <span><i style="background:var(--ok)"></i>工程本体 · 不动</span>
+      <span><i style="background:var(--accent)"></i>文档 · 各司其职不合并</span>
+      <span><i style="background:var(--warn)"></i>运行时数据 · 移动即坏</span>
+      <span><i style="background:#8B5CF6"></i>第三方只读 · 不入库</span>
+      <span><i style="background:var(--bad)"></i>散落待清</span>
+    </div>
+
+    <div class="gapbox" style="margin-top:18px;border-color:rgba(249,115,22,.45);background:rgba(249,115,22,.05)">
+      <b style="color:var(--warn)">⚠ 为什么「四份文档不合并」、运行时目录为什么不能归堆</b>
+      <p style="margin:7px 0 0;font-size:13.5px">你提到「开发经验、架构说明、设计稿、全局框架要么融合、要么放一起」——
+      但它们<b class="hi">变的速度不一样</b>：需求会改方向、现状随代码改、教训不会过期、样稿是过程产物。
+      揉成一份，结果必然是「改了代码忘了改文档」。分家不是洁癖，是让每份有各自稳定的寿命 ——
+      所以要统一的是<b class="hi">入口和规矩</b>（就是本目录），不是把内容倒进一个筐。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ══ 3 ══ -->
+  <div class="sec">
+    <p class="eyebrow">03 · 设计框架</p>
+    <h2>四层对照链 —— 每层点开看「在哪、缺什么」</h2>
+    <p>这是本项目的<b class="hi">设计思路本体</b>。四层各回答一个问题，<b class="hi">不能互相替代</b>。
+    点任意一层展开细节。</p>
+
+    <div class="chain" id="chain">
+      <div class="cstep">
+        <div class="cnum">1</div>
+        <div class="cmain"><b>需求 —— 你要什么</b><span>你的原话 + 判据，契约级，只读</span></div>
+        <div class="cstat" style="color:var(--ok)">✅ 完整</div>
+        <div class="cbody">
+          <b class="hi">在哪</b>：<code>需求/00-词汇表</code>、<code>01~06 契约</code>、<code>07 项目工作区</code>。
+          其中 <code>00-交互标准（锁死·只读）</code> 是最高优先级 —— 与任何新需求冲突时以它为准。
+          <div class="where">它回答：用户要什么、什么算做对了。不回答怎么实现。</div>
+        </div>
+      </div>
+
+      <div class="cstep">
+        <div class="cnum">2</div>
+        <div class="cmain"><b>原型 —— 长什么样、点哪出什么</b><span>HTML 三件套，验证交互，不是产品</span></div>
+        <div class="cstat" style="color:var(--ok)">✅ 有</div>
+        <div class="cbody">
+          <b class="hi">在哪</b>：<code>index.html</code> + <code>app.js</code>（约 4900 行）+ <code>app.css</code>（仓库根）。
+          <br><b class="hi">它回答</b>：交互与信息架构。
+          <br><b class="hi">它不回答</b>：具体参数、数据结构、边界条件、算法 —— 这些必须回源码取。
+          <div class="where">⚠ 别覆盖根目录 index.html —— 它就是原型的入口。</div>
+        </div>
+      </div>
+
+      <div class="cstep open">
+        <div class="cnum">3</div>
+        <div class="cmain"><b>源码依据 —— 具体怎么实现</b><span>别人的参数 / 字段 / 算法 / 调用顺序</span></div>
+        <div class="cstat" style="color:var(--warn)">⚠ 路径刚修</div>
+        <div class="cbody">
+          <b class="hi">在哪</b>：<code>Clone_From/Orca/</code>（402 MB）、<code>reference/pi/</code>。
+          <br><b class="hi">原型里写了吗？写了</b> —— <code>app.js</code> 的注释精确到 <b class="hi">文件:行号</b>，
+          例如「视口预设照 <code>Clone_From/Orca/src/shared/browser-viewport-presets.ts:13-68</code>」。
+          需求里也写了：每节开头的出处行。
+          <br><b class="hi">刚修的 bug</b>：这 13 处原来写的是 <code>reference/orca</code> ——
+          <b class="hi">那份已不存在</b>，照注释找源码会扑空，其中 5 处是直接显示给用户的 toast 文案。
+          2026-10-01 已全部改为 <code>Clone_From/Orca</code>。
+          <div class="where">硬规矩：还原功能时，原型确认交互，实现细节一律回源码 —— 冲突时以源码为准。</div>
+        </div>
+      </div>
+
+      <div class="cstep">
+        <div class="cnum">4</div>
+        <div class="cmain"><b>落地 —— macOS 上真跑起来</b><span>Swift 真实现（权限 / 窗口 / 上架）</span></div>
+        <div class="cstat" style="color:var(--ok)">✅ 在跑</div>
+        <div class="cbody">
+          <b class="hi">在哪</b>：<code>Wanna/*.swift</code>（191 个文件）。
+          <br><b class="hi">怎么分工</b>：碰 macOS 的必须 Swift；现成的纯逻辑保留原语言跑子进程；
+          只有数据格式（JSON）要统一 —— 详见 <a href="../架构说明/index.html">架构说明</a>。
+          <div class="where">它回答：在 macOS 上怎么真跑。不回答交互该长什么样。</div>
+        </div>
+      </div>
+    </div>
+
+    <p style="margin-top:20px"><b class="hi">层间对照表</b> —— 哪两层之间有现成的对照文档：</p>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>对照</th><th>文档</th><th>现状</th></tr></thead>
+        <tbody>
+          <tr><td>需求 → 原型</td><td class="p">需求/90-实现映射.md</td>
+            <td><span class="pill g">✅ 有</span> 33 行，每条带「怎么验 + 状态」（已验/未验/悬空）</td></tr>
+          <tr><td>原型 → 源码</td><td class="p">app.js 行内注释 + 需求/07 出处行</td>
+            <td><span class="pill g">✅ 有</span> 行号级，但散在代码里；路径已修</td></tr>
+          <tr><td>需求 → 源码</td><td class="p">需求/90 部分行</td>
+            <td><span class="pill o">⚠ 部分</span> 只有移植类需求写了出处</td></tr>
+          <tr><td><b class="hi">原型 → Swift 落地</b></td><td class="p">——</td>
+            <td><span class="pill r">❌ 缺</span> 唯一缺的一环，三个选项待你拍板（见 05）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="gapbox">
+      <b>为什么缺的那一环要紧</b>
+      <p style="margin:7px 0 0;font-size:13.5px"><code>90-实现映射</code> 的左列是<b class="hi">你的原话</b>，
+      右列是<b class="hi">原型代码落点</b>。将来要把原型还原成 Swift 时，得先从需求行反推原型代码、
+      再想 Swift 怎么写 —— <b class="hi">多一跳</b>，而且 app.js 的 4900 行不是按 Swift 模块边界组织的，
+      对不上。这正是你担心的「还原项目时找不到对应关系」。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ══ 4 ══ -->
+  <div class="sec">
+    <p class="eyebrow">04 · 速查</p>
+    <h2>具体参考哪份源码</h2>
+    <p><b class="hi">Orca 源码只在 <code>Clone_From/Orca</code></b> —— <code>reference/orca</code> 已不存在。
+    拿到一个功能，先去 <code>app.js</code> 搜功能名，注释会直接告诉你照的哪个文件第几行，
+    <b class="hi">从注释反查源码，比从截图猜快得多</b>。</p>
+
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>要还原什么</th><th>起点文件</th></tr></thead>
+        <tbody>
+          <tr><td>浏览器页（视口/Cookie/抓取/标注）</td><td class="p">Clone_From/Orca/src/shared/browser-viewport-presets.ts:13-68</td></tr>
+          <tr><td>标签右键菜单、标签颜色</td><td class="p">tab-bar/SortableTabContextMenu.tsx:27-88</td></tr>
+          <tr><td>拆分终端 / 移动标签到分屏</td><td class="p">tab-bar/TerminalTabSplitMenuSection.tsx:47-77</td></tr>
+          <tr><td>项目右键、Sleep</td><td class="p">sidebar/WorktreeContextMenuView.tsx:157-344</td></tr>
+          <tr><td>右侧资源管理器（Names/Contents）</td><td class="p">right-sidebar/FileExplorer.tsx:42 · file-name-filter-tokens.ts:51-61</td></tr>
+          <tr><td>智能体会话历史（字段/过滤/恢复）</td><td class="p">right-sidebar/AiVaultPanel.tsx:62 · <b class="hi">shared/ai-vault-types.ts:96-139</b></td></tr>
+          <tr><td>⌘J 全局命令面板</td><td class="p">WorktreeJumpPalette.tsx · keybindings/definitions-core-1.ts:35</td></tr>
+          <tr><td>快捷命令（表单+执行动作）</td><td class="p">terminal-quick-commands/ · lib/run-quick-command-in-new-tab.ts:56-142</td></tr>
+          <tr><td>自动化（八选择器/搜索/筛选/运行）</td><td class="p">automations/AutomationEditorDialog.tsx:37 · automation-list-view.ts:184-198</td></tr>
+          <tr><td>决策大脑 RPC 协议（Pi）</td><td class="p">reference/pi/packages/coding-agent/docs/rpc.md</td></tr>
+          <tr><td>技能怎么写（Pi）</td><td class="p">reference/pi/.pi/skills/（YAML frontmatter，与我们 11 个同格式）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:16px"><b class="hi">每拿一个新功能，就在上表加一行</b> —— 这张表是「我们抄过谁、抄在哪」
+    的总账，也是上游更新时判断「他改的那段跟我有没有关系」的唯一依据。</p>
+
+    <div class="gapbox" style="border-color:rgba(239,68,68,.45)">
+      <b>⚠ 比路径更重要：协议红线</b>
+      <p style="margin:7px 0 0;font-size:13.5px">
+      <b class="hi">Claude-Code 是专有协议，一行代码都不能搬</b>，只能学思路；<br>
+      <b class="hi">LLM_Wiki 是 GPL-3.0，搬了会让整个 Wanna 必须开源</b>；<br>
+      可直接搬的只有 Hermes / MiMo-Code / Orca / Codex（MIT / Apache-2.0）。<br>
+      <span class="quiet">出处：<code>Clone_From/README-克隆项目汇总.md</code></span></p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ══ 5 ══ -->
+  <div class="sec">
+    <p class="eyebrow">05 · 待你拍板</p>
+    <h2>四件我<b style="color:var(--warn)">没有</b>替你决定的事</h2>
+    <p class="quiet">都是「改仓库内容 / 改代码」级别的，点了展开看代价。我只做了零风险的那部分
+    （路径修正、gitignore、新建本目录）。</p>
+
+    <div class="decide" id="decide">
+      <div class="dcard">
+        <div class="dhead"><b>① 29 MB 运行日志已入库</b><span class="cost">停跟踪 · 历史仍在</span></div>
+        <div class="dbody">
+          <code>开发经验/运行日志/</code> 有 <b class="hi">287 个 .log 全在版本控制里</b>，
+          而 <code>.gitignore</code> 只挡了一个具体文件名。<br>
+          做法：<code>git rm -r --cached</code> + 补 ignore —— <b class="hi">本地文件全保留</b>，
+          以后不入库。<br>
+          <b class="hi">代价</b>：历史里仍然存在，仓库不会因此变小；而且日志里可能有
+          <code>开发经验/09-实测数据.md</code> 引用的证据，留本地就还能查。
+          <div class="now-st">现状：本批已补 ignore 规则，阻止<b>新的</b>日志入库；已入库的未动。</div>
+        </div>
+      </div>
+
+      <div class="dcard">
+        <div class="dhead"><b>② reference/ 1967 个文件已入库</b><span class="cost">29 MB · 同上</span></div>
+        <div class="dbody">
+          <code>.gitignore:77</code> 写着 <code>reference/</code>，但 <b class="hi">gitignore 挡不住已经入库的东西</b> ——
+          <code>git ls-files reference</code> 仍然返回 1967 条。<br>
+          <b class="hi">而且要先确认留哪个</b>：它是 AGENTS §0.9 说的「官方文档本地副本」
+          （<code>reference/pi/</code> 38 份 rpc/技能文档），拆掉会影响照官方实现的那条规矩。
+          <div class="now-st">现状：未动。这条要先确认用途再决定。</div>
+        </div>
+      </div>
+
+      <div class="dcard">
+        <div class="dhead"><b>③ 四个运行时目录归到一处</b><span class="cost">要改代码 + 迁数据</span></div>
+        <div class="dbody">
+          <code>Wanna录音/</code> <code>Wanna图形/</code> <code>Wanna复盘/</code> <code>WannaAgents/</code>
+          —— 你明确想把它们当缓存归堆，方向对。<br>
+          <b class="hi">但不能现在挪</b>：路径不是集中在一个常量里，而是散写在多个 Swift 文件
+          （<code>RecordingLibrary.swift:88</code> 明写「checkout 里的 Wanna录音/」，
+          <code>AppSettings.swift:689</code>、<code>AgentSessionManager:244</code> 同理）。<br>
+          真要做：改 <code>WorkspaceDirectory</code> 一处收口 → 迁移用户已有数据 → 全量搜引用 → 测录音/画图/复盘三条链。
+          <div class="now-st">现状：未动，只在 00-目录地图 标了「移动即坏」。</div>
+        </div>
+      </div>
+
+      <div class="dcard">
+        <div class="dhead"><b>④ 原型 → Swift 落地的对照表</b><span class="cost">唯一缺的一环</span></div>
+        <div class="dbody">
+          <b class="hi">A</b> 在 <code>需求/90</code> 每行加一栏「Swift 落点」，没做的天然显示为待落地<br>
+          <b class="hi">B</b> 新建 <code>需求/91-落地映射.md</code>：原型组件 → <code>Wanna/*.swift</code><br>
+          <b class="hi">C</b> 不建，等真落地时逐条补 —— 最省事，但落地时可能重蹈「路径指空」的坑<br>
+          <span class="quiet">我倾向 A（一张表胜过两张），但这是长期维护负担，由你定。</span>
+          <div class="now-st">现状：未动。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ══ 6 ══ -->
+  <div class="sec">
+    <p class="eyebrow">06 · 硬规矩</p>
+    <h2>三条，加新东西之前过一遍</h2>
+    <div class="tblwrap">
+      <table>
+        <tbody>
+          <tr><td>① 根目录不放散装文件</td>
+            <td>新东西先问「属于哪一类」（见 02 的五类），不属于就先想清楚职责再建目录。
+            本批已把 5 个无主截图/OCR 文件收进 <code>.cache/</code>。</td></tr>
+          <tr><td>② <code>git add -A</code> 前先看 <code>git status</code></td>
+            <td>更要紧的是：<b class="hi">新加 ignore 规则后跑一次
+            <code>git ls-files 目录名 | wc -l</code></b> —— 非 0 就是「以为挡住了、其实在仓库里」。
+            ①②两个问题就是这么来的。</td></tr>
+          <tr><td>③ 移动目录前先搜引用</td>
+            <td><code>grep -rn "目录名" --include="*.swift" --include="*.js" --include="*.md"</code> ——
+            <b class="hi">注释里的引用也算</b>，那是「按图索骥」的线。本批修的 13 处指空就是没搜的后果。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="foot">
+    设计框架/ · 00-目录地图.md ｜ 01-设计框架.md ｜ 本页 index.html<br>
+    相关：<a href="../架构说明/index.html">架构说明（多语言分工）</a> ｜
+    <a href="../需求/90-实现映射.md">需求/90 实现映射</a> ｜
+    <a href="../全局框架/00-项目全貌.md">全局框架/00 项目全貌</a>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  /* 目录地图筛选 */
+  var fbtns = document.querySelectorAll('#filters .fbtn');
+  var nodes = document.querySelectorAll('#map .node');
+  fbtns.forEach(function(b){
+    b.addEventListener('click', function(){
+      fbtns.forEach(function(x){ x.classList.toggle('on', x===b); });
+      var f = b.dataset.f;
+      nodes.forEach(function(n){
+        n.classList.toggle('dim', f!=='all' && n.dataset.cat!==f);
+      });
+    });
+  });
+
+  /* 四层链展开（一次只开一个） */
+  var steps = document.querySelectorAll('#chain .cstep');
+  steps.forEach(function(s){
+    s.addEventListener('click', function(){
+      var was = s.classList.contains('open');
+      steps.forEach(function(x){ x.classList.remove('open'); });
+      if(!was) s.classList.add('open');
+    });
+  });
+
+  /* 待拍板展开 */
+  document.querySelectorAll('#decide .dcard').forEach(function(c){
+    c.addEventListener('click', function(){ c.classList.toggle('open'); });
+  });
+})();
+</script>
+</body>
+</html>

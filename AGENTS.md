@@ -2395,6 +2395,18 @@ So before changing a subsystem, read its document in `全局框架/` — `02-光
 
 Add to them rather than duplicating this file: this file states what the app *is*, `全局框架/` states how it works today, `开发经验/` states what was *learned* building it. **And the writing is not optional or on request — see the rule near the top of this file.**
 
+**`设计框架/` 是第四份，管两件上面三份都不管的事：这个项目怎么整理、怎么从需求走到落地（2026-10-01 用户要求新建）。** 它有三样东西：
+
+- **`00-目录地图.md`** —— 根目录 48 个条目按「**能不能动**」分五类（工程本体 / 文档 / 运行时数据 / 第三方只读 / 散落待清），每类写明「谁在引用它、动了会不会坏」。**新增或移动任何目录之前先看这张表**；加了新目录就在表里加一行。
+- **`01-设计框架.md`** —— 四层对照链（需求 → 原型 → 源码 → 落地）、每层文档在哪、以及一张「具体参考哪份源码」的速查表。
+- **`index.html`** —— 上面两份的可视化版，可点开预览。
+
+它和 `架构说明/`（多语言分工图解）不是一回事：那个讲**用什么语言写**，这个讲**文件放哪、流程怎么走**。
+
+**三条硬规矩**（详见 `设计框架/00` 第二节）：① 根目录不放散装文件；② `git add -A` 之前先看 `git status`，**新加 ignore 规则后跑一次 `git ls-files 目录名 | wc -l`** —— 非 0 就是「以为挡住了、其实在仓库里」（`开发经验/运行日志/` 287 个文件和 `reference/` 1967 个文件就是这么进去的）；③ 移动任何目录前先 `grep -rn "目录名"`，**注释里的引用也算**。
+
+**⚠️ Orca 源码只在 `Clone_From/Orca`。`reference/orca` 已不存在** —— 这个过时路径曾让全仓库 13 处引用指空（5 处是直接显示给用户的 toast 文案），2026-10-01 修掉。原型里 `app.js` 的注释精确到 `文件:行号`，**还原功能时从注释反查源码，实现细节一律回源码取，与原型冲突时以源码为准**。
+
 **The two Agent design trees (`04-Agent体系/` and `Agent施工/`) were DELETED on 2026-09-28 at the user's instruction.** They described a framework that was never built — their own status lines say `设计已定，尚未实施` and `运行时还没有去读它`, and the code they described (`[SKILL:]` injection, the 任务卡, `[RUN:]` routing) does not exist. The user's call was that a design tree sitting next to code it does not describe is worse than no design tree. What survives about the agent subsystem is `全局框架/14-Agent子系统.md` (the Claude Code subprocess protocol, measured) plus `开发经验/16-卡片通话的两条路.md`, `17-大调整-主Agent接管执行.md` and `05-Agent架构-官方对照.md`.
 
 ## Self-Update Instructions

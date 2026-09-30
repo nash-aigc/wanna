@@ -132,7 +132,7 @@ let S = load() || {
   automationFilter: {},
   vaultScope: 'workspace', vaultHost: 'local', vaultAgents: [], vaultGroup: 'project',
   vaultHideEmpty: false, vaultLimit: 100, vaultQuery: '', vaultOpen: {}, vaultGroupsCollapsed: {},
-  // §22.14 浏览器页 —— 形状照 reference/orca …/shared/browser-workspace-types.ts:174-180
+  // §22.14 浏览器页 —— 形状照 Clone_From/Orca …/shared/browser-workspace-types.ts:174-180
   browserProfiles: [{ id: 'default', label: 'Default', engine: 'Safari', scope: 'default' },
                     { id: 'google',  label: 'Google',  engine: 'Chrome',  scope: 'isolated' }],
   browserProfile: 'default',
@@ -3477,7 +3477,7 @@ function bind() {
   $('#brDraw').onclick = () => setBrMode('draw');
   $('#brImport').onclick = e => { e.stopPropagation(); openBrCookie(e.currentTarget); };
   $('#brMore').onclick = e => { e.stopPropagation(); openBrMore(e.currentTarget); };
-  $('#brCode').onclick = () => toast('&lt;&gt; 开发者工具：真机走 `guest.openDevTools()`（reference/orca …/browser-manager-viewport.ts:16）');
+  $('#brCode').onclick = () => toast('&lt;&gt; 开发者工具：真机走 `guest.openDevTools()`（Clone_From/Orca …/browser-manager-viewport.ts:16）');
   $('#brExt').onclick = () => { const t = activeTabObj(); if (t && t.url) window.open(t.url, '_blank', 'noopener'); else toast('还没有网址'); };
   $('#btnPath').onclick = () => {
     const t = $('#fullPathLabel').textContent;
@@ -4024,8 +4024,8 @@ function runQuickCommand(id) {
 }
 
 /* ============================================================
-   §22.14 浏览器页 —— 细节从 reference/orca 取，不是照截图猜
-   视口预设照 reference/orca/src/shared/browser-viewport-presets.ts:13-68
+   §22.14 浏览器页 —— 细节从 Clone_From/Orca 取，不是照截图猜
+   视口预设照 Clone_From/Orca/src/shared/browser-viewport-presets.ts:13-68
    工具栏顺序照 …/assemble-chrome/browser-chrome-toolbar.tsx:212-267
    ⋯ 菜单照 …/assemble-chrome/BrowserToolbarMenu.tsx:99-252
    ============================================================ */
@@ -4137,7 +4137,7 @@ function brBounds(strokes) {
   if (!xs.length) return null;
   return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
-/// 提示词模板照 reference/orca …/annotate/browser-annotation-output.ts:162-224 的骨架
+/// 提示词模板照 Clone_From/Orca …/annotate/browser-annotation-output.ts:162-224 的骨架
 function brPrompt({ title, kind, items, strokes }) {
   const t = activeTabObj() || {};
   const body = $('#brBody').getBoundingClientRect();
@@ -4151,7 +4151,7 @@ function brPrompt({ title, kind, items, strokes }) {
     lines.push(`### ${i + 1}. ${it.label}`);
     lines.push(`**Intent:** ${it.intent || '（未填）'}`);
     const noDom = '_（跨域读不到 DOM；真机上走 Electron 的 guest.executeJavaScript(buildGuestOverlayScript("extractHover"))'
-                + ' —— reference/orca/src/main/browser/browser-manager-grab.ts:111-125）_';
+                + ' —— Clone_From/Orca/src/main/browser/browser-manager-grab.ts:111-125）_';
     lines.push(`**Selector:** ${it.selector || noDom}`);
     lines.push(`**Bounds:** x=${it.x}, y=${it.y}, ${it.w}x${it.h}`);
     if (it.comment) lines.push(`**Feedback:** ${it.comment}`);
@@ -4162,7 +4162,7 @@ function brPrompt({ title, kind, items, strokes }) {
     lines.push(`### 绘制标注（${strokes.length} 笔）`);
     lines.push(`**Bounds:** x=${b.x}, y=${b.y}, ${b.w}x${b.h}`);
     lines.push(`**Colors:** ${[...new Set(strokes.map(s => s.color))].join(', ')}`);
-    lines.push('_底图截图需要 Electron 的 `webview.capturePage()`（reference/orca …/markup-base-image.ts:29）—— 原型里没有，所以只带笔迹与坐标。_');
+    lines.push('_底图截图需要 Electron 的 `webview.capturePage()`（Clone_From/Orca …/markup-base-image.ts:29）—— 原型里没有，所以只带笔迹与坐标。_');
     lines.push('');
   }
   return lines.join('\n');
@@ -4242,7 +4242,7 @@ function openBrCookie(anchor) {
     S.browserCookies = S.browserCookies || [];
     S.browserCookies.push({ from: src, count: n, at: now() });
     save(true);
-    toast(`已从 <b>${escapeHtml(src)}</b> 导入 ${n} 条 cookie<br><code style="font-size:11px">真机走 reference/orca/src/main/browser/browser-cookie-import-pipeline.ts</code>`);
+    toast(`已从 <b>${escapeHtml(src)}</b> 导入 ${n} 条 cookie<br><code style="font-size:11px">真机走 Clone_From/Orca/src/main/browser/browser-cookie-import-pipeline.ts</code>`);
   });
   m.hidden = false; placeMenu(m, anchor.getBoundingClientRect().right + 6, anchor.getBoundingClientRect().top);
 }
