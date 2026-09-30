@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多语言功能到底用哪种语言写 · Wanna 架构说明</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230A84FF'/%3E%3Cpath d='M4 8h8M8 4v8' stroke='%23fff' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
+
+<style>
+  :root{
+    --bg:#050506; --surface:#18181C; --surface2:#0C0C0E; --line:#2A2A2E; --line2:#1D1D21;
+    --ink:#F2F2F4; --ink2:#B9B9C2; --ink3:#8A8A93;
+    --accent:#0A84FF; --ok:#4ADE80; --warn:#F97316; --bad:#EF4444;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px; line-height:1.75; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:56px 24px 96px}
+  .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);
+    font-family:var(--mono);margin:0 0 14px}
+  h1{font-size:31px;line-height:1.35;font-weight:650;margin:0 0 16px;letter-spacing:-.01em}
+  h2{font-size:20px;font-weight:600;margin:0 0 6px;letter-spacing:-.005em}
+  h3{font-size:15px;font-weight:600;margin:0 0 4px}
+  p{margin:0 0 16px;color:var(--ink2)}
+  .lead{font-size:16.5px;color:var(--ink);line-height:1.8}
+  .sec{margin-top:72px}
+  .rule{height:1px;background:var(--line2);margin:72px 0 0}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px 24px}
+  .card + .card{margin-top:14px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;
+    padding:2px 7px;border-radius:5px;border:1px solid var(--line);color:var(--ink3);margin-right:6px}
+  .tag.b{color:#8FC6FF;border-color:rgba(10,132,255,.35);background:rgba(10,132,255,.10)}
+  .tag.g{color:var(--ok);border-color:rgba(74,222,128,.35);background:rgba(74,222,128,.10)}
+  .tag.o{color:var(--warn);border-color:rgba(249,115,22,.35);background:rgba(249,115,22,.10)}
+  .tag.r{color:#F87171;border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.10)}
+  code{font-family:var(--mono);font-size:.9em;background:#0F0F11;border:1px solid var(--line2);
+    border-radius:4px;padding:1px 5px;color:#8FC6FF}
+  .quiet{color:var(--ink3);font-size:13.5px}
+
+  /* 你的心结 */
+  .knot{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .knot > div{background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .knot h4{margin:0 0 6px;font-size:13.5px;font-weight:600;color:var(--ink)}
+  .knot p{margin:0;font-size:13.5px;color:var(--ink3);line-height:1.7}
+  .knot .verdict{margin-top:8px;font-size:12.5px;font-family:var(--mono)}
+  .no{color:var(--bad)} .yes{color:var(--ok)}
+
+  /* 三层图 */
+  .three{margin-top:18px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface2)}
+  .layer{display:flex;align-items:center;gap:16px;padding:16px 20px;border-bottom:1px solid var(--line2)}
+  .layer:last-child{border-bottom:0}
+  .layer .n{flex:0 0 auto;width:34px;height:34px;border-radius:8px;display:flex;align-items:center;
+    justify-content:center;font-family:var(--mono);font-size:13px;font-weight:600}
+  .layer .t{flex:1;min-width:0}
+  .layer .t b{display:block;font-size:14.5px;font-weight:600}
+  .layer .t span{font-size:13px;color:var(--ink3)}
+  .layer .k{flex:0 0 auto;font-family:var(--mono);font-size:12px;text-align:right;color:var(--ink2)}
+  .L1 .n{background:rgba(10,132,255,.16);color:#8FC6FF}
+  .L2 .n{background:rgba(74,222,128,.14);color:var(--ok)}
+  .L3 .n{background:rgba(249,115,22,.14);color:var(--warn)}
+  .once{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:4px;
+    background:#0F0F11;border:1px solid var(--line);color:var(--ink3)}
+
+  /* 演示 */
+  .demo{margin-top:18px;border:1px solid var(--line);border-radius:12px;background:var(--surface);
+    overflow:hidden}
+  .demo-head{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;justify-content:space-between;gap:12px;background:#141416}
+  .demo-head b{font-size:13.5px}
+  .demo-head span{font-size:11.5px;color:var(--ink3);font-family:var(--mono)}
+  .demo-body{display:grid;grid-template-columns:1fr 240px;min-height:264px}
+  .pane{padding:20px 22px;border-right:1px solid var(--line2)}
+  .pane .hint{font-size:13px;color:var(--ink3);margin-bottom:14px}
+  .qbtns{display:flex;flex-wrap:wrap;gap:8px}
+  .qbtn{appearance:none;font:inherit;font-size:13.5px;color:var(--ink);background:#141416;
+    border:1px solid var(--line);border-radius:9px;padding:8px 13px;cursor:pointer;
+    transition:border-color .14s,background .14s}
+  .qbtn:hover{border-color:rgba(10,132,255,.6);background:#1F1F22}
+  .qbtn.on{border-color:rgba(10,132,255,.75);background:rgba(10,132,255,.14)}
+  .out{margin-top:18px;background:var(--surface2);border:1px solid var(--line2);border-radius:9px;
+    padding:14px 16px;min-height:118px}
+  .out .empty{color:var(--ink3);font-size:13px}
+  .out .line{font-size:14.5px;color:var(--ink);line-height:1.7;animation:rise .3s ease-out}
+  .out .line em{font-style:normal;color:var(--ok)}
+  .out .meta{margin-top:9px;font-family:var(--mono);font-size:11.5px;color:var(--ink3);
+    border-top:1px dashed var(--line);padding-top:9px}
+  @keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+  .pipes{padding:20px 16px;display:flex;flex-direction:column;justify-content:space-between;gap:10px}
+  .prow{display:flex;align-items:center;gap:10px}
+  .dot{width:9px;height:9px;border-radius:50%;background:#2A2A2E;flex:0 0 auto;transition:background .2s}
+  .track{flex:1;height:6px;border-radius:3px;background:#141416;position:relative;overflow:hidden}
+  .track i{position:absolute;inset:0;width:0;border-radius:3px;transition:width .55s cubic-bezier(.3,.9,.3,1)}
+  .plab{font-family:var(--mono);font-size:11.5px;color:var(--ink3);flex:0 0 auto;width:104px}
+  .prow.live .dot{background:var(--ok)}
+  .prow.live .plab{color:var(--ink2)}
+  .p1.live .track i{width:100%;background:linear-gradient(90deg,#0A84FF,#4ADE80)}
+  .p2.live .track i{width:100%;background:linear-gradient(90deg,#0A84FF,#F59E0B)}
+  .p3.live .track i{width:100%;background:linear-gradient(90deg,#0A84FF,#A855F7)}
+  .psrc{margin-top:6px;font-size:11.5px;color:var(--ink3);font-family:var(--mono);
+    text-align:center;border-top:1px dashed var(--line);padding-top:10px}
+
+  /* 表 */
+  table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13.8px}
+  th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line2);vertical-align:top}
+  th{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);
+    font-family:var(--mono);font-weight:500;border-bottom-color:var(--line)}
+  td{color:var(--ink2)}
+  td:first-child{color:var(--ink);font-weight:550;width:31%}
+  tbody tr:last-child td{border-bottom:0}
+  .tblwrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface2)}
+
+  /* 两极对比 */
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+  .vs > div{border:1px solid var(--line);border-radius:12px;padding:18px 20px;background:var(--surface2)}
+  .vs h3{display:flex;align-items:center;gap:8px}
+  .vs ul{margin:10px 0 0;padding-left:18px}
+  .vs li{font-size:13.5px;color:var(--ink2);margin-bottom:7px;line-height:1.65}
+  .vs .cost{margin-top:12px;font-family:var(--mono);font-size:12px;padding-top:10px;
+    border-top:1px dashed var(--line)}
+  .bad-c h3{color:#F87171} .ok-c h3{color:var(--ok)}
+  .bad-c .cost{color:#F87171} .ok-c .cost{color:var(--ok)}
+
+  /* 误解 */
+  .myth{border-left:3px solid var(--bad);background:var(--surface2);border-radius:0 10px 10px 0;
+    padding:14px 18px;margin-top:14px}
+  .myth .h{font-size:13px;font-family:var(--mono);color:#F87171;margin-bottom:4px}
+  .myth p{margin:0;font-size:14px;color:var(--ink2)}
+  .fact{border-left-color:var(--ok)} .fact .h{color:var(--ok)}
+
+  /* 目录 */
+  pre{background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+    overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.85;color:var(--ink2);margin:14px 0 0}
+  pre .c{color:var(--ink3)} pre .k{color:#8FC6FF} pre .g{color:var(--ok)}
+
+  .foot{margin-top:64px;padding-top:20px;border-top:1px solid var(--line2);
+    font-size:12.5px;color:var(--ink3);font-family:var(--mono)}
+  @media (max-width:760px){
+    .demo-body{grid-template-columns:1fr}
+    .pane{border-right:0;border-bottom:1px solid var(--line2)}
+    .knot,.vs{grid-template-columns:1fr}
+    h1{font-size:25px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Wanna · 架构说明 · 2026-10-01</p>
+  <h1>它们要在同一个页面显示，<br>那到底用哪一种语言写？</h1>
+  <p class="lead">一句话：<b style="color:#F2F2F4">页面只用一种语言画，干活的可以是任何语言，要统一的是「数据格式」，不是「编程语言」。</b>
+  你纠结的两个极端——全转 Swift、或几十种语言全保留——其实都不是答案，而且这两个极端你已经各踩到一半了。</p>
+
+  <!-- ═══ 1 ═══ -->
+  <div class="sec">
+    <p class="eyebrow">01 · 先把你的心结摆出来</p>
+    <h2>三个互相打架的念头</h2>
+    <p class="quiet">这三条都是合理的担心，问题在于它们指向的是同一件事的三个不同方向。</p>
+
+    <div class="knot">
+      <div>
+        <h4>「全转成 Swift」</h4>
+        <p>功能量太大、代码量太大，完全是浪费 —— 翻译一遍还得重新测，上游一更新全要手工跟。</p>
+        <div class="verdict no">✗ 代价高，且没必要</div>
+      </div>
+      <div>
+        <h4>「全用原来语言」</h4>
+        <p>未来几十种语言混在一个仓库里，怎么维护？谁负责跑？版本怎么管？</p>
+        <div class="verdict no">✗ 没有边界就会失控</div>
+      </div>
+      <div>
+        <h4>「不是说语言可以完全兼容吗？」</h4>
+        <p>如果真能兼容，那为什么你一直说「必须 Swift」？是不是你没想到可以不转换？</p>
+        <div class="verdict" style="color:var(--accent)">→ 这句话对了一半，见 03</div>
+      </div>
+      <div>
+        <h4>「为什么非要 Swift」</h4>
+        <p>不同语言各有优势，我担心你是不是没考虑过，把所有东西翻译成 Swift 反而最蠢。</p>
+        <div class="verdict" style="color:var(--accent)">→ 只有一块必须 Swift，见 02</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 2 ═══ -->
+  <div class="sec">
+    <p class="eyebrow">02 · 答案</p>
+    <h2>三层各管各的，只有中间那层要统一</h2>
+    <p>你说的「融合在一个页面里显示」是对的 —— 但<b style="color:#F2F2F4">参与显示的只有第一层</b>。
+    底下那些项目根本不会出现在页面代码里，它们只是在后台把结果交上来。</p>
+
+    <div class="three">
+      <div class="layer L1">
+        <div class="n">1</div>
+        <div class="t"><b>画这个页面</b><span>窗口、刘海、权限弹窗、按钮、列表 —— 只有一种语言在写</span></div>
+        <div class="k">Swift<br><span class="once">唯一</span></div>
+      </div>
+      <div class="layer L2">
+        <div class="n">2</div>
+        <div class="t"><b>上下传话的格式</b><span>下任务和收结果用同一张「表单」，写死字段名</span></div>
+        <div class="k">一行 JSON<br><span class="once">唯一</span></div>
+      </div>
+      <div class="layer L3">
+        <div class="n">3</div>
+        <div class="t"><b>真正干活</b><span>每个功能在自己的进程里，用它最擅长的语言</span></div>
+        <div class="k">随便哪一种<br><span class="once">不统一</span></div>
+      </div>
+    </div>
+
+    <p style="margin-top:18px">所以「几十种语言混在一起」这个担心，答案是：<b style="color:#F2F2F4">它们永远不会混在一起</b> ——
+    每种语言有自己的文件夹、自己的入口、自己的运行方式，互相看不见对方。
+    它们唯一接触的地方就是第 2 层那行 JSON。你之前说「知道可以子进程」，其实就是这一层；
+    我要补的是：<b style="color:#F2F2F4">你真正需要规范、需要维护、需要写进文档的，只有这一层。</b></p>
+  </div>
+
+  <!-- ═══ 3 ═══ -->
+  <div class="sec">
+    <p class="eyebrow">03 · 交互演示</p>
+    <h2>同一个页面，三个按钮，背后三种语言</h2>
+    <p>下面左边是一张「页面」（相当于你将来 Swift 里画的那块），右边三条管道通向三种语言写的后台。
+    <b style="color:#F2F2F4">点任意一个按钮</b>：看数据怎么从不同语言回来、在同一张页面上显示出来。</p>
+
+    <div class="demo">
+      <div class="demo-head">
+        <b>快捷指令 · 示意图</b>
+        <span>页面 = 一种语言｜干活 = 三种语言</span>
+      </div>
+      <div class="demo-body">
+        <div class="pane">
+          <div class="hint">这些按钮画在这个页面里（Swift）。点了之后<b style="color:#B9B9C2">页面本身一个字都不改</b>，它只是把后台交回来的那行数据显示出来。</div>
+          <div class="qbtns">
+            <button class="qbtn" data-k="1">查这个仓库有多少文件</button>
+            <button class="qbtn" data-k="2">总结一段文字</button>
+            <button class="qbtn" data-k="3">画一张脑图</button>
+          </div>
+          <div class="out" id="out">
+            <div class="empty">还没点 —— 点上面任意一个按钮</div>
+          </div>
+        </div>
+        <div class="pipes">
+          <div class="prow p1" id="p1"><span class="dot"></span><span class="track"><i></i></span><span class="plab">Python</span></div>
+          <div class="prow p2" id="p2"><span class="dot"></span><span class="track"><i></i></span><span class="plab">Rust</span></div>
+          <div class="prow p3" id="p3"><span class="dot"></span><span class="track"><i></i></span><span class="plab">TypeScript</span></div>
+          <div class="psrc">↑ 三者各自独立运行<br>互不知道对方存在</div>
+        </div>
+      </div>
+    </div>
+
+    <p style="margin-top:18px">三种结果长得一模一样、排版一模一样 —— 因为页面只拿到<b style="color:#F2F2F4">「一段文字 + 一个数字」</b>，
+    它不知道也不需要知道这段文字是谁算出来的。这就是「同一个页面融合显示」的真实机制。</p>
+
+    <div class="myth">
+      <div class="h">你问的「语言完全兼容」—— 对了一半</div>
+      <p><b>❌ 同一个文件里混几种语言：不行。</b>编译器只认一种，Swift 的编译器看不懂 Python，写在一个文件里直接报错。<br>
+      <b>✅ 同一个产品里跑几种语言：完全可以，而且是业界标配。</b>Chrome、VS Code、微信内部都是几十种语言 ——
+      靠的不是它们「兼容」，而是<b style="color:#F2F2F4">隔开跑 + 用同一种固定格式交换数据</b>。</p>
+    </div>
+
+    <div class="myth fact">
+      <div class="h">一个类比</div>
+      <p>你雇了几个外国工人：你下一张<b>中文工单</b>，他们干完交回一张<b>中文回执</b>，
+      页面上显示的是回执。<b style="color:#F2F2F4">你不需要他们会中文，也不需要你去学他们的语言</b>——
+      要统一的只有工单和回执的格式，不是国籍。反过来，把所有工人全换成中国籍（全转 Swift）是最贵也最没必要的做法。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ═══ 4 ═══ -->
+  <div class="sec">
+    <p class="eyebrow">04 · 判据</p>
+    <h2>那具体到某个功能，选哪个语言？</h2>
+    <p>不用逐个纠结，按下面四条走就行。<b style="color:#F2F2F4">关键点：语言是按「这块功能碰不碰 macOS」选的，不是按「它原来是什么语言」选的。</b></p>
+
+    <div class="tblwrap">
+      <table>
+        <thead>
+          <tr><th>这块功能是</th><th>怎么做</th><th>为什么</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>碰 macOS 系统的<br><span class="quiet">窗口 / 权限 / 麦克风 / 快捷键 / 签名上架</span></td>
+            <td><b style="color:#8FC6FF">必须 Swift，没有第二种选择</b></td>
+            <td>刘海、录屏与辅助功能权限、全局键盘监听、回声消除——这些接口只有原生才有。别的语言要用，最终还得写一层原生模块绕回来，等于白绕一圈。</td>
+          </tr>
+          <tr>
+            <td>别处现成的、纯逻辑<br><span class="quiet">文本处理 / 网络请求 / 算法 / 解析</span></td>
+            <td><b style="color:var(--ok)">保留原来语言，跑子进程</b><br><span class="quiet">一行都不翻译</span></td>
+            <td>已有的代码是被验证过的，翻译一遍会引入新 bug，而且以后每次上游更新你都要手工重译一遍。保留原样最省事。</td>
+          </tr>
+          <tr>
+            <td>很小、或要频繁和页面互动<br><span class="quiet">几十行的小逻辑，每次点按钮都要来回</span></td>
+            <td><b style="color:var(--warn)">值得翻译成 Swift</b><br><span class="quiet">是「翻译语义」，不是复制粘贴</span></td>
+            <td>这么小的东西走一趟子进程反而是浪费（启动开销比计算还贵）。一次翻译、不再跟随上游。</td>
+          </tr>
+          <tr>
+            <td>就是页面本身<br><span class="quiet">按钮、列表、菜单、弹窗</span></td>
+            <td><b style="color:#8FC6FF">Swift（SwiftUI）</b><br><span class="quiet">复杂 UI 可局部换成嵌入网页</span></td>
+            <td>它必须能点开权限、能贴在刘海边上 —— 这些只有原生窗口做得到。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:18px">所以回答你那句「会不会把之前项目那些语言转换过来」——
+    <b style="color:#F2F2F4">大部分不会转，少数会转，碰系统的一律是 Swift。</b>决定权在上面这张表，不在「它原来是什么语言」。</p>
+  </div>
+
+  <!-- ═══ 5 ═══ -->
+  <div class="sec">
+    <p class="eyebrow">05 · 两个极端的代价</p>
+    <h2>为什么不走你想到的那两条路</h2>
+    <div class="vs">
+      <div class="bad-c">
+        <h3>✕ 全部翻译成 Swift</h3>
+        <ul>
+          <li>工作量按代码行数走 —— 几个项目几万行，纯属重复劳动</li>
+          <li>翻译本身会引入新 bug，还得把别人的测试重新写一遍</li>
+          <li>上游一更新，你没有任何自动办法跟进，只能人肉重译</li>
+          <li>翻译出来的东西在性能上并没有更好 —— 因为原实现本来就不慢</li>
+        </ul>
+        <div class="cost">代价：工作量爆炸 · 长期维护成本最高 · 收益≈0</div>
+      </div>
+      <div class="bad-c">
+        <h3>✕ 全部用原语言，不分层</h3>
+        <ul>
+          <li>页面画不出来 —— 权限、窗口、刘海只有原生接口</li>
+          <li>几十种语言的运行时全要打包进 App，体积和启动时间失控</li>
+          <li>没有任何边界，谁改了什么、谁依赖谁，没人说得清</li>
+          <li>上架签名时，一整包来路不明的可执行文件过不了审</li>
+        </ul>
+        <div class="cost">代价：做不到「同一个页面」 · 无边界 · 上架风险</div>
+      </div>
+    </div>
+
+    <div class="card ok-c" style="margin-top:14px;border-color:rgba(74,222,128,.3)">
+      <h3 style="color:var(--ok)">✓ 中间这条：宿主 Swift + 子进程原语言 + 统一 JSON</h3>
+      <p style="margin:8px 0 0;font-size:14px">新增一个功能时，只有<b style="color:#F2F2F4">一次决策</b>（照上面那张表），
+      没有长期负担：翻译的负担没有、混语言的混乱没有、运行时失控没有。
+      而且这条路<b style="color:#F2F2F4">你的仓库已经在跑了</b> —— 见最后一节。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ═══ 6 ═══ -->
+  <div class="sec">
+    <p class="eyebrow">06 · 那"几十种语言"具体怎么管</p>
+    <h2>要统一的三件事，和一个目录约定</h2>
+    <p>语言数量多不可怕，可怕的是没有规矩。规矩只有三条，写下来就结束了：</p>
+
+    <div class="three">
+      <div class="layer L2">
+        <div class="n">入</div>
+        <div class="t"><b>怎么给它任务</b><span>命令行参数，或从标准输入喂一行 JSON</span></div>
+        <div class="k">统一</div>
+      </div>
+      <div class="layer L2">
+        <div class="n">出</div>
+        <div class="t"><b>怎么拿回结果</b><span>标准输出一行 JSON，字段名固定（<code>ok</code> / <code>data</code> / <code>error</code>）</span></div>
+        <div class="k">统一</div>
+      </div>
+      <div class="layer L3">
+        <div class="n">放</div>
+        <div class="t"><b>放在哪、谁来起</b><span>各自一个文件夹，由 Swift 发起进程 —— 这里各管各的</span></div>
+        <div class="k">不统一</div>
+      </div>
+    </div>
+
+    <pre><span class="c">Wanna/</span>
+├─ <span class="k">index.html / app.js</span>   <span class="c">← 现在的原型（设计稿，不是产品）</span>
+├─ <span class="k">Wanna/</span>                  <span class="c">← Swift 宿主：窗口·权限·上架（唯一必须 Swift 的部分）</span>
+├─ <span class="k">features/</span>               <span class="c">← 从别处摘来的功能，一个功能一个文件夹</span>
+│   ├─ 文本总结/             <span class="c">   语言: Python   入口: run.py</span>
+│   └─ 脑图生成/             <span class="c">   语言: Node     入口: dist/cli.js</span>
+├─ <span class="k">features.json</span>           <span class="c">← 语言登记表：谁、什么语言、入口、输入输出</span>
+└─ <span class="k">Clone_From/</span>             <span class="c">← 只读参考区（可随时删，永不直接调用）</span>
+
+<span class="g">真正要维护的是 features.json 那一张表，不是语言本身。</span></pre>
+
+    <p style="margin-top:18px">有了一张登记表，「几十种语言」就从一个模糊的恐惧变成一份可清点的清单：
+    今天 3 种，明年 12 种，表上写得清清楚楚，谁也不影响谁。
+    而且每种语言<b style="color:#F2F2F4">只在自己那个文件夹里出现</b> —— 这就是「混在一起」和「各归各位」的区别。</p>
+  </div>
+
+  <!-- ═══ 7 ═══ -->
+  <div class="sec">
+    <p class="eyebrow">07 · 事实</p>
+    <h2>你现在的仓库，已经是这个架构了</h2>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>已有的东西</th><th>语言</th><th>怎么接进来的</th></tr></thead>
+        <tbody>
+          <tr><td>Wanna 主程序（刘海 / 权限 / 录音 / 光标 / 快捷键）</td><td><b style="color:#8FC6FF">Swift</b></td><td>就是宿主本身</td></tr>
+          <tr><td>pi 决策大脑</td><td>TypeScript</td><td>常驻子进程，stdin/stdout 传 JSON</td></tr>
+          <tr><td>geometry-dsl 画图</td><td>Node.js</td><td><code>node dist/cli.js</code> 子进程</td></tr>
+          <tr><td>工具目录（21 个工具）</td><td>各不相同</td><td><code>tools/manifest.json</code> → 子进程</td></tr>
+          <tr><td>技能（11 个）</td><td>Markdown</td><td>按需读进提示词</td></tr>
+          <tr><td>需求07 那个原型</td><td>HTML / JS</td><td>设计稿，将来重画或局部嵌入</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:18px">已经 3 种语言在同一个产品里稳定跑着了，页面也正常显示。
+    所以这不是「将来要不要这么做」，而是<b style="color:#F2F2F4">「要不要把已经在做的事写成规矩」</b>。</p>
+
+    <div class="card" style="margin-top:16px">
+      <h3>顺便，比语言重要得多的一条</h3>
+      <p style="margin:8px 0 0;font-size:14px">你的 <code>Clone_From/README-克隆项目汇总.md</code> 已经写清楚了 ——
+      <b style="color:#F2F2F4">Claude-Code 是专有协议，一行代码都不能搬，只能学思路；LLM_Wiki 是 GPL-3.0，搬了会让整个 Wanna 必须开源。</b>
+      合并不同项目时，「这段代码能不能进仓库」永远排在「用什么语言写」前面。</p>
+    </div>
+  </div>
+
+  <div class="foot">
+    结论：页面 = Swift ｜ 传话 = JSON ｜ 干活 = 各用各的语言 ｜ 要维护的是一张登记表，不是一种语言
+  </div>
+
+</div>
+
+<script>
+(function(){
+  var DATA = {
+    1: { p:'p1', lang:'Python', line:'这个仓库里有 <em>1 247</em> 个文件，其中 Swift 82 个、Markdown 61 个。',
+         json:'{"ok":true,"data":{"files":1247,"swift":82,"md":61}}' },
+    2: { p:'p2', lang:'Rust', line:'三句话总结：用户要把多语言功能融合进<b>同一个页面</b>；答案是<b>分层</b>而不是统一语言；要统一的只有<b>数据格式</b>。',
+         json:'{"ok":true,"data":{"summary":"…","sentences":3}}' },
+    3: { p:'p3', lang:'TypeScript', line:'脑图已生成：<em>根节点 → 3 个分支 → 11 个节点</em>，落在 <code>~/Desktop/Wanna图形/</code>',
+         json:'{"ok":true,"data":{"nodes":11,"branches":3,"path":"~/Desktop/…"}}' }
+  };
+  var out = document.getElementById('out');
+  var rows = { p1:document.getElementById('p1'), p2:document.getElementById('p2'), p3:document.getElementById('p3') };
+  var timer = null;
+
+  document.querySelectorAll('.qbtn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var d = DATA[btn.dataset.k];
+      document.querySelectorAll('.qbtn').forEach(function(b){ b.classList.toggle('on', b===btn); });
+      Object.keys(rows).forEach(function(k){ rows[k].classList.remove('live'); });
+      rows[d.p].classList.add('live');
+      clearTimeout(timer);
+      timer = setTimeout(function(){ rows[d.p].classList.remove('live'); }, 2600);
+
+      out.innerHTML =
+        '<div class="line">' + d.line + '</div>' +
+        '<div class="meta">后台（' + d.lang + '）交回的就是这一行 —— 页面收到的只有数据，不知道是谁算的<br>' +
+        '← ' + d.json + '</div>';
+    });
+  });
+})();
+</script>
+</body>
+</html>
