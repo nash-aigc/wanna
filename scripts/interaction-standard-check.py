@@ -98,8 +98,13 @@ def staged_standard_action() -> str | None:
 
 
 def normalize(text: str) -> str:
-    """只比字，不比排版：折叠空白、统一几种标点。"""
+    """只比字，不比排版：折叠空白、统一几种标点、剥掉 Markdown 强调符号。
+
+    标准是 Markdown 写的（**加粗** / `代码`），引用的人不应该因为少抄两个星号被拒。
+    剥掉的只有装饰符号，字与标点仍然必须逐字一致。
+    """
     text = text.translate(str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "—": "-", "–": "-"}))
+    text = text.replace("*", "").replace("`", "")
     return re.sub(r"\s+", " ", text).strip()
 
 

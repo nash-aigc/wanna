@@ -199,20 +199,24 @@ struct BlueCursorView: View {
     ///
     /// 答案优先于待确认的那句话：它们属于一次交互的不同阶段，不会同时成立；但万一有一句迟到的
     /// 转写落在答案开始之后，显示答案才是唯一不陈旧的读法。
+    ///
+    /// ⭐ **结果只在一个地方出现**（用户 2026-09-30 定）：
+    /// 「窗口没有打开，结果 = 右下角卡片；**窗口打开，结果 = 窗口中（不再右下角卡片显示）**」。
+    /// 两个位置读的是同一份数据，所以判据只有一个：**实时窗口开着 → 卡片不出结果**。
     private var conversationBubbleText: String {
         // 完成通知优先级最高：一段 2–3 秒的「✓ 一句话」本来就该盖住别的东西 ——
         // 它出现的时刻正好是答案清空、下一句转录可能刚到的时候，不压住就会闪。
         if let notice = companionManager.taskCompletionNotice {
             return notice
         }
-        if !companionManager.streamingAnswerText.isEmpty {
+        // 实时窗口开着 → 结果只在窗口里，右下角什么都不出（连执行轮的回复也一样）。
+        let isRealtimeWindowOpen = DirectionBoardSession.shared.isWindowOpen
+        if !isRealtimeWindowOpen, !companionManager.streamingAnswerText.isEmpty {
             return companionManager.streamingAnswerText
         }
-        // ⭐ **实时模式的答案也显示在这里**（2026-09-29 晚，用户把这条恢复了）：
-        // 实时轮（Pi 实时进程，思考关）的流式结果写 `DirectionBoardSession.previewAnswer`，
-        // **右下角卡片与实时窗口底部读同一个字段**（用户："同一个结果返回到两个位置，仅此而已"；
-        // 窗口没开就只有这里显示）。执行轮的回复仍走上面的 `streamingAnswerText`（优先级更高）。
-        if !(DirectionBoardSession.shared.previewAnswer ?? "").isEmpty {
+        // 实时模式的答案（Pi 实时进程，思考关）写 `DirectionBoardSession.previewAnswer`；
+        // 窗口关着时它就是右下角卡片的内容。
+        if !isRealtimeWindowOpen, !(DirectionBoardSession.shared.previewAnswer ?? "").isEmpty {
             return DirectionBoardSession.shared.previewAnswer ?? ""
         }
         return companionManager.liveTranscriptText
@@ -480,8 +484,13 @@ struct BlueCursorView: View {
                 Color.clear
                     .overlay(alignment: .topLeading) {
                         Group {
-                            // ⭐ 2026-09-29 晚：实时轮的答案**恢复显示在右下角**（与实时窗口同源）。
-                            if !companionManager.streamingAnswerText.isEmpty
+                            // ⭐ 结果只在一个地方出现（用户 2026-09-30 定）：
+                            // 实时窗口开着 → 结果在窗口里，右下角**什么都不出**（结果不出、
+                            // 实时字幕也不出 —— 那条规矩 2026-09-27 就定了：字幕只在刘海下面）；
+                            // 窗口关着 → 结果在右下角卡片。
+                            if DirectionBoardSession.shared.isWindowOpen {
+                                EmptyView()
+                            } else if !companionManager.streamingAnswerText.isEmpty
                                 || !(DirectionBoardSession.shared.previewAnswer ?? "").isEmpty {
                                 answerCardBubble
                             } else {

@@ -551,6 +551,19 @@ final class CompanionManager: ObservableObject {
     ///
     /// 置位：显式提交（再按一下快捷键 / ⌥⏎ 执行）。复位：一次全新的按下（新的大轮）。
     private var hasSubmittedToExecuteThisCycle = false
+    /// **模式落盘的键**（交互标准 §2.1：「即便电脑关机 24 小时，它都是在 agent 模式下」——
+    /// 所以模式不能只活在内存里）。启动时读回来，见 `restorePersistedInteractionMode()`。
+    static let persistedAgentModeKey = "wannaVoiceInteractionModeIsAgent"
+
+    /// **启动时把上次关机前的模式读回来**（§2.1）。在 `start()` 里调一次。
+    /// 重启之后大循环里的东西（历史、临时会话、监听窗口）都不在了，但**模式还在**：
+    /// · 上次是 Agent 模式 → 第一次按下：嘴里有话 = 发送（仍在 Agent）；没话 = 终止这个
+    ///   （已经没有内容的）大循环，再按一次才开始新的大轮 —— 全部按 §3 走，无特例。
+    private func restorePersistedInteractionMode() {
+        let wasAgent = UserDefaults.standard.bool(forKey: Self.persistedAgentModeKey)
+        hasSubmittedToExecuteThisCycle = wasAgent
+        MainFlowDiagnostics.log("🥧 启动恢复交互模式：\(wasAgent ? "Agent（上次关机前在其中）" : "实时")")
+    }
 
     /// 实时模式那一轮的临时会话 id —— 一大轮一个（追问窗口里连续多轮 = 同一个会话，
     /// pi 自己带上下文）。随大轮换新。
@@ -693,8 +706,8 @@ final class CompanionManager: ObservableObject {
     /// 三种都没有（没在听、也没打字）→ 什么都不做，只记一行（按了回车但没东西可发）。
     private func sendTurnFromBoard() {
         // **⌥⏎ 执行 = 进入 Agent 模式**（用户 2026-09-28 点名要它切图文）。
-        // ⭐ 同时置执行旗标（2026-09-29 两段式）：之后的句子走执行进程。
-        hasSubmittedToExecuteThisCycle = true
+        // ⭐ 同时进 Agent 模式（2026-09-29 两段式；交互标准 §6.3：这一刻实时链停、临时会话作废）。
+        enterAgentModeForVoiceTurn()
         // 它自己也要切一次，不能只靠"按下那一刻切过"：这一下与按下之间隔着整轮实时对话，
         // 中间用户完全可能去点了模式条。三个分支（打字 / 连续追问 / 松键）都从这一轮出发，
         // 所以放在最前面一次就够。
@@ -886,7 +899,6 @@ final class CompanionManager: ObservableObject {
 
     /// The continuous-listening window's expiry timer. Re-armed when a new
     /// answer's playback starts and when a follow-up is submitted.
-    private var continuousListeningWindowTask: Task<Void, Never>?
 
     /// Counts 屏幕 mentions in streaming interim transcripts so each spoken
     /// mention fires exactly one pre-capture (edge, not level).
@@ -1138,6 +1150,10 @@ final class CompanionManager: ObservableObject {
         //（`set_model` / `set_thinking_level`），所以"两条进程"只剩系统提示词这一个理由，
         // 而那个差别改成**实时轮用户消息开头那一行**（`realtimeTurnFraming`）。
         PiAgentRunner.warmUpProcess()
+
+        // **交互标准 §2.1：模式落盘，启动时读回来** —— 「即便电脑关机 24 小时，
+        // 它都是在 agent 模式下，不会自动触发关停」。
+        restorePersistedInteractionMode()
 
         MainFlowDiagnostics.startMainThreadWatchdog()
 
@@ -2384,7 +2400,7 @@ final class CompanionManager: ObservableObject {
                 //  第二下走的是实时轮，而实时轮那一轮又因为模型报错而空手而归）。
                 // 原来只写在"连续监听窗口里的发送"那一条分支上 —— 那条是**追问窗口**的路，
                 // 按住说话这条根本不经过它。
-                hasSubmittedToExecuteThisCycle = true
+                enterAgentModeForVoiceTurn()
                 buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
                 return
             }
@@ -2457,17 +2473,42 @@ final class CompanionManager: ObservableObject {
                     MainFlowDiagnostics.log("⌨️ 按下 → 分支：**发送**这句（实时模式里我说完了）")
                     // ⭐ **这一下是显式提交 = 进入执行模式**（2026-09-29 两段式）：
                     // 接下来那句定稿走**执行进程**（思考开、带实时上下文），不再走实时问答。
-                    hasSubmittedToExecuteThisCycle = true
+                    enterAgentModeForVoiceTurn()
                     buddyDictationManager.finishContinuousListeningUtteranceByShortcutSend()
                     // 同上：release 不能把这次按下当成有效按压。
                     shortcutPressBeganAt = nil
                     return
                 }
-                MainFlowDiagnostics.log("⌨️ 按下 → 分支：**纯打断**（它在忙，这一下只停它、不开麦）")
-                endContinuousListeningWindow(reason: "talk shortcut pressed while busy (pure stop)")
+                MainFlowDiagnostics.log("⌨️ 按下 → 分支：**看模式**（它在忙，但这一下是发送还是结束由标准定）")
+                // **交互标准 §3**：此刻轮到谁？
+                // · 实时模式（不出声，永远"轮到用户"）→ 按下**没有前提** = 强制进 Agent，
+                //   把用户最后问的那一句（连同全部历史）交给 Agent 真的去做。
+                // · Agent 模式，轮到 AI（正在说 / 刚说完）→ **结束大循环**。
+                if !hasSubmittedToExecuteThisCycle {
+                    enterAgentModeForVoiceTurn()
+                    submitAgentHandoffWithLastRealtimeQuestion()
+                    shortcutPressBeganAt = nil
+                    return
+                }
+                endContinuousListeningWindow(reason: "agent mode: shortcut pressed while AI's turn (terminate)")
                 interruptActiveResponse()
                 // 让 release 把这次按下当成一次没有时长的按压：既不能触发确认
                 // 轻点的「发送暂存的话」，也不能留下一个陈旧的计时。
+                shortcutPressBeganAt = nil
+                return
+            }
+
+            // **交互标准 §3**：Agent 模式下"轮到 AI"（说完了 / 窗口已关、嘴里没话）按下 =
+            // **终止大循环** —— 不开麦、不进下一轮。下一按下才是新的大循环（实时模式）。
+            // （实时模式里不存在这一支：实时不出声，按下永远是"轮到用户" = 强制进 Agent，
+            // 走上面那一支。）
+            if hasSubmittedToExecuteThisCycle
+                && !buddyDictationManager.isContinuousListening
+                && !buddyDictationManager.isRecordingFromKeyboardShortcut {
+                MainFlowDiagnostics.log("⌨️ 按下 → 分支：**终止**（Agent 模式、轮到 AI）")
+                exitAgentModeForVoiceTurn(reason: "shortcut pressed in agent mode (terminate)")
+                endContinuousListeningWindow(reason: "agent mode terminated by shortcut")
+                interruptActiveResponse()
                 shortcutPressBeganAt = nil
                 return
             }
@@ -2481,7 +2522,7 @@ final class CompanionManager: ObservableObject {
                 currentVoiceCycleID = UUID().uuidString
                 // ⭐ 一次全新的按下 = 新的大轮：回到实时模式（执行旗标复位）、
                 // 换一个新的实时会话（2026-09-29 两段式）。
-                hasSubmittedToExecuteThisCycle = false
+                exitAgentModeForVoiceTurn(reason: "new big round")
                 realtimeSessionID = currentVoiceCycleID
             }
             // Recorded so the release can tell a tap (send what's waiting) from a
@@ -2761,7 +2802,13 @@ final class CompanionManager: ObservableObject {
         }
         let sessionID = "realtime-" + (realtimeSessionID ?? currentVoiceCycleID ?? UUID().uuidString)
         MainFlowDiagnostics.log("🥧 实时轮 → 会话 \(sessionID.prefix(16)) · \(transcript.prefix(40))")
-        Task { @MainActor [weak self] in
+        // **先把问题记进完整对话史**（交互标准 §6.1：移交时要"全部历史"，所以每一问都记，
+        // 答案回来再补 —— 就算这一轮没答上来，问过就是问过）。
+        DirectionBoardSession.shared.noteRealtimeQuestion(transcript)
+        // ⚠️ **这一轮的 Task 必须存住**：用户在实时轮还在跑的时候按快捷键 = 强制进 Agent
+        //（标准 §3），那一刻要把它停掉 —— 否则它占着 Pi 进程（一次只能跑一轮），
+        // 执行轮会因为"Pi 正在跑另一轮"被拒（实测就是这么撞的）。
+        let turnTask = Task { @MainActor [weak self] in
             do {
                 let result = try await PiAgentRunner.shared.runTurn(
                     // **框架句放在用户消息最前面**（见 `realtimeTurnFraming` 的注释：
@@ -2775,6 +2822,8 @@ final class CompanionManager: ObservableObject {
                     onProgress: { _ in })
                 DirectionBoardSession.shared.settleRealtimeAnswer(result.finalText)
                 MainFlowDiagnostics.log("🥧 实时轮回来了：\(result.finalText.count) 字")
+            } catch is CancellationError {
+                MainFlowDiagnostics.log("🥧 实时轮被打断（进 Agent 模式 / 用户停止）—— 不报错")
             } catch {
                 // ⚠️ **失败要让用户看见，不能只进日志**（2026-09-29 实测教训）：
                 // 模型报错（如 DeepSeek 402 余额不足）时 pi 不发任何 text_delta，
@@ -2786,6 +2835,57 @@ final class CompanionManager: ObservableObject {
                 self?.lastErrorMessage = "实时模式没答上：" + reason
             }
         }
+        realtimeAnswerTask = turnTask
+    }
+
+    /// 实时模式**正在跑的那一轮**（交互标准 §6.3：进 Agent 模式那一刻要停掉它）。
+    /// `runRealtimeAnswerTurn` 每次起一轮就存一次；`enterAgentModeForVoiceTurn` 取消。
+    private var realtimeAnswerTask: Task<Void, Never>?
+
+    /// ⭐ **进 Agent 模式那一刻**（交互标准 §6.3）—— 三件事都在 `DirectionBoardSession`：
+    /// 实时那条链整个停、临时会话作废、右下角卡片消失。**麦克风不停**。
+    ///
+    /// 幂等：已经进过就什么都不做（三条按下路径都会调它，但转变只发生一次）。
+    /// **模式落盘**（§2.1：关机、重启、隔天回来都还在 Agent 模式 —— 不靠内存活着）。
+    private func enterAgentModeForVoiceTurn() {
+        guard !hasSubmittedToExecuteThisCycle else { return }
+        hasSubmittedToExecuteThisCycle = true
+        UserDefaults.standard.set(true, forKey: Self.persistedAgentModeKey)
+        // 实时轮还在跑的话停掉 —— 它占着 Pi 进程，执行轮会被"一次只能跑一轮"拒掉。
+        realtimeAnswerTask?.cancel()
+        realtimeAnswerTask = nil
+        DirectionBoardSession.shared.stopRealtimeChainForAgentHandoff()
+        MainFlowDiagnostics.log("🥧 进 Agent 模式（实时链停、临时会话作废、卡片清、模式落盘）")
+    }
+
+    /// **退出 Agent 模式**（交互标准 §2.1 / §3）—— 只有两条路会走到这里：
+    /// ESC、或 Agent 模式下"轮到 AI"时按下快捷键（终止）。之后下一次按下 = 新的大轮（实时）。
+    /// 同样落盘：模式回到实时。
+    private func exitAgentModeForVoiceTurn(reason: String) {
+        guard hasSubmittedToExecuteThisCycle else { return }
+        hasSubmittedToExecuteThisCycle = false
+        UserDefaults.standard.set(false, forKey: Self.persistedAgentModeKey)
+        MainFlowDiagnostics.log("🥧 退出 Agent 模式（\(reason)）—— 下一次按下 = 新的大轮（实时）")
+    }
+
+    /// ⭐ **交互标准 §3：实时模式里按下（无前提）→ 强制进 Agent**，交出去的那句话 =
+    /// **用户最后问的那一句**（§6.1：「最后补一行，备注用户最近一次的问题是什么」）。
+    ///
+    /// 没有可交的话（刚起的大轮、还没问过任何东西）→ 退回实时并如实说明，
+    /// **不静默**（静默 = "按了没反应"，这个仓库最忌讳的那类）。
+    private func submitAgentHandoffWithLastRealtimeQuestion() {
+        let lastQuestion = DirectionBoardSession.shared.lastRealtimeQuestion
+            ?? lastTranscript
+            ?? ""
+        guard !lastQuestion.isEmpty else {
+            MainFlowDiagnostics.log("🥧 进 Agent：没有可交的话 —— 退回实时，照常开麦")
+            exitAgentModeForVoiceTurn(reason: "agent handoff with nothing to hand off")
+            endContinuousListeningWindow(reason: "agent handoff with nothing to hand off")
+            interruptActiveResponse()
+            return
+        }
+        MainFlowDiagnostics.log("🥧 交互标准 §3：实时模式按下 → 强制进 Agent，交最后一句「\(lastQuestion.prefix(30))」")
+        sendTranscriptToVisionChatWithScreenshot(transcript: lastQuestion, comesFromTalkShortcut: true)
     }
 
     private func handleFinalTranscript(
@@ -3467,7 +3567,8 @@ final class CompanionManager: ObservableObject {
         guard appSettings.continuousListeningWindowSeconds > 0 else { return }
 
         if buddyDictationManager.isContinuousListening {
-            scheduleContinuousListeningWindowExpiry(seconds: appSettings.continuousListeningWindowSeconds)
+            // **交互标准 §7：循环内部不倒计时** —— 麦克风在整个大循环期间一直开着，
+            // 不再"30 秒没人说话就关"。窗口只在大循环结束之后才关（ESC / Agent 模式下按下）。
             return
         }
 
@@ -3518,65 +3619,11 @@ final class CompanionManager: ObservableObject {
                 }
             )
             guard self.buddyDictationManager.isContinuousListening else { return }
-            self.scheduleContinuousListeningWindowExpiry(seconds: appSettings.continuousListeningWindowSeconds)
+            // （交互标准 §7：循环内部不倒计时 —— 不再给窗口排到期任务。）
             if self.voiceState == .idle {
                 // Playback had already drained by the time the window opened —
                 // show that the companion is still listening rather than idle.
                 self.voiceState = .listening
-            }
-        }
-    }
-
-    /// The window's deadline. Counts from when it was armed (playback start /
-    /// follow-up submit), and — at expiry — waits for a still-playing answer
-    /// to finish rather than cutting the user's own reply off mid-word.
-    private func scheduleContinuousListeningWindowExpiry(seconds: Int) {
-        continuousListeningWindowTask?.cancel()
-        continuousListeningWindowTask = Task { [weak self] in
-            guard let self else { return }
-
-            // **截止时间是可推进的，而且要推进到"真正安静下来"之后。**
-            //
-            // 这里原来是：从起播算 30 秒 → 到点了再「等播报结束就关」。长回答会在
-            // 播报期间把那 30 秒吃光，于是**用户一打断、播报一停，窗口当场关闭** ——
-            // 而打断正是他要追问的时刻。实测日志（2026-09-25）：
-            //
-            //     🎙️ detected speech (mic peak 0.633)          ← 用户开始问第 4 个问题
-            //     🔊 playback loop exited (stopPlayback())      ← 打断让播报停下
-            //     🎙️ window closing (listening window expired); playback idle
-            //
-            // 那句话说到一半，连会话一起被拆，所以"后面就不回复了"。
-            //
-            // 用户要的语义是**回复结束之后 30 秒**（也是 听 页面那一项的字面意思），
-            // 所以：到点后如果还在播报、或还有一句追问在路上，就把截止时间整个往后推，
-            // 直到真的安静满一个完整窗口才关。
-            var expiryDeadline = Date().addingTimeInterval(TimeInterval(seconds))
-
-            while true {
-                // Sleep in slices so a re-arm (which cancels this task) takes effect
-                // promptly instead of after the whole window.
-                while Date() < expiryDeadline {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    guard !Task.isCancelled else { return }
-                    guard self.buddyDictationManager.isContinuousListening else { return }
-                }
-
-                // 还在播报：不算数 —— 把窗口推到播报结束之后重新起算。
-                if self.bailianTTSClient.isPlaying {
-                    expiryDeadline = Date().addingTimeInterval(TimeInterval(seconds))
-                    print("🎙️ Companion: 播报还没结束，持续监听窗口推迟到播报之后重新起算（\(seconds)s）")
-                    continue
-                }
-
-                // 有一句追问正在说 / 正在定稿：同样不算数，等它提交完再起算。
-                if self.buddyDictationManager.isContinuousListeningUtterancePending {
-                    expiryDeadline = Date().addingTimeInterval(TimeInterval(seconds))
-                    print("🎙️ Companion: 追问还在说，持续监听窗口推迟（\(seconds)s）")
-                    continue
-                }
-
-                self.endContinuousListeningWindow(reason: "listening window expired")
-                return
             }
         }
     }
@@ -3593,8 +3640,6 @@ final class CompanionManager: ObservableObject {
     /// finish. Without the caller named, a run that lost its audio reads the
     /// same either way — which is why the log now says which one it was.
     private func endContinuousListeningWindow(reason: String) {
-        continuousListeningWindowTask?.cancel()
-        continuousListeningWindowTask = nil
         // 窗口关掉 = 这一串（周期）结束：ESC 的打断范围到此为止，下一次按下开新的。
         currentVoiceCycleID = nil
         // 窗口关了，Notion 那张检测表也跟着停 —— 它只在这条窗口活着的时候有意义。
@@ -3644,6 +3689,11 @@ final class CompanionManager: ObservableObject {
         case .idle, .listening:
             break
         }
+
+        // ⭐ **用户一开口，右下角卡片立刻消失**（交互标准 §4）——
+        // 「用户说话就是一个全新的问题。右下角卡片显示的是 AI 回复的结果……它显示没有意义」。
+        // 在**检测到人声那一刻**清，不是等这句话发出去 —— 那就不是"瞬间"了。
+        DirectionBoardSession.shared.discardRealtimeAnswerForNewQuestion()
 
         guard AppSettingsStore.snapshot().autoScreenshotOnFollowUpSpeech else { return }
 
@@ -3786,13 +3836,16 @@ final class CompanionManager: ObservableObject {
         lastTranscript = trimmedTranscriptText
         liveTranscriptText = ""
 
-        // Re-arm the deadline now: the new answer's playback start re-arms it
-        // again, but a slow model must not be able to eat the whole window in
-        // the gap between submit and first audio.
-        scheduleContinuousListeningWindowExpiry(
-            seconds: AppSettingsStore.snapshot().continuousListeningWindowSeconds
-        )
+        // （交互标准 §7：循环内部不倒计时 —— 提交之后不再重排到期任务。）
 
+        // **交互标准 §5 / §8：追问跟着模式走** ——
+        // · 实时模式的追问 → **留在临时会话里**继续（不出声、不进对话历史、不动手）；
+        // · Agent 模式的追问 → 留在 Agent 模式（出声、连续对话）。
+        // 在这之前这一句**永远**走执行管线 ✗ —— 实时模式里问一句"北京在哪"它都会出声念一遍。
+        if !hasSubmittedToExecuteThisCycle {
+            runRealtimeAnswerTurn(transcript: trimmedTranscriptText)
+            return
+        }
         sendTranscriptToVisionChatWithScreenshot(transcript: trimmedTranscriptText, comesFromTalkShortcut: true)
     }
 
@@ -4341,7 +4394,10 @@ final class CompanionManager: ObservableObject {
                             untrustedAccessibilityContext: pendingAccessibilityContext,
                             userIntentTags: userIntentTags,
                             referenceMaterials: [TurnReferenceCollector.shared.promptBlock(),
-                                                 DirectionBoardSession.shared.previousCornerAnswersPromptBlock(),
+                                                 // ⭐ **移交块**（交互标准 §6.2）：`<history>` 全部历史 +
+                                                 // `<goal>` 最后一问，取走即清（§6.3 临时会话清空）。
+                                                 DirectionBoardSession.shared
+                                                    .consumeRealtimeHandoffPromptBlock(currentQuestion: transcript),
                                                  // **粘贴进来的文件 / 文件夹的绝对路径**（2026-09-28）。
                                                  // 图片那一条不在这个块里 —— 它是真图片，跟着
                                                  // `labeledImages` 走；这里只管"路径"这一类。

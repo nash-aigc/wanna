@@ -98,51 +98,106 @@ final class DirectionBoardSession: ObservableObject {
         """
     }
 
-    /// 右下角那张卡片刚显示过的那段（`CompanionManager` 在写预览/真答案时喂进来）。
-    func noteCornerAnswerShown(_ text: String) {
+    /// ⭐ **记下实时模式这一轮问的是什么**（交互标准 §6.1 移交的第一半）。
+    ///
+    /// 在 `CompanionManager.runRealtimeAnswerTurn` 发起那一轮时调 —— 先把问题记上，
+    /// 答案等 `settleRealtimeAnswer` 回来再补。就算那一轮失败（没答上来），**问题也留着**：
+    /// 标准要的是"完整记录"，问过就是问过。
+    func noteRealtimeQuestion(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        if recentCornerAnswers.first?.text == trimmed { return }
-        recentCornerAnswers.insert((trimmed, Date()), at: 0)
-        if recentCornerAnswers.count > Self.rememberedCornerAnswerCount {
-            recentCornerAnswers.removeLast(recentCornerAnswers.count - Self.rememberedCornerAnswerCount)
+        realtimeTurns.append((question: trimmed, answer: ""))
+    }
+
+    /// 实时轮收尾：落定 + **把答案补进完整对话史** —— 这是"带全部历史一起交执行"的那条线
+    ///（交互标准 §6.1）。
+    func settleRealtimeAnswer(_ text: String) {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty else { return }
+        streamingAnswerText = ""
+        previewAnswer = answer
+        isPreviewStreaming = false
+        if let last = realtimeTurns.indices.last, realtimeTurns[last].answer.isEmpty {
+            realtimeTurns[last].answer = answer
         }
     }
 
-    /// 这些"上一轮的回答"拼成提示词的一段（没有就返回 nil）。
+    /// ⭐ **用户一开口，右下角那张卡片立刻消失**（交互标准 §4）。
     ///
-    /// 并**标出"卡片出现之后他说了什么"**——用户自己给的判据（时间 A → 时间 B）：
-    /// 「建议通过代码方式截取第一次回复内容的文本，以及第一次回复显示到卡片的时间，作为时间 A；
-    /// 再测量时间 A 到时间 B……提取这段时间用户说的话，作为提示词重点标记」。
-    func previousCornerAnswersPromptBlock() -> String? {
-        guard !recentCornerAnswers.isEmpty else { return nil }
+    /// 标准逐字：「用户说话时右下角卡片消失，这是正确的，因为**用户说话就是一个全新的问题**。
+    /// 右下角卡片显示的是 AI 回复的结果……**它显示没有意义**，因为只有用户看完这个答案时，
+    /// 他才会去提问。」
+    ///
+    /// 由 `CompanionManager.handleContinuousListeningSpeechDetected` 在**检测到人声那一刻**调
+    ///（不是等这句话发出去才清 —— 那就不是"瞬间"了）。
+    func discardRealtimeAnswerForNewQuestion() {
+        guard previewAnswer != nil || isPreviewStreaming || !streamingAnswerText.isEmpty else { return }
+        previewAnswer = nil
+        isPreviewStreaming = false
+        streamingAnswerText = ""
+    }
+
+    /// ⭐⭐ **进 Agent 模式那一刻的移交块**（交互标准 §6.2）—— **取走即清，一次**。
+    ///
+    /// 形状（标准逐字定下的两个标签，各自独立、谁也不包谁）：
+    ///
+    ///     <history>（全部历史 —— 包括最后那一问、以及它的回复，一条不少）</history>
+    ///     <goal>（只有用户最后那一句问题，不带它的回答）</goal>
+    ///
+    /// 并明说「**请你以最后一句话为标准，来完成用户的要求或任务**」（§6.2）——
+    /// 用户最后那句很可能是一个**执行指令**（例：追问十轮之后说"把这些整理到笔记里"）。
+    ///
+    /// `currentQuestion` 是**这一轮提交**的那句话：多数时候它就是 `<goal>`（按下快捷键时
+    /// 嘴里那句、或刚被实时模式答过的那句）。取走即清 = §6.3 的「临时会话的内容全部清空」。
+    func consumeRealtimeHandoffPromptBlock(currentQuestion: String) -> String? {
         var lines: [String] = []
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        for (index, answer) in recentCornerAnswers.enumerated() {
-            // 用户 2026-09-27 深夜点名要的标法：「**一定要标清楚前一轮、两轮、三轮、四轮、五轮**
-            // 分别是什么，一定要告诉 AI 上一轮的内容是什么，让它判断跟上一个内容有没有关系」。
-            let label = "最近\(TurnReferenceMaterials.chineseNumber(index + 1))轮"
-            lines.append("【\(label)｜\(formatter.string(from: answer.shownAt))】\(answer.text)")
+        for turn in realtimeTurns {
+            lines.append("[用户] \(turn.question)")
+            if !turn.answer.isEmpty {
+                lines.append("[助手] \(turn.answer)")
+            }
         }
-        let spokenAfter: String
-        if let latest = recentCornerAnswers.first {
-            let after = latestTranscriptAfter(latest.shownAt)
-            spokenAfter = after.isEmpty
-                ? "（他还没说什么新的）"
-                : "他在这条回复**之后**说的是：「\(after)」 —— **这一段最可能就是对上面那条回复的追问或修改**，请优先按它来。"
-        } else {
-            spokenAfter = ""
-        }
-        return """
-        <previous_answers>
-        你刚才在右下角那张卡片上回过这几条（最近的在前）：
+        // 移交完就清（§6.3）—— Agent 模式里的后续追问由 Agent 自己的会话管，不再靠这份历史。
+        realtimeTurns = []
+        guard !lines.isEmpty || !currentQuestion.isEmpty else { return nil }
+
+        var block = """
+        <history>
+        （下面是用户在实时模式里的全部对话记录，按时间顺序 —— 这些是**参考信息 / 聊天记录**，
+        让你知道他一路问到现在问了什么。它们不是要你现在执行的东西。）
         \(lines.joined(separator: "\n"))
-        \(spokenAfter)
-        如果他这一轮的话像是对上面某一条的补充（「用英文再说一遍」「展开讲讲」这种），
-        就**接着那条回答**，不要重新理解成一个全新的问题。
-        </previous_answers>
+        </history>
+
         """
+        let goal = currentQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !goal.isEmpty {
+            block += """
+            用户最后问的那一句，在下面这个标签里 —— **只有问题，没有回答**。
+            **请你以最后一句话为标准，来完成用户的要求或任务**；它很可能是一个执行指令。
+            <goal>
+            \(goal)
+            </goal>
+            """
+        }
+        return block
+    }
+
+    /// ⭐ **进 Agent 模式那一刻，实时模式那条链整个停掉**（交互标准 §6.3）。
+    ///
+    /// 标准逐字：「进入 Agent 模式后……**实时模式的代码也不再执行**……这部分代码不需要运行」
+    /// 「**临时会话里的内容全部清空**」「**右下角卡片消失**」—— 三件事都在这里。
+    /// 麦克风**不停**（标准：「麦克风持续开着」，接下来是 Agent 模式）。
+    func stopRealtimeChainForAgentHandoff() {
+        requestTask?.cancel()
+        requestTask = nil
+        isRequesting = false
+        isListening = false
+        // 临时会话作废（内容已以 `<history>` 移交，下一次大轮在 beginListening 里开新的）。
+        temporarySessionID = nil
+        // 右下角卡片消失。
+        previewAnswer = nil
+        isPreviewStreaming = false
+        streamingAnswerText = ""
     }
 
     /// 他把话说出来了 → 灯亮；**约 0.9 秒没有新字就熄灭**（他自己定的判据：「检测不到用户在说话，
@@ -323,17 +378,7 @@ final class DirectionBoardSession: ObservableObject {
         previewAnswer = answer
         isPreviewStreaming = true
     }
-
-    /// 实时轮收尾：落定 + **记进 recentCornerAnswers** —— 这是"带实时上下文一起交执行"的
-    /// 那条线：进执行模式时 `previousCornerAnswersPromptBlock()` 把它们拼进执行提示词。
-    func settleRealtimeAnswer(_ text: String) {
-        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !answer.isEmpty else { return }
-        streamingAnswerText = ""
-        previewAnswer = answer
-        isPreviewStreaming = false
-        noteCornerAnswerShown(answer)
-    }
+    // （settleRealtimeAnswer 在上面 §6.1/§6.2 那一组里 —— 它现在还负责把答案补进完整对话史。）
     /// **内容更新了几次** —— 视图拿它触发那一下"淡入"动画（用户：「我希望让它有一种动画效果，
     /// 而不是突然间显示出来」）。每次模型回复落下来就 +1。
     @Published private(set) var contentRevision = 0
@@ -420,8 +465,22 @@ final class DirectionBoardSession: ObservableObject {
     /// 最多留多少段（防"说了一整天"把提示词撑爆；一段就是一轮说的话）。
     static let maximumSpokenSegments = 60
 
-    private var recentCornerAnswers: [(text: String, shownAt: Date)] = []
-    static let rememberedCornerAnswerCount = 3
+    /// ⭐ **实时模式的完整对话史**（交互标准 §6.1）—— 一轮一条：他问了什么、实时模式回了什么。
+    ///
+    /// 为什么是"完整"而不是"最近三条"：标准逐字 ——「他可能有**三轮、四轮、五轮、七轮、八轮、
+    /// 九轮、十轮**，所有这些东西未来对用户来说都可能非常重要，**他可能需要整理或保存完整记录**，
+    /// 所以不能只保存一部分内容」。
+    ///
+    /// 生命周期：一轮（大循环）累积；**进 Agent 模式那一刻整份移交并清空**（§6.3「临时会话的
+    /// 内容全部清空」）—— 移交走 `consumeRealtimeHandoffPromptBlock`（取走即清，一次）。
+    private(set) var realtimeTurns: [(question: String, answer: String)] = []
+
+    /// **用户最后问的那一句**（交互标准 §6.1 的"最近一问"）——
+    /// 实时模式里按下快捷键强制进 Agent 时，交出去的就是它（`CompanionManager` 读）。
+    /// 没问过任何东西 → nil。
+    var lastRealtimeQuestion: String? {
+        realtimeTurns.last?.question
+    }
 
     /// **还没解决的疑问**（用户 2026-09-27：「用户可能会关注某个疑问，并因此补充一些内容。
     /// 如果发现这个疑问已经消除，或不再有疑问，就把这个疑问删掉。这个疑问要带入到本次回复中显示出来，
@@ -1356,7 +1415,7 @@ final class DirectionBoardSession: ObservableObject {
         accumulatedMindMap = ""
         spokenTranscript = []
         recentTurns = []
-        recentCornerAnswers = []
+        realtimeTurns = []
         pendingQuestions = ""
         previousRoundItems = []
         jevProbabilities = [:]
