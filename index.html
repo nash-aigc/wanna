@@ -37,6 +37,7 @@
       <button class="btn btn-ghost" id="btnLayout" title="对话位置：右 ⇄ 中 ⇄ 左">对话·右</button>
       <button class="btn btn-ghost" id="btnSettings" title="设置（默认对话位置）">⚙</button>
       <button class="btn btn-ghost" id="btnFs" title="全屏（⌘⇧F / F11）">⛶</button>
+      <button class="btn btn-ghost" id="btnToggleEditor" title="只留 文件夹 + 对话（编辑区随时能打开）">◫ 编辑区</button>
       <button class="btn btn-ghost" id="btnCommitGit">提交</button>
       <button class="btn btn-icon" id="btnClose" title="关闭，回到会话页">✕</button>
     </div>
@@ -217,7 +218,19 @@
       <div class="msgs" id="msgs"></div>
 
       <div class="chat-foot">
-        <!-- 输入框上方那一行（22pt 极简 · 竖线分隔）：左组恒定，右组**随模式变** -->
+        <!-- ① 最上面：选中的内容（重点参考） -->
+        <div class="focus-row" id="focusRow">
+          <button class="focus-plus" id="btnFocusMore" title="展开全部重点参考">+0</button>
+          <div class="focus-chips" id="focusChips"></div>
+          <div class="focus-list" id="focusList" hidden></div>
+        </div>
+
+        <!-- ② 中间：项目 / 对话卡路径 -->
+        <div class="chat-ctx">
+          <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">对话模式（无项目）</code></span>
+        </div>
+
+        <!-- ③ 紧贴输入框的那一行：连续/临时/新建 与右组（§14.2 顺序） -->
         <div class="cc-row">
           <div class="cc-left" id="ccLeft">
             <button class="cc is-on" data-conv="continuous">连续</button><i class="vr"></i>
@@ -227,18 +240,7 @@
           <div class="cc-right" id="ccRight"><!-- 按模式渲染 --></div>
         </div>
 
-        <!-- 重点参考：**同一行**，放不下收到最左侧那个 + 里（§13.3） -->
-        <div class="focus-row" id="focusRow">
-          <button class="focus-plus" id="btnFocusMore" title="展开全部重点参考">+0</button>
-          <div class="focus-chips" id="focusChips"></div>
-          <div class="focus-list" id="focusList" hidden></div>
-        </div>
-
-        <div class="chat-ctx">
-          <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">对话模式（无项目）</code></span>
-        </div>
-
-        <!-- 输入框：三行、右上展开、右下 ✕、右侧停止 -->
+        <!-- ④ 输入框 -->
         <div class="composer">
           <div class="composer-top">
             <span class="composer-hint" id="composerHint">回车发送 · Shift+回车换行</span>
@@ -279,6 +281,8 @@
     <div class="menu-sep"></div>
     <button data-act="moveGroup">移动标签分组</button>
   </div>
+  <!-- 临时卡片右键：放入分组 / 删除 -->
+  <div class="menu" id="menuCard" hidden></div>
   <!-- 设置：默认对话位置 -->
   <div class="menu" id="menuSettings" hidden>
     <div class="menu-title">默认对话位置</div>
@@ -291,13 +295,18 @@
   <!-- 全部标签（折叠显示） -->
   <div class="menu menu-tabs-pop" id="tabsPopover" hidden></div>
   <div class="menu" id="menuProj" hidden>
+    <button data-act="unread">标记为未读</button>
+    <button data-act="continue">在新对话中继续</button>
+    <div class="menu-sep"></div>
     <button data-act="batch">批量管理</button>
     <button data-act="finder">在访达中显示</button>
     <button data-act="copyPath">复制工作路径</button>
     <button data-act="reveal">文件位置</button>
     <button data-act="rename">重命名项目</button>
     <button data-act="pin">置顶项目</button>
+    <button data-act="export">导出对话记录</button>
     <div class="menu-sep"></div>
+    <button data-act="delete" class="danger">删除项目</button>
     <button data-act="archive" class="danger">归档</button>
   </div>
 

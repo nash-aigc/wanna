@@ -210,44 +210,64 @@ function renderNav() {
       <b>空白项目（文件夹）</b> / <b>现有项目（文件夹）</b>。</div>`;
   }
 
-  // ── 「临时」块：加载的是**对话**不是文件夹（§13.2）。默认那张卡恒在，＋ 只加卡 ──
+  // ── 「临时」块：加载的是**对话**不是文件夹（§13.2）；分组可展开/折叠（§14.1） ──
   const ph = $('#planList'); ph.innerHTML = '';
   const defCard = document.createElement('div');
   defCard.className = 'plan-row' + (S.activePlan === null || S.activePlan === 'default' ? ' is-on' : '');
   defCard.innerHTML = `<span class="plan-dot" style="background:var(--ok)"></span>
-    <span class="pname">默认</span><span class="pdef">快捷键进的就是它</span>`;
+    <span class="pname">默认</span><span class="pdef">快捷键进的就是它</span>
+    <button class="pmore" title="选项">⋯</button>`;
   defCard.title = '默认对话卡片：按主快捷键进来就是这一张';
   defCard.onclick = () => selectTempCard('default');
+  defCard.querySelector('.pmore').onclick = e => { e.stopPropagation(); openCardMenu(null, e.currentTarget); };
   ph.appendChild(defCard);
+
+  const groups = S.plans.filter(x => x.isGroup);
+  const loose = S.plans.filter(x => !x.isGroup && !x.group);
+  const renderCard = pl => {
+    const el = document.createElement('div');
+    el.className = 'plan-row' + (S.activePlan === pl.id ? ' is-on' : '');
+    el.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
+      ${pl.pinned ? '<span class="ppin" title="已置顶">📌</span>' : ''}
+      ${pl.unread ? '<span class="punread" title="未读"></span>' : ''}
+      <button class="pmore" title="选项">⋯</button>
+      <button class="ppin-btn" title="置顶">📌</button>`;
+    el.querySelector('.pname').textContent = pl.title;
+    el.querySelector('.pname').onclick = () => selectTempCard(pl.id);
+    el.querySelector('.pmore').onclick = e => { e.stopPropagation(); openCardMenu(pl, e.currentTarget); };
+    el.querySelector('.ppin-btn').onclick = e => {
+      e.stopPropagation(); pl.pinned = !pl.pinned; save(true); renderNav();
+      toast(pl.pinned ? '已置顶' : '已取消置顶');
+    };
+    el.onclick = () => selectTempCard(pl.id);
+    return el;
+  };
+  // 分组：头行可点折叠，卡在 children 里
+  groups.forEach(g => {
+    const open = (S.groupOpen || {})[g.title] !== false;
+    const kids = S.plans.filter(x => !x.isGroup && x.group === g.title);
+    const head = document.createElement('div');
+    head.className = 'plan-group' + (open ? '' : ' closed');
+    head.innerHTML = `<span class="gc">▶</span><span class="gname"></span>
+      <span class="gcount">${kids.length} 张</span>`;
+    head.querySelector('.gname').textContent = g.title;
+    head.onclick = () => {
+      S.groupOpen = S.groupOpen || {};
+      S.groupOpen[g.title] = !(S.groupOpen[g.title] !== false);
+      save(); renderNav();
+    };
+    ph.appendChild(head);
+    const box = document.createElement('div');
+    box.className = 'plan-children' + (open ? '' : ' closed');
+    kids.forEach(k => box.appendChild(renderCard(k)));
+    ph.appendChild(box);
+  });
+  loose.forEach(c => ph.appendChild(renderCard(c)));
 
   if (!S.plans.length) {
     ph.insertAdjacentHTML('beforeend',
       `<div class="plan-empty">还没有别的对话卡 —— 点右边 ＋：<b>分组</b> / <b>新建</b>。</div>`);
   }
-  S.plans.forEach(pl => {
-    const el = document.createElement('div');
-    if (pl.isGroup) {
-      el.className = 'plan-group';
-      el.innerHTML = `<span class="gname"></span><span class="gcount">${S.plans.filter(x => !x.isGroup && x.group === pl.title).length} 张</span>`;
-      el.querySelector('.gname').textContent = '📁 ' + pl.title;
-      ph.appendChild(el);
-      return;
-    }
-    el.className = 'plan-row' + (S.activePlan === pl.id ? ' is-on' : '');
-    el.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
-      <button class="pdel" title="删除这张对话卡">✕</button>`;
-    el.querySelector('.pname').textContent = pl.title;
-    el.querySelector('.pdel').onclick = e => {
-      e.stopPropagation();
-      confirmModal({ title: '删除这张对话卡？', text: pl.title, okText: '删除', onOk: () => {
-        S.plans = S.plans.filter(x => x.id !== pl.id);
-        if (S.activePlan === pl.id) S.activePlan = 'default';
-        save(true); renderNav(); toast('已删除');
-      }});
-    };
-    el.onclick = () => selectTempCard(pl.id);
-    ph.appendChild(el);
-  });
 
   $('#gitLogCount').textContent = `${S.gitLog.length} 次提交`;
   filterTree($('#navSearch') ? $('#navSearch').value : '');
@@ -384,7 +404,7 @@ function openProjMenu(p, anchor) {
   m.querySelector('[data-act="pin"]').textContent = p.pinned ? '取消置顶' : '置顶项目';
 }
 function closeMenus() {
-  ['#menuAddProject','#menuAddTemp','#menuProj','#menuTabs','#menuSettings','#tabsPopover']
+  ['#menuAddProject','#menuAddTemp','#menuProj','#menuTabs','#menuSettings','#tabsPopover','#menuCard']
     .forEach(id => { const el = $(id); if (el) el.hidden = true; });
 }
 
@@ -402,6 +422,22 @@ function projMenuAction(act) {
       }});
       break; }
     case 'pin': p.pinned = !p.pinned; save(true); renderNav(); toast(p.pinned ? '已置顶' : '已取消置顶'); break;
+    case 'unread': p.unread = !p.unread; save(true); renderNav();
+      toast(p.unread ? '已标记为未读' : '已标记为已读'); break;
+    case 'continue': toast(`在新对话中继续「${escapeHtml(p.name)}」—— 原型新开一张同内容的卡`); break;
+    case 'export': toast(`导出「${escapeHtml(p.name)}」的对话记录（原型导 JSON）`); break;
+    case 'delete':
+      confirmModal({ title: '删除这个项目？', text: `${p.name}\n只删这一侧的记录，不动你磁盘上的文件夹。`,
+        okText: '删除', onOk: () => {
+          S.projects = S.projects.filter(x => x.id !== p.id);
+          if (S.activeProject === p.id) {
+            S.activeProject = S.projects[0] ? S.projects[0].id : null;
+            S.tabs = []; S.activeTab = 0; S.currentFile = null; S.focusFiles = [];
+            S.projectMode = false;
+          }
+          save(true); renderAll(); toast('已删除项目');
+        }});
+      break;
     case 'archive':
       confirmModal({ title: '归档这个项目？', text: `「${p.name}」\n只归档这一侧，不动你磁盘上的文件。`,
         okText: '归档', onOk: () => {
@@ -453,6 +489,115 @@ function addMenuAction(act) {
       }});
   }
 }
+
+/* ── 对话卡的选项菜单（完全参考小米：重命名/置顶/未读/…/删除，§14.6） ── */
+let menuCardObj = null;          // null = 默认卡
+function openCardMenu(pl, anchor) {
+  menuCardObj = pl;
+  closeMenus();
+  const m = $('#menuCard');
+  const pinLabel = pl ? (pl.pinned ? '取消置顶' : '置顶对话') : '置顶对话';
+  m.innerHTML = `
+    <button data-act="rename">重命名</button>
+    <button data-act="pin">${pinLabel}</button>
+    <button data-act="unread">标记为未读</button>
+    <button data-act="continue">在新对话中继续</button>
+    <div class="menu-sep"></div>
+    <button data-act="toGroup">放入分组</button>
+    <button data-act="toProject">移动至项目</button>
+    <button data-act="archive">归档对话</button>
+    <button data-act="batch">批量管理</button>
+    <div class="menu-sep"></div>
+    <button data-act="finder">在 Finder 中显示</button>
+    <button data-act="workdir">复制工作目录</button>
+    <button data-act="export">导出对话记录</button>
+    <div class="menu-sep"></div>
+    <button data-act="delete" class="danger">删除对话</button>`;
+  $$('button', m).forEach(b => b.onclick = () => cardMenuAction(b.dataset.act));
+  const r = anchor.getBoundingClientRect();
+  m.hidden = false;
+  m.style.left = Math.min(r.left, innerWidth - 230) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+}
+function cardMenuAction(act) {
+  const pl = menuCardObj; closeMenus();
+  const name = pl ? pl.title : '默认';
+  switch (act) {
+    case 'rename':
+      if (!pl) { toast('默认卡不能重命名'); return; }
+      askModal({ title: '重命名对话', value: pl.title, okText: '重命名', onOk: v => {
+        if (v && v.trim()) { pl.title = v.trim(); save(true); renderNav(); toast('已重命名'); }
+      }});
+      break;
+    case 'pin':
+      if (!pl) { toast('默认卡不用置顶'); return; }
+      pl.pinned = !pl.pinned; save(true); renderNav(); toast(pl.pinned ? '已置顶' : '已取消置顶');
+      break;
+    case 'unread':
+      if (!pl) { toast('默认卡没有未读态'); return; }
+      pl.unread = !pl.unread; save(true); renderNav();
+      toast(pl.unread ? '已标记为未读（行上一个小点）' : '已标记为已读');
+      break;
+    case 'continue':
+      toast(`在新对话中继续「${escapeHtml(name)}」—— 原型里新开一张同内容的卡（落 SwiftUI 接真正的续聊）`);
+      break;
+    case 'toGroup': {
+      if (!pl) { toast('默认卡不参与分组'); return; }
+      const gs = (S.plans || []).filter(x => x.isGroup).map(x => x.title);
+      if (!gs.length) { toast('还没有分组 —— 左栏 ＋ → 先建一个分组'); return; }
+      askModal({ title: '放入分组', text: '可选：' + gs.join(' / ') + '\n（填组名；留空 = 移出分组）',
+        value: pl.group || '', okText: '放进去', onOk: v => {
+          const name = (v || '').trim();
+          pl.group = name || null;
+          save(true); renderNav();
+          toast(name ? `已把「${escapeHtml(pl.title)}」放入分组 <b>${escapeHtml(name)}</b>`
+                     : `已把「${escapeHtml(pl.title)}」移出分组`);
+        }});
+      break; }
+    case 'toProject': {
+      const names = projList(); if (!names) return;
+      askModal({ title: '移动至项目', text: '可选：' + names, value: '', okText: '移动', onOk: v => {
+        if (!pl) { toast('默认卡不能移动'); return; }
+        S.plans = S.plans.filter(x => x.id !== pl.id);
+        save(true); renderNav();
+        toast(`已把「${escapeHtml(pl.title)}」移至项目 ${escapeHtml((v||'').trim())}`);
+      }});
+      break; }
+    case 'archive':
+      confirmModal({ title: '归档这段对话？', text: name + '\n（归档后不出现在这个列表里）', okText: '归档', onOk: () => {
+        if (!pl) { toast('默认卡不归档'); return; }
+        S.plans = S.plans.filter(x => x.id !== pl.id);
+        if (S.activePlan === pl.id) S.activePlan = 'default';
+        save(true); renderNav(); toast('已归档对话');
+      }});
+      break;
+    case 'batch': toast('批量管理：多选改名 / 归档（原型先记一笔）'); break;
+    case 'finder':
+      toast(pl && proj() ? `在 Finder 中显示 <code>${escapeHtml(proj().path)}</code>`
+                         : '这段对话没有工作目录（临时对话不带项目文件夹）');
+      break;
+    case 'workdir':
+      if (proj()) { navigator.clipboard?.writeText(proj().path); toast(`已复制工作目录 <b>${escapeHtml(proj().path)}</b>`); }
+      else toast('这段对话没有工作目录（不带任何项目文件夹）');
+      break;
+    case 'export':
+      toast('导出对话记录：原型导出为 JSON（落 SwiftUI 走 NSPanel 存文件）');
+      break;
+    case 'delete':
+      confirmModal({ title: '删除这段对话？', text: name + '\n不可恢复。', okText: '删除', onOk: () => {
+        if (!pl) { toast('默认卡不能删'); return; }
+        S.plans = S.plans.filter(x => x.id !== pl.id);
+        if (S.activePlan === pl.id) S.activePlan = 'default';
+        save(true); renderNav(); toast('已删除对话');
+      }});
+      break;
+  }
+}
+function projList() {
+  if (!S.projects.length) { toast('还没有项目可移动'); return null; }
+  return S.projects.map(x => x.name).join(' / ');
+}
+
 function selectTempCard(id) {
   S.activePlan = id;
   S.tempMode = true;
@@ -623,7 +768,23 @@ function renderCrumbs() {
   $('#fullPathLabel').title = fullPath(rel);
 }
 
+/// §14.4 / §14.5：对话模式天然没有编辑区；项目模式可以把它藏起来（按钮在顶栏「提交」旁）
+function applyWorkspaceVisibility() {
+  const main = $('#main'), btn = $('#btnToggleEditor');
+  if (!main) return;
+  const hide = !S.projectMode || S.hideEditor;
+  main.classList.toggle('no-workspace', hide);
+  if (!btn) return;
+  btn.disabled = !S.projectMode;
+  btn.style.opacity = S.projectMode ? '' : '.4';
+  btn.textContent = S.projectMode && S.hideEditor ? '＋ 编辑区' : '◫ 编辑区';
+  btn.title = S.projectMode
+    ? (S.hideEditor ? '把中间的编辑区打开' : '收起中间编辑区 —— 只留 文件夹 + 对话')
+    : '对话模式本来就没有编辑区（左栏 + 对话，两栏）';
+}
+
 function renderContent() {
+  applyWorkspaceVisibility();
   const rel = relOfActiveTab(), p = proj();
   const hasFile = !!(p && rel);
   ['#viewMd','#viewFile','#viewMind','#viewHistory'].forEach(s => $(s).classList.remove('is-on'));
@@ -1155,10 +1316,11 @@ function cycleLayout() {
   setLayout(S.layout === 'right' ? 'center' : S.layout === 'center' ? 'left' : 'right');
 }
 /// 进项目模式：把导航栏那排 图文/语音/视频 **搬进对话框**（§12.0.5）
+/// ⭐ 图文/语音/视频 **永远画在对话窗里**（§14.3）：对话窗在哪，它们就在哪。
+/// 项目模式和对话模式都一样 —— 顶栏不再放它们（#modesSlotTop 被 CSS 藏掉）。
 function placeModeChips() {
-  const chips = $('#modeChips');
-  if (!chips) return;
-  const target = S.projectMode && proj() ? $('#modesSlotChat') : $('#modesSlotTop');
+  const chips = $('#modeChips'), target = $('#modesSlotChat');
+  if (!chips || !target) return;
   if (chips.parentElement !== target) target.appendChild(chips);
 }
 function toggleFullscreen() {
@@ -1358,6 +1520,13 @@ function bind() {
     } else {
       addMenuAction('newBlank');
     }
+  };
+  $('#btnToggleEditor').onclick = () => {
+    if (!S.projectMode) { toast('对话模式本来就没有编辑区 —— 就是 左栏 + 对话 两栏'); return; }
+    S.hideEditor = !S.hideEditor;
+    save(); renderContent();
+    toast(S.hideEditor ? '编辑区已收起 —— 只剩 文件夹 + 对话（像小米客户端）'
+                       : '编辑区已打开');
   };
   $('#btnClose').onclick = () => toast('（原型）关闭 = 回到原来的会话页');
   $('#btnCommitGit').onclick = commitGit;
