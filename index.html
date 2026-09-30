@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全功能 · 项目工作区</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ── 顶部：模式条保持不变（图文 / 语音 / 视频） ── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">全功能</span>
+      <span class="brand-sub">项目工作区</span>
+    </div>
+
+    <div class="modes" id="modeChips" role="tablist" aria-label="聊天模式">
+      <button class="chip is-on" data-mode="imageText">图文</button>
+      <button class="chip" data-mode="voice">语音</button>
+      <button class="chip" data-mode="video">视频</button>
+    </div>
+
+    <!-- 上下文条：项目绝对路径 + 重点参考文件 -->
+    <div class="ctx" id="ctxStrip">
+      <span class="ctx-item ctx-project" id="ctxProject" title="项目绝对路径">
+        <i class="ico ico-folder"></i><code id="ctxProjectPath">—</code>
+      </span>
+      <span class="ctx-sep"></span>
+      <span class="ctx-item ctx-focus" id="ctxFocus" title="重点参考文件">
+        <i class="ico ico-star"></i><code id="ctxFocusPath">未选择文件</code>
+        <b class="tag-focus">重点参考</b>
+      </span>
+    </div>
+
+    <div class="topbar-right">
+      <button class="btn btn-ghost" id="btnNewProject">新建项目</button>
+      <button class="btn btn-ghost" id="btnCommitGit">提交 git</button>
+      <button class="btn btn-primary is-active" id="btnFullFeature">全功能</button>
+      <button class="btn btn-icon" id="btnClose" title="关闭，回到会话页">✕</button>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ════ 左 80%：工作区 ════ -->
+    <section class="workspace" id="workspace">
+
+      <!-- 左：文件夹工作区（VSCode 式树） -->
+      <aside class="tree-pane">
+        <div class="pane-head">
+          <span class="pane-title">文件夹</span>
+          <span class="pane-meta" id="treeCount"></span>
+        </div>
+        <div class="tree" id="fileTree" role="tree"></div>
+        <div class="pane-foot">
+          <div class="foot-row"><span class="k">项目</span><code id="treeProjectPath">—</code></div>
+          <div class="foot-row"><span class="k">快照</span><span id="gitLogCount">0 次提交</span></div>
+        </div>
+      </aside>
+
+      <div class="v-split" id="vSplit" title="拖动调整宽度"></div>
+
+      <!-- 中：内容区 -->
+      <section class="content-pane">
+        <div class="pane-head content-head">
+          <div class="tabs" id="contentTabs" role="tablist">
+            <button class="tab is-on" data-tab="md">正文</button>
+            <button class="tab" data-tab="mind">脑图</button>
+            <button class="tab" data-tab="history">历史 <i class="badge" id="historyBadge">0</i></button>
+          </div>
+          <div class="file-title" id="fileTitle">未打开文件</div>
+          <div class="tools" id="contentTools"></div>
+        </div>
+
+        <!-- 正文：实时编辑 + 实时预览 -->
+        <div class="view view-md is-on" id="viewMd">
+          <div class="md-split" id="mdSplit">
+            <textarea class="md-source" id="mdSource" spellcheck="false"
+                      placeholder="在这里编辑 Markdown…（改动会自动备份历史）"></textarea>
+            <div class="v-gutter" id="mdGutter"></div>
+            <article class="md-preview" id="mdPreview"></article>
+          </div>
+        </div>
+
+        <!-- 脑图：mermaid 源码 + 图，代码可折叠 -->
+        <div class="view view-mind" id="viewMind">
+          <div class="mind-layout" id="mindLayout">
+            <div class="mind-code" id="mindCodePane">
+              <div class="code-head">
+                <span class="code-name">脑图.mmd <em>（mermaid）</em></span>
+                <button class="btn btn-mini" id="btnFoldCode">折叠代码 ▸ 只看图</button>
+              </div>
+              <textarea class="code-src" id="mindSource" spellcheck="false"></textarea>
+              <div class="code-err" id="mindErr"></div>
+            </div>
+            <div class="mind-canvas-wrap" id="mindCanvasWrap">
+              <div class="mind-bar">
+                <span class="mind-hint">点节点可折叠 / 展开分支</span>
+                <button class="btn btn-mini" id="btnShowCode" hidden>展开代码</button>
+                <button class="btn btn-mini" id="btnFit">适应窗口</button>
+              </div>
+              <div class="mind-canvas" id="mindCanvas"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 历史：自动备份 + 恢复 -->
+        <div class="view view-history" id="viewHistory">
+          <div class="hist-head">
+            <div>
+              <div class="hist-file" id="histFile">—</div>
+              <div class="hist-note">任何一次编辑（手改 / 对话改 / 恢复）都会自动存一版，这里只列<strong>当前文件</strong>的历史。</div>
+            </div>
+            <button class="btn btn-ghost" id="btnHistClear">清空本文件历史</button>
+          </div>
+          <ul class="hist-list" id="histList"></ul>
+        </div>
+      </section>
+    </section>
+
+    <div class="h-split" id="hSplit" title="拖动调整对话宽度"></div>
+
+    <!-- ════ 右：对话窗口 ════ -->
+    <aside class="chat" id="chatPane">
+      <div class="chat-head">
+        <div class="chat-modes" id="chatModes">
+          <button class="dchip is-on" data-chat="continuous">连续对话</button>
+          <button class="dchip" data-chat="temporary">临时对话</button>
+          <button class="dchip" data-chat="voice">语音</button>
+        </div>
+        <div class="chat-status" id="chatStatus">围绕当前项目</div>
+      </div>
+
+      <div class="msgs" id="msgs"></div>
+
+      <div class="chat-foot">
+        <div class="chat-ctx" id="chatCtx">
+          <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">—</code></span>
+          <span class="cctx" id="chatCtxFocusWrap"><i class="ico ico-star"></i><code id="chatCtxFocus">—</code></span>
+        </div>
+        <div class="composer">
+          <textarea id="chatInput" rows="2"
+            placeholder="围绕项目提问或让它改脑图…（回车发送）"></textarea>
+          <div class="composer-bar">
+            <span class="composer-hint" id="composerHint">回车发送 · Shift+回车换行</span>
+            <button class="btn btn-primary" id="btnSend">发送</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
