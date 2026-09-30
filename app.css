@@ -328,10 +328,14 @@ code{font-family:var(--mono);font-size:11.5px}
 .msgs-row{flex:1;min-height:0;display:flex;position:relative}
 /* ══ §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 截图（无源码可搬）══
    声音照 reference/MiMo-Code 的 tui/util/sound.ts：pulse-a/b/c 三文件轮换、音量 0.35 */
-.hist-rail{flex:0 0 30px;width:30px;z-index:6;position:relative;overflow:hidden;
+.hist-rail{flex:0 0 48px;width:48px;z-index:6;position:relative;overflow:hidden;
   display:flex;flex-direction:column;align-items:flex-start;
-  gap:11px;padding:16px 0 16px 7px;cursor:ns-resize;user-select:none;
-  background:linear-gradient(90deg,rgba(10,10,12,.5),rgba(10,10,12,0) 82%);
+  gap:11px;padding:20px 0 20px 7px;cursor:ns-resize;user-select:none;
+  /* 用户要的「中间位置」= 轨道整体垂直居中；safe = 内容多到溢出时退回顶部，
+     否则 justify-content:center 在溢出会把两端都顶出可视区 */
+  justify-content:flex-start;
+  justify-content:safe center;
+  background:linear-gradient(90deg,rgba(10,10,12,.45),rgba(10,10,12,0) 82%);
   border-right:1px solid rgba(255,255,255,.05)}
 .hist-rail[hidden]{display:none!important}
 .hr-line{flex:0 0 auto;width:20px;height:3px;border-radius:2px;background:#3F3F46;
@@ -339,7 +343,9 @@ code{font-family:var(--mono);font-size:11.5px}
   transition:background .16s ease,transform .16s cubic-bezier(.3,1.4,.5,1),box-shadow .16s;
   animation:railIn .18s ease-out both}
 .hr-line:hover{background:#D4D4D8;transform:scaleX(1.18)}
-.hr-line.is-cur{background:#FFFFFF;width:24px;box-shadow:0 0 7px rgba(255,255,255,.45)}
+.hr-line.is-cur{background:#FFFFFF;width:40px;box-shadow:0 0 7px rgba(255,255,255,.45)}
+/* 图里「最新那条」恒为白色短条（在最下面），与「当前位置」那条更长的白条并存 */
+.hr-line.is-last{background:#FFFFFF}
 .hr-line.is-cur.is-live{animation:curPulse .5s ease-out}
 /* 滑动回放时正在划过的那条 */
 .hr-line.is-scrub{background:#8FC6FF;transform:scaleX(1.28);

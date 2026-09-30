@@ -2655,11 +2655,12 @@ function renderHistRail() {
   const msgs = S.chat || [];
   if (!msgs.length) { rail.hidden = true; rail.innerHTML = ''; return; }   // 空对话不画
   rail.hidden = false;
+  const last = msgs.length - 1;
   rail.innerHTML = msgs.map((m, i) => {
     const who = m.role === 'user' ? '你' : m.role === 'ai' ? 'AI' : '系统';
-    const txt = String(m.html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-    return `<div class="hr-line" data-i="${i}" style="animation-delay:${i * 14}ms"
-      title="第 ${i + 1} 条 · ${who}"></div>`;
+    // 最后一条 = 最新消息，恒白（照 MiMo Desktop 图：底部那条白色短标记）
+    return `<div class="hr-line${i === last ? ' is-last' : ''}" data-i="${i}"
+      style="animation-delay:${i * 14}ms" title="第 ${i + 1} 条 · ${who}"></div>`;
   }).join('');
   bindRailTip();
 }
