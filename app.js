@@ -145,6 +145,11 @@ function toast(html) {
 }
 
 /* ── 本软件风格的模态（§12.3：不许再用系统 prompt / confirm） ── */
+window.addEventListener('error', e => {
+  // 任何未捕获异常都让他说出来 —— 「点了没反应」必须能被看见
+  console.error('[页面异常]', e.message);
+  if (typeof toast === 'function') toast('⚠️ 页面异常：' + e.message);
+});
 let modalOnOk = null;
 function openModal({ title, text = '', value = null, okText = '确定', onOk }) {
   $('#modalTitle').textContent = title;
@@ -1688,6 +1693,17 @@ function toggleHistoryView() {
    绑定
    ============================================================ */
 function bind() {
+  // ⭐ **先绑这两颗**（2026-09-30 用户报「提交、恢复完全无效」）：
+  // bind() 后面任何一行抛错，都会让排在它后面的绑定全部失效 —— 那就是"点了没反应"。
+  // 所以提交/恢复放在最前，整段再套 try/catch：宁可别的功能残废，这两颗必须活着。
+  try {
+    $('#btnCommitGit').onclick = commitGit;
+    $('#btnGitHist').onclick = e => {
+      e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget);
+    };
+  } catch (e) { console.error('[bind] 提交/恢复 绑定失败', e); }
+
+  try {
   $$('#modeChips .chip').forEach(c => c.onclick = () => {
     S.mode = c.dataset.mode; save();
     renderComposerControls();          // 必须重建右组 —— 三种模式右上角内容不同（§13.1）
@@ -1701,8 +1717,6 @@ function bind() {
   });
   // 「＋新建」= 在**临时区**新建一段对话（§15.5）
   $('#ccNew').onclick = () => addMenuAction('newCard');
-  // 顶栏「恢复」= 提交历史面板（§15.2）
-  $('#btnGitHist').onclick = e => { e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget); };
   // 左栏顶部快捷入口（保留你旧项目那排）
   $$('#navQuick button').forEach(b => b.onclick = e => {
     e.stopPropagation();
@@ -1821,7 +1835,6 @@ function bind() {
     const m = S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频';
     toast(`通话 = 当前<b>${m}</b>模式的通话（位置固定在刘海右侧，不随模式条移动）`);
   };
-  $('#btnCommitGit').onclick = commitGit;
 
   // md 工具栏
   $$('#mdBar .md-tools button').forEach(b => b.onclick = () => mdInsert(b.dataset.md));
@@ -1915,6 +1928,10 @@ function bind() {
     if (meta && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); toggleFullscreen(); }
     if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); }
   });
+  } catch (e) {
+    console.error('[bind] 后半段出错（提交/恢复已在最前面保底绑定）：', e);
+    toast('部分控件没绑上：' + e.message);
+  }
 }
 
 /// 提交 = 一个**可恢复的快照**：第几次 + 时间 + 改了哪些文件 + 整份内容（§16.1）
