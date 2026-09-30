@@ -32,7 +32,7 @@ const iconFor = rel => {
 function sampleProject() {
   return {
     id: 'p1', name: '我的笔记项目', path: '/Users/mjm/Documents/SuperAgent/我的笔记项目',
-    pinned: true, open: true,
+    pinned: false, open: true,
     files: {
       'README.md': `# 我的笔记项目\n\n每一轮对话都会自动带上项目路径。\n\n## 这个页面怎么用\n\n- 左边点文件 → 自动加进 **重点参考**（可多选），并携带项目绝对路径\n- 中间「正文」可以**点预览的任意一行就地编辑**，按 ESC 回到预览\n- 「脑图」是 mermaid，**代码可以折叠**\n- 右边围绕项目提问，也能让它改脑图 —— **任何一次编辑都会自动备份历史（每文件最近 10 次）**\n\n## 待办\n\n- [ ] 把会议纪要里的三条结论并进脑图\n- [ ] 竞品对比补一栏价格\n`,
       '脑图.mmd': `mindmap\n  root((我的笔记项目))\n    会议\n      09-30 评审\n        结论：先做左 80% 工作区\n      待办清单\n    内容\n      正文 README\n      网页 示例\n      竞品对比\n    对话\n      连续对话\n      临时对话\n      语音\n`,
@@ -108,6 +108,11 @@ function load() {
     const r = JSON.parse(localStorage.getItem(LS_KEY));
     if (!r || !Array.isArray(r.projects)) return null;
     if (!Array.isArray(r.focusFiles)) r.focusFiles = [];
+    // 老数据是字符串 rel → 迁成 {p,f}（跨项目多选要分清是哪个项目）
+    if (r.focusFiles.some(x => typeof x === 'string')) {
+      const defP = r.activeProject || (r.projects && r.projects[0] && r.projects[0].id) || null;
+      r.focusFiles = r.focusFiles.filter(x => typeof x === 'string').map(x => ({ p: defP, f: x }));
+    }
     if (!Array.isArray(r.tabs)) r.tabs = [];
     if (!Array.isArray(r.plans)) r.plans = [];          // v2→v3：补「临时规划」块
     if (typeof r.projectMode !== 'boolean') r.projectMode = !!(r.projects && r.projects.length);
@@ -132,6 +137,13 @@ const relOfActiveTab = () => (S.tabs[S.activeTab] || {}).f || null;
 const fullPath = (rel, p = proj()) => p ? `${p.path}/${rel}` : rel || '';
 const fileContent = rel => (proj() && proj().files[rel]) || '';
 const MIND_FILE = '脑图.mmd';
+const projectById = id => S.projects.find(x => x.id === id) || null;
+const focusHas = (pid, rel) => (S.focusFiles || []).some(x => x && x.p === pid && x.f === rel);
+function focusToggle(pid, rel) {
+  if (focusHas(pid, rel)) S.focusFiles = (S.focusFiles || []).filter(x => !(x.p === pid && x.f === rel));
+  else S.focusFiles = [...(S.focusFiles || []), { p: pid, f: rel }];
+  save(); renderNav(); renderContext();
+}
 const histFile = () => S.currentFile || relOfActiveTab();
 
 let toastTimer;
@@ -145,6 +157,11 @@ function toast(html) {
 }
 
 /* ── 本软件风格的模态（§12.3：不许再用系统 prompt / confirm） ── */
+// §17.1：点菜单外面（任何地方）就关掉所有菜单 —— 独立于 bind，断链也生效
+document.addEventListener('mousedown', () => {
+  document.querySelectorAll('.menu').forEach(m => { if (m) m.hidden = true; });
+  if (menuDyn) menuDyn.hidden = true;
+}, true);
 window.addEventListener('error', e => {
   // 任何未捕获异常都让他说出来 —— 「点了没反应」必须能被看见
   console.error('[页面异常]', e.message);
@@ -170,8 +187,9 @@ function confirmModal(opts) { openModal({ okText: '确定', ...opts }); }
    左栏：MiMo 式项目栏
    ============================================================ */
 /// 单击重点参考标签 → 展开并滚到左边那个文件，闪一下（§15.9）
-function locateFileInTree(rel) {
-  const row = [...document.querySelectorAll('#projectList .node-row')].find(x => x.dataset.rel === rel);
+function locateFileInTree(rel, pid) {
+  const row = [...document.querySelectorAll('#projectList .node-row')]
+    .find(x => x.dataset.rel === rel && (!pid || x.dataset.pid === pid));
   if (!row) { toast('这个文件不在当前展开的项目里'); return; }
   let el = row.parentElement;
   while (el && el !== document.getElementById('projectList')) {
@@ -269,14 +287,9 @@ function renderNav() {
       row.className = 'plan-row' + (S.activeProjChat === c.id ? ' is-on' : '');
       row.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
         ${c.pinned ? '<span class="ppin">📌</span>' : ''}
-        <span class="psid" title="会话 ID（点击复制）">${c.sid}</span>
-        <button class="pmore" title="选项">⋯</button>`;
+        ${c.unread ? '<span class="punread" title="未读"></span>' : ''}
+        <button class="pmore" title="选项（含会话 ID）">⋯</button>`;
       row.querySelector('.pname').textContent = c.title;
-      row.querySelector('.psid').onclick = ev => {
-        ev.stopPropagation();
-        navigator.clipboard?.writeText(c.sid);
-        toast(`已复制会话 ID <b>${c.sid}</b> —— 可以把任务发给它`);
-      };
       row.querySelector('.pmore').onclick = ev => { ev.stopPropagation(); openProjChatMenu(c, p, ev.currentTarget); };
       row.onclick = () => {
         S.activeProjChat = c.id; S.activePlan = null; S.tempMode = false;
@@ -459,7 +472,7 @@ function renderTreeInto(project, nodes, container, prefix) {
     row.className = 'node-row';
     if (n.type === 'file') {
       if (rel === relOfActiveTab()) row.classList.add('is-sel');
-      if (S.focusFiles.includes(rel)) row.classList.add('is-focus-file');
+      if (focusHas(project.id, rel)) row.classList.add('is-focus-file');
       row.innerHTML = `<span class="tw"></span>${treeIconSVG(rel, false)}
         <span class="n-name"></span>`;
       row.querySelector('.n-name').textContent = n.name;
@@ -472,6 +485,7 @@ function renderTreeInto(project, nodes, container, prefix) {
         save(); renderNav(); renderContent();
       };
       row.dataset.rel = rel;
+      row.dataset.pid = project.id;
       row.oncontextmenu = ev => {
         ev.preventDefault();
         showMenu([
@@ -479,10 +493,11 @@ function renderTreeInto(project, nodes, container, prefix) {
               save(); renderNav(); renderContent(); } },
           { label: '定位（只选中不打开）', action: () => locateFileInTree(rel) },
           { sep: true },
-          { label: '添加到对话（重点参考）', action: () => {
-              if (!S.focusFiles.includes(rel)) S.focusFiles.push(rel);
-              save(); renderNav(); renderContext();
-              toast(`已把 <b>${rel}</b> 加进这次对话的参考`); } },
+          { label: focusHas(project.id, rel) ? '从对话里移出（取消参考）' : '添加到对话（重点参考）',
+            action: () => {
+              focusToggle(project.id, rel);
+              toast(focusHas(project.id, rel) ? `已把 <b>${rel}</b> 加进这次对话的参考`
+                                              : `已移出参考 · ${rel}`); } },
           { label: '复制路径', action: () => {
               navigator.clipboard?.writeText(fullPath(rel, project));
               toast('已复制 ' + fullPath(rel, project)); } },
@@ -495,7 +510,8 @@ function renderTreeInto(project, nodes, container, prefix) {
                 if (nn in project.files) { toast('已经有同名文件了'); return; }
                 project.files[nn] = project.files[rel]; delete project.files[rel];
                 renameInTree(project.tree, rel.split('/'), nn.split('/'));
-                if (S.focusFiles.includes(rel)) S.focusFiles = S.focusFiles.map(x => x === rel ? nn : x);
+                S.focusFiles = (S.focusFiles || []).map(x =>
+                  x.p === project.id && x.f === rel ? { ...x, f: nn } : x);
                 if (relOfActiveTab() === rel) { S.tabs.forEach(t => { if (t.f === rel) t.f = nn; });
                   S.currentFile = nn; S.tab = extViewKind(nn) === 'file' ? 'file' : extViewKind(nn); }
                 save(true); renderNav(); renderTabs(); renderContent(); renderContext();
@@ -507,7 +523,7 @@ function renderTreeInto(project, nodes, container, prefix) {
                 S.tabs = S.tabs.filter(t => !(t.p === project.id && t.f === rel));
                 if (S.activeTab >= S.tabs.length) S.activeTab = Math.max(0, S.tabs.length - 1);
                 if (relOfActiveTab() !== rel) {} else S.currentFile = relOfActiveTab() || null;
-                S.focusFiles = S.focusFiles.filter(x => x !== rel);
+                S.focusFiles = (S.focusFiles || []).filter(x => !(x.p === project.id && x.f === rel));
                 save(true); renderNav(); renderTabs(); renderContent(); renderContext();
                 toast('已删除 ' + rel); } }) }
         ], ev.currentTarget);
@@ -530,29 +546,17 @@ function renderTreeInto(project, nodes, container, prefix) {
   });
 }
 
-let lastClickedFile = null;      // Shift 范围的锚点
 function onFileRowClick(project, rel, ev) {
-  const meta = ev.metaKey || ev.ctrlKey;
-  if (ev.shiftKey && lastClickedFile) {
-    const order = flatFiles(project);
-    const a = order.indexOf(lastClickedFile), b = order.indexOf(rel);
-    if (a >= 0 && b >= 0) {
-      const [lo, hi] = a < b ? [a, b] : [b, a];
-      for (let i = lo; i <= hi; i++) if (!S.focusFiles.includes(order[i])) S.focusFiles.push(order[i]);
-      save(); renderNav(); renderContext();
-      toast(`范围选中 <b>${hi - lo + 1}</b> 个文件（重点参考）`);
-      return;
-    }
+  // ⭐ Shift 或 ⌘ 点击 = **点谁选谁**（toggle），不是"中间全选"；
+  // 而且可以**跨子文件夹、跨项目**点选（focusFiles 带项目 id，同名文件不会混）。
+  if (ev.shiftKey || ev.metaKey || ev.ctrlKey) {
+    focusToggle(project.id, rel);
+    toast(focusHas(project.id, rel)
+      ? `已加为重点参考 · ${escapeHtml(project.name)}/${rel}（${(S.focusFiles || []).length} 个）`
+      : `已移出重点参考 · ${rel}`);
+    return;
   }
-  lastClickedFile = rel;
-  openInTab(project.id, rel);                    // 单击 = 打开
-  if (meta) {                                     // ⌘ 单击 = 加入 / 移出重点参考
-    S.focusFiles = S.focusFiles.includes(rel)
-      ? S.focusFiles.filter(x => x !== rel)
-      : [...S.focusFiles, rel];
-    save(); renderNav(); renderContext();
-    toast(S.focusFiles.includes(rel) ? `已加为重点参考 · ${rel}` : `已移出重点参考 · ${rel}`);
-  }
+  openInTab(project.id, rel);                    // 普通单击 = 打开
 }
 
 /// 侧栏搜索：只过滤树（在侧栏顶部那个框）
@@ -587,8 +591,9 @@ function openProjMenu(p, anchor) {
   m.querySelector('[data-act="pin"]').textContent = p.pinned ? '取消置顶' : '置顶项目';
 }
 function closeMenus() {
-  ['#menuAddProject','#menuAddTemp','#menuProj','#menuTabs','#menuSettings','#tabsPopover','#menuCard']
-    .forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+  // 直接按 class 关，不走 id 列表 —— §17.1 实测 id 列表这条路在某些时序下关不干净，
+  // 而 `querySelectorAll('.menu')` 这条已经验证过是可靠的（点外面 → 0 个残留）。
+  document.querySelectorAll('.menu').forEach(m => { if (m) m.hidden = true; });
   if (menuDyn) menuDyn.hidden = true;
 }
 /// 打开别的菜单/下拉时，顺手关掉提交面板（免得叠两层）
@@ -684,12 +689,17 @@ function openCardMenu(pl, anchor) {
   menuCardObj = pl;
   closeMenus();
   const m = $('#menuCard');
+  if (pl && !pl.sid) { pl.sid = newSid(); save(true); }
   const pinLabel = pl ? (pl.pinned ? '取消置顶' : '置顶对话') : '置顶对话';
   m.innerHTML = `
     <button data-act="rename">重命名</button>
     <button data-act="pin">${pinLabel}</button>
     <button data-act="unread">标记为未读</button>
     <button data-act="continue">在新对话中继续</button>
+    <div class="menu-sep"></div>
+    <div class="menu-title">会话 ID${pl && pl.sid ? ' · ' + pl.sid : ''}</div>
+    <button data-act="copySid">复制会话 ID</button>
+    <button data-act="sendSid">发送到会话…</button>
     <div class="menu-sep"></div>
     <button data-act="toGroup">放入分组</button>
     <button data-act="toProject">移动至项目</button>
@@ -759,6 +769,19 @@ function cardMenuAction(act) {
         save(true); renderNav(); toast('已归档对话');
       }});
       break;
+    case 'copySid':
+      if (!pl || !pl.sid) { toast('默认卡没有会话 ID'); return; }
+      navigator.clipboard?.writeText(pl.sid);
+      toast(`已复制会话 ID <b>${pl.sid}</b>`);
+      break;
+    case 'sendSid':
+      if (!pl || !pl.sid) { toast('默认卡没有会话 ID'); return; }
+      askModal({ title: '发送到会话', text: '填目标会话 ID（另一个对话的 ID）。发过去会自动激活那个会话窗口。',
+        value: '', okText: '发送', onOk: v => {
+          if (!v || !v.trim()) return;
+          toast(`已把任务发给 <b>${escapeHtml(v.trim())}</b> —— 那个会话会被自动激活`);
+        }});
+      break;
     case 'batch': toast('批量管理：多选改名 / 归档（原型先记一笔）'); break;
     case 'finder':
       toast(pl && proj() ? `在 Finder 中显示 <code>${escapeHtml(proj().path)}</code>`
@@ -818,6 +841,7 @@ function projList() {
 
 function selectTempCard(id) {
   S.activePlan = id;
+  S.activeProjChat = null;          // 选临时卡 = 不再是"项目对话"上下文（§17.4）
   S.tempMode = true;
   S.projectMode = false;                     // 临时卡不在项目模式里
   // ⚠️ 不要把 activeProject 置空：标签还指着它的文件
@@ -918,30 +942,35 @@ function renderTabs() {
    ============================================================ */
 function renderAll() { renderNav(); renderTabs(); renderContext(); renderContent(); renderModes(); renderChatModes(); renderChat(); }
 
-function focusChipEl(rel) {
+function focusChipEl(entry) {
+  const rel = entry.f, pr = projectById(entry.p);
   const el = document.createElement('span');
   el.className = 'fchip';
-  el.title = fullPath(rel) + '（点 × 取消参考）';
+  const full = pr ? `${pr.path}/${rel}` : rel;
+  el.title = full + '\n单击=定位到左边的文件 · 双击=在编辑区打开';
   el.innerHTML = `${treeIconSVG(rel, false)}<span class="fname"></span>
-    <button class="x" title="取消参考">×</button>`;
+    <span class="fproj"></span><button class="x" title="取消参考">×</button>`;
   el.querySelector('.fname').textContent = rel;
-  el.querySelector('.fname').title = fullPath(rel) + '\n单击=定位到左边的文件 · 双击=在编辑区打开';
-  el.querySelector('.fname').onclick = ev => { ev.stopPropagation(); locateFileInTree(rel); };
+  el.querySelector('.fproj').textContent = pr && pr.name ? pr.name : '';   // 跨项目标出处
+  el.querySelector('.fname').onclick = ev => {
+    ev.stopPropagation();
+    if (pr && S.activeProject !== pr.id) { S.activeProject = pr.id; pr.open = true; renderNav(); }
+    locateFileInTree(rel, entry.p);
+  };
   el.querySelector('.fname').ondblclick = ev => {
     ev.stopPropagation();
-    if (proj()) {
-      S.projectMode = true;
-      openInTab(S.activeProject, rel);
-      save(); renderNav(); renderContent();
-    }
+    if (pr) { S.projectMode = true; S.activeProject = pr.id; openInTab(pr.id, rel);
+      save(); renderNav(); renderContent(); }
   };
-  el.querySelector('.x').onclick = () => {
-    S.focusFiles = S.focusFiles.filter(x => x !== rel);
+  el.querySelector('.x').onclick = ev => {
+    ev.stopPropagation();
+    S.focusFiles = (S.focusFiles || []).filter(x => !(x.p === entry.p && x.f === entry.f));
     save(); renderNav(); renderContext();
     toast(`已取消参考 · ${rel}`);
   };
   return el;
 }
+
 /// 重点参考：**必须同一行**（§13.3）—— 放不下的收到**最左侧那个 +** 里
 function renderContext() {
   const focuses = S.focusFiles || [], n = focuses.length;
@@ -957,23 +986,25 @@ function renderContext() {
         还没有重点参考。<br><b>⌘+单击</b> 文件加入，<b>Shift+单击</b> 范围多选。</div>`;
       return;
     }
-    focuses.forEach(rel => {
+    focuses.forEach(entry => {
+      const rel = entry.f, pr = projectById(entry.p);
       const it = document.createElement('div');
       it.className = 'focus-item';
       it.innerHTML = `${treeIconSVG(rel, false)}<span class="fname"></span>
-        <button class="x" title="取消参考">×</button>`;
+        <span class="fproj"></span><button class="x" title="取消参考">×</button>`;
       it.querySelector('.fname').textContent = rel;
-      it.querySelector('.fname').title = fullPath(rel);
+      it.querySelector('.fproj').textContent = pr ? pr.name : '';
+      it.querySelector('.fname').title = pr ? `${pr.path}/${rel}` : rel;
       it.querySelector('.x').onclick = e => {
         e.stopPropagation();
-        S.focusFiles = S.focusFiles.filter(x => x !== rel);
+        S.focusFiles = (S.focusFiles || []).filter(x => !(x.p === entry.p && x.f === entry.f));
         save(); renderNav(); renderContext();
       };
       list.appendChild(it);
     });
   };
   // 行里最多露 3 枚（横向放不下就靠 overflow 截断），其余去 + 里
-  focuses.slice(0, 3).forEach(rel => chips.appendChild(focusChipEl(rel)));
+  focuses.slice(0, 3).forEach(e => chips.appendChild(focusChipEl(e)));
 
   const inProject = S.projectMode && proj();
   const card = S.activePlan && S.activePlan !== 'default'
@@ -1262,24 +1293,41 @@ function renderHistory() {
     return;
   }
   list.forEach((h, i) => {
+    const older = list[i + 1];
     const li = document.createElement('li');
     li.className = 'hist-item' + (i === 0 ? ' is-new' : '');
-    li.innerHTML = `<span class="hist-when">${fmtTime(h.ts)}</span>
-      <span class="hist-src src-${h.source}">${h.source}</span>
-      <span class="hist-sum">${escapeHtml(h.summary || '')}</span>
-      <span class="hist-acts"><button class="btn btn-mini" data-a="view">查看</button>
-      <button class="btn btn-mini" data-a="restore">恢复</button></span>`;
+    li.innerHTML = `
+      <div class="hi-top">
+        <span class="hist-when">${fmtTime(h.ts)}</span>
+        <span class="hist-src src-${h.source}">${h.source}</span>
+        <span class="hist-sum">${escapeHtml(h.summary || '')}</span>
+      </div>
+      <div class="hi-acts">
+        <button class="btn btn-mini" data-a="diff">改了什么</button>
+        <button class="btn btn-mini" data-a="view">查看这一版</button>
+        <button class="btn btn-mini" data-a="loc">定位文件</button>
+        <button class="btn btn-mini hi-restore" data-a="restore">恢复到这一版</button>
+      </div>
+      <div class="hi-diff" hidden></div>`;
+    li.querySelector('[data-a="diff"]').onclick = () => {
+      const pane = li.querySelector('.hi-diff');
+      if (!pane.hidden) { pane.hidden = true; return; }
+      const prev = older ? older.content : '';
+      const d = lineDiff(prev, h.content);
+      const st = diffStat(d);
+      pane.hidden = false;
+      pane.innerHTML = `<div class="hi-diff-head">相对上一版 <b>+${st.add}</b> / <b>−${st.del}</b> 行</div>` +
+        d.slice(0, 200).map(l =>
+          `<div class="dl ${l.t === '+' ? 'add' : l.t === '-' ? 'del' : 'ctx'}">` +
+          `<span class="dl-t">${l.t === '+' ? '+' : l.t === '-' ? '−' : ' '}</span>` +
+          `<span class="dl-s">${escapeHtml(l.s) || ' '}</span></div>`).join('') +
+        (d.length > 200 ? '<div class="dl-more">（只显示前 200 行）</div>' : '');
+    };
     li.querySelector('[data-a="view"]').onclick = () => viewHistory(rel, h);
+    li.querySelector('[data-a="loc"]').onclick = () => locateFileInTree(rel, proj() ? proj().id : null);
     li.querySelector('[data-a="restore"]').onclick = () => restore(rel, i);
     host.appendChild(li);
   });
-}
-function viewHistory(rel, h) {
-  ensureTab(rel);
-  if (extViewKind(rel) === 'mind') { $('#mindSource').value = h.content; S.tab = 'mind'; }
-  else if (extViewKind(rel) === 'md') { $('#mdSource').value = h.content; $('#mdPreview').innerHTML = mdToHtml(h.content); S.tab = 'md'; }
-  save(); renderContent(); renderContext();
-  toast(`查看 <b>${fmtTime(h.ts)}</b> 那一版（未写回）`);
 }
 function restore(rel, index) {
   const h = (S.history[rel] || [])[index]; if (!h) return;
@@ -1469,8 +1517,9 @@ function sendChat() {
 }
 function reply(q) {
   const p = proj(), focuses = S.focusFiles || [], focus = focuses[0];
+  const fp = e => { const pr = projectById(e.p); return pr ? `${pr.path}/${e.f}` : e.f; };
   const ctx = p ? `<code>${p.path}</code>` : '临时对话（不带项目）'
-    + (focuses.length ? ` · 重点参考 ${focuses.map(f => `<code>${fullPath(f)}</code>`).join(' ')}` : '');
+    + (focuses.length ? ` · 重点参考 ${focuses.map(fp).map(x => `<code>${x}</code>`).join(' ')}` : '');
   const demo = '本地演示回复 · 未接模型';
 
   if (p && /(脑图|思维导图|mindmap|分支|节点)/.test(q) && /(加|新增|添加|插入|来一个|来条)/.test(q)) {
@@ -1499,13 +1548,14 @@ function reply(q) {
   }
   if (/(路径|目录|项目在哪|绝对路径)/.test(q)) {
     addMsg('ai', `当前项目：<code>${p.path}</code>\n`
-      + (focuses.length ? `重点参考（${focuses.length} 个）：${focuses.map(f => `<code>${fullPath(f)}</code>`).join(' ｜ ')}\n`
+      + (focuses.length ? `重点参考（${focuses.length} 个）：${focuses.map(fp).map(x => `<code>${x}</code>`).join(' ｜ ')}\n`
                         : '（还没选重点文件，点左边任意文件即可）')
       + `\n每一轮对话都会自动带上这些路径。`, demo); return;
   }
   if (/(总结|讲讲|说了什么|概览|README)/i.test(q) && focus) {
-    const body = fileContent(focus).split('\n').filter(l => l.trim() && !/^```/.test(l)).slice(0, 5).join('\n');
-    addMsg('ai', `重点参考是 <code>${escapeHtml(focus)}</code>，开头这些：\n\n${escapeHtml(body)}\n\n`
+    const fpRel = focus.f, fpProj = projectById(focus.p) || p;
+    const body = (fpProj.files[fpRel] || '').split('\n').filter(l => l.trim() && !/^```/.test(l)).slice(0, 5).join('\n');
+    addMsg('ai', `重点参考是 <code>${escapeHtml(fpRel)}</code>，开头这些：\n\n${escapeHtml(body)}\n\n`
       + `要我把它并进脑图吗？说「给脑图加一个 …」就行。`, demo); return;
   }
   if (/(历史|备份|恢复|版本)/.test(q)) {
@@ -1596,6 +1646,7 @@ let menuTabIndex = null;
 let menuDyn = null;
 /// 通用弹出菜单：给一串 {label, danger?, action?} 就画出来（分组菜单 / 卡片附加项都用它）
 function showMenu(items, anchor) {
+  closeMenus();                              // 任何菜单打开前先关掉其它（含分组/卡片/项目）
   closeGitPanel();
   if (!menuDyn) {
     menuDyn = document.createElement('div');
@@ -1684,6 +1735,12 @@ function settingsAction(act, btn) {
 /// 历史开关（文件头那颗 + 工具栏那颗共用）
 function toggleHistoryView() {
   if (!histFile()) { toast('先打开一个文件'); return; }
+  // 历史是**项目/编辑区**这一侧的东西：点它就切回项目上下文
+  //（对话模式下编辑区是藏的、临时卡下整块是空的 —— 不切的话这一下"看起来没反应"）
+  if (!S.projectMode || S.tempMode) {
+    S.projectMode = true; S.tempMode = false; S.activePlan = null; S.activeProjChat = null;
+    save(); renderNav();
+  }
   ensureTab(histFile());
   S.tab = S.tab === 'history' ? (extViewKind(relOfActiveTab()) === 'mind' ? 'mind' : extViewKind(relOfActiveTab() === 'file' ? 'x' : 'md')) : 'history';
   save(); renderNav(); renderTabs(); renderContent(); renderContext();
@@ -1715,8 +1772,24 @@ function bind() {
     toast(c.dataset.conv === 'temporary' ? '临时对话 —— 这一段不写进任何会话'
                                         : '连续对话 —— 接着这条会话往下聊');
   });
-  // 「＋新建」= 在**临时区**新建一段对话（§15.5）
-  $('#ccNew').onclick = () => addMenuAction('newCard');
+  // 「＋新建」按你选中的地方走（§17.4）：
+  //  · 选的是**项目里的对话卡** → 新建一段**项目对话**（只有连续对话，落在「对话」分组里）
+  //  · 否则（临时区 / 默认卡） → 新建一张**临时对话卡**
+  $('#ccNew').onclick = () => {
+    const p = proj();
+    if (S.activeProjChat && p) {
+      askModal({ title: `给「${p.name}」新建对话`, text: '落在项目的「对话」分组里；只有**连续对话**这一种。',
+        value: `对话 ${(p.chats || []).length + 1}`, okText: '新建', onOk: v => {
+          p.chats = p.chats || [];
+          p.chats.push({ id: 'c' + now(), sid: newSid(),
+            title: (v || '').trim() || `对话 ${p.chats.length + 1}`, ts: now() });
+          save(true); renderNav();
+          toast(`已在项目「${escapeHtml(p.name)}」的对话分组里新建（连续对话）`);
+        }});
+      return;
+    }
+    addMenuAction('newCard');
+  };
   // 左栏顶部快捷入口（保留你旧项目那排）
   $$('#navQuick button').forEach(b => b.onclick = e => {
     e.stopPropagation();
@@ -1732,6 +1805,7 @@ function bind() {
   $('#btnPlanSect').onclick = () => { S.planOpen = S.planOpen === false; save(); renderNav(); };
 
   const openMenuAt = (id, btn) => {
+    closeMenus();                            // 互斥：不允许两个菜单同时开（§17.1）
     closeGitPanel();
     const m = $(id), r = btn.getBoundingClientRect();
     m.hidden = !m.hidden;
@@ -1771,12 +1845,15 @@ function bind() {
 
   // 页头右组：只有 角色 + 选项（音色在选项里，通话在顶栏固定格）
   $('#hcRole').onclick = () => toast('角色：这一段对话里它扮演的角色（照搬当前软件的角色清单）');
-  $('#hcOptions').onclick = () => {
+  const toggleOptPanel = () => {
     const p = $('#optPanel');
     p.hidden = !p.hidden;
     $('#hcOptions').classList.toggle('is-on', !p.hidden);
     if (!p.hidden) renderOptPanel();
   };
+  $('#hcOptions').onclick = e => { e.stopPropagation(); toggleOptPanel(); };
+  // 选项的第二种触发方式：**右键**（§17.3）
+  $('#hcOptions').oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); toggleOptPanel(); };
 
   // 本软件风格的模态（§12.3：不许再用系统 prompt / confirm）
   $('#modalCancel').onclick = closeModal;
