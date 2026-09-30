@@ -132,7 +132,7 @@ let S = load() || {
   automationFilter: {},
   vaultScope: 'workspace', vaultHost: 'local', vaultAgents: [], vaultGroup: 'project',
   vaultHideEmpty: false, vaultLimit: 100, vaultQuery: '', vaultOpen: {}, vaultGroupsCollapsed: {},
-  // §22.14 浏览器页 —— 形状照 Clone_From/Orca …/shared/browser-workspace-types.ts:174-180
+  // §22.14 浏览器页 —— 形状照 reference/Orca …/shared/browser-workspace-types.ts:174-180
   browserProfiles: [{ id: 'default', label: 'Default', engine: 'Safari', scope: 'default' },
                     { id: 'google',  label: 'Google',  engine: 'Chrome',  scope: 'isolated' }],
   browserProfile: 'default',
@@ -3477,7 +3477,7 @@ function bind() {
   $('#brDraw').onclick = () => setBrMode('draw');
   $('#brImport').onclick = e => { e.stopPropagation(); openBrCookie(e.currentTarget); };
   $('#brMore').onclick = e => { e.stopPropagation(); openBrMore(e.currentTarget); };
-  $('#brCode').onclick = () => toast('&lt;&gt; 开发者工具：真机走 `guest.openDevTools()`（Clone_From/Orca …/browser-manager-viewport.ts:16）');
+  $('#brCode').onclick = () => toast('&lt;&gt; 开发者工具：真机走 `guest.openDevTools()`（reference/Orca …/browser-manager-viewport.ts:16）');
   $('#brExt').onclick = () => { const t = activeTabObj(); if (t && t.url) window.open(t.url, '_blank', 'noopener'); else toast('还没有网址'); };
   $('#btnPath').onclick = () => {
     const t = $('#fullPathLabel').textContent;
@@ -4004,7 +4004,7 @@ function saveQuickCommand() {
   toast(`已保存快捷指令 <b>${escapeHtml(qcDraft ? qcDraft.label : '')}</b>`);
 }
 /// 点它 = **真的跑**：终端 → 终端面板逐字敲入；智能体 → 同时把命令当首条指令发进对话
-/// 点它 = **真的跑**。执行动作逐条对过 Clone_From/Orca 的 run-quick-command-in-new-tab.ts:56-142：
+/// 点它 = **真的跑**。执行动作逐条对过 reference/Orca 的 run-quick-command-in-new-tab.ts:56-142：
 ///   ① 空白命令直接拒绝（源码同款 `if (!command.command.trim()) return null`，免得开出一张空白标签）
 ///   ② 每跑一次 = **新开一个终端标签**，不是反复复用同一块面板
 ///   ③ 智能体动作 = agent + prompt（源码 launchAgentInNewTab）；我们这里 = 终端标签先 cd，再把 prompt 当首条指令
@@ -4024,8 +4024,8 @@ function runQuickCommand(id) {
 }
 
 /* ============================================================
-   §22.14 浏览器页 —— 细节从 Clone_From/Orca 取，不是照截图猜
-   视口预设照 Clone_From/Orca/src/shared/browser-viewport-presets.ts:13-68
+   §22.14 浏览器页 —— 细节从 reference/Orca 取，不是照截图猜
+   视口预设照 reference/Orca/src/shared/browser-viewport-presets.ts:13-68
    工具栏顺序照 …/assemble-chrome/browser-chrome-toolbar.tsx:212-267
    ⋯ 菜单照 …/assemble-chrome/BrowserToolbarMenu.tsx:99-252
    ============================================================ */
@@ -4137,7 +4137,7 @@ function brBounds(strokes) {
   if (!xs.length) return null;
   return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
-/// 提示词模板照 Clone_From/Orca …/annotate/browser-annotation-output.ts:162-224 的骨架
+/// 提示词模板照 reference/Orca …/annotate/browser-annotation-output.ts:162-224 的骨架
 function brPrompt({ title, kind, items, strokes }) {
   const t = activeTabObj() || {};
   const body = $('#brBody').getBoundingClientRect();
@@ -4151,7 +4151,7 @@ function brPrompt({ title, kind, items, strokes }) {
     lines.push(`### ${i + 1}. ${it.label}`);
     lines.push(`**Intent:** ${it.intent || '（未填）'}`);
     const noDom = '_（跨域读不到 DOM；真机上走 Electron 的 guest.executeJavaScript(buildGuestOverlayScript("extractHover"))'
-                + ' —— Clone_From/Orca/src/main/browser/browser-manager-grab.ts:111-125）_';
+                + ' —— reference/Orca/src/main/browser/browser-manager-grab.ts:111-125）_';
     lines.push(`**Selector:** ${it.selector || noDom}`);
     lines.push(`**Bounds:** x=${it.x}, y=${it.y}, ${it.w}x${it.h}`);
     if (it.comment) lines.push(`**Feedback:** ${it.comment}`);
@@ -4162,7 +4162,7 @@ function brPrompt({ title, kind, items, strokes }) {
     lines.push(`### 绘制标注（${strokes.length} 笔）`);
     lines.push(`**Bounds:** x=${b.x}, y=${b.y}, ${b.w}x${b.h}`);
     lines.push(`**Colors:** ${[...new Set(strokes.map(s => s.color))].join(', ')}`);
-    lines.push('_底图截图需要 Electron 的 `webview.capturePage()`（Clone_From/Orca …/markup-base-image.ts:29）—— 原型里没有，所以只带笔迹与坐标。_');
+    lines.push('_底图截图需要 Electron 的 `webview.capturePage()`（reference/Orca …/markup-base-image.ts:29）—— 原型里没有，所以只带笔迹与坐标。_');
     lines.push('');
   }
   return lines.join('\n');
@@ -4242,7 +4242,7 @@ function openBrCookie(anchor) {
     S.browserCookies = S.browserCookies || [];
     S.browserCookies.push({ from: src, count: n, at: now() });
     save(true);
-    toast(`已从 <b>${escapeHtml(src)}</b> 导入 ${n} 条 cookie<br><code style="font-size:11px">真机走 Clone_From/Orca/src/main/browser/browser-cookie-import-pipeline.ts</code>`);
+    toast(`已从 <b>${escapeHtml(src)}</b> 导入 ${n} 条 cookie<br><code style="font-size:11px">真机走 reference/Orca/src/main/browser/browser-cookie-import-pipeline.ts</code>`);
   });
   m.hidden = false; placeMenu(m, anchor.getBoundingClientRect().right + 6, anchor.getBoundingClientRect().top);
 }
@@ -4274,7 +4274,7 @@ function openBrSettings() {
 
 /* ============================================================
    §23.4 右侧边栏（资源管理器 + 智能体会话历史）
-   结构与字段照 Clone_From/Orca：
+   结构与字段照 reference/Orca：
      Explorer  …/right-sidebar/FileExplorer.tsx（Names / Contents 两个视图）
      Agents    …/right-sidebar/AiVaultPanel.tsx + AiVaultPanelHeader/Controls
      类型      src/shared/ai-vault-types.ts:96-139、ai-vault-session-filters.ts:31-56
@@ -4373,7 +4373,7 @@ function walkTreeRows(p, nodes, prefix, depth, out) {
   });
 }
 /// §23.4.2 名称过滤 = **按空白切成多个 token、全部 includes、不分大小写**
-/// （照 Clone_From/Orca/src/shared/file-name-filter-tokens.ts:51-61）
+/// （照 reference/Orca/src/shared/file-name-filter-tokens.ts:51-61）
 function nameFilterTokens(q) { return String(q || '').toLowerCase().split(/\s+/).filter(Boolean); }
 function pathMatchesNameFilter(rel, tokens) {
   if (!tokens.length) return true;
@@ -4675,7 +4675,7 @@ function vaultLocate(x) {
 
 /* ============================================================
    §23.5 自动化 + §23.6 ⌘J 命令面板 + 全部接线
-   字段照 Clone_From/Orca：
+   字段照 reference/Orca：
      AutomationDraft — Automations/AutomationEditorDialog.tsx:37-59
      搜索/筛选      — automations/automation-list-search.ts:97、automation-list-view.ts:184-198
      ⌘J 键位        — shared/keybindings/definitions-core-1.ts:35（darwin: Mod+J）

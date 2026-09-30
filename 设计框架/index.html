@@ -256,10 +256,9 @@
       <div class="node" data-cat="runtime"><span class="st">✅</span><span class="nm">.cache/</span>
         <span class="ds">散装临时文件（本批新建）</span><span class="ref">截图 / OCR / profraw 归这里</span></div>
 
-      <div class="node" data-cat="third"><span class="st">🚫 不入库</span><span class="nm">Clone_From/</span>
-        <span class="ds">975 MB · 第三方源码克隆</span><span class="ref">★ Orca 源码在这里：Clone_From/Orca</span></div>
-      <div class="node" data-cat="third"><span class="st">⚠️ 实际入库</span><span class="nm">reference/</span>
-        <span class="ds">29 MB · 官方文档本地副本</span><span class="ref">gitignore 写了但 1967 文件已入库</span></div>
+      <div class="node" data-cat="third"><span class="st">⚠️ 两种状态</span><span class="nm">reference/</span>
+        <span class="ds">第三方只读参考 · <b style="color:#B9B9C2">2026-10-01 由 Clone_From + reference 合并</b></span>
+        <span class="ref">★ Orca 源码：reference/Orca ｜ 6 个克隆 975MB 不入库 ｜ <b style="color:#F97316">pi 已入库 1967 文件</b></span></div>
       <div class="node" data-cat="third"><span class="st">✅</span><span class="nm">参考资料/ · pi二次开发/</span>
         <span class="ds">调研素材 · 已 gitignore</span><span class="ref">体积大且含第三方内容</span></div>
       <div class="node" data-cat="third"><span class="st">✅</span><span class="nm">mini-agent/ · voice-agent/</span>
@@ -321,13 +320,14 @@
         <div class="cmain"><b>源码依据 —— 具体怎么实现</b><span>别人的参数 / 字段 / 算法 / 调用顺序</span></div>
         <div class="cstat" style="color:var(--warn)">⚠ 路径刚修</div>
         <div class="cbody">
-          <b class="hi">在哪</b>：<code>Clone_From/Orca/</code>（402 MB）、<code>reference/pi/</code>。
+          <b class="hi">在哪</b>：<code>reference/Orca/</code>（402 MB）、<code>reference/pi/</code>。
           <br><b class="hi">原型里写了吗？写了</b> —— <code>app.js</code> 的注释精确到 <b class="hi">文件:行号</b>，
-          例如「视口预设照 <code>Clone_From/Orca/src/shared/browser-viewport-presets.ts:13-68</code>」。
+          例如「视口预设照 <code>reference/Orca/src/shared/browser-viewport-presets.ts:13-68</code>」。
           需求里也写了：每节开头的出处行。
-          <br><b class="hi">刚修的 bug</b>：这 13 处原来写的是 <code>reference/orca</code> ——
-          <b class="hi">那份已不存在</b>，照注释找源码会扑空，其中 5 处是直接显示给用户的 toast 文案。
-          2026-10-01 已全部改为 <code>Clone_From/Orca</code>。
+          <br><b class="hi">中途踩的坑</b>：这 13 处最早写的是 <code>reference/orca</code>，
+          中途 Orca 搬家后<b class="hi">那 13 处指空</b>（其中 5 处是直接显示给用户的 toast 文案），
+          照注释找源码会扑空。<b class="hi">现已统一为 <code>reference/Orca</code></b>。
+          路径变过两次，<b class="hi">完整路径史只写在 <a href="00-目录地图.md">00-目录地图.md 第三点五节</a></b>。
           <div class="where">硬规矩：还原功能时，原型确认交互，实现细节一律回源码 —— 冲突时以源码为准。</div>
         </div>
       </div>
@@ -445,7 +445,8 @@
   <div class="sec">
     <p class="eyebrow">05 · 速查</p>
     <h2>具体参考哪份源码</h2>
-    <p><b class="hi">Orca 源码只在 <code>Clone_From/Orca</code></b> —— <code>reference/orca</code> 已不存在。
+    <p><b class="hi">Orca 源码只在 <code>reference/Orca</code></b>（大写 O）——
+    路径史见 <a href="00-目录地图.md">00 第三点五节</a>，<b class="hi">现在只需记这一个</b>。
     拿到一个功能，先去 <code>app.js</code> 搜功能名，注释会直接告诉你照的哪个文件第几行，
     <b class="hi">从注释反查源码，比从截图猜快得多</b>。</p>
 
@@ -453,7 +454,7 @@
       <table>
         <thead><tr><th>要还原什么</th><th>起点文件</th></tr></thead>
         <tbody>
-          <tr><td>浏览器页（视口/Cookie/抓取/标注）</td><td class="p">Clone_From/Orca/src/shared/browser-viewport-presets.ts:13-68</td></tr>
+          <tr><td>浏览器页（视口/Cookie/抓取/标注）</td><td class="p">reference/Orca/src/shared/browser-viewport-presets.ts:13-68</td></tr>
           <tr><td>标签右键菜单、标签颜色</td><td class="p">tab-bar/SortableTabContextMenu.tsx:27-88</td></tr>
           <tr><td>拆分终端 / 移动标签到分屏</td><td class="p">tab-bar/TerminalTabSplitMenuSection.tsx:47-77</td></tr>
           <tr><td>项目右键、Sleep</td><td class="p">sidebar/WorktreeContextMenuView.tsx:157-344</td></tr>
@@ -477,7 +478,7 @@
       <b class="hi">Claude-Code 是专有协议，一行代码都不能搬</b>，只能学思路；<br>
       <b class="hi">LLM_Wiki 是 GPL-3.0，搬了会让整个 Wanna 必须开源</b>；<br>
       可直接搬的只有 Hermes / MiMo-Code / Orca / Codex（MIT / Apache-2.0）。<br>
-      <span class="quiet">出处：<code>Clone_From/README-克隆项目汇总.md</code></span></p>
+      <span class="quiet">出处：<code>克隆项目汇总.md</code>（本目录）</span></p>
     </div>
   </div>
 
@@ -567,7 +568,8 @@
 
   <div class="foot">
     设计框架/ · 00-目录地图.md ｜ 01-设计框架.md ｜ <b style="color:#B9B9C2">02-原型同步.md</b> ｜ 本页 index.html<br>
-    相关：<a href="../架构说明/index.html">架构说明（多语言分工）</a> ｜
+    相关：<a href="克隆项目汇总.md">克隆项目与协议红线</a> ｜
+    <a href="../架构说明/index.html">架构说明（多语言分工）</a> ｜
     <a href="../需求/90-实现映射.md">需求/90 实现映射</a> ｜
     <a href="../全局框架/00-项目全貌.md">全局框架/00 项目全貌</a>
   </div>

@@ -2406,7 +2406,7 @@ Add to them rather than duplicating this file: this file states what the app *is
 
 **三条硬规矩**（详见 `设计框架/00` 第二节）：① 根目录不放散装文件；② `git add -A` 之前先看 `git status`，**新加 ignore 规则后跑一次 `git ls-files 目录名 | wc -l`** —— 非 0 就是「以为挡住了、其实在仓库里」（`开发经验/运行日志/` 287 个文件和 `reference/` 1967 个文件就是这么进去的）；③ 移动任何目录前先 `grep -rn "目录名"`，**注释里的引用也算**。
 
-**⚠️ Orca 源码只在 `Clone_From/Orca`。`reference/orca` 已不存在** —— 这个过时路径曾让全仓库 13 处引用指空（5 处是直接显示给用户的 toast 文案），2026-10-01 修掉。原型里 `app.js` 的注释精确到 `文件:行号`，**还原功能时从注释反查源码，实现细节一律回源码取，与原型冲突时以源码为准**。
+**⚠️ Orca 源码只在 `reference/Orca`（大写 O）** —— 路径变过两次，**完整路径史只写在 `设计框架/00-目录地图.md` 第三点五节**，别处一律指向它。中途那次改动曾让全仓库 13 处引用指空（5 处是直接显示给用户的 toast 文案），根因是 `Clone_From/` 与 `reference/` 两个名字并存；2026-10-01 已把两个目录合并成一个 `reference/` 并修掉。原型里 `app.js` 的注释精确到 `文件:行号`，**还原功能时从注释反查源码，实现细节一律回源码取，与原型冲突时以源码为准**。
 
 **The two Agent design trees (`04-Agent体系/` and `Agent施工/`) were DELETED on 2026-09-28 at the user's instruction.** They described a framework that was never built — their own status lines say `设计已定，尚未实施` and `运行时还没有去读它`, and the code they described (`[SKILL:]` injection, the 任务卡, `[RUN:]` routing) does not exist. The user's call was that a design tree sitting next to code it does not describe is worse than no design tree. What survives about the agent subsystem is `全局框架/14-Agent子系统.md` (the Claude Code subprocess protocol, measured) plus `开发经验/16-卡片通话的两条路.md`, `17-大调整-主Agent接管执行.md` and `05-Agent架构-官方对照.md`.
 
