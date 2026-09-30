@@ -34,6 +34,14 @@ function sampleProject() {
   return {
     id: 'p1', name: '我的笔记项目', path: '/Users/mjm/Documents/SuperAgent/我的笔记项目',
     pinned: false, open: true,
+    // §23.4.13 右侧「智能体 · 会话历史」要能真的列出会话 —— 样例项目自带两条
+    // （AiVaultSession 从 p.chats 拼出来，一条都没有时面板只有一句「没有匹配的会话」）
+    chats: [
+      { id: 'c1', sid: 'sess-8f21', title: '竞品对比补一栏价格', ts: Date.now() - 3600e3, msgs: 12,
+        sub: 2, model: 'claude-sonnet-4', preview: '价格表还差 Orca 那一列，先记下来别忘了' },
+      { id: 'c2', sid: 'sess-3a07', title: '脑图改成左右两栏', ts: Date.now() - 7200e3, msgs: 5,
+        sub: 0, model: 'gpt-5-codex', preview: '脑图根节点拆成「内容 / 对话」两支' }
+    ],
     files: {
       'README.md': `# 我的笔记项目\n\n每一轮对话都会自动带上项目路径。\n\n## 这个页面怎么用\n\n- 左边点文件 → 自动加进 **重点参考**（可多选），并携带项目绝对路径\n- 中间「正文」可以**点预览的任意一行就地编辑**，按 ESC 回到预览\n- 「脑图」是 mermaid，**代码可以折叠**\n- 右边围绕项目提问，也能让它改脑图 —— **任何一次编辑都会自动备份历史（每文件最近 10 次）**\n\n## 待办\n\n- [ ] 把会议纪要里的三条结论并进脑图\n- [ ] 竞品对比补一栏价格\n`,
       '脑图.mmd': `mindmap\n  root((我的笔记项目))\n    会议\n      09-30 评审\n        结论：先做左 80% 工作区\n      待办清单\n    内容\n      正文 README\n      网页 示例\n      竞品对比\n    对话\n      连续对话\n      临时对话\n      语音\n`,
@@ -101,6 +109,7 @@ let S = load() || {
   speechRate: 1,                   // §20.5 语速档（0.75 / 1 / 1.25 / 1.5 / 2）
   composerExpanded: false,         // §21.5 输入框展开态（点顶边手柄切换）
   sendPolicy: 'queue',             // §22.13 发送方式：queue=排队（默认）/ interrupt=打断
+  dualScreen: false,               // §23.2 会话窗口：单屏（默认）/ 双屏（连续 ｜ 临时 并排）
   // §22.11 快捷指令：一个按钮替换一行动作（字段照用户那张「添加快捷命令」图）
   quickCommands: [{ id: 'qc_gt', label: 'GT推送', op: 'terminal',
                     cmd: 'git push origin main', append: true, scope: 'global', project: '' }],
@@ -108,8 +117,21 @@ let S = load() || {
   sendQueue: [],                   // §22.13 排队中的消息
   tabsVertical: false,             // §21.2 标签显示方式：false=横向（默认）/ true=垂直
   tabGroups: [],                   // §21.4 标签组：[{ name, color, open }]
+  // §23.7 侧栏**项目分组**（Orca 的 ProjectGroup，与标签组/对话分组是三套东西）
+  projectGroups: [],               // [{ id, name, color, isCollapsed, createdFrom }]
   splitSide: null,                 // §22.10 拆分半屏在哪一侧（null = 不拆）
   tvWidth: 268,                    // §22.1.2 垂直标签列宽（可拖）
+  // §23 左右面板 / 自动化 / ⌘J
+  sidePanel: null,                 // null | 'explorer' | 'agents'
+  paletteShortcut: 'meta+j',       // §23.6.5 命令面板快捷键（可在 ⚙ 设置 → 快捷键 里改）
+  sideView: 'names',               // 资源管理器：Names / Contents（Orca 是两个视图，不是一次分两组）
+  sideQuery: '',
+  explorerCollapsed: {},
+  automationOpen: false,
+  automations: [],
+  automationFilter: {},
+  vaultScope: 'workspace', vaultHost: 'local', vaultAgents: [], vaultGroup: 'project',
+  vaultHideEmpty: false, vaultLimit: 100, vaultQuery: '', vaultOpen: {}, vaultGroupsCollapsed: {},
   // §22.14 浏览器页 —— 形状照 reference/orca …/shared/browser-workspace-types.ts:174-180
   browserProfiles: [{ id: 'default', label: 'Default', engine: 'Safari', scope: 'default' },
                     { id: 'google',  label: 'Google',  engine: 'Chrome',  scope: 'isolated' }],
@@ -151,12 +173,26 @@ function load() {
     // §21 新字段
     if (typeof r.composerExpanded !== 'boolean') r.composerExpanded = false;
     if (r.sendPolicy !== 'interrupt') r.sendPolicy = 'queue';
+    if (typeof r.dualScreen !== 'boolean') r.dualScreen = false;
+    if (r.sidePanel !== 'explorer' && r.sidePanel !== 'agents') r.sidePanel = null;
+    if (typeof r.paletteShortcut !== 'string' || !r.paletteShortcut) r.paletteShortcut = 'meta+j';
+    if (r.sideView !== 'contents') r.sideView = 'names';
+    if (typeof r.sideQuery !== 'string') r.sideQuery = '';
+    if (!r.explorerCollapsed || typeof r.explorerCollapsed !== 'object') r.explorerCollapsed = {};
+    if (typeof r.automationOpen !== 'boolean') r.automationOpen = false;
+    if (!Array.isArray(r.automations)) r.automations = [];
+    if (!r.automationFilter || typeof r.automationFilter !== 'object') r.automationFilter = {};
+    if (!Array.isArray(r.vaultAgents)) r.vaultAgents = [];
+    if (!r.vaultOpen || typeof r.vaultOpen !== 'object') r.vaultOpen = {};
+    if (!r.vaultGroupsCollapsed || typeof r.vaultGroupsCollapsed !== 'object') r.vaultGroupsCollapsed = {};
     if (!Array.isArray(r.quickCommands)) r.quickCommands = [{ id: 'qc_gt', label: 'GT推送', op: 'terminal',
       cmd: 'git push origin main', append: true, scope: 'global', project: '' }];
     if (!r.quickCommandActive) r.quickCommandActive = 'qc_gt';
     if (!Array.isArray(r.sendQueue)) r.sendQueue = [];
     if (typeof r.tabsVertical !== 'boolean') r.tabsVertical = false;
     if (!Array.isArray(r.tabGroups)) r.tabGroups = [];
+    if (!Array.isArray(r.projectGroups)) r.projectGroups = [];
+    (r.projects || []).forEach(pp => { if (pp && pp.sleeping === undefined) pp.sleeping = false; });
     (r.projects || []).forEach(pp => { if (pp && !Array.isArray(pp.extraPaths)) pp.extraPaths = []; });
     if (r.splitSide !== 'left' && r.splitSide !== 'right') r.splitSide = null;
     if (typeof r.tvWidth !== 'number') r.tvWidth = 268;
@@ -521,15 +557,11 @@ function newTabAction(act) {
 }
 
 /// §22.9.7 / §22.11.5 终端面板：先 `cd <项目路径>`，再敲进指令（打字机效果，看得出它跑了什么）
-let termTyping = null;
-function openTerminal({ title = '终端', seed = ['$ '], agent = null, command = null } = {}) {
-  const panel = $('#termPanel'), body = $('#termBody');
-  if (!panel || !body) return;
+/// §23.9 终端现在**也是一个标签**（`kind:'terminal'`）——每开一次新开一张，形状照 Orca 的
+/// createTab + setActiveTabType('terminal')（run-quick-command-in-new-tab.ts:112）。
+let termTyping = null;      // { t: 标签, id: 定时器 } —— 打字机跟着**当前这张**终端标签走
+function openTerminal({ title = '终端', seed = ['$ '], agent = null, command = null, appendEnter = true } = {}) {
   const path = (proj() || defaultProject() || {}).path || defaultFolderPath();
-  $('#termTitle').textContent = title;
-  $('#termPath').textContent = path;
-  panel.hidden = false;
-  clearTimeout(termTyping);
   const lines = [];
   if (agent || command) {
     lines.push({ cls: 't-dim', text: `启动 ${title} —— 用当前项目文件夹作为路径` });
@@ -538,29 +570,80 @@ function openTerminal({ title = '终端', seed = ['$ '], agent = null, command =
     lines.push({ cls: 't-agent', text: agent === 'claude' ? '▸ Claude Code 已就绪（原型 · 真机上这里是一个真终端）'
               : agent === 'pi' ? '▸ Pi 已就绪（原型 · 真机上这里是一个真终端）'
               : `▸ 已执行：${command}` });
-    lines.push({ cls: 't-dim', text: `$ ` });
+    // Append Enter 关着 = 只敲进去、不回车（源码的 run 路径写死回车，见 runQuickCommand 的注释）
+    lines.push({ cls: 't-dim', text: appendEnter === false ? '$ （Append Enter 关着 —— 命令已敲入，未回车）' : `$ ` });
   } else {
-    seed.forEach(t => lines.push({ cls: t.startsWith('$') ? 't-cmd' : 't-dim', text: t }));
+    seed.forEach(x => lines.push({ cls: x.startsWith('$') ? 't-cmd' : 't-dim', text: x }));
   }
-  body.innerHTML = '';
-  let li = 0, ci = 0, buf = '';
-  const step = () => {
-    if (li >= lines.length) { termTyping = null; return; }
-    const cur = lines[li];
-    if (ci === 0) buf += (buf ? '\n' : '');
-    if (ci < cur.text.length) {
-      ci++;
-      const done = buf;
-      body.innerHTML = renderTerm(done, cur.text.slice(0, ci), cur.cls);
-      body.scrollTop = body.scrollHeight;
-      termTyping = setTimeout(step, cur.text[ci - 1] === ' ' ? 12 : 26);
-    } else {
-      buf += cur.text; li++; ci = 0;
-      body.innerHTML = renderTerm(buf, '', '');
-      termTyping = setTimeout(step, 180);
-    }
-  };
-  step();
+  const t = { p: (proj() || {}).id || null, f: '', kind: 'terminal', label: title,
+              term: { title, path, lines, split: null, done: '', typing: '', cls: '',
+                      buf: '', li: 0, ci: 0, done2: '' } };
+  S.tabs.push(t);
+  S.activeTab = S.tabs.length - 1;
+  S.currentFile = null;
+  S.tab = 'terminal';
+  S.projectMode = true; S.tempMode = false;     // 同浏览器标签：不进项目模式就看不见这张标签
+  save(true); renderTabs(); renderContent(); renderContext(); renderNav();
+  runTermSession(t);
+}
+/// 打字机：状态全部记在**这张标签自己的 term 上**，切走再切回来仍是原文
+function runTermSession(t) {
+  if (termTyping) clearTimeout(termTyping.id);
+  Object.assign(t.term, { buf: '', li: 0, ci: 0, done: '', typing: '', cls: '' });
+  termStep(t);
+}
+function termStep(t) {
+  const lines = t.term.lines || [];
+  if (t.term.li >= lines.length) { termTyping = null; termPaint(); return; }
+  const cur = lines[t.term.li];
+  if (t.term.ci === 0) t.term.buf += (t.term.buf ? '\n' : '');
+  if (t.term.ci < cur.text.length) {
+    t.term.ci++;
+    t.term.done = t.term.buf;
+    t.term.typing = cur.text.slice(0, t.term.ci);
+    t.term.cls = cur.cls;
+    termPaint();
+    termTyping = { t, id: setTimeout(() => termStep(t), cur.text[t.term.ci - 1] === ' ' ? 12 : 26) };
+  } else {
+    t.term.buf += cur.text; t.term.li++; t.term.ci = 0;
+    t.term.done = t.term.buf; t.term.typing = ''; t.term.cls = '';
+    termPaint();
+    termTyping = { t, id: setTimeout(() => termStep(t), 180) };
+  }
+}
+function termPaint() {
+  const t = S.tabs[S.activeTab];
+  if (!t || t.kind !== 'terminal' || !t.term) return;
+  const b1 = $('#termBody'); if (!b1) return;
+  b1.innerHTML = renderTerm(t.term.done || '', t.term.typing || '', t.term.cls || '');
+  b1.scrollTop = b1.scrollHeight;
+  const p2 = $('#termPane2');
+  if (p2 && !p2.hidden) {
+    const b2 = $('#termBody2');
+    if (b2) { b2.innerHTML = renderTerm(t.term.done2 || '', '', ''); b2.scrollTop = b2.scrollHeight; }
+  }
+}
+/// §23.9.2 终端面板自己拆成两格（右 = 左右并排，下 = 上下）——
+/// 第二格是一条新 shell（Orca 的 split 就是新 pane，不是把一格复制一份）
+function splitTerminal(dir) {
+  const t = S.tabs[S.activeTab];
+  if (!t || t.kind !== 'terminal' || !t.term) { toast('先打开一个终端标签'); return; }
+  t.term.split = (t.term.split === dir) ? null : dir;
+  if (t.term.split && !t.term.done2) t.term.done2 = `$ cd ${t.term.path}\n$ `;
+  save(true); renderTermPanes(); termPaint();
+  toast(t.term.split === 'right' ? '终端已<b>左右</b>拆成两格'
+        : t.term.split === 'down' ? '终端已<b>上下</b>拆成两格' : '已收回单格终端');
+}
+function renderTermPanes() {
+  const t = S.tabs[S.activeTab];
+  const panes = $('#termPanes'), p2 = $('#termPane2');
+  if (!panes || !p2) return;
+  const split = (t && t.kind === 'terminal' && t.term) ? t.term.split : null;
+  panes.classList.toggle('is-right', split === 'right');
+  panes.classList.toggle('is-down', split === 'down');
+  p2.hidden = !split;
+  const sp = $('#termSplit');
+  if (sp) sp.classList.toggle('is-on', !!split);
 }
 function renderTerm(done, typing, cls) {
   const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -607,36 +690,34 @@ function renderNav() {
   const host = $('#projectList'); host.innerHTML = '';
   const active = proj();
   const ordered = [...realProjects()].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-  ordered.forEach(p => {
-    const scope = { kind: 'project', project: p };
-    const pool = poolOf(scope);
+  /// 单个项目行（§23.7 抽出来：分组头和"没分组的"都用它）
+  const appendProjectRow = (p) => {
     const wrap = document.createElement('div');
-    wrap.className = 'proj' + (p.open ? '' : ' closed');
+    wrap.className = 'proj' + (p.open ? '' : ' closed') + (p.sleeping ? ' is-sleep' : '');
     wrap.innerHTML = `
       <div class="proj-row${active && active.id === p.id && inProject ? ' is-on' : ''}">
         <span class="proj-caret">▶</span>
         <span class="proj-ico"></span>
         <span class="proj-name"></span>
+        ${p.sleeping ? '<span class="proj-sleep" title="已 Sleep —— 面板都关了、只留记录">💤</span>' : ''}
         ${p.pinned ? '<span class="proj-pin">📌</span>' : ''}
         <button class="proj-more" title="更多">⋯</button>
       </div>
       </div>`;
     wrap.querySelector('.proj-name').textContent = p.name;
     wrap.querySelector('.proj-name').title = p.path;
-    // §20.1：**整行**（左箭头 / 中间名字 / 右侧空白）点下去都是折叠 ⇄ 展开 ——
-    // 展开的那一下顺带选中（选中才有上下文）。箭头不用单独绑：它冒泡到整行就是同一件事。
+    // §22.1：**整行**（左箭头 / 中间名字 / 右侧空白）点下去都是折叠 ⇄ 展开
     wrap.querySelector('.proj-row').onclick = () => {
       if (p.open) { p.open = false; save(); renderNav(); }
       else selectProject(p.id);
     };
     wrap.querySelector('.proj-more').onclick = e => { e.stopPropagation(); openProjMenu(p, e.currentTarget); };
 
-    // 展开后先给两个分组：**对话**（与默认区完全同一套，§20.10）｜**文件**（原来的树）
     const sub = document.createElement('div');
     sub.className = 'proj-subs' + (p.open ? '' : ' closed');
     sub.innerHTML = `
       <div class="sub-head" data-sub="chats">
-        <span class="tw">▶</span><span class="st">对话</span><span class="sc">${convCount(pool)}</span>
+        <span class="tw">▶</span><span class="st">对话</span><span class="sc">${convCount(poolOf({ kind: 'project', project: p }))}</span>
         <button class="sadd" title="给这个项目新建分组 / 对话">＋</button>
       </div>
       <div class="sub-kids" data-kids="chats"></div>
@@ -646,12 +727,41 @@ function renderNav() {
       <div class="sub-kids" data-kids="files"></div>`;
     wireSubHead(sub, 'chats');
     wireSubHead(sub, 'files');
+    const scope = { kind: 'project', project: p };
     sub.querySelector('.sadd').onclick = ev => { ev.stopPropagation(); openConvAddMenu(scope, ev.currentTarget); };
-    renderConvList(sub.querySelector('[data-kids="chats"]'), pool, scope);
+    renderConvList(sub.querySelector('[data-kids="chats"]'), poolOf(scope), scope);
     renderTreeInto(p, p.tree, sub.querySelector('[data-kids="files"]'), '');
     wrap.appendChild(sub);
     host.appendChild(wrap);
+  };
+
+  // §23.7 侧栏项目分组（Orca ProjectGroup）：分组头 + 组里的项目，最后是没有分组的
+  const pgroups = (S.projectGroups || []);
+  const ungrouped = [];
+  const seen = new Set();
+  pgroups.forEach(g => {
+    const kids = ordered.filter(p => p.projectGroupId === g.id);
+    kids.forEach(p => seen.add(p.id));
+    if (!kids.length && g.isCollapsed === undefined) return;
+    const open = g.isCollapsed !== true;
+    const head = document.createElement('div');
+    head.className = 'plan-group' + (open ? '' : ' closed');
+    head.innerHTML = `<span class="gc">▶</span>
+      <span class="pg-dot" style="background:${g.color || '#5A5A62'}"></span>
+      <span class="gname"></span><span class="gcount">${kids.length} 个</span>
+      <button class="gmore" title="分组选项">⋯</button>`;
+    head.querySelector('.gname').textContent = g.name;
+    head.onclick = ev => {
+      if (ev.target.classList.contains('gmore')) return;
+      g.isCollapsed = !open; save(); renderNav();
+    };
+    head.querySelector('.gmore').onclick = ev => { ev.stopPropagation(); openProjGroupMenu(g, ev.currentTarget); };
+    host.appendChild(head);
+    if (open) kids.forEach(appendProjectRow);
   });
+  ordered.forEach(p => { if (!seen.has(p.id)) ungrouped.push(p); });
+  ungrouped.forEach(appendProjectRow);
+
   if (!realProjects().length) {
     host.innerHTML = `<div style="padding:8px 10px 12px;color:var(--ink3);font-size:12px">
       还没有项目文件夹。点右边 <b style="color:var(--ink2)">＋</b>：
@@ -1051,6 +1161,7 @@ function openDirPath(project, rel) {
 /* ── 项目菜单（更多…） ───────────────────────── */
 let menuProject = null;
 function openProjMenu(p, anchor) {
+  menuProjXY = { x: anchor.getBoundingClientRect().left, y: anchor.getBoundingClientRect().bottom + 4 };
   // ⚠️ 这里**不做"再点一次就关"**：#menuProj 是**每行一颗 ⋯ 共用同一个菜单元素**，
   // 按"开没开来判"会把"点另一行的 ⋯"误判成"关掉"（那颗菜单不会打开）。右键同理。
   menuProject = p;
@@ -1061,6 +1172,13 @@ function openProjMenu(p, anchor) {
   m.style.left = Math.min(r.left, innerWidth - 200) + 'px';
   m.style.top = (r.bottom + 6) + 'px';
   m.querySelector('[data-act="pin"]').textContent = p.pinned ? '取消置顶' : '置顶项目';
+  // §23.7 Sleep 是"可逆地关掉面板"，不是删除；文案与 Orca 保持一致
+  const sl = m.querySelector('[data-act="sleep"]');
+  if (sl) sl.textContent = p.sleeping ? 'Wake（唤醒）' : 'Sleep';
+  const mg = m.querySelector('[data-act="moveGroup"]');
+  if (mg) mg.disabled = !(S.projectGroups || []).length;
+  const rg = m.querySelector('[data-act="removeFromGroup"]');
+  if (rg) rg.disabled = !p.projectGroupId;
 }
 /// §21.4：菜单按**实测尺寸**贴鼠标并夹进屏幕 —— 写死的高度猜不准，
 /// 这次 18 项的标签菜单就因为 `innerHeight - 420` 把最后两项顶到了屏幕外。
@@ -1102,6 +1220,48 @@ function projMenuAction(act) {
       openProjectModal('edit', p);                 // §22.12.5 显示名 + 主要/其他文件夹一起改
       break;
     case 'pin': p.pinned = !p.pinned; save(true); renderNav(); toast(p.pinned ? '已置顶' : '已取消置顶'); break;
+    // ── §23.7 照 Orca WorktreeContextMenuView ──
+    case 'newChat':
+      askModal({ title: `给「${p.name}」新建对话`, text: '这一段参考的是**当前项目的内容**（+ 这段对话自己的上下文）。',
+        value: `对话 ${(p.chats || []).length + 1}`, okText: '新建', onOk: v => {
+          p.chats = p.chats || [];
+          p.chats.push({ id: 'c' + now(), sid: newSid(), title: (v || '').trim() || '对话', ts: now() });
+          save(true); renderNav(); toast('已新建项目内对话（带会话 ID）');
+        }});
+      break;
+    case 'copyName':
+      navigator.clipboard?.writeText(p.name); toast(`已复制工作区名 <b>${escapeHtml(p.name)}</b>`); break;
+    case 'sleep':
+      // Orca 的 sleep = 可逆地关掉这个工作区里所有活着的面板，只留记录（不删）
+      p.sleeping = !p.sleeping; save(true); renderNav();
+      toast(p.sleeping
+        ? `已 <b>Sleep</b>「${escapeHtml(p.name)}」—— 面板全关、记录还在（可再唤醒）<br><span style="opacity:.7">Close all active panels in this workspace to free up memory and CPU.</span>`
+        : `已唤醒「${escapeHtml(p.name)}」`);
+      break;
+    case 'moveGroup': {
+      const gs = S.projectGroups || [];
+      const x = menuProjXY;
+      if (!gs.length) { toast('还没有项目分组 —— 先「来自项目的新组」'); return; }
+      showMenu(gs.map(g => ({ label: g.name + (p.projectGroupId === g.id ? '  ✓' : ''),
+        action: () => { p.projectGroupId = g.id; save(true); renderNav(); toast(`已移动到分组 <b>${escapeHtml(g.name)}</b>`); } }))
+        .concat([{ sep: true }, { label: '移出分组', action: () => { p.projectGroupId = null; save(true); renderNav(); toast('已移出分组'); } }]),
+        null, x);
+      return; }
+    case 'removeFromGroup':
+      if (!p.projectGroupId) { toast('这个项目本来就不在任何分组里'); return; }
+      p.projectGroupId = null; save(true); renderNav(); toast('已移出分组'); break;
+    case 'newGroupFromProject':
+      askModal({ title: '来自项目的新组', text: `建一个侧栏分组，并把「${p.name}」放进去。`,
+        value: `${p.name} 组`, okText: '创建', onOk: v => {
+          const name = (v || '').trim() || '新分组';
+          S.projectGroups = S.projectGroups || [];
+          const id = 'pg' + now();
+          S.projectGroups.push({ id, name, color: null, isCollapsed: false, createdFrom: 'manual' });
+          p.projectGroupId = id;
+          save(true); renderNav();
+          toast(`已建分组 <b>${escapeHtml(name)}</b> 并把「${escapeHtml(p.name)}」放进去`);
+        }});
+      break;
     case 'unread': p.unread = !p.unread; save(true); renderNav();
       toast(p.unread ? '已标记为未读' : '已标记为已读'); break;
     case 'continue': toast(`在新对话中继续「${escapeHtml(p.name)}」—— 原型新开一张同内容的卡`); break;
@@ -1161,39 +1321,70 @@ function addMenuAction(act) {
    打开的是同一个菜单、跑的是同一个 action，唯一差别是 `scope`（改哪个池子、工作目录是谁）。 */
 let menuCardObj = null;          // null = 默认卡
 let menuCardScope = null;        // { kind:'default' } | { kind:'project', project }
+/// §23.1 会话右键 —— **骨架照 Orca**（置顶/重命名/归档 › 侧边聊天 › 复制› › 分支 › 删除），
+/// 其中 Orca 的「打开侧边聊天」换成**临时聊天**与**临时聊天分屏显示**两个选项；
+/// 「复制」收成一个二级菜单 —— 这就是"去重"（原来 复制工作目录 出现在两处）。
 function openConvCardMenu(item, scope, anchor, xy) {
   menuCardObj = item;
   menuCardScope = scope;
+  menuCardXY = xy || null;
   closeMenus();
   const m = $('#menuCard');
   if (item && !item.sid) { item.sid = newSid(); save(true); }
   const pinLabel = item ? (item.pinned ? '取消置顶' : '置顶对话') : '置顶对话';
+  const uname = item && item.unread ? '标记为已读' : '标记为未读';
   m.innerHTML = `
-    <button data-act="rename">重命名</button>
     <button data-act="pin">${pinLabel}</button>
-    <button data-act="unread">标记为未读</button>
-    <button data-act="continue">在新对话中继续</button>
+    <button data-act="rename">重命名对话</button>
+    <button data-act="archive">归档对话</button>
     <div class="menu-sep"></div>
+    <button data-act="tempChat">临时聊天</button>
+    <button data-act="tempChatSplit">临时聊天分屏显示</button>
+    <div class="menu-sep"></div>
+    <button data-act="copyMenu">复制 ›</button>
     <div class="menu-title">会话 ID${item && item.sid ? ' · ' + item.sid : ''}</div>
-    <button data-act="copySid">复制会话 ID</button>
     <button data-act="sendSid">发送到会话…</button>
     <div class="menu-sep"></div>
-    <button data-act="toGroup">放入分组</button>
-    <button data-act="toProject">移动至项目</button>
-    <button data-act="archive">归档对话</button>
-    <button data-act="batch">批量管理</button>
+    <button data-act="toGroup">放入分组…</button>
+    <button data-act="toProject">移动至项目…</button>
+    <button data-act="unread">${uname}</button>
+    <button data-act="continue">在新对话中继续</button>
+    <button data-act="branch">分支</button>
     <div class="menu-sep"></div>
-    <button data-act="finder">在 Finder 中显示</button>
-    <button data-act="workdir">复制工作目录</button>
     <button data-act="export">导出对话记录</button>
-    <div class="menu-sep"></div>
     <button data-act="delete" class="danger">删除对话</button>`;
   $$('button', m).forEach(b => b.onclick = () => convCardMenuAction(b.dataset.act));
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
   const left = xy ? xy.x : (r ? r.left : 100), top = xy ? xy.y : (r ? r.bottom + 4 : 100);
   m.hidden = false;
-  m.style.left = Math.max(6, Math.min(left, innerWidth - 240)) + 'px';
-  m.style.top = Math.max(6, Math.min(top, innerHeight - 340)) + 'px';
+  placeMenu(m, left, top);
+}
+/// 「复制 ›」的二级菜单（四项都收在这里，别在两处重复出现）
+function openConvCopyMenu() {
+  const item = menuCardObj, scope = menuCardScope;
+  const m = $('#menuCardCopy');
+  const folder = scope ? (scope.kind === 'default' ? defaultFolderPath() : scope.project.path) : '';
+  const link = item && item.sid ? `wanna://session/${item.sid}` : '';
+  m.innerHTML = `
+    <button data-act="copySid">复制会话 ID</button>
+    <button data-act="copyWorkdir">复制工作目录</button>
+    <button data-act="copyLink">复制会话链接</button>
+    <button data-act="copyMd">复制为 Markdown</button>`;
+  $$('#menuCardCopy button').forEach(b => b.onclick = () => {
+    const act = b.dataset.act;
+    if (act === 'copySid') { navigator.clipboard?.writeText(item && item.sid ? item.sid : ''); toast('已复制会话 ID'); }
+    else if (act === 'copyWorkdir') { navigator.clipboard?.writeText(folder); toast(`已复制工作目录 <code>${escapeHtml(folder)}</code>`); }
+    else if (act === 'copyLink') { navigator.clipboard?.writeText(link); toast('已复制会话链接'); }
+    else if (act === 'copyMd') {
+      const md = `# ${item ? item.title : '对话'}\n\n- 会话 ID：${item && item.sid ? item.sid : '-'}\n- 工作目录：${folder}\n- 导出时间：${new Date().toLocaleString()}\n`;
+      navigator.clipboard?.writeText(md); toast('已复制为 Markdown');
+    }
+    closeMenus();
+  });
+  m.hidden = false;
+  const base = $('#menuCard');
+  if (!base.hidden) { m.style.left = (base.getBoundingClientRect().right + 4) + 'px'; m.style.top = base.getBoundingClientRect().top + 'px'; }
+  else placeMenu(m, (menuCardXY || { x: 200, y: 200 }).x + 120, (menuCardXY || { y: 200 }).y);
 }
 function convCardMenuAction(act) {
   const pl = menuCardObj, scope = menuCardScope; closeMenus();
@@ -1270,6 +1461,21 @@ function convCardMenuAction(act) {
         }});
       break;
     case 'batch': toast('批量管理：多选改名 / 归档（原型先记一笔）'); break;
+    // §23.1 Orca「打开侧边聊天」的两个替身
+    case 'copyMenu': openConvCopyMenu(); return;
+    case 'tempChat':
+      S.chatMode = 'temporary'; S.dualScreen = false;
+      S.activeTempSessionId = pl ? pl.id : 'default';
+      save(true); renderComposerControls(); renderChat();
+      toast(`已开<b>临时聊天</b>${pl ? `：${escapeHtml(pl.title)}` : ''}（单屏）`); return;
+    case 'tempChatSplit':
+      S.chatMode = 'temporary'; S.dualScreen = true;
+      S.activeTempSessionId = pl ? pl.id : 'default';
+      save(true); renderComposerControls(); renderChat(); renderDualScreen();
+      toast(`已开<b>临时聊天 · 分屏</b>${pl ? `：${escapeHtml(pl.title)}` : ''} —— 连续 与 临时 左右并排`); return;
+    case 'branch': toast('分支：原型只记一笔（Orca 里是 workspace 的 git branch）'); break;
+    case 'copyLink': { const sid = pl && pl.sid ? `wanna://session/${pl.sid}` : '';
+      navigator.clipboard?.writeText(sid); toast('已复制会话链接'); break; }
     case 'finder':
       toast(`在 Finder 中显示 <code>${escapeHtml(folder)}</code>`);
       break;
@@ -1376,6 +1582,45 @@ function saveProjectModal() {
   toast(`已添加项目 <b>${escapeHtml(name)}</b>`);
 }
 
+/// §23.7 侧栏项目分组自己的 ⋯ 菜单（Orca：ProjectGroup 没有 type 字段，别造一个）
+function openProjGroupMenu(g, anchor) {
+  closeMenus();
+  const m = $('#menuProjGroup');
+  m.innerHTML = `
+    <div class="menu-title">${escapeHtml(g.name)}</div>
+    <button data-act="rename">重命名分组</button>
+    <button data-act="color">颜色…</button>
+    <button data-act="collapse">${g.isCollapsed ? '展开分组' : '折叠分组'}</button>
+    <div class="menu-sep"></div>
+    <button data-act="ungroup">解散分组（项目保留）</button>
+    <button data-act="delete" class="danger">删除分组（项目移出）</button>`;
+  $$('#menuProjGroup button').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const act = b.dataset.act;
+    if (act === 'rename') {
+      askModal({ title: '重命名分组', value: g.name, okText: '重命名', onOk: v => {
+        if (v && v.trim()) { g.name = v.trim(); save(true); renderNav(); toast('已重命名'); } }});
+      return;
+    }
+    if (act === 'color') {
+      showMenu(TAB_ICON_COLORS.map(c => ({ label: `${TAB_COLOR_NAMES[c] || c}  ●`,
+        action: () => { g.color = c; save(true); renderNav(); toast('分组颜色已改'); } }))
+        .concat([{ sep: true }, { label: '无颜色', action: () => { g.color = null; save(true); renderNav(); } }]),
+        null, { x: anchor.getBoundingClientRect().right + 6, y: anchor.getBoundingClientRect().top });
+      return;
+    }
+    closeMenus();
+    if (act === 'collapse') { g.isCollapsed = !g.isCollapsed; save(true); renderNav(); }
+    else if (act === 'ungroup') { (S.projects || []).forEach(p => { if (p.projectGroupId === g.id) p.projectGroupId = null; });
+      S.projectGroups = (S.projectGroups || []).filter(x => x !== g); save(true); renderNav(); toast('已解散分组，项目都还在'); }
+    else if (act === 'delete') confirmModal({ title: '删除这个分组？', text: `${g.name}\n项目会移出分组，不会删项目。`,
+      okText: '删除', onOk: () => { (S.projects || []).forEach(p => { if (p.projectGroupId === g.id) p.projectGroupId = null; });
+        S.projectGroups = (S.projectGroups || []).filter(x => x !== g); save(true); renderNav(); toast('已删除分组'); }});
+  });
+  m.hidden = false;
+  placeMenu(m, anchor.getBoundingClientRect().left, anchor.getBoundingClientRect().bottom + 4);
+}
+
 function projList() {
   if (!realProjects().length) { toast('还没有项目可移动'); return null; }
   return realProjects().map(x => x.name).join(' / ');
@@ -1466,7 +1711,14 @@ const TAB_GROUP_COLORS = ['#8A6A5A', '#4C9BE8', '#E5484D', '#F5A623',
                           '#30A46C', '#E5468A', '#8E4EC6', '#7CB342', '#F76B5A'];
 const tabGroupByName = name => (S.tabGroups || []).find(g => g.name === name) || null;
 /// §22.1.4 用户自定义的标签图标：`#RRGGBB` 画色块，否则当成 emoji/字符
-const TAB_ICON_COLORS = ['#F5C518', '#F87171', '#60A5FA', '#4ADE80', '#F472B6', '#A78BFA', '#FBBF24', '#E5E7EB'];
+/// §23.3.4 色板**逐字照 Orca**：…/tab-bar/SortableTabContextMenu.tsx:27-88
+/// None(null) / Blue #3b82f6 / Purple #a855f7 / Pink #ec4899 / Red #ef4444 /
+/// Orange #f97316 / Yellow #eab308 / Green #22c55e / Teal #14b8a6 / Gray #9ca3af
+const TAB_ICON_COLORS = ['#3b82f6', '#a855f7', '#ec4899', '#ef4444',
+                         '#f97316', '#eab308', '#22c55e', '#14b8a6', '#9ca3af'];
+const TAB_COLOR_NAMES = { '#3b82f6':'Blue', '#a855f7':'Purple', '#ec4899':'Pink', '#ef4444':'Red',
+                          '#f97316':'Orange', '#eab308':'Yellow', '#22c55e':'Green',
+                          '#14b8a6':'Teal', '#9ca3af':'Gray' };
 function customIconHtml(t) {
   if (!t || !t.icon) return null;
   const v = String(t.icon);
@@ -1475,6 +1727,10 @@ function customIconHtml(t) {
 }
 const tabGroupOf = t => (t && t.group ? tabGroupByName(t.group) : null);
 const tabDisplayName = t => t.label || t.f;
+/// §23.9 终端标签的图标（不是文件，别拿扩展名去推）
+const tabIconFor = t => (t && t.kind === 'terminal') ? { cls: 'term', label: '>_' } : iconFor(t ? t.f : '');
+/// 浏览器 / 终端标签都没有「当前文件」——currentFile 只属于文件标签
+const fluidTab = t => !!t && (t.kind === 'browser' || t.kind === 'terminal');
 
 function renderTabs() {
   const host = $('#tabs'); host.innerHTML = '';
@@ -1482,13 +1738,14 @@ function renderTabs() {
     const g = tabGroupOf(t);
     const el = document.createElement('div');
     el.className = 'tab' + (i === S.activeTab ? ' is-on' : '') + (t.pinned ? ' is-pin' : '')
-      + (g ? ' has-group' : '');
+      + (g ? ' has-group' : '') + (t.color ? ' has-color' : '');
     if (g) el.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
-    const ic = iconFor(t.f);
+    if (t.color) el.style.setProperty('--tc', t.color);
+    const ic = tabIconFor(t);
     const ci = customIconHtml(t);
     el.innerHTML = `${ci || `<span class="fico ${ic.cls}"></span>`}<span class="tname"></span><span class="tx" title="关闭标签">×</span>`;
     el.querySelector('.tname').textContent = tabDisplayName(t);
-    el.title = tabDisplayName(t) + (t.label ? `（原名 ${t.f}）` : '')
+    el.title = tabDisplayName(t) + (t.label && t.f ? `（原名 ${t.f}）` : '')
       + (t.pinned ? '（已固定 · 在最左、按钮变小；右键可取消）' : '')
       + (g ? `\n标签组：${g.name}` : '')
       + '\n右键：分组 / 重命名 / 关闭…';
@@ -1503,7 +1760,7 @@ function renderTabs() {
     el.ondragend = () => el.classList.remove('dragging');
     el.onclick = e => {
       if (e.target.classList.contains('tx')) { closeTab(i); return; }
-      S.activeTab = i; S.currentFile = t.kind === 'browser' ? null : t.f;
+      S.activeTab = i; S.currentFile = fluidTab(t) ? null : t.f;
       S.tab = tabViewKind(t);
       save(); renderTabs(); renderContent(); renderContext(); renderNav();
     };
@@ -1546,7 +1803,7 @@ function toggleTabsLayout() {
 function renderTabsVertical() {
   const panel = $('#tabsVertical'); if (!panel || panel.hidden) return;
   const kw = (($('#tvSearch') && $('#tvSearch').value) || '').trim().toLowerCase();
-  const hit = t => !kw || tabDisplayName(t).toLowerCase().includes(kw) || t.f.toLowerCase().includes(kw);
+  const hit = t => !kw || tabDisplayName(t).toLowerCase().includes(kw) || String(t.f || '').toLowerCase().includes(kw);
 
   // ── ① 固定的：缩成小图标，每行几个由面板宽度算，**最多 4 行** ──
   const grid = $('#tvPinned');
@@ -1560,10 +1817,11 @@ function renderTabsVertical() {
   pinned.slice(0, maxCells).forEach(t => {
     const i = S.tabs.indexOf(t);
     const cell = document.createElement('div');
-    cell.className = 'tv-cell' + (i === S.activeTab ? ' is-on' : '');
+    cell.className = 'tv-cell' + (i === S.activeTab ? ' is-on' : '') + (t.color ? ' has-color' : '');
     const g = tabGroupOf(t);
     if (g) cell.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
-    cell.innerHTML = `${customIconHtml(t) || `<span class="fico ${iconFor(t.f).cls}"></span>`}`
+    if (t.color) cell.style.setProperty('--tc', t.color);
+    cell.innerHTML = `${customIconHtml(t) || `<span class="fico ${tabIconFor(t).cls}"></span>`}`
       + `<button class="x" title="关闭">×</button>`;
     cell.title = tabDisplayName(t) + '\n右键：分组 / 重命名 / 取消固定';
     cell.querySelector('.x').onclick = e => { e.stopPropagation(); closeTab(i); };
@@ -1624,7 +1882,7 @@ function moveTabTo(from, to) {
 }
 function activateTab(i) {
   const t = S.tabs[i]; if (!t) return;
-  S.activeTab = i; S.currentFile = t.kind === 'browser' ? null : t.f;
+  S.activeTab = i; S.currentFile = fluidTab(t) ? null : t.f;
   S.tab = tabViewKind(t);
   save(); renderTabs(); renderContent(); renderContext(); renderNav();
 }
@@ -1632,12 +1890,14 @@ function tvItemRow(t, isChild) {
   const i = S.tabs.indexOf(t);
   const g = tabGroupOf(t);
   const el = document.createElement('div');
-  el.className = 'tv-item' + (i === S.activeTab ? ' is-on' : '') + (isChild ? ' is-child' : '');
+  el.className = 'tv-item' + (i === S.activeTab ? ' is-on' : '') + (isChild ? ' is-child' : '')
+    + (t.color ? ' has-color' : '');
   if (g) el.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
-  el.innerHTML = `${customIconHtml(t) || `<span class="fico ${iconFor(t.f).cls}"></span>`}
+  if (t.color) el.style.setProperty('--tc', t.color);
+  el.innerHTML = `${customIconHtml(t) || `<span class="fico ${tabIconFor(t).cls}"></span>`}
     <span class="nm"></span><button class="x" title="关闭">×</button>`;
   el.querySelector('.nm').textContent = tabDisplayName(t);
-  el.title = tabDisplayName(t) + (t.label ? `（原名 ${t.f}）` : '');
+  el.title = tabDisplayName(t) + (t.label && t.f ? `（原名 ${t.f}）` : '');
   el.querySelector('.x').onclick = e => { e.stopPropagation(); closeTab(i); };
   el.onclick = () => activateTab(i);
   el.ondblclick = e => { e.stopPropagation(); renameTabLabel(t); };
@@ -1765,11 +2025,12 @@ function renderSplitPane() {
   el.hidden = false;
   el.dataset.side = side;
   $('#wsSplitName').textContent = t.label || t.f;
-  const ic = iconFor(t.f);
+  const ic = tabIconFor(t);
   const ico = $('#wsSplitIco'); ico.className = `fico ${ic.cls}`;
   const pr = projectById(t.p);
   const body = $('#wsSplitBody');
   if (t.kind === 'browser') { body.innerHTML = `<p>浏览器标签不参与拆分（原型只拆文件）。</p>`; return; }
+  if (t.kind === 'terminal') { body.innerHTML = `<p>终端标签用右键菜单里的<b>拆分终端</b>（拆的是终端自己，不是这个预览半屏）。</p>`; return; }
   const content = (pr && pr.files[t.f]) || '';
   const e = extOf(t.f);
   if (e === 'md') body.innerHTML = mdToHtml(content);
@@ -1816,6 +2077,30 @@ function renderContent() {
   const hasFile = !!(p && rel);
   ['#viewMd','#viewFile','#viewMind','#viewHistory','#viewBrowser'].forEach(s => $(s).classList.remove('is-on'));
   const vb = $('#viewBrowser'); if (vb) vb.hidden = true;
+  // §23.9 终端标签：不是 .view，靠 hidden + is-tab 两态；切到别的标签就收回去
+  const tp = $('#termPanel');
+  if (tp && !(activeTab && activeTab.kind === 'terminal')) { tp.hidden = true; tp.classList.remove('is-tab'); }
+
+  // §23.9 终端标签：同一块 .term-panel 铺满内容区（双击/点标签 = 切到这一张终端）
+  if (activeTab && activeTab.kind === 'terminal' && tp) {
+    $('#viewEmpty').classList.add('is-off');
+    $('#tabbar').style.display = '';
+    $('#fileHead').style.display = 'none';
+    $('#mdBar').style.display = 'none';
+    tp.hidden = false; tp.classList.add('is-tab');
+    $('#termTitle').textContent = activeTab.term?.title || activeTab.label || '终端';
+    $('#termPath').textContent = activeTab.term?.path || '';
+    // 打字机一次只为**看得见的那张**终端跑：切过来就把上一张的定时器收掉，再接着这张往下敲
+    if (termTyping && termTyping.t !== activeTab) { clearTimeout(termTyping.id); termTyping = null; }
+    if (!termTyping) {
+      const L = activeTab.term?.lines || [];
+      if (activeTab.term && activeTab.term.li < L.length) termStep(activeTab);
+    }
+    renderTermPanes(); termPaint();
+    renderSplitPane();
+    renderHistoryBadge();
+    return;
+  }
 
   // §22.14 浏览器标签：不走「项目 / 文件」那套门槛 —— 它自己就是一整页
   if (activeTab && activeTab.kind === 'browser') {
@@ -2278,23 +2563,66 @@ function addMsg(role, html, meta) {
   if (S.recent.length > 30) S.recent.pop();
   save(); renderChat(); renderNav();
 }
+/// §23.2 单屏 / 双屏：双屏把「连续会话」和「临时会话」左右并排，**一条消息都没改、功能不变**
+function renderScreenToggle() {
+  const b = $('#ccScreen'); if (!b) return;
+  b.innerHTML = S.dualScreen ? '<b>双屏</b>｜单屏' : '双屏｜<b>单屏</b>';
+  b.classList.toggle('is-dual', !!S.dualScreen);
+  b.title = S.dualScreen
+    ? '双屏中 —— 左=连续会话、右=临时会话，同时显示。点一下收回单屏'
+    : '单屏（默认，只有一个会话窗口）。点一下切成双屏';
+}
+function toggleDualScreen() {
+  S.dualScreen = !S.dualScreen; save(true);
+  renderScreenToggle(); renderChat();
+  toast(S.dualScreen ? '已切到<b>双屏</b> —— 连续 与 临时 左右并排（功能不变）'
+                     : '已收回<b>单屏</b> —— 只有一个会话窗口');
+}
+/// 会话右键「临时聊天分屏显示」用：直接开双屏并把当前流切到临时
+function renderDualScreen() { renderScreenToggle(); renderChat(); }
+
 function renderChat() {
   const host = $('#msgs'); host.innerHTML = '';
-  if (!S.chat.length) {
-    host.innerHTML = `<div class="msg msg-sys"><div class="bubble">
-      ${proj()
-        ? '围绕项目提问，或直接让它改脑图 —— 每次改动都会自动备份历史。'
-        : '这是<b>临时对话</b>：没有项目文件，直接和 AI 聊。想要围绕项目，点左边 ＋ 添加文件夹。'}
-      </div></div>`;
-  }
-  S.chat.forEach(m => {
+  renderScreenToggle();
+  const mk = m => {
     const el = document.createElement('div');
     el.className = `msg msg-${m.role}` + (m.temp ? ' msg-temp' : '');
     const who = m.role === 'user' ? '你' : m.role === 'ai' ? (m.temp ? 'AI · 临时对话' : 'AI') : '系统';
     el.innerHTML = `<div class="msg-who">${who}</div><div class="bubble">${m.html}</div>`
       + (m.meta ? `<div class="msg-meta">${m.meta}</div>` : '');
-    host.appendChild(el);
-  });
+    return el;
+  };
+  const emptyHtml = `<div class="msg msg-sys"><div class="bubble">
+      ${proj()
+        ? '围绕项目提问，或直接让它改脑图 —— 每次改动都会自动备份历史。'
+        : '这是<b>临时对话</b>：没有项目文件，直接和 AI 聊。想要围绕项目，点左边 ＋ 添加文件夹。'}
+      </div></div>`;
+  if (!S.chat.length) {
+    if (S.dualScreen) {
+      host.classList.add('dual');
+      const l = document.createElement('div'); l.className = 'msg-col';
+      l.innerHTML = `<div class="msg-col-head">连续会话</div>` + emptyHtml;
+      const r = document.createElement('div'); r.className = 'msg-col';
+      r.innerHTML = `<div class="msg-col-head is-temp">临时会话</div>`;
+      host.append(l, r);
+    } else {
+      host.classList.remove('dual');
+      host.innerHTML = emptyHtml;
+    }
+    return;
+  }
+  if (S.dualScreen) {
+    host.classList.add('dual');
+    const l = document.createElement('div'); l.className = 'msg-col';
+    l.innerHTML = `<div class="msg-col-head">连续会话</div>`;
+    const r = document.createElement('div'); r.className = 'msg-col';
+    r.innerHTML = `<div class="msg-col-head is-temp">临时会话</div>`;
+    S.chat.forEach(m => (m.temp ? r : l).appendChild(mk(m)));
+    host.append(l, r);
+  } else {
+    host.classList.remove('dual');
+    S.chat.forEach(m => host.appendChild(mk(m)));
+  }
   host.scrollTop = host.scrollHeight;
 }
 /// §22.13 —— replyBusy 模拟"上一条还没答完"（原型没有真模型，用一个定时器当生成窗口）
@@ -2480,6 +2808,8 @@ let menuTabIndex = null;
 let menuDyn = null;
 let menuTabXY = null;              // §21.4A 菜单要贴着鼠标（二级「加入标签组…」也从这里接）
 let menuTabGroupObj = null;
+let menuCardXY = null;
+let menuProjXY = null;      // §23.7 项目菜单贴鼠标（二级「移动到分组」要靠它）         // §23.1 会话菜单贴鼠标（二级复制菜单要靠它定位）
 /// 通用弹出菜单：给一串 {label, danger?, action?} 就画出来（分组菜单 / 卡片附加项都用它）
 function showMenu(items, anchor, xy) {
   closeMenus();                              // 任何菜单打开前先关掉其它（含分组/卡片/项目）
@@ -2518,7 +2848,7 @@ function openTabsPopover() {
     it.innerHTML = `${treeIconSVG(t.f, false)}<span class="nm"></span>
       <span class="pin">${t.pinned ? '📌' : ''}</span>`;
     it.querySelector('.nm').textContent = `${(projectById(t.p) || {}).name || t.p} · ${tabDisplayName(t)}`;
-    it.onclick = () => { m.hidden = true; S.activeTab = i; S.currentFile = t.kind === 'browser' ? null : t.f;
+    it.onclick = () => { m.hidden = true; S.activeTab = i; S.currentFile = fluidTab(t) ? null : t.f;
       S.tab = tabViewKind(t);
       save(); renderTabs(); renderContent(); renderContext(); renderNav(); };
     m.appendChild(it);
@@ -2539,11 +2869,12 @@ function openTabMenu(index, ev) {
   const groups = S.tabGroups || [];
   const last = index >= S.tabs.length - 1;
   const isBrowser = t.kind === 'browser';
-  const rel = isBrowser ? null : t.f;
+  const isTerm = t.kind === 'terminal';          // §23.9.1 同一条入口，文案随标签类型变
+  const rel = (isBrowser || isTerm) ? null : t.f;
   const isMd = rel && extOf(rel) === 'md';
   m.innerHTML = `
     <div class="menu-title">${escapeHtml(t.label || t.f)}</div>
-    <button data-act="splitTo">将标签页移至拆分 ›</button>
+    <button data-act="splitTo">${isTerm ? '拆分终端' : '将标签页移至拆分'} ›</button>
     <button data-act="renameFile">重命名</button>
     <button data-act="pin">${t.pinned ? '取消固定标签' : '固定标签'}</button>
     <div class="menu-sep"></div>
@@ -2570,6 +2901,7 @@ function openTabMenu(index, ev) {
     <button data-act="dup">复制标签页</button>
     <button data-act="renameLabel">重命名标签页</button>
     <button data-act="customIcon">自定义图标…</button>
+    <button data-act="tabColor">修改标签颜色…</button>
     <button data-act="mute">将这个网站静音</button>
     <div class="menu-sep"></div>
     <button data-act="layout">${S.tabsVertical ? '水平显示标签页' : '垂直显示标签页'}</button>`;
@@ -2590,6 +2922,16 @@ function tabMenuAction(act) {
     case 'splitView': toast('拆分视图：原型先记一笔（落 SwiftUI 走双栏）'); return;
     case 'splitTo': {
       const x = menuTabXY;
+      // §23.9.1 终端标签上这一条叫「拆分终端」，拆的是**终端自己**的两格
+      //（源码 TerminalTabSplitMenuSection.tsx:53 'Split terminal' → right / down）
+      if (S.tabs[i] && S.tabs[i].kind === 'terminal') {
+        if (S.activeTab !== i) activateTab(i);
+        showMenu([
+          { label: '拆分终端向右', action: () => splitTerminal('right') },
+          { label: '拆分终端向下', action: () => splitTerminal('down') },
+        ], null, x);
+        return;
+      }
       showMenu([
         { label: '拆分到左侧', action: () => setSplitSide('left', i) },
         { label: '拆分到右侧', action: () => setSplitSide('right', i) },
@@ -2627,6 +2969,15 @@ function tabMenuAction(act) {
     case 'toWindow': toast('移至新窗口：原型先记一笔（落 SwiftUI 走新 NSWindow）'); return;
     case 'reload': save(); renderContent(); renderTabs(); toast(`已重新加载 <b>${escapeHtml(t.f)}</b>`); return;
     case 'rename': renameTabLabel(t); return;
+    case 'tabColor': {
+      const x = menuTabXY;
+      showMenu([{ title: '标签颜色' }]
+        .concat(TAB_ICON_COLORS.map(c => ({ label: `${TAB_COLOR_NAMES[c] || c}  ●`,
+          action: () => { t.color = c; save(true); renderTabs(); toast(`标签颜色已改为 <b>${TAB_COLOR_NAMES[c] || c}</b>`); } })))
+        .concat([{ sep: true },
+          { label: '清除颜色', action: () => { delete t.color; save(true); renderTabs(); toast('已清除标签颜色'); } }]),
+        null, x);
+      return; }
     case 'customIcon': {
       const x = menuTabXY;
       showMenu([{ title: '图标' }]
@@ -2718,12 +3069,17 @@ function setSplitSide(side, index) {
 
 /// 改的是**显示名**，不碰磁盘上的文件名；留空 = 恢复原名
 function renameTabLabel(t) {
+  const isTerm = t.kind === 'terminal';
   askModal({ title: '重命名标签页',
-    text: `改的只是这一栏显示的名字，不会动磁盘上的文件。留空 = 恢复成 ${t.f}`,
+    text: isTerm ? '改的只是这一栏显示的名字，不会动终端本身。留空 = 恢复成原来的名字。'
+                 : `改的只是这一栏显示的名字，不会动磁盘上的文件。留空 = 恢复成 ${t.f}`,
     value: t.label || '', okText: '重命名', onOk: v => {
       const s = (v || '').trim();
-      if (s) t.label = s; else delete t.label;
-      save(true); renderTabs();
+      if (s) t.label = s;
+      else if (isTerm) t.label = (t.term && t.term.title) || '终端';   // 终端没有"原文件名"可回落
+      else delete t.label;
+      if (isTerm && t.term) t.term.title = t.label;
+      save(true); renderTabs(); renderContent();
       toast(s ? `标签已改名为 <b>${escapeHtml(s)}</b>` : '已恢复原名');
     }});
 }
@@ -2825,6 +3181,46 @@ function tabGroupAction(act) {
   void x;
 }
 /// 设置：默认对话位置（§13.5）
+/* ── §23.6.5 命令面板快捷键：设置里能看到、也能改（原型没有整页设置，放在 ⚙ 菜单的「快捷键」组）──
+   键位格式与 Orca 的 keybinding 一致：`meta+j` / `meta+shift+j`（修饰键 + 最后一个实体键） */
+const SHORTCUT_KEYS = { meta: '⌘', ctrl: '⌃', alt: '⌥', shift: '⇧' };
+function shortcutLabel(spec) {
+  return String(spec || '').split('+').map(x => SHORTCUT_KEYS[x] || (x.length === 1 ? x.toUpperCase() : x)).join('');
+}
+/// 从一次按键里组装键位；**光一个字母不算**（那会抢走正常输入，和 Orca 的 recorder 一样要修饰键）
+function shortcutFromEvent(e) {
+  const k = String(e.key || '').toLowerCase();
+  if (['meta', 'control', 'alt', 'shift'].includes(k)) return null;
+  const parts = [];
+  if (e.metaKey) parts.push('meta');
+  if (e.ctrlKey) parts.push('ctrl');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  if (!parts.length) return null;
+  parts.push(k === ' ' ? 'space' : k);
+  return parts.join('+');
+}
+function shortcutMatches(spec, e) {
+  const parts = String(spec || '').split('+').filter(Boolean);
+  const wantKey = parts[parts.length - 1];
+  if (!wantKey) return false;
+  const got = String(e.key || '').toLowerCase();
+  const keyOk = wantKey === 'space' ? got === ' ' : got === wantKey;
+  return keyOk
+    && !!e.metaKey === parts.includes('meta')
+    && !!e.ctrlKey === parts.includes('ctrl')
+    && !!e.altKey === parts.includes('alt')
+    && !!e.shiftKey === parts.includes('shift');
+}
+let paletteShortcutArmed = false;
+function armPaletteShortcut() {
+  paletteShortcutArmed = true;
+  toast('按下<b>新的快捷键</b>来打开命令面板（Esc 取消）');
+}
+function refreshPaletteShortcutLabel() {
+  const el = $('#paletteKbd');
+  if (el) el.textContent = shortcutLabel(S.paletteShortcut || 'meta+j');
+}
 function settingsAction(act, btn) {
   closeMenus();
   if (act === 'defLeft') { S.defaultLayout = 'left'; setLayout('left'); }
@@ -2832,6 +3228,7 @@ function settingsAction(act, btn) {
   else if (act === 'defRight') { S.defaultLayout = 'right'; setLayout('right'); }
   else if (act === 'policyQueue') { setSendPolicy('queue'); return; }
   else if (act === 'policyInterrupt') { setSendPolicy('interrupt'); return; }
+  else if (act === 'paletteShortcut') { armPaletteShortcut(); return; }
   else if (act === 'resetHist') {
     const rel = histFile(); if (!rel) return;
     confirmModal({ title: '清空这个文件的全部历史？', text: rel, okText: '清空', onOk: () => {
@@ -3011,7 +3408,22 @@ function bind() {
   // §22.9.5 ＋ 改成**下拉**（显示在按钮正下方）
   $('#btnNewTab').onclick = e => { e.stopPropagation(); openMenuAt('#menuNewTab', e.currentTarget); };
   $$('#menuNewTab button').forEach(b => b.onclick = () => newTabAction(b.dataset.act));
-  $('#termClose').onclick = () => { $('#termPanel').hidden = true; };
+  // §23.9 关掉 = 关这张终端标签（终端已经是一等公民的标签，不再是浮在底上的面板）
+  $('#termClose').onclick = () => {
+    const active = S.tabs[S.activeTab];
+    if (active && active.kind === 'terminal') { closeTab(S.activeTab); toast('已关掉终端标签'); return; }
+    $('#termPanel').hidden = true;
+  };
+  // §23.9.2 面板自己也能拆 —— 不用非得去标签右键
+  $('#termSplit').onclick = e => {
+    e.stopPropagation();
+    const t = S.tabs[S.activeTab];
+    const cur = (t && t.kind === 'terminal' && t.term) ? t.term.split : null;
+    showMenu([
+      { label: (cur === 'right' ? '✓ ' : '') + '拆分终端向右', action: () => splitTerminal('right') },
+      { label: (cur === 'down' ? '✓ ' : '') + '拆分终端向下', action: () => splitTerminal('down') },
+    ], e.currentTarget);
+  };
   // §22.11 快捷指令
   $('#qcRun').onclick = () => { const id = $('#qcRun').dataset.id; if (id) runQuickCommand(id); else openQuickCommandModal(null); };
   $('#qcPick').onclick = e => { e.stopPropagation(); openQuickCommandMenu(e.currentTarget); };
@@ -3190,6 +3602,8 @@ function bind() {
   $('#btnSend').onclick = sendChat;
   // §22.13 排队 ⇄ 打断 + 队列徽标
   $$('#qRow .q-opt').forEach(b => b.onclick = e => { e.stopPropagation(); setSendPolicy(b.dataset.policy); });
+  // §23.2 单屏 ⇄ 双屏（在 连续/临时 左边）
+  $('#ccScreen').onclick = e => { e.stopPropagation(); toggleDualScreen(); };
   $('#qBadge').onclick = e => { e.stopPropagation(); openQueueMenu(e.currentTarget); };
   renderSendPolicy();
   // §21.5.6/8 展开 ⇄ 收起：点**输入框顶边那条手柄**（旧的 ⤢ 是死按钮，连同那行说明一起删了）
@@ -3236,6 +3650,10 @@ function bind() {
     if (meta && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); toggleFullscreen(); }
     if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); }
   });
+  // §23 左右 rail / 面板 / ⌘J —— 函数定义在文件后面，靠 function 声明提升，这里调得到
+  try { bindRails(); }
+  catch (e) { console.error('[bind] rail/面板绑定失败：', e); }
+
   } catch (e) {
     console.error('[bind] 后半段出错（提交/恢复已在最前面保底绑定）：', e);
     toast('部分控件没绑上：' + e.message);
@@ -3550,10 +3968,13 @@ function openQuickCommandMenu(anchor) {
 }
 function openQuickCommandModal(cmd) {
   qcEditing = cmd;
-  qcDraft = cmd ? { ...cmd } : { label: '', op: 'terminal', cmd: '', append: true, scope: 'global', project: '' };
+  qcDraft = cmd ? { ...cmd } : { label: '', op: 'terminal', agent: 'claude', cmd: '',
+                                 append: true, scope: 'global', project: '' };
+  if (!qcDraft.agent) qcDraft.agent = 'claude';
   $('#qcLabel').value = qcDraft.label;
   $('#qcCmd').value = qcDraft.cmd;
   $('#qcAppend').checked = qcDraft.append !== false;
+  $('#qcAgent').value = qcDraft.agent;
   $('#qcAdvBody').hidden = true;
   paintQcModal();
   $('#qcBack').hidden = false;
@@ -3563,6 +3984,7 @@ function paintQcModal() {
   $$('#qcOp button').forEach(b => b.classList.toggle('is-on', b.dataset.op === qcDraft.op));
   $$('#qcScope button').forEach(b => b.classList.toggle('is-on', b.dataset.scope === qcDraft.scope));
   $('#qcProjWrap').hidden = qcDraft.scope !== 'project';
+  $('#qcAgentWrap').hidden = qcDraft.op !== 'agent';   // §23.8.2 源码的 agent 字段：只有智能体动作要选
   $('#qcProjBtn').textContent = '▾ ' + (qcDraft.project || '（未选，对所有项目生效）');
 }
 function closeQuickCommandModal() { $('#qcBack').hidden = true; qcEditing = null; qcDraft = null; }
@@ -3571,6 +3993,7 @@ function saveQuickCommand() {
   qcDraft.label = ($('#qcLabel').value || '').trim();
   qcDraft.cmd = $('#qcCmd').value || '';
   qcDraft.append = $('#qcAppend').checked;
+  qcDraft.agent = $('#qcAgent').value || 'claude';
   if (!qcDraft.label) { toast('先给它起个「标签」'); $('#qcLabel').focus(); return; }
   if (!qcDraft.cmd.trim()) { toast('命令是空的'); $('#qcCmd').focus(); return; }
   S.quickCommands = S.quickCommands || [];
@@ -3581,15 +4004,23 @@ function saveQuickCommand() {
   toast(`已保存快捷指令 <b>${escapeHtml(qcDraft ? qcDraft.label : '')}</b>`);
 }
 /// 点它 = **真的跑**：终端 → 终端面板逐字敲入；智能体 → 同时把命令当首条指令发进对话
+/// 点它 = **真的跑**。执行动作逐条对过 Clone_From/Orca 的 run-quick-command-in-new-tab.ts:56-142：
+///   ① 空白命令直接拒绝（源码同款 `if (!command.command.trim()) return null`，免得开出一张空白标签）
+///   ② 每跑一次 = **新开一个终端标签**，不是反复复用同一块面板
+///   ③ 智能体动作 = agent + prompt（源码 launchAgentInNewTab）；我们这里 = 终端标签先 cd，再把 prompt 当首条指令
 function runQuickCommand(id) {
   const c = (S.quickCommands || []).find(x => x.id === id) || quickCommandsVisible()[0];
   if (!c) { toast('还没有快捷指令 —— 点 ⌄ 新建一条'); return; }
+  if (!String(c.cmd || '').trim()) { toast('这条命令是空的，先编辑一下'); return; }
   S.quickCommandActive = c.id; save(true); renderQuickCommandBar();
   if (c.op === 'agent') {
-    addMsg('sys', `智能体 <b>${escapeHtml(c.label)}</b> 收到指令：<code>${escapeHtml(c.cmd)}</code>`
-      + `<br><span style="opacity:.7">原型 · 真机上这里起一个 agent 进程，把命令当首条指令</span>`);
+    addMsg('sys', `智能体 <b>${escapeHtml(c.agent || 'claude')}</b> 收到指令：<code>${escapeHtml(c.cmd)}</code>`
+      + `<br><span style="opacity:.7">原型 · 真机上这里起一个 ${escapeHtml(c.agent || 'claude')} 进程，把命令当首条指令</span>`);
+    openTerminal({ title: `🤖 ${c.label}`, agent: c.agent || 'claude', command: c.cmd,
+                   appendEnter: c.append !== false });
+  } else {
+    openTerminal({ title: `⌨ ${c.label}`, command: c.cmd, appendEnter: c.append !== false });
   }
-  openTerminal({ title: (c.op === 'agent' ? '🤖 ' : '⌨ ') + c.label, command: c.cmd });
 }
 
 /* ============================================================
@@ -3614,7 +4045,7 @@ let brStrokes = [];                // 本次绘制累计的笔迹（导出时一
 let brStrokeColor = '#FF4D4F';
 let brStrokeWidth = 4;
 const activeTabObj = () => S.tabs[S.activeTab] || null;
-const tabViewKind = t => (t && t.kind === 'browser') ? 'browser' : extViewKind(t.f);
+const tabViewKind = t => (t && (t.kind === 'browser' || t.kind === 'terminal')) ? (t.kind || 'file') : extViewKind(t.f);
 const hostOf = u => { try { return u ? new URL(u).host : ''; } catch { return ''; } };
 
 /// 开一张浏览器标签（§22.0.1 / §22.9.5）
@@ -3839,6 +4270,715 @@ function openBrSettings() {
     value: st.homePage, okText: '保存',
     onOk: v => { S.browserSettings = { ...st, homePage: (v || '').trim() || st.homePage, doNotTrack: !st.doNotTrack };
       save(true); toast('浏览器设置已保存'); } });
+}
+
+/* ============================================================
+   §23.4 右侧边栏（资源管理器 + 智能体会话历史）
+   结构与字段照 Clone_From/Orca：
+     Explorer  …/right-sidebar/FileExplorer.tsx（Names / Contents 两个视图）
+     Agents    …/right-sidebar/AiVaultPanel.tsx + AiVaultPanelHeader/Controls
+     类型      src/shared/ai-vault-types.ts:96-139、ai-vault-session-filters.ts:31-56
+   ============================================================ */
+const VAULT_AGENTS = ['claude', 'codex', 'pi', 'gemini', 'kiro', 'cursor'];
+const VAULT_SCOPES = [['workspace', '工作区'], ['project', '项目'], ['all', '全部']];
+const VAULT_HOSTS = [['local', 'local'], ['all', '全部主机']];
+const VAULT_GROUPS = [['project', '按项目'], ['folder', '按文件夹'], ['agent', '按智能体']];
+
+/// 会话历史的数据**从现有会话派生**（原型没有真磁盘会话），字段名照 AiVaultSession
+function buildVaultSessions() {
+  const out = [];
+  let n = 0;
+  // AiVaultSession 字段照 src/shared/ai-vault-types.ts:96-139（子集，原型有数据的那几个）
+  const push = (o) => { out.push({ id: o.id, executionHostId: 'local', agent: o.agent || VAULT_AGENTS[(n++) % VAULT_AGENTS.length],
+    sessionId: o.sid || o.id, title: o.title, cwd: o.cwd, branch: null, model: o.model || 'claude-sonnet-4',
+    filePath: o.cwd, createdAt: o.ts, updatedAt: o.ts, modifiedAt: new Date(o.ts || Date.now()).toISOString(),
+    messageCount: o.msgs || 0, totalTokens: 0, previewMessages: [], resumeCommand: `claude --resume ${o.sid || o.id}`,
+    subagentCount: o.sub || 0, preview: o.preview || '',
+    projectLabel: o.projectLabel, projectKey: o.cwd, kind: o.kind, ref: o.ref }); };
+  realProjects().forEach(p => (p.chats || []).forEach(c => push({
+    id: 'vs_' + c.id, sid: c.sid || c.id, title: c.title, cwd: p.path, ts: c.ts || now(),
+    msgs: c.msgs || 0, projectLabel: p.name, kind: 'project', ref: { p: p.id, id: c.id } })));
+  (S.plans || []).filter(x => !x.isGroup).forEach(pl => push({
+    id: 'vs_' + pl.id, sid: pl.sid || pl.id, title: pl.title, cwd: defaultFolderPath(),
+    ts: pl.ts || now(), msgs: 0, projectLabel: '默认', kind: 'default', ref: { id: pl.id } }));
+  return out;
+}
+function vaultFilterState() {
+  return { query: (S.vaultQuery || '').trim(), agents: S.vaultAgents || [], scope: S.vaultScope || 'workspace',
+    group: S.vaultGroup || 'project', hideEmpty: !!S.vaultHideEmpty, limit: S.vaultLimit || 100 };
+}
+/// 过滤 + 分组 —— 形状照 src/shared/ai-vault-session-filters.ts:73/129
+function vaultFilteredGroups() {
+  const f = vaultFilterState();
+  const cur = (proj() || {}).path;
+  let list = buildVaultSessions();
+  if (f.scope === 'workspace' && cur) list = list.filter(x => x.cwd === cur);
+  else if (f.scope === 'project') list = list.filter(x => x.projectLabel && x.projectLabel !== '默认');
+  if (f.agents.length) list = list.filter(x => f.agents.includes(x.agent));
+  if (f.hideEmpty) list = list.filter(x => x.messageCount > 0);
+  if (f.query) { const q = f.query.toLowerCase();
+    list = list.filter(x => (x.title || '').toLowerCase().includes(q)
+      || (x.agent || '').includes(q) || (x.projectLabel || '').toLowerCase().includes(q)); }
+  list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  list = list.slice(0, f.limit);
+  const keyOf = x => f.group === 'agent' ? x.agent : (f.group === 'folder' ? (x.cwd || '') : (x.projectLabel || ''));
+  const map = new Map();
+  list.forEach(x => { const k = keyOf(x) || '（无）'; if (!map.has(k)) map.set(k, []); map.get(k).push(x); });
+  return [...map.entries()].map(([key, sessions]) => ({ key, sessions }));
+}
+
+function renderSidePanel() {
+  const panel = $('#panelSide'); if (!panel) return;
+  const sumEl = $('#sideSum');
+  if (sumEl) sumEl.hidden = true;              // 汇总条只属于 Contents 视图（23.4.4），其余一律收起
+  const which = S.sidePanel;
+  panel.hidden = which !== 'explorer' && which !== 'agents';
+  $$('#railRight .rail-btn').forEach(b => b.classList.toggle('is-on',
+    (b.dataset.open === 'explorer' && which === 'explorer') || (b.dataset.open === 'agents' && which === 'agents')));
+  $('#railLeft')?.classList.toggle('has-open', !!S.automationOpen);
+  $('#railLeft .rail-btn')?.classList.toggle('is-on', !!S.automationOpen);
+  $('#panelAutomation').hidden = !S.automationOpen;
+  // 面板开着就要有内容 —— 只在「点开」那条路上调过 renderAutomation 的话，刷新一回来就是空列表
+  if (S.automationOpen) renderAutomation();
+  if (panel.hidden) return;
+  $$('#sideTabs button').forEach(b => b.classList.toggle('is-on', b.dataset.side === which));
+  const refresh = $('#sideRefresh'), collapse = $('#sideCollapse'), locate = $('#sideLocate');
+  if (which === 'explorer') {
+    refresh.title = '刷新'; collapse.title = '折叠全部'; collapse.hidden = false;
+    if (locate) { locate.hidden = false; locate.title = '定位到当前打开的文件（右栏 + 左栏一起展开）'; }
+  } else {
+    refresh.title = '刷新（强制重扫）'; collapse.hidden = true;
+    if (locate) locate.hidden = true;
+  }
+  if (which === 'explorer') renderSideExplorer(); else renderSideVault();
+}
+function openSidePanel(which) {
+  S.sidePanel = (S.sidePanel === which) ? null : which;
+  save(true); renderSidePanel();
+}
+
+/* ── 23.4.A 资源管理器：Names / Contents 两个视图 ── */
+function explorerRows() {
+  // Orca 的 explorer 跟着**当前 worktree** 走 —— 我们就是跟着当前项目
+  const p = proj() || realProjects()[0] || defaultProject();
+  const out = [];
+  if (p) walkTreeRows(p, p.tree, '', 0, out);
+  return out;
+}
+function walkTreeRows(p, nodes, prefix, depth, out) {
+  (nodes || []).forEach(n => {
+    const rel = prefix ? `${prefix}/${n.name}` : n.name;
+    out.push({ project: p, rel, name: n.name, dir: n.type === 'dir', depth, node: n });
+    if (n.type === 'dir' && n.open) walkTreeRows(p, n.children || [], rel, depth + 1, out);
+  });
+}
+/// §23.4.2 名称过滤 = **按空白切成多个 token、全部 includes、不分大小写**
+/// （照 Clone_From/Orca/src/shared/file-name-filter-tokens.ts:51-61）
+function nameFilterTokens(q) { return String(q || '').toLowerCase().split(/\s+/).filter(Boolean); }
+function pathMatchesNameFilter(rel, tokens) {
+  if (!tokens.length) return true;
+  const hay = rel.toLowerCase();
+  return tokens.every(t => hay.includes(t));          // locale-independent，与 Orca 逐字一致
+}
+/// §23.4.6 定位 = 把**当前打开的文件**在面板的树里展开并高亮，
+/// 同时调现有的 locateFileInTree 把左栏那棵树也带过去（两棵树一次都落到同一个文件）
+function locateActiveFileInSidePanel() {
+  const rel = relOfActiveTab(), p = proj();
+  if (!p || !rel) { toast('先在编辑区打开一个文件'); return; }
+  S.sidePanel = 'explorer'; S.sideView = 'names'; S.sideQuery = ''; S.automationOpen = false;
+  const parts = rel.split('/');
+  let nodes = p.tree;
+  for (let i = 0; i < parts.length - 1 && Array.isArray(nodes); i++) {
+    const d = nodes.find(n => n.type === 'dir' && n.name === parts[i]);
+    if (!d) break;
+    d.open = true;                              // 祖先目录逐级打开，否则这一行根本不渲染
+    nodes = d.children || [];
+  }
+  save(true); renderSidePanel();
+  const row = [...document.querySelectorAll('#sideBody .sp-row')]
+    .find(x => x.dataset.rel === rel && x.dataset.pid === p.id);
+  if (!row) { toast('这个文件不在当前项目的树里'); return; }
+  row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1100);
+  locateFileInTree(rel, p.id);
+  toast(`已定位 <b>${escapeHtml(rel)}</b> —— 右侧资源管理器与左栏都展开到它`);
+}
+function renderSideExplorer() {
+  const sub = $('#sideSub'), body = $('#sideBody');
+  const view = S.sideView || 'names';
+  const sumEl = $('#sideSum'); if (sumEl) sumEl.hidden = true;   // Contents 分支里再按结果放出来
+  sub.innerHTML = `
+    <div class="sp-view" style="padding:0">
+      <button data-view="names" class="${view === 'names' ? 'is-on' : ''}">Names</button>
+      <button data-view="contents" class="${view === 'contents' ? 'is-on' : ''}">Contents</button>
+    </div>
+    <input class="sp-input" style="margin:6px 0 0" id="sideQuery"
+      placeholder="${view === 'names' ? '按名称过滤…' : '按内容搜索…'}" spellcheck="false"
+      value="${escapeHtml(S.sideQuery || '')}">`;
+  $$('#sideSub .sp-view button').forEach(b => b.onclick = () => {
+    S.sideView = b.dataset.view; save(true); renderSideExplorer();
+  });
+  const qEl = $('#sideQuery');
+  qEl.oninput = () => { S.sideQuery = qEl.value; save(true); renderSideExplorer();
+    const n = $('#sideQuery'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };
+
+  const tokens = view === 'names' ? nameFilterTokens(S.sideQuery) : [];
+  const rows = explorerRows().filter(r => view !== 'names' || pathMatchesNameFilter(r.rel, tokens));
+
+  if (view === 'contents') { renderSideContents(body); return; }
+
+  if (!rows.length) {
+    body.innerHTML = `<div class="sp-empty">${tokens.length
+      ? '名称里没有匹配的文件' : '还没有可显示的文件 —— 先在左边打开一个项目'}</div>`;
+    return;
+  }
+  body.innerHTML = '';
+  rows.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'sp-row' + (r.dir ? ' is-dir' : '');
+    el.style.paddingLeft = (7 + r.depth * 12) + 'px';
+    el.innerHTML = `<span class="ic">${r.dir ? (r.node.open ? '▾' : '▸') : treeIconSVG(r.rel, false)}</span>
+      <span class="bd"><span class="t1">${escapeHtml(r.name)}</span></span>`;
+    el.dataset.rel = r.rel; el.dataset.pid = r.project.id;   // §23.4.6 定位靠它找行
+    el.title = `${r.project.path}/${r.rel}`;
+    el.onclick = () => {
+      if (r.dir) { r.node.open = !r.node.open; save(true); renderSideExplorer(); renderNav(); }
+      else { S.projectMode = true; S.tempMode = false; S.activeProject = r.project.id;
+             openInTab(r.project.id, r.rel); save(); renderNav(); renderSideExplorer(); }
+    };
+    el.oncontextmenu = ev => { ev.preventDefault();
+      // §23.4.7 沿用左栏那一份：打开 / 定位 / 重点参考 / 复制路径 / 重命名 / 删除
+      const fileItems = r.dir ? [] : [
+        { label: '定位到左栏', action: () => locateFileInTree(r.rel, r.project.id) },
+        { label: focusHas(r.project.id, r.rel) ? '从对话里移出（取消参考）' : '添加到对话（重点参考）',
+          action: () => { focusToggle(r.project.id, r.rel);
+            toast(focusHas(r.project.id, r.rel) ? `已把 <b>${escapeHtml(r.rel)}</b> 加进这次对话的参考`
+                                                : `已移出参考 · ${escapeHtml(r.rel)}`);
+            renderSideExplorer(); } },
+        { label: '复制路径', action: () => { navigator.clipboard?.writeText(`${r.project.path}/${r.rel}`);
+            toast('已复制 ' + r.project.path + '/' + r.rel); } },
+        { label: '重命名', action: () => renameFileNode(r.project, r.rel) },
+        { label: '删除文件', danger: true, action: () => confirmModal({ title: '删除这个文件？',
+            text: r.rel + '\n（原型只从这棵树里删，不动你磁盘）', okText: '删除', onOk: () => {
+              delete r.project.files[r.rel];
+              removeFromTree(r.project.tree, r.rel.split('/'));
+              S.tabs = S.tabs.filter(t => !(t.p === r.project.id && t.f === r.rel));
+              S.focusFiles = (S.focusFiles || []).filter(x => !(x.p === r.project.id && x.f === r.rel));
+              if (S.activeTab >= S.tabs.length) S.activeTab = Math.max(0, S.tabs.length - 1);
+              if (S.currentFile === r.rel && S.activeProject === r.project.id) { S.currentFile = null; S.activeTab = 0; }
+              save(true); renderNav(); renderTabs(); renderContent(); renderSideExplorer();
+              toast('已删除 ' + escapeHtml(r.rel));
+            }}) },
+      ];
+      showMenu([
+        { label: r.dir ? '展开 / 折叠这个目录' : '打开（在编辑区）', action: () => {
+            if (r.dir) { r.node.open = !r.node.open; save(true); renderSideExplorer(); renderNav(); }
+            else { S.projectMode = true; S.activeProject = r.project.id;
+                   openInTab(r.project.id, r.rel); save(); renderNav(); } } },
+        ...(r.dir ? [{ label: '定位到左栏', action: () => locateFileInTree(r.rel, r.project.id) }] : fileItems),
+      ], null, { x: ev.clientX + 4, y: ev.clientY + 4 }); };
+    body.appendChild(el);
+  });
+}
+/// §23.4.3 Contents 视图：**文件组（可折叠）+ 命中行**，形状照 search-rows.ts:13 buildSearchRows
+function renderSideContents(body) {
+  const sumEl = $('#sideSum');
+  const setSum = text => { if (!sumEl) return; sumEl.hidden = !text; sumEl.textContent = text || ''; };
+  const q = (S.sideQuery || '').trim().toLowerCase();
+  if (!q) { setSum(''); body.innerHTML = `<div class="sp-empty">输入关键字，在文件内容里搜</div>`; return; }
+  const files = [];
+  searchFilesInProjects([...realProjects(), defaultProject()].filter(Boolean), q, files);
+  if (!files.length) { setSum('0 results in 0 files'); body.innerHTML = ''; return; }
+  let total = 0; files.forEach(f => total += f.matches.length);
+  // §23.4.4 汇总条在**列表外面**（#sideSum），所以列表滚到底也不会把它卷走
+  setSum(`${total} results in ${files.length} files`);
+  body.innerHTML = '';
+  files.forEach(f => {
+    const key = `${f.project.id}|${f.rel}`;
+    const collapsed = !!(S.explorerCollapsed || {})[key];
+    const head = document.createElement('div');
+    head.className = 'sp-group';
+    head.innerHTML = `<span class="cv" style="${collapsed ? '' : 'transform:rotate(90deg)'}">▶</span>
+      <span class="lb">${escapeHtml(f.rel)}</span><span class="ct">${f.matches.length}</span>`;
+    head.onclick = () => { S.explorerCollapsed = S.explorerCollapsed || {};
+      S.explorerCollapsed[key] = !collapsed; save(true); renderSideExplorer(); };
+    body.appendChild(head);
+    if (collapsed) return;
+    f.matches.forEach(m => {
+      const line = document.createElement('div');
+      line.className = 'sp-match';
+      line.textContent = `${m.line}: ${m.lineContent.trim()}`;
+      line.title = `${f.project.path}/${f.rel}:${m.line}`;
+      line.onclick = () => { S.projectMode = true; S.activeProject = f.project.id;
+        openInTab(f.project.id, f.rel); save(); renderNav();
+        toast(`跳到 ${escapeHtml(f.rel)}:${m.line}`); };
+      body.appendChild(line);
+    });
+  });
+}
+function searchFilesInProjects(projects, q, out) {
+  projects.forEach(p => Object.keys(p.files || {}).forEach(rel => {
+    const text = p.files[rel] || ''; if (text === '__PDF__') return;
+    const lines = text.split('\n'); const matches = [];
+    lines.forEach((line, i) => {
+      const at = line.toLowerCase().indexOf(q);
+      if (at >= 0) matches.push({ line: i + 1, column: at + 1, lineContent: line });
+    });
+    if (matches.length) out.push({ project: p, rel, matches });
+  }));
+  return out;
+}
+function renameFileNode(project, rel) {
+  askModal({ title: '重命名文件', text: rel, value: rel.split('/').pop(), okText: '重命名', onOk: v => {
+    const nn = (v || '').trim(); if (!nn) return;
+    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+    const target = dir + nn;
+    if (target in project.files) { toast('已经有同名文件了'); return; }
+    project.files[target] = project.files[rel]; delete project.files[rel];
+    renameInTree(project.tree, rel.split('/'), target.split('/'));
+    S.tabs.forEach(x => { if (x.p === project.id && x.f === rel) x.f = target; });
+    if (S.currentFile === rel) S.currentFile = target;
+    save(true); renderNav(); renderTabs(); renderContent(); renderSideExplorer();
+    toast('已重命名为 ' + target);
+  }});
+}
+
+/* ── 23.4.B 智能体会话历史（Agents / Ai Vault） ── */
+function renderSideVault() {
+  const sub = $('#sideSub'), body = $('#sideBody');
+  const f = vaultFilterState();
+  sub.innerHTML = `
+    <input class="sp-input" style="margin:0 0 6px" id="vaultQuery"
+      placeholder="搜索会话…" spellcheck="false" value="${escapeHtml(f.query)}">
+    <div class="sp-filters" style="padding:0">
+      ${VAULT_SCOPES.map(([v, l]) => `<button class="sp-chip ${f.scope === v ? 'is-on' : ''}" data-vscope="${v}">${l}</button>`).join('')}
+      <button class="sp-chip" data-vmenu="host" title="执行主机">🖥 ${escapeHtml(S.vaultHost || 'local')}</button>
+      <button class="sp-chip" data-vmenu="filter" title="过滤：智能体 / 分组 / 隐藏空会话">⚙ 过滤</button>
+    </div>`;
+  const q = $('#vaultQuery');
+  q.oninput = () => { S.vaultQuery = q.value; save(true); renderSideVault();
+    const n = $('#vaultQuery'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };
+  $$('#sideSub [data-vscope]').forEach(b => b.onclick = () => { S.vaultScope = b.dataset.vscope;
+    save(true); renderSideVault(); });
+  $$('#sideSub [data-vmenu]').forEach(b => b.onclick = e => { e.stopPropagation();
+    if (b.dataset.vmenu === 'host') {
+      showMenu(VAULT_HOSTS.map(([v, l]) => ({ label: (S.vaultHost || 'local') === v ? `✓ ${l}` : l,
+        action: () => { S.vaultHost = v; save(true); renderSideVault(); toast('执行主机：' + l); } })), b);
+    } else {
+      const present = [...new Set(buildVaultSessions().map(x => x.agent))];
+      showMenu(
+        [{ title: '选择智能体（多选）' }]
+          .concat(present.map(a => ({ label: (f.agents.includes(a) ? '✓ ' : '  ') + a,
+            action: () => { const set = new Set(f.agents); set.has(a) ? set.delete(a) : set.add(a);
+              S.vaultAgents = [...set]; save(true); renderSideVault(); } })))
+          .concat([{ sep: true }, { title: '分组' }])
+          .concat(VAULT_GROUPS.map(([v, l]) => ({ label: (f.group === v ? '✓ ' : '  ') + l,
+            action: () => { S.vaultGroup = v; save(true); renderSideVault(); } })))
+          .concat([{ sep: true },
+            { label: (f.hideEmpty ? '✓ ' : '  ') + '隐藏空会话', action: () => { S.vaultHideEmpty = !f.hideEmpty;
+                save(true); renderSideVault(); } },
+            { label: '恢复默认过滤', action: () => { S.vaultAgents = []; S.vaultScope = 'workspace';
+                S.vaultGroup = 'project'; S.vaultHideEmpty = false; S.vaultLimit = 100;
+                save(true); renderSideVault(); toast('已恢复默认过滤'); } }]),
+        b);
+    }
+  });
+
+  const groups = vaultFilteredGroups();
+  if (!groups.length) { body.innerHTML = `<div class="sp-empty">没有匹配的会话<br><span style="opacity:.7">刷新可强制重扫</span></div>`; return; }
+  body.innerHTML = '';
+  let shown = 0;
+  groups.forEach(g => {
+    const collapsed = !!(S.vaultGroupsCollapsed || {})[g.key];
+    const head = document.createElement('div');
+    head.className = 'sp-group' + (collapsed ? ' closed' : '');
+    head.innerHTML = `<span class="cv">▶</span><span class="lb">${escapeHtml(g.key)}</span>
+      <span class="ct">${g.sessions.length}</span>`;
+    head.onclick = () => { S.vaultGroupsCollapsed = S.vaultGroupsCollapsed || {};
+      S.vaultGroupsCollapsed[g.key] = !collapsed; save(true); renderSideVault(); };
+    body.appendChild(head);
+    if (collapsed) return;
+    g.sessions.forEach(x => { body.appendChild(vaultRow(x)); shown++; });
+  });
+  const sum = document.createElement('div');
+  sum.className = 'sp-sum';
+  sum.textContent = `${shown} sessions · group by ${f.group}${f.agents.length ? ' · agents: ' + f.agents.join(',') : ''}`;
+  body.appendChild(sum);
+}
+function vaultRow(x) {
+  const open = !!(S.vaultOpen || {})[x.id];
+  const wrap = document.createElement('div');
+  const row = document.createElement('div');
+  row.className = 'sp-row' + (open ? ' is-on' : '');
+  // §23.4.13 字段照 ai-vault-session-row-display.tsx SessionMetadata：
+  // title ｜ agent + N msgs + N subagents + model ｜ worktree 徽章 + 最近一轮 preview ｜ 时间
+  const worktree = String(x.cwd || '').split('/').filter(Boolean).pop() || '—';
+  row.innerHTML = `<span class="ic">${escapeHtml(x.agent.slice(0, 2))}</span>
+    <span class="bd"><span class="t1">${escapeHtml(x.title || x.sessionId)}</span>
+      <span class="t2">${escapeHtml(x.agent)} · ${x.messageCount} msgs · ${x.subagentCount} subagents · ${escapeHtml(x.model || '-')}</span>
+      <span class="t3"><b class="vtree" title="${escapeHtml(x.cwd || '')}">${escapeHtml(worktree)}</b>${
+        x.preview ? `<span class="vpv">${escapeHtml(x.preview)}</span>` : ''}</span></span>
+    <span class="rt">${new Date(x.updatedAt).toLocaleDateString()}</span>`;
+  row.onclick = () => { S.vaultOpen = S.vaultOpen || {}; S.vaultOpen[x.id] = !open;
+    save(true); renderSideVault(); };
+  wrap.appendChild(row);
+  if (open) {
+    const canResume = x.messageCount > 0;
+    const kv = document.createElement('div');
+    kv.className = 'sp-kv';
+    kv.innerHTML = `<div><b>agent</b> <code>${escapeHtml(x.agent)}</code>　<b>model</b> <code>${escapeHtml(x.model || '-')}</code></div>
+      <div><b>host</b> <code>${escapeHtml(x.executionHostId)}</code>　<b>cwd</b> <code>${escapeHtml(x.cwd || '-')}</code></div>
+      <div><b>branch</b> <code>${x.branch || '-'}</code>　<b>msgs</b> <code>${x.messageCount}</code></div>
+      <div><b>resume</b> <code>${escapeHtml(x.resumeCommand)}</code></div>
+      <div class="sp-acts" style="margin-top:6px">
+        <button class="sp-act ok" data-a="resume" ${canResume ? '' : 'disabled'}>恢复</button>
+        <button class="sp-act" data-a="locate">定位</button>
+        <button class="sp-act" data-a="copy">复制 resume</button>
+      </div>`;
+    kv.querySelector('[data-a="resume"]').onclick = e => { e.stopPropagation(); vaultResume(x); };
+    kv.querySelector('[data-a="locate"]').onclick = e => { e.stopPropagation(); vaultLocate(x); };
+    kv.querySelector('[data-a="copy"]').onclick = e => { e.stopPropagation();
+      navigator.clipboard?.writeText(x.resumeCommand); toast('已复制 resume 命令'); };
+    wrap.appendChild(kv);
+  }
+  return wrap;
+}
+/// 恢复（照 ai-vault-session-launch-actions.ts:86 handleResume 的语义：没内容就不给点）
+function vaultResume(x) {
+  if (x.kind === 'project') {
+    const p = projectById(x.ref.p); const c = (p && p.chats || []).find(z => z.id === x.ref.id);
+    if (!c) { toast('这条会话已经不在了'); return; }
+    S.activeProject = p.id; S.tempMode = false; S.activePlan = null;
+    selectProjChat(c, p);
+    toast(`已恢复会话 <b>${escapeHtml(c.title)}</b>（接回当前对话）`);
+  } else {
+    selectTempCard(x.ref.id);
+    toast(`已恢复会话 <b>${escapeHtml(x.title)}</b>`);
+  }
+}
+/// 定位（照 ai-vault-original-pane-actions.ts:72 jumpToOriginalPane：先定位内容、再切工作区）
+function vaultLocate(x) {
+  if (x.kind === 'project') {
+    const p = projectById(x.ref.p);
+    if (p) { S.activeProject = p.id; p.open = true; save(true); renderNav();
+      const row = [...document.querySelectorAll('#projectList .proj')]
+        .find(el => el.querySelector('.proj-name') && el.querySelector('.proj-name').textContent === p.name);
+      if (row) { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); row.classList.add('flash');
+        setTimeout(() => row.classList.remove('flash'), 1100); } }
+    toast(`已定位到 <b>${escapeHtml(x.projectLabel)}</b> / ${escapeHtml(x.title)}`);
+  } else {
+    locateFileInTree('', null);
+    toast(`已定位到默认区的 <b>${escapeHtml(x.title)}</b>`);
+  }
+}
+
+/* ============================================================
+   §23.5 自动化 + §23.6 ⌘J 命令面板 + 全部接线
+   字段照 Clone_From/Orca：
+     AutomationDraft — Automations/AutomationEditorDialog.tsx:37-59
+     搜索/筛选      — automations/automation-list-search.ts:97、automation-list-view.ts:184-198
+     ⌘J 键位        — shared/keybindings/definitions-core-1.ts:35（darwin: Mod+J）
+     选中分发       — use-worktree-jump-palette-selection-actions.ts:235（按 item.type switch）
+   ============================================================ */
+const PALETTE_SETTINGS = [
+  { id: 'layout-left',     title: '默认对话位置：对话在左',   sub: '设置' },
+  { id: 'layout-center',   title: '默认对话位置：对话在中',   sub: '设置' },
+  { id: 'layout-right',    title: '默认对话位置：对话在右',   sub: '设置' },
+  { id: 'policy-queue',    title: '发送方式：排队',           sub: '设置' },
+  { id: 'policy-interrupt',title: '发送方式：打断',           sub: '设置' },
+  { id: 'editor-on',       title: '编辑区：打开',             sub: '设置' },
+  { id: 'editor-off',      title: '编辑区：关闭',             sub: '设置' },
+  { id: 'reset-hist',      title: '清空当前文件历史',          sub: '设置 · 危险' },
+];
+const PALETTE_ACTIONS = [
+  { id: 'new-markdown-file',    title: '新建 Markdown 文件',   sub: '动作' },
+  { id: 'new-terminal-tab',     title: '新建终端',             sub: '动作' },
+  { id: 'new-browser-tab',      title: '新建浏览器选项卡',      sub: '动作' },
+  { id: 'open-project-folder',  title: '打开项目文件夹…',      sub: '动作' },
+  { id: 'search',               title: '打开搜索',             sub: '动作' },
+  { id: 'add-quick-command',    title: '添加快捷命令…',        sub: '动作' },
+];
+
+/// §23.6.3 结果**按来源分组**；质量梯度照 match-field.ts:86 —— exact > 前缀 > 子串
+function paletteQuality(text, q) {
+  const t = String(text || '').toLowerCase();
+  if (!q) return 3;
+  if (t === q) return 0;
+  if (t.startsWith(q)) return 1;
+  return t.includes(q) ? 2 : -1;
+}
+function paletteItems() {
+  const q = (S.paletteQuery || '').trim().toLowerCase();
+  const empty = !q;                          // §23.6.4 空输入 = 最近/常用，不是把全部一股脑摊开
+  const quota = empty ? { chat: 5, terminal: 4, worktree: 3, branch: 2, settings: 4, action: 4 } : null;
+  const used = {};
+  const out = [];
+  const push = it => {
+    if (quota) {
+      const n = used[it.type] || 0;
+      if (n >= (quota[it.type] || 0)) return;   // 每类给个上限，来源顺序就是「最近在前」
+      used[it.type] = n + 1;
+    }
+    const tq = paletteQuality(it.title, q), sq = paletteQuality(it.sub || '', q);
+    if (Math.max(tq, sq) < 0) return;
+    out.push({ ...it, score: Math.min(tq < 0 ? 9 : tq, sq < 0 ? 9 : sq) });
+  };
+  // 聊天（最近的在后 —— 先倒着取再按原顺序放回，保证显示仍是时间正序）
+  (S.chat || []).map((m, i) => ({ m, i })).reverse().slice(0, empty ? 5 : Infinity)
+    .reverse().forEach(({ m, i }) => {
+    if (m.role !== 'user' && m.role !== 'ai') return;
+    const txt = String(m.html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    if (!txt) return;
+    push({ type: 'chat', id: 'chat' + i, icon: '💬', title: txt.slice(0, 70), sub: m.temp ? '临时对话' : '连续对话',
+      run: () => { openPaletteClose(); toast('已定位到这条消息（原型里只跳转，不重放）'); } });
+  });
+  // 终端 / 快捷命令
+  (S.quickCommands || []).forEach(c => push({ type: 'terminal', id: c.id, icon: '⌨',
+    title: c.label, sub: c.cmd, run: () => { openPaletteClose(); runQuickCommand(c.id); } }));
+  // 最近的工作区
+  [...realProjects()].reverse().forEach(p => push({ type: 'worktree', id: p.id, icon: '📁',
+    title: p.name, sub: p.path, run: () => { openPaletteClose(); selectProject(p.id); } }));
+  // 分支（Orca 没有独立分支源 —— 分支是工作区文档的一个字段，见 worktree-palette-document.ts:28）
+  realProjects().forEach(p => push({ type: 'branch', id: p.id + '#main', icon: '⑂',
+    title: `main — ${p.name}`, sub: p.path, run: () => { openPaletteClose(); selectProject(p.id);
+      toast('已跳到 <b>main</b> 分支对应的工作区'); } }));
+  // 设置
+  PALETTE_SETTINGS.forEach(x => push({ type: 'settings', id: x.id, icon: '⚙', title: x.title, sub: x.sub,
+    run: () => { openPaletteClose(); paletteRunSetting(x.id); } }));
+  // 快捷动作
+  PALETTE_ACTIONS.forEach(x => push({ type: 'action', id: x.id, icon: '⚡', title: x.title, sub: x.sub,
+    run: () => { openPaletteClose(); paletteRunAction(x.id); } }));
+  out.sort((a, b) => a.score - b.score);
+  return out;
+}
+function paletteRunSetting(id) {
+  if (id.startsWith('layout-')) { setLayout(id.slice(7)); S.defaultLayout = id.slice(7); save(); toast('默认对话位置已改'); }
+  else if (id === 'policy-queue') setSendPolicy('queue');
+  else if (id === 'policy-interrupt') setSendPolicy('interrupt');
+  else if (id === 'editor-on') { S.projectMode = true; S.tempMode = false; save(); renderNav(); renderContent(); renderContext(); toast('编辑区已开'); }
+  else if (id === 'editor-off') { S.projectMode = false; save(); renderNav(); renderContent(); renderContext(); toast('编辑区已关'); }
+  else if (id === 'reset-hist') { const rel = histFile(); if (!rel) { toast('先打开一个文件'); return; }
+    confirmModal({ title: '清空这个文件的全部历史？', text: rel, okText: '清空',
+      onOk: () => { delete S.history[rel]; save(true); renderHistory(); renderHistoryBadge(); } }); }
+}
+function paletteRunAction(id) {
+  const map = { 'new-markdown-file': 'newFile', 'new-terminal-tab': 'terminal',
+    'new-browser-tab': 'browser', 'open-project-folder': 'folder', 'search': 'search' };
+  if (id === 'add-quick-command') { openQuickCommandModal(null); return; }
+  if (map[id]) newTabAction(map[id]);
+}
+function openPalette() {
+  S.paletteQuery = ''; S.paletteSel = 0;
+  $('#paletteBack').hidden = false;
+  const i = $('#paletteInput'); i.value = ''; i.focus();
+  renderPalette();
+}
+function openPaletteClose() { $('#paletteBack').hidden = true; }
+function renderPalette() {
+  const list = $('#paletteList');
+  const items = paletteItems();
+  S.paletteItems = items;
+  if (S.paletteSel >= items.length) S.paletteSel = Math.max(0, items.length - 1);
+  if (!items.length) { list.innerHTML = `<div class="sp-empty">没有匹配的结果</div>`; return; }
+  let html = '', lastType = null;
+  const secName = { chat: '聊天', terminal: '终端', worktree: '最近的工作区', branch: '分支',
+                    settings: '设置', action: '快捷动作' };
+  items.forEach((it, idx) => {
+    if (it.type !== lastType) { html += `<div class="palette-sec">${secName[it.type] || it.type}</div>`; lastType = it.type; }
+    const t = escapeHtml(it.title);
+    const q = (S.paletteQuery || '').trim();
+    const hl = q && t.toLowerCase().includes(q.toLowerCase())
+      ? t.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'), '<em>$1</em>') : t;
+    html += `<div class="pitem${idx === S.paletteSel ? ' is-sel' : ''}" data-i="${idx}">
+      <span class="ic">${it.icon}</span><span class="tt">${hl}</span>
+      <span class="sub">${escapeHtml(String(it.sub || '').slice(0, 42))}</span></div>`;
+  });
+  list.innerHTML = html;
+  $$('#paletteList .pitem').forEach(el => el.onclick = () => {
+    const it = items[+el.dataset.i]; if (it) it.run();
+  });
+  const sel = list.querySelector('.is-sel'); if (sel) sel.scrollIntoView({ block: 'nearest' });
+}
+
+/* ── §23.5 自动化 ─────────────────────────────── */
+let autoEditing = null;
+function renderAutomation() {
+  const list = $('#autoList'); if (!list) return;
+  const q = (($('#autoSearch') && $('#autoSearch').value) || '').trim().toLowerCase();
+  const f = S.automationFilter || {};
+  let rows = (S.automations || []).slice();
+  // 索引字段照 automation-list-search.ts:14（name/project/workspace/agent/host/prompt），逐字段 includes
+  if (q) rows = rows.filter(a => [a.name, a.prompt, a.agentId, a.host, a.workspaceId, a.baseBranch]
+    .some(v => String(v || '').toLowerCase().includes(q)));
+  if (f.agent && f.agent !== 'all') rows = rows.filter(a => a.agentId === f.agent);
+  if (f.host && f.host !== 'all') rows = rows.filter(a => a.host === f.host);
+  if (f.status && f.status !== 'all') rows = rows.filter(a => (a.enabled ? 'on' : 'off') === f.status);
+  // 过滤条
+  $('#autoFilters').innerHTML =
+    `<button class="sp-chip ${!f.agent || f.agent === 'all' ? 'is-on' : ''}" data-f="agent">智能体</button>
+     <button class="sp-chip ${!f.host || f.host === 'all' ? 'is-on' : ''}" data-f="host">主机</button>
+     <button class="sp-chip ${!f.status || f.status === 'all' ? 'is-on' : ''}" data-f="status">状态</button>
+     <button class="sp-chip" data-f="clear">清除筛选</button>`;
+  $$('#autoFilters .sp-chip').forEach(b => b.onclick = e => { e.stopPropagation(); autoFilterMenu(b.dataset.f, b); });
+  if (!rows.length) {
+    list.innerHTML = `<div class="sp-empty">${q || f.agent || f.host || f.status ? '没有匹配的自动化' : '还没有自动化<br>点右上角 ＋ 新建'}</div>`;
+    return;
+  }
+  list.innerHTML = '';
+  rows.forEach(a => {
+    const el = document.createElement('div');
+    el.className = 'sp-row';
+    const preset = ({ hourly: '每小时', daily: '每天', weekdays: '工作日', weekly: '每周', custom: 'cron' })[a.preset] || a.preset;
+    el.innerHTML = `<span class="ic">⚡</span>
+      <span class="bd"><span class="t1">${escapeHtml(a.name)}</span>
+        <span class="t2">${escapeHtml(a.agentId)} · ${escapeHtml(preset)} ${escapeHtml(a.time || '')} · grace ${a.missedRunGraceMinutes}m</span></span>
+      <span class="st ${a.enabled ? 'on' : 'off'}">${a.enabled ? 'on' : 'off'}</span>
+      <span class="sp-acts"><button class="auto-run" title="立即运行">运行</button></span>`;
+    el.querySelector('.auto-run').onclick = e => { e.stopPropagation(); runAutomation(a); };
+    el.onclick = () => openAutomationDialog(a);
+    list.appendChild(el);
+  });
+}
+function autoFilterMenu(kind, anchor) {
+  if (kind === 'clear') { S.automationFilter = {}; save(true); renderAutomation(); toast('已清除筛选'); return; }
+  const f = S.automationFilter || {};
+  const opts = kind === 'agent' ? [...new Set((S.automations || []).map(a => a.agentId))].map(v => [v, v])
+    : kind === 'host' ? [...new Set((S.automations || []).map(a => a.host))].map(v => [v, v])
+    : [['all', '全部'], ['on', '启用'], ['off', '停用']];
+  const cur = f[kind] || 'all';
+  showMenu([{ title: kind === 'agent' ? '按智能体' : kind === 'host' ? '按主机' : '按状态' }]
+    .concat([[kind === 'status' ? 'all' : 'all', '全部']].map(([v, l]) =>
+      ({ label: (cur === v || (!f[kind] && v === 'all') ? '✓ ' : '  ') + l,
+         action: () => { S.automationFilter = { ...f, [kind]: v }; save(true); renderAutomation(); } })))
+    .concat(opts.filter(([v]) => v !== 'all').map(([v, l]) =>
+      ({ label: (cur === v ? '✓ ' : '  ') + l,
+         action: () => { S.automationFilter = { ...f, [kind]: v }; save(true); renderAutomation(); } }))),
+    anchor);
+}
+function runAutomation(a) {
+  a.lastRunAt = now(); a.runCount = (a.runCount || 0) + 1; a.trigger = 'manual';
+  save(true); renderAutomation();
+  // 预检查先跑（照 automation-precheck.ts：命令 + 超时，非 0 就 skipped_precheck）
+  const pre = a.precheckCommand ? `预检查 \`${a.precheckCommand}\`（超时 ${a.precheckTimeoutSeconds || 60}s）→ 通过` : '';
+  toast(`已触发运行 <b>${escapeHtml(a.name)}</b>${pre ? '<br>' + escapeHtml(pre) : ''}<br>
+    <span style="opacity:.7">trigger=manual · 落地走 RPC automation.runNow</span>`);
+}
+function openAutomationDialog(item) {
+  autoEditing = item || null;
+  $('#autoTitle').textContent = item ? '编辑自动化' : '新建自动化';
+  const v = item || { name: '', prompt: '', agentId: 'claude', host: 'local', projectId: (realProjects()[0] || {}).id,
+    workspaceMode: 'existing', baseBranch: 'main', reuseSession: false, preset: 'daily', time: '09:00',
+    missedRunGraceMinutes: 720, precheckCommand: '', precheckTimeoutSeconds: 60 };
+  $('#aName').value = v.name || ''; $('#aPrompt').value = v.prompt || '';
+  $('#aAgent').value = v.agentId || 'claude'; $('#aHost').value = v.host || 'local';
+  $('#aWorkspace').value = v.workspaceMode || 'existing';
+  $('#aBranch').value = v.baseBranch || 'main';
+  $('#aPreset').value = v.preset || 'daily'; $('#aTime').value = v.time || '09:00';
+  $('#aGrace').value = String(v.missedRunGraceMinutes || 720);
+  $('#aPreCmd').value = v.precheckCommand || ''; $('#aPreTimeout').value = String(v.precheckTimeoutSeconds || 60);
+  $$('#aSession button').forEach(b => b.classList.toggle('is-on', String(!!v.reuseSession) === b.dataset.reuse));
+  const sel = $('#aProject');
+  sel.innerHTML = realProjects().map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+  if (v.projectId) sel.value = v.projectId;
+  $('#autoBack').hidden = false;
+  $('#aName').focus();
+}
+function saveAutomation() {
+  const name = ($('#aName').value || '').trim();
+  if (!name) { toast('先给它起个名字'); $('#aName').focus(); return; }
+  const reuse = $$('#aSession button').find(b => b.classList.contains('is-on'));
+  const data = {
+    name, prompt: $('#aPrompt').value || '', agentId: $('#aAgent').value, host: $('#aHost').value,
+    projectId: $('#aProject').value, workspaceMode: $('#aWorkspace').value, baseBranch: $('#aBranch').value,
+    reuseSession: !!(reuse && reuse.dataset.reuse === '1'),
+    preset: $('#aPreset').value, time: $('#aTime').value,
+    missedRunGraceMinutes: parseInt($('#aGrace').value, 10) || 720,
+    precheckCommand: $('#aPreCmd').value || '',
+    precheckTimeoutSeconds: parseInt($('#aPreTimeout').value, 10) || 60,
+  };
+  S.automations = S.automations || [];
+  if (autoEditing) Object.assign(autoEditing, data);
+  else S.automations.push({ id: 'au' + now(), enabled: true, runCount: 0, ...data });
+  save(true); $('#autoBack').hidden = true; autoEditing = null;
+  renderAutomation();
+  toast(`已保存自动化 <b>${escapeHtml(name)}</b>`);
+}
+
+/* ── 接线（bind() 末尾会调一次） ────────────────── */
+function bindRails() {
+  const open = which => {
+    if (which === 'automation') { S.automationOpen = !S.automationOpen; S.sidePanel = null; save(true); renderSidePanel();
+      if (S.automationOpen) { renderAutomation(); $('#autoSearch') && $('#autoSearch').focus(); } }
+    else { S.automationOpen = false; openSidePanel(which); }
+  };
+  $$('.rail-btn').forEach(b => b.onclick = e => { e.stopPropagation(); open(b.dataset.open); });
+  $$('[data-close]').forEach(b => b.onclick = () => {
+    const id = b.dataset.close;
+    if (id === 'panelAutomation') S.automationOpen = false;
+    if (id === 'panelSide') S.sidePanel = null;
+    save(true); renderSidePanel();
+  });
+  $$('#sideTabs button').forEach(b => b.onclick = () => { S.sidePanel = b.dataset.side; save(true); renderSidePanel(); });
+  $('#sideRefresh').onclick = e => {
+    e.stopPropagation();
+    if (S.sidePanel === 'agents') { toast('已强制重扫会话（refresh force:true）'); renderSideVault(); }
+    else { toast('已刷新目录树'); renderSideExplorer(); }
+  };
+  $('#sideLocate').onclick = e => { e.stopPropagation(); locateActiveFileInSidePanel(); };
+  $('#sideCollapse').onclick = e => {
+    e.stopPropagation();
+    // FileExplorer.tsx:144 handleCollapseAll → collapseAllDirs
+    S.explorerCollapsed = {}; 
+    (defaultProject() ? [defaultProject()] : []).concat(realProjects()).forEach(p => {
+      const walk = ns => (ns || []).forEach(n => { if (n.type === 'dir') { n.open = false; walk(n.children); } });
+      walk(p.tree);
+    });
+    save(true); renderSideExplorer(); renderNav(); toast('已折叠全部目录');
+  };
+  $('#autoSearch').oninput = renderAutomation;
+  $('#autoNew').onclick = e => { e.stopPropagation(); openAutomationDialog(null); };
+  $('#autoCancel').onclick = () => { $('#autoBack').hidden = true; autoEditing = null; };
+  $('#autoSave').onclick = saveAutomation;
+  $('#autoBack').onclick = e => { if (e.target.id === 'autoBack') { $('#autoBack').hidden = true; autoEditing = null; } };
+  $('#aName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveAutomation(); }
+    if (e.key === 'Escape') e.stopPropagation(); });
+  $('#aPrompt').addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
+  $$('#aSession button').forEach(b => b.onclick = () =>
+    $$('#aSession button').forEach(x => x.classList.toggle('is-on', x === b)));
+
+  // §23.6 ⌘J
+  const pin = $('#paletteInput');
+  pin.oninput = () => { S.paletteQuery = pin.value; S.paletteSel = 0; renderPalette(); };
+  pin.onkeydown = e => {
+    const items = S.paletteItems || [];
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); openPaletteClose(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); S.paletteSel = Math.min(items.length - 1, (S.paletteSel || 0) + 1); renderPalette(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); S.paletteSel = Math.max(0, (S.paletteSel || 0) - 1); renderPalette(); }
+    else if (e.key === 'Enter') { e.preventDefault(); const it = items[S.paletteSel]; if (it) it.run(); }
+  };
+  $('#paletteBack').onclick = e => { if (e.target.id === 'paletteBack') openPaletteClose(); };
+  document.addEventListener('keydown', e => {
+    // §23.6.5 正在录新的快捷键 —— 这一次按键只用来录，不再触发命令面板
+    if (paletteShortcutArmed) {
+      if (e.key === 'Escape') { paletteShortcutArmed = false; toast('已取消修改快捷键'); return; }
+      const spec = shortcutFromEvent(e);
+      if (!spec) return;                       // 只按修饰键 / 裸字母都不算
+      e.preventDefault();
+      paletteShortcutArmed = false;
+      S.paletteShortcut = spec; save(true);
+      refreshPaletteShortcutLabel();
+      toast(`命令面板快捷键已改成 <b>${escapeHtml(shortcutLabel(spec))}</b>`);
+      return;
+    }
+    // §23.6.1 键位照 definitions-core-1.ts:35（darwin Mod+J），默认 meta+j、可在设置里改
+    if (shortcutMatches(S.paletteShortcut || 'meta+j', e)) {
+      e.preventDefault();
+      if ($('#paletteBack').hidden) openPalette(); else openPaletteClose();
+    }
+  });
+  refreshPaletteShortcutLabel();
+  renderSidePanel();
 }
 
 })();

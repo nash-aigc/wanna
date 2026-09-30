@@ -41,6 +41,23 @@
 
   <main class="main" id="main">
 
+    <!-- §23.5 左侧 activity rail —— 自动化在**项目栏的左边** -->
+    <div class="rail rail-left" id="railLeft">
+      <button class="rail-btn" data-open="automation" title="自动化（⌘⌥A）">⚡</button>
+    </div>
+    <div class="side-panel side-panel-left" id="panelAutomation" hidden>
+      <div class="sp-head">
+        <span class="sp-title">自动化</span>
+        <span class="sp-spacer"></span>
+        <button class="sp-ico" id="autoRefresh" title="刷新">⟳</button>
+        <button class="sp-ico" id="autoNew" title="新建自动化">＋</button>
+        <button class="sp-close" data-close="panelAutomation" title="收起">✕</button>
+      </div>
+      <input class="sp-input" id="autoSearch" placeholder="搜索自动化…" spellcheck="false" autocomplete="off">
+      <div class="sp-filters" id="autoFilters"></div>
+      <div class="sp-list" id="autoList"></div>
+    </div>
+
     <!-- ════ 左：项目栏（MiMo 256pt） ════ -->
     <aside class="nav" id="navPane">
       <div class="skel" id="skelNav" aria-hidden="true">
@@ -266,14 +283,19 @@
         </div>
       </div>
 
-      <!-- §22.9.7 / §22.11.5 终端面板：＋里的「终端」「Claude Code」「Pi」都落到这儿 -->
+      <!-- §22.9.7 / §22.11.5 终端面板：＋里的「终端」「Claude Code」「Pi」、快捷指令都落到这儿。
+           §23.9 它现在也是**终端标签**（kind:'terminal'）的内容视图，并且能拆成左右/上下两格 -->
       <div class="term-panel" id="termPanel" hidden>
         <div class="term-head">
           <span class="term-dot"></span><span class="term-title" id="termTitle">终端</span>
           <span class="term-path" id="termPath"></span>
-          <button class="term-close" id="termClose" title="关闭终端">✕</button>
+          <button class="term-split" id="termSplit" title="拆分终端（左右 / 上下）">⊟</button>
+          <button class="term-close" id="termClose" title="关闭终端标签">✕</button>
         </div>
-        <pre class="term-body" id="termBody"></pre>
+        <div class="term-panes" id="termPanes">
+          <div class="term-pane"><pre class="term-body" id="termBody"></pre></div>
+          <div class="term-pane term-pane-2" id="termPane2" hidden><pre class="term-body" id="termBody2"></pre></div>
+        </div>
       </div>
 
       <!-- 历史 -->
@@ -353,6 +375,8 @@
           <div class="composer-bar">
             <span class="composer-mode" id="composerModeLabel">图文 · 连续对话</span>
             <span class="composer-controls">
+              <button class="cc cc-screen" id="ccScreen" data-screen="single"
+                      title="会话窗口：单屏 / 双屏（连续 与 临时 并排）">单屏</button><i class="vr"></i>
               <span class="cc-left" id="ccLeft">
                 <button class="cc is-on" data-conv="continuous">连续</button><i class="vr"></i>
                 <button class="cc" data-conv="temporary">临时</button><i class="vr"></i>
@@ -366,7 +390,77 @@
         </div>
       </div>
     </aside>
+    <!-- §23.4 右侧 activity rail + 右侧边栏（资源管理器 / 智能体）—— 核心 -->
+    <div class="side-panel side-panel-right" id="panelSide" hidden>
+      <div class="sp-head">
+        <div class="sp-tabs" id="sideTabs">
+          <button data-side="explorer" class="is-on">资源管理器</button>
+          <button data-side="agents">智能体</button>
+        </div>
+        <span class="sp-spacer"></span>
+        <button class="sp-ico" id="sideLocate" title="定位到当前打开的文件">⌖</button>
+        <button class="sp-ico" id="sideRefresh" title="刷新">⟳</button>
+        <button class="sp-ico" id="sideCollapse" title="折叠全部">⤡</button>
+        <button class="sp-close" data-close="panelSide" title="收起">✕</button>
+      </div>
+      <div class="sp-sub" id="sideSub"></div>
+      <div class="sp-list" id="sideBody"></div>
+      <!-- §23.4.4 结果汇总条**固定在列表外**（SearchResultsPane.tsx:71-83）—— 不随列表滚走 -->
+      <div class="sp-sumbar" id="sideSum" hidden></div>
+    </div>
+    <div class="rail rail-right" id="railRight">
+      <button class="rail-btn" data-open="explorer" title="资源管理器">🗂</button>
+      <button class="rail-btn" data-open="agents" title="智能体 · 会话历史">🤖</button>
+    </div>
   </main>
+
+  <!-- §23.5 新建/编辑自动化 —— 八个选择器照 Clone_From/Orca AutomationEditorSettingsSidebar.tsx:70 -->
+  <div class="modal-back" id="autoBack" hidden>
+    <div class="modal auto-modal" role="dialog" aria-modal="true">
+      <div class="modal-title" id="autoTitle">新建自动化</div>
+      <div class="auto-grid">
+        <div class="auto-f wide"><label>名称</label><input class="modal-input" id="aName" placeholder="每天早上跑一次检查"></div>
+        <div class="auto-f wide"><label>提示词</label><textarea class="auto-ta" id="aPrompt" placeholder="要让智能体做什么…"></textarea></div>
+        <div class="auto-f"><label>智能体</label>
+          <select id="aAgent"><option value="claude">claude</option><option value="codex">codex</option>
+            <option value="pi">pi</option><option value="gemini">gemini</option></select></div>
+        <div class="auto-f"><label>主机</label>
+          <select id="aHost"><option value="local">local</option><option value="ssh:mac">ssh:mac</option>
+            <option value="all">全部主机</option></select></div>
+        <div class="auto-f"><label>项目</label><select id="aProject"></select></div>
+        <div class="auto-f"><label>工作区</label>
+          <select id="aWorkspace"><option value="existing">现有工作区</option>
+            <option value="new_per_run">每次新建（base branch）</option></select></div>
+        <div class="auto-f"><label>Base branch</label><input class="modal-input" id="aBranch" value="main" spellcheck="false"></div>
+        <div class="auto-f"><label>会话</label>
+          <div class="qc-seg" id="aSession"><button data-reuse="0" class="is-on">Fresh</button>
+            <button data-reuse="1">Reuse</button></div></div>
+        <div class="auto-f"><label>日程</label>
+          <select id="aPreset"><option value="hourly">每小时</option><option value="daily" selected>每天</option>
+            <option value="weekdays">工作日</option><option value="weekly">每周</option>
+            <option value="custom">自定义 cron</option></select></div>
+        <div class="auto-f"><label>时间</label><input class="modal-input" id="aTime" value="09:00"></div>
+        <div class="auto-f"><label>Cron 宽限期（分钟）</label>
+          <select id="aGrace"><option>0</option><option>30</option><option>60</option>
+            <option selected>720</option><option>1440</option><option>2880</option></select></div>
+        <div class="auto-f"><label>预检查 · 命令</label><input class="modal-input" id="aPreCmd" placeholder="git status --porcelain" spellcheck="false"></div>
+        <div class="auto-f"><label>预检查 · 超时（秒）</label><input class="modal-input" id="aPreTimeout" value="60"></div>
+      </div>
+      <div class="modal-acts">
+        <button class="btn btn-ghost" id="autoCancel">取消</button>
+        <button class="btn btn-primary" id="autoSave">保存 <span class="qc-kbd">⌘ Enter</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- §23.6 ⌘J 命令面板（全屏居中弹窗，不是下拉） -->
+  <div class="palette-back" id="paletteBack" hidden>
+    <div class="palette" role="dialog" aria-modal="true">
+      <input id="paletteInput" placeholder="搜索 聊天 / 终端 / 最近工作区 / 设置 / 分支…" spellcheck="false" autocomplete="off">
+      <div class="palette-list" id="paletteList"></div>
+      <div class="palette-foot">↑↓ 选择 · ⏎ 执行 · Esc 关闭 · 快捷键 ⌘J</div>
+    </div>
+  </div>
 
   <!-- 项目 ＋ ：只有两项（都是文件夹） -->
   <div class="menu" id="menuAddProject" hidden>
@@ -408,6 +502,16 @@
           </div>
         </div>
       </div>
+      <!-- §23.8.2 源码里的 agent 字段（terminal-quick-command-types.ts:3-32）—— 只在「智能体」动作下出现 -->
+      <div class="qc-col" id="qcAgentWrap" hidden>
+        <div class="qc-label">Agent</div>
+        <select class="modal-input" id="qcAgent">
+          <option value="claude">claude</option>
+          <option value="codex">codex</option>
+          <option value="pi">pi</option>
+          <option value="gemini">gemini</option>
+        </select>
+      </div>
       <div class="qc-label">命令</div>
       <textarea class="qc-cmd" id="qcCmd" placeholder="npm run dev" spellcheck="false"></textarea>
       <div class="qc-foot">
@@ -444,8 +548,10 @@
   <div class="menu" id="menuBrViewport" hidden></div>
   <!-- §22.14 标签组右键（§21.4B：改名 + 8 个颜色点 + 组操作） -->
   <div class="menu" id="menuTabGroup" hidden></div>
-  <!-- 临时卡片右键：放入分组 / 删除 -->
+  <!-- 会话右键（§23.1 骨架照 Orca：置顶/重命名/归档 › 临时聊天×2 › 复制› › 分支 › 删除） -->
   <div class="menu" id="menuCard" hidden></div>
+  <div class="menu" id="menuCardCopy" hidden></div>
+  <!-- §23.2 双屏｜单屏（输入框内、连续/临时 左侧） -->
   <!-- 设置：默认对话位置 -->
   <div class="menu" id="menuSettings" hidden>
     <div class="menu-title">默认对话位置</div>
@@ -457,25 +563,40 @@
     <button data-act="policyQueue">排队 —— 上一条答完再发</button>
     <button data-act="policyInterrupt">打断 —— 直接顶掉上一条</button>
     <div class="menu-sep"></div>
+    <!-- §23.6.5 原型没有整页设置，「快捷键」这一组就是 快捷键 页的等价物 -->
+    <div class="menu-title">快捷键</div>
+    <button data-act="paletteShortcut">全局搜索（命令面板）：<span id="paletteKbd">⌘J</span></button>
+    <div class="menu-sep"></div>
     <button data-act="resetHist">清空当前文件历史</button>
   </div>
   <!-- 全部标签（折叠显示） -->
   <div class="menu menu-tabs-pop" id="tabsPopover" hidden></div>
+  <!-- §23.7 工作区右键 —— 顺序与条目照 Clone_From/Orca 的 WorktreeContextMenuView.tsx:157-344 -->
   <div class="menu" id="menuProj" hidden>
+    <div class="menu-title">Workspace</div>
+    <button data-act="rename">Update（改名 / 备注）</button>
+    <button data-act="newChat">新建对话…</button>
+    <div class="menu-sep"></div>
+    <button data-act="moveGroup">移动到分组 ›</button>
+    <button data-act="newGroupFromProject">来自项目的新组</button>
+    <button data-act="removeFromGroup">移出分组</button>
+    <div class="menu-sep"></div>
+    <button data-act="copyPath">Copy Path</button>
+    <button data-act="copyName">Copy 工作区名</button>
+    <button data-act="pin">Pin / Unpin</button>
     <button data-act="unread">标记为未读</button>
     <button data-act="continue">在新对话中继续</button>
-    <div class="menu-sep"></div>
-    <button data-act="batch">批量管理</button>
     <button data-act="finder">在访达中显示</button>
-    <button data-act="copyPath">复制工作路径</button>
     <button data-act="reveal">文件位置</button>
-    <button data-act="rename">编辑显示名…</button>
-    <button data-act="pin">置顶项目</button>
     <button data-act="export">导出对话记录</button>
+    <div class="menu-sep"></div>
+    <button data-act="sleep" id="miSleep">Sleep</button>
     <div class="menu-sep"></div>
     <button data-act="delete" class="danger">删除项目</button>
     <button data-act="archive" class="danger">归档</button>
   </div>
+  <!-- §23.7 「移动到分组」的二级 -->
+  <div class="menu" id="menuProjGroup" hidden></div>
 
   <!-- §22.12 添加/编辑项目：改**显示名**（不碰文件夹）+ 主要文件夹 + 其他文件夹（Codex 式） -->
   <div class="modal-back" id="projBack" hidden>
