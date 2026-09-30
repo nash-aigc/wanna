@@ -2584,9 +2584,11 @@ function renderDualScreen() { renderScreenToggle(); renderChat(); }
 function renderChat() {
   const host = $('#msgs'); host.innerHTML = '';
   renderScreenToggle();
-  const mk = m => {
+  const mk = (m, i) => {
     const el = document.createElement('div');
     el.className = `msg msg-${m.role}` + (m.temp ? ' msg-temp' : '');
+    el.dataset.i = i;                       // §24 双屏两列 append 后 DOM 顺序 ≠ S.chat 顺序，
+                                            // 轨道与消息靠这个索引对齐，不能靠 $$(...)[i]
     const who = m.role === 'user' ? '你' : m.role === 'ai' ? (m.temp ? 'AI · 临时对话' : 'AI') : '系统';
     el.innerHTML = `<div class="msg-who">${who}</div><div class="bubble">${m.html}</div>`
       + (m.meta ? `<div class="msg-meta">${m.meta}</div>` : '');
@@ -2609,6 +2611,7 @@ function renderChat() {
       host.classList.remove('dual');
       host.innerHTML = emptyHtml;
     }
+    renderHistRail();          // §24 空对话 → 轨道自己隐藏
     return;
   }
   if (S.dualScreen) {
@@ -2617,14 +2620,125 @@ function renderChat() {
     l.innerHTML = `<div class="msg-col-head">连续会话</div>`;
     const r = document.createElement('div'); r.className = 'msg-col';
     r.innerHTML = `<div class="msg-col-head is-temp">临时会话</div>`;
-    S.chat.forEach(m => (m.temp ? r : l).appendChild(mk(m)));
+    S.chat.forEach((m, i) => (m.temp ? r : l).appendChild(mk(m, i)));
     host.append(l, r);
   } else {
     host.classList.remove('dual');
-    S.chat.forEach(m => host.appendChild(mk(m)));
+    S.chat.forEach((m, i) => host.appendChild(mk(m, i)));
   }
   host.scrollTop = host.scrollHeight;
+  renderHistRail();            // §24 画对话记录轨道
+  requestAnimationFrame(syncHistCur);
 }
+/* ══════════════════════════════════════════════════════════════
+   §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 的截图
+   （那个功能在 Desktop 里，开源的 reference/MiMo-Code CLI **没有**，
+    所以**没有源码可照搬**，界面按截图做；标注清楚，不假装照搬）
+   声音照抄 reference/MiMo-Code 的 tui/util/sound.ts：
+     FILE = [pulse-a, pulse-b, pulse-c] 轮换，volume = 0.35
+   ══════════════════════════════════════════════════════════════ */
+const HIST_SFX = ['sfx/pulse-a.wav', 'sfx/pulse-b.wav', 'sfx/pulse-c.wav'];
+let histSfxI = 0, histSfxAt = 0;
+/// 一次短促的 pulse。**去抖 70ms**：快速划过一整列时不能每条都响（会糊成噪音）
+function histTick(vol = 0.35) {
+  const now = Date.now();
+  if (now - histSfxAt < 70) return;
+  histSfxAt = now;
+  const a = new Audio(HIST_SFX[histSfxI++ % HIST_SFX.length]);   // 三文件轮换，照 sound.ts
+  a.volume = vol;
+  a.play().catch(() => {});          // 由鼠标手势触发，浏览器允许
+}
+
+function renderHistRail() {
+  const rail = $('#histRail');
+  if (!rail) return;
+  const msgs = S.chat || [];
+  if (!msgs.length) { rail.hidden = true; rail.innerHTML = ''; return; }   // 空对话不画
+  rail.hidden = false;
+  rail.innerHTML = msgs.map((m, i) => {
+    const who = m.role === 'user' ? '你' : m.role === 'ai' ? 'AI' : '系统';
+    const txt = String(m.html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    return `<div class="hr-line" data-i="${i}" style="animation-delay:${i * 14}ms"
+      title="第 ${i + 1} 条 · ${who}"></div>`;
+  }).join('');
+  bindRailTip();
+}
+
+/// 当前可视的那一条 —— 用**视口距离**判断，单屏 / 双屏都对
+/// （双屏两列的 offsetTop 会重复，所以不能靠 offsetTop 排序）
+function histCurIndex() {
+  const msgs = $$('#msgs .msg');
+  if (!msgs.length) return -1;
+  const host = $('#msgs'); if (!host) return -1;
+  const vr = host.getBoundingClientRect();
+  let best = -1, bestD = Infinity;
+  msgs.forEach(m => {
+    const r = m.getBoundingClientRect();
+    if (r.bottom < vr.top + 4) return;                 // 整条滚出上方
+    const d = Math.abs(r.top - (vr.top + 8));
+    if (d < bestD) { bestD = d; best = +m.dataset.i; }  // 返回 **S.chat 索引**，不是 DOM 序号
+  });
+  return best;
+}
+
+/// 滚动时把高亮移到当前那条（白色那条，对应截图里最下面那条）
+function syncHistCur() {
+  const rail = $('#histRail');
+  if (!rail || rail.hidden) return;
+  const cur = histCurIndex();
+  const lines = $$('.hr-line', rail);
+  lines.forEach((el, i) => {
+    const on = i === cur;
+    if (on && !el.classList.contains('is-cur')) {
+      el.classList.add('is-cur', 'is-live');
+      setTimeout(() => el.classList.remove('is-live'), 520);
+    } else if (!on) el.classList.remove('is-cur', 'is-live');
+  });
+}
+
+/// 跳到第 i 条 —— 「滑动回放修改过程」就是靠它把对话区滚过去
+function histGoto(i) {
+  const el = document.querySelector(`#msgs .msg[data-i="${i}"]`);
+  if (!el) return;
+  $('#msgs').scrollTo({ top: Math.max(0, el.offsetTop - 10), behavior: 'smooth' });
+  setTimeout(syncHistCur, 260);
+}
+
+/// hover 浮出的那一小条摘要（tooltip 放在 msgs-row 上 —— rail 有 overflow:hidden 会裁掉它）
+let hrTip = null;
+function bindRailTip() {
+  const row = $('#msgsRow'); if (!row) return;
+  if (!hrTip) { hrTip = document.createElement('div'); hrTip.className = 'hr-tip'; row.appendChild(hrTip); }
+  const rail = $('#histRail');
+  rail.onmousemove = e => {
+    const line = e.target.closest('.hr-line');
+    if (!line) { hrTip.classList.remove('on'); clearScrub(); return; }
+    const i = +line.dataset.i;
+    const m = (S.chat || [])[i]; if (!m) return;
+    // ① 滑过 = 回放到那条
+    $$('.hr-line', rail).forEach(x => x.classList.remove('is-scrub'));
+    line.classList.add('is-scrub');
+    histGoto(i);
+    // ② 伴随声音（轮换 pulse-a/b/c，音量 0.35）
+    histTick(0.35);
+    // ③ tooltip
+    const who = m.role === 'user' ? '你' : m.role === 'ai' ? 'AI' : '系统';
+    const txt = String(m.html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    hrTip.innerHTML = `<span class="hr-idx">${i + 1}</span><b>${who}</b>　${escapeHtml(txt.slice(0, 46))}${txt.length > 46 ? '…' : ''}`;
+    const lr = line.getBoundingClientRect(), rr = row.getBoundingClientRect();
+    hrTip.style.top = (lr.top - rr.top + lr.height / 2) + 'px';
+    hrTip.classList.add('on');
+  };
+  rail.onmouseleave = () => { hrTip.classList.remove('on'); clearScrub(); };
+  // ④ 点击 = 跳过去 + 更响一声（照 logo.tsx 释放时提高音量的思路）
+  rail.onclick = e => {
+    const line = e.target.closest('.hr-line'); if (!line) return;
+    histTick(0.75);
+    histGoto(+line.dataset.i);
+  };
+}
+function clearScrub() { $$('.hr-line.is-scrub').forEach(x => x.classList.remove('is-scrub')); }
+
 /// §22.13 —— replyBusy 模拟"上一条还没答完"（原型没有真模型，用一个定时器当生成窗口）
 let replyBusy = false, replyTimer = null;
 function renderSendPolicy() {
@@ -4979,6 +5093,11 @@ function bindRails() {
   });
   refreshPaletteShortcutLabel();
   renderSidePanel();
+
+  // §24 滚动 → 高亮跟着走（绑一次；renderChat 每次重建消息，监听挂在容器上不受影响）
+  $('#msgs')?.addEventListener('scroll', () => {
+    if (typeof syncHistCur === 'function') syncHistCur();
+  }, { passive: true });
 }
 
 })();

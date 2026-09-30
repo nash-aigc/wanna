@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<link rel="stylesheet" href="app.css">
+<!-- ?v=24 破缓存：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=24">
 </head>
 <body>
 <div class="app">
@@ -343,7 +344,11 @@
       <!-- 选项面板：音色在这里（§15.3），按模式给不同内容 -->
       <div class="opt-panel" id="optPanel" hidden></div>
 
-      <div class="msgs" id="msgs"></div>
+      <!-- §24 对话区一行 = 轨道 ｜ 消息。轨道**独立占 30px**，所以不改 .msgs 的内边距 -->
+      <div class="msgs-row" id="msgsRow">
+        <div class="hist-rail" id="histRail" hidden aria-label="对话记录轨道"></div>
+        <div class="msgs" id="msgs"></div>
+      </div>
 
       <div class="chat-foot">
         <!-- ① 最上面：选中的内容（重点参考） -->
@@ -635,6 +640,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>
