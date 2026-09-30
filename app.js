@@ -101,7 +101,7 @@ let S = load() || {
   projects: [sampleProject()],
   activeProject: 'p1',
   openFile: 'README.md',
-  focusFile: 'README.md',
+  focusFiles: ['README.md'],   // 重点参考**可多选**（2026-09-30 用户定）
   tab: 'md',
   mdVariant: 'split',          // edit | preview | split
   codeFolded: false,
@@ -115,8 +115,13 @@ let S = load() || {
 };
 
 function load() {
-  try { const r = JSON.parse(localStorage.getItem(LS_KEY)); return r && r.projects ? r : null; }
-  catch { return null; }
+  try {
+    const r = JSON.parse(localStorage.getItem(LS_KEY));
+    if (!r || !r.projects) return null;
+    // 老版本存的是单个 focusFile → 迁成数组（一次，之后就是数组）
+    if (!Array.isArray(r.focusFiles)) r.focusFiles = r.focusFile ? [r.focusFile] : [];
+    return r;
+  } catch { return null; }
 }
 let saveTimer = null;
 function save(now = false) {
@@ -157,9 +162,9 @@ function renderTree() {
     if (n.type === 'file') {
       count++;
       if (rel === histFile()) row.classList.add('is-sel');
-      if (rel === S.focusFile) row.classList.add('is-focus-file');
+      if (S.focusFiles.includes(rel)) row.classList.add('is-focus-file');
       row.innerHTML = `<span class="tw"></span><span class="n-name"></span>`
-        + (rel === S.focusFile ? `<span class="n-badge">重点</span>` : '');
+        + (S.focusFiles.includes(rel) ? `<span class="n-badge">重点</span>` : '');
       row.querySelector('.n-name').textContent = n.name;
       row.onclick = () => openFile(rel);
     } else {
@@ -201,7 +206,8 @@ function findNode(rel, nodes = proj().tree, prefix = '') {
 
 function openFile(rel) {
   if (!(rel in proj().files)) return;
-  S.focusFile = rel;                       // 点文件 = 自动设为「重点参考」
+  // 点文件 = **加进重点参考**（可多选，2026-09-30 用户定）；取消走路径条上的 ×。
+  if (!S.focusFiles.includes(rel)) S.focusFiles.push(rel);
   if (rel === MIND_FILE) {
     // 点脑图文件：开脑图这一层，但**不改正文那个 openFile**
     //（否则「脑图 → 正文」会把 .mmd 当 markdown 编辑）。
@@ -213,7 +219,7 @@ function openFile(rel) {
     if (S.tab === 'mind') S.tab = 'md';    // 停在脑图上时点别的文件，内容区要跟着换
   }
   save(); renderTree(); renderContext(); renderContent();
-  toast(`已设为 <b>重点参考</b> · ${rel}`);
+  toast(`已加入 <b>重点参考</b>（${S.focusFiles.length} 个）· ${rel}`);
 }
 
 /* ============================================================
@@ -223,17 +229,34 @@ function renderContext() {
   const p = proj();
   $('#ctxProjectPath').textContent = p.path;
   $('#ctxProjectPath').title = p.path;
-  const f = S.focusFile;
-  const has = !!f;
-  $('#ctxFocusPath').textContent = has ? fullPath(f) : '未选择文件';
-  $('#ctxFocusPath').title = has ? fullPath(f) : '';
+  const focuses = S.focusFiles || [];
+  const has = focuses.length > 0;
+  // 重点参考**可多选**：一枚 chip 一个文件，× 单独取消（2026-09-30 用户定）
+  const chips = $('#focusChips');
+  chips.innerHTML = '';
+  if (!has) {
+    chips.innerHTML = '<span class="fchip-empty">未选重点文件（点左边任意文件加入）</span>';
+  } else {
+    focuses.forEach(rel => {
+      const el = document.createElement('span');
+      el.className = 'fchip';
+      el.title = fullPath(rel) + '（点 × 取消这一项重点参考）';
+      el.innerHTML = `<code></code><button class="x" title="取消这一项重点参考">×</button>`;
+      el.querySelector('code').textContent = rel;
+      el.querySelector('.x').onclick = () => {
+        S.focusFiles = S.focusFiles.filter(x => x !== rel);
+        save(); renderTree(); renderContext();
+        toast(`已取消重点参考 · ${rel}`);
+      };
+      chips.appendChild(el);
+    });
+  }
   $('#ctxStrip').classList.toggle('is-empty', !has);
-  $('#ctxFocus').style.display = has ? '' : 'none';
 
   $('#chatCtxProject').textContent = p.path;
   $('#chatCtxProject').title = p.path;
-  $('#chatCtxFocus').textContent = has ? fullPath(f) : '未选重点文件';
-  $('#chatCtxFocus').title = has ? fullPath(f) : '';
+  $('#chatCtxFocus').textContent = has ? focuses.map(fullPath).join(' ｜ ') : '未选重点文件';
+  $('#chatCtxFocus').title = has ? focuses.map(fullPath).join('\n') : '';
   $('#chatCtxFocusWrap').classList.toggle('has-focus', has);
 
   $('#fileTitle').textContent = S.openFile ? fullPath(histFile()) : '未打开文件';
@@ -348,7 +371,79 @@ function onMdEdit() {
     pushHistory(rel, '手改', proj().files[rel], '正文编辑');
     save(); renderToolsBadge();
   }, 700);
+  // 「点预览 → 编辑 → **停手自动回预览**」（2026-09-30 用户：
+  // 「编辑完之后，自动去显示实时预览的状态，而没有必要反复的切换」）
+  if (previewEditSession) armPreviewIdleReturn();
   save();
+}
+
+/* ── 点预览 = 进编辑，停手 = 回预览 ─────────────── */
+let previewEditSession = false;
+let previewIdleTimer = null;
+
+/// 点在预览的哪一行（按可见文本算；我们的渲染是"一段≈一行"，所以能落准）
+function lineIndexAtPoint(event) {
+  const root = $('#mdPreview');
+  let range = null;
+  if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(event.clientX, event.clientY);
+  if (!range && document.caretPositionFromPoint) {
+    const cp = document.caretPositionFromPoint(event.clientX, event.clientY);
+    if (cp) { range = document.createRange(); range.setStart(cp.offsetNode, cp.offset); }
+  }
+  if (!range) return 0;
+  let offset = 0, found = false;
+  const walk = n => {
+    if (found) return;
+    if (n === range.startContainer) { offset += range.startOffset; found = true; return; }
+    if (n.nodeType === 3) { offset += n.nodeValue.length; return; }
+    for (const c of n.childNodes) { walk(c); if (found) return; }
+  };
+  walk(root);
+  return root.textContent.slice(0, offset).split('\n').length - 1;
+}
+function lineStartOffset(text, lineIndex) {
+  const lines = text.split('\n');
+  let off = 0;
+  for (let i = 0; i < lineIndex && i < lines.length; i++) off += lines[i].length + 1;
+  return Math.min(off, text.length);
+}
+function onPreviewClick(event) {
+  if (S.tab !== 'md') return;
+  if (S.mdVariant === 'edit') return;
+  const line = lineIndexAtPoint(event);
+  // 分栏态：预览本来就在，只把光标送过去（不动版式，不打断你已有的左右布局）
+  if (S.mdVariant === 'split') { focusEditorAtLine(line); return; }
+  // 全预览态：整块切成可编辑，停手再自动切回来
+  S.mdVariant = 'edit';
+  previewEditSession = true;
+  save(); renderTabs();
+  focusEditorAtLine(line);
+  armPreviewIdleReturn();          // 进编辑那一刻就起表（不然点了不打字就永远回不去）
+  toast('已进入编辑 —— 停手一会儿自动回到预览');
+}
+function focusEditorAtLine(line) {
+  const ta = $('#mdSource');
+  requestAnimationFrame(() => {
+    ta.focus({ preventScroll: false });
+    const pos = lineStartOffset(ta.value, line);
+    try { ta.setSelectionRange(pos, pos); } catch {}
+  });
+}
+function armPreviewIdleReturn() {
+  clearTimeout(previewIdleTimer);
+  previewIdleTimer = setTimeout(() => {
+    if (!previewEditSession) return;
+    previewEditSession = false;
+    S.mdVariant = 'preview';
+    save(); renderTabs();
+    toast('已自动回到实时预览');
+  }, 1200);                                 // 停手 1.2s 就回预览
+}
+function leavePreviewEditSession(reason) {
+  if (!previewEditSession) return;
+  previewEditSession = false;
+  clearTimeout(previewIdleTimer);
+  if (reason === 'now') { S.mdVariant = 'preview'; save(); renderTabs(); }
 }
 function renderToolsBadge() {
   $('#historyBadge').textContent = (S.history[histFile()] || []).length;
@@ -573,7 +668,7 @@ function pushHistory(rel, source, content, summary, force = false) {
   // 而恢复到最新一版时内容恰好相同，去重会把这条痕迹吃掉（需求 5.3）。
   if (!force && last && last.content === content) return;
   list.unshift({ ts: now(), source, content, summary });
-  if (list.length > 50) list.length = 50;                // 每文件留 50 条
+  if (list.length > 10) list.length = 10;                // 每文件留最近 10 次（2026-09-30 用户定）
   save();
   if (S.tab === 'history') renderHistory(); else renderToolsBadge();
 }
@@ -662,8 +757,9 @@ function sendChat() {
 }
 
 function reply(q) {
-  const p = proj(), focus = S.focusFile;
-  const ctx = `<code>${p.path}</code>` + (focus ? ` · 重点参考 <code>${fullPath(focus)}</code>` : '');
+  const p = proj(), focuses = S.focusFiles || [], focus = focuses[0];
+  const ctx = `<code>${p.path}</code>`
+    + (focuses.length ? ` · 重点参考 ${focuses.map(f => `<code>${fullPath(f)}</code>`).join(' ')}` : '');
   const demo = `本地演示回复 · 未接模型`;
 
   // ① 对话改脑图（需求 6.3）
@@ -694,8 +790,9 @@ function reply(q) {
   if (/(路径|目录|项目在哪|绝对路径)/.test(q)) {
     addMsg('ai',
       `当前项目：<code>${p.path}</code>\n` +
-      (focus ? `重点参考：<code>${fullPath(focus)}</code>\n` : '（还没选重点文件，点左边任意文件即可）') +
-      `\n每一轮对话都会自动带上这两条。`, demo);
+      (focuses.length ? `重点参考（${focuses.length} 个）：${focuses.map(f => `<code>${fullPath(f)}</code>`).join(' ｜ ')}\n`
+                      : '（还没选重点文件，点左边任意文件即可）') +
+      `\n每一轮对话都会自动带上这些路径。`, demo);
     return;
   }
   if (/(总结|讲讲|说了什么|概览|README)/i.test(q) && focus) {
@@ -707,7 +804,7 @@ function reply(q) {
     const n = (S.history[histFile()] || []).length;
     addMsg('ai',
       `<code>${escapeHtml(histFile())}</code> 目前有 <b>${n}</b> 版历史。\n` +
-      `任何一次编辑（手改 / 对话改 / 恢复）都会自动存一版，最多留 50 条，点「恢复」随时回去 —— 恢复本身也会留一版。`, demo);
+      `任何一次编辑（手改 / 对话改 / 恢复）都会自动存一版，**每个文件只留最近 10 次**，点「恢复」随时回去 —— 恢复本身也会留一版。`, demo);
     return;
   }
   // ③ 默认：结合上下文
@@ -755,7 +852,7 @@ function newProject() {
     },
     tree: [{ name: 'README.md', type: 'file' }, { name: '脑图.mmd', type: 'file' }]
   });
-  S.activeProject = id; S.openFile = 'README.md'; S.focusFile = 'README.md';
+  S.activeProject = id; S.openFile = 'README.md'; S.focusFiles = ['README.md'];
   save(true); renderTree(); renderContext(); renderContent();
   addMsg('sys', `新建项目 <b>${escapeHtml(name)}</b> · <code>${path}</code> —— 后续对话默认携带这个绝对路径。`);
   toast(`新项目 <b>${escapeHtml(name)}</b> 已建好`);
@@ -806,6 +903,12 @@ function bind() {
   });
 
   $('#mdSource').addEventListener('input', onMdEdit);
+  // 点预览 = 进编辑；Esc / 手动点工具按钮 = 结束这一次"自动回预览"
+  $('#mdPreview').addEventListener('click', onPreviewClick);
+  $('#mdSource').addEventListener('keydown', e => {
+    if (e.key === 'Escape') leavePreviewEditSession('now');
+  });
+  $('#contentTools').addEventListener('click', () => leavePreviewEditSession());
 
   let mindTimer;
   $('#mindSource').addEventListener('input', () => {
@@ -863,22 +966,39 @@ function bind() {
   });
 }
 
-/* ── 启动 ─────────────────────────────────────── */
+/* ── 启动：**骨架先出、内容后到**（需求 §2 性能，终极需求） ─────
+   骨架是 index.html 里**静态的一段**，浏览器第一次 paint 就有它 ——
+   重活（读状态、建树、渲染脑图、拼消息）全部推到两次 rAF 之后再干，
+   干完再撤骨架。所以用户点开这一页的瞬间看到的是完整的三块框架，
+   而不是白屏。底栏「首屏」那一行报的就是量到的两个数。            */
 function boot() {
-  bind();
-  renderTree(); renderContext(); renderModes(); renderChatModes();
-  renderContent(); renderChat();
-  // 起手给一句系统说明（＝"当前会话搬到右侧"）
-  if (!S.chat.length) {
-    S.chat.push({
-      role: 'sys', ts: now(),
-      html: `已进入<b>全功能</b>：左 80% 是工作区（文件夹 · md · 脑图），右边是对话。` +
-            `当前项目 <code>${proj().path}</code>`,
-      meta: ''
+  const t0 = performance.now();
+  const app = document.querySelector('.app');
+  app.classList.add('is-booting');
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const tSkeleton = Math.round(performance.now() - t0);   // 骨架已上屏
+
+    bind();
+    renderTree(); renderContext(); renderModes(); renderChatModes();
+    renderContent(); renderChat();
+    if (!S.chat.length) {                       // 起手一句：＝"当前会话搬到右侧"
+      S.chat.push({
+        role: 'sys', ts: now(),
+        html: `已进入<b>全功能</b>：左 80% 是工作区（文件夹 · md · 脑图），右边是对话。` +
+              `当前项目 <code>${proj().path}</code>`,
+        meta: ''
+      });
+      save();
+      renderChat();
+    }
+
+    requestAnimationFrame(() => {
+      const tDone = Math.round(performance.now() - t0);     // 内容填完
+      app.classList.remove('is-booting');
+      $('#loadStat').textContent = `骨架 ${tSkeleton}ms · 内容 ${tDone}ms`;
     });
-    save();
-    renderChat();
-  }
+  }));
 }
 document.readyState === 'loading'
   ? document.addEventListener('DOMContentLoaded', boot)

@@ -24,22 +24,24 @@
       <button class="chip" data-mode="video">视频</button>
     </div>
 
-    <!-- 上下文条：项目绝对路径 + 重点参考文件 -->
+    <!-- 入口按钮：**贴在模式条右端**（用户 2026-09-30：「放在视频按钮右侧」） -->
+    <button class="btn btn-primary is-active" id="btnFullFeature" title="进入项目工作区">全功能</button>
+
+    <!-- 上下文条：项目绝对路径 + 重点参考（**可多选**，每个带 ×） -->
     <div class="ctx" id="ctxStrip">
       <span class="ctx-item ctx-project" id="ctxProject" title="项目绝对路径">
         <i class="ico ico-folder"></i><code id="ctxProjectPath">—</code>
       </span>
       <span class="ctx-sep"></span>
-      <span class="ctx-item ctx-focus" id="ctxFocus" title="重点参考文件">
-        <i class="ico ico-star"></i><code id="ctxFocusPath">未选择文件</code>
-        <b class="tag-focus">重点参考</b>
+      <span class="ctx-item ctx-focus" id="ctxFocus" title="重点参考（可多选）">
+        <i class="ico ico-star"></i>
+        <span class="fchips" id="focusChips"></span>
       </span>
     </div>
 
     <div class="topbar-right">
       <button class="btn btn-ghost" id="btnNewProject">新建项目</button>
       <button class="btn btn-ghost" id="btnCommitGit">提交 git</button>
-      <button class="btn btn-primary is-active" id="btnFullFeature">全功能</button>
       <button class="btn btn-icon" id="btnClose" title="关闭，回到会话页">✕</button>
     </div>
   </header>
@@ -51,6 +53,12 @@
 
       <!-- 左：文件夹工作区（VSCode 式树） -->
       <aside class="tree-pane">
+        <!-- 骨架：点开「全功能」后**立刻**可见的占位（§2 性能：骨架先出、内容后到） -->
+        <div class="skel" id="skelTree" aria-hidden="true">
+          <i class="sk" style="width:70%"></i><i class="sk" style="width:52%"></i>
+          <i class="sk" style="width:64%"></i><i class="sk" style="width:44%"></i>
+          <i class="sk" style="width:58%"></i><i class="sk" style="width:40%"></i>
+        </div>
         <div class="pane-head">
           <span class="pane-title">文件夹</span>
           <span class="pane-meta" id="treeCount"></span>
@@ -59,6 +67,7 @@
         <div class="pane-foot">
           <div class="foot-row"><span class="k">项目</span><code id="treeProjectPath">—</code></div>
           <div class="foot-row"><span class="k">快照</span><span id="gitLogCount">0 次提交</span></div>
+          <div class="foot-row"><span class="k">首屏</span><span id="loadStat">加载中…</span></div>
         </div>
       </aside>
 
@@ -66,6 +75,11 @@
 
       <!-- 中：内容区 -->
       <section class="content-pane">
+        <div class="skel" id="skelContent" aria-hidden="true">
+          <i class="sk" style="width:38%"></i>
+          <i class="sk" style="width:88%"></i><i class="sk" style="width:76%"></i>
+          <i class="sk" style="width:82%"></i><i class="sk" style="width:56%"></i>
+        </div>
         <div class="pane-head content-head">
           <div class="tabs" id="contentTabs" role="tablist">
             <button class="tab is-on" data-tab="md">正文</button>
@@ -126,6 +140,10 @@
 
     <!-- ════ 右：对话窗口 ════ -->
     <aside class="chat" id="chatPane">
+      <div class="skel skel-chat" id="skelChat" aria-hidden="true">
+        <i class="sk" style="width:60%"></i><i class="sk" style="width:86%"></i>
+        <i class="sk" style="width:44%"></i>
+      </div>
       <div class="chat-head">
         <div class="chat-modes" id="chatModes">
           <button class="dchip is-on" data-chat="continuous">连续对话</button>

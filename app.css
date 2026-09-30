@@ -353,3 +353,41 @@ code{font-family:var(--mono);font-size:11.5px}
   :root{--chat-w:300px;--tree-w:190px}
   .ctx{display:none}
 }
+
+/* ── 重点参考：**可多选**，路径条上一枚一枚，点 × 取消 ── */
+.fchips{display:flex;gap:5px;min-width:0;overflow:hidden;align-items:center}
+.fchip{
+  display:inline-flex;align-items:center;gap:4px;max-width:26vw;
+  background:rgba(245,184,81,.13);border:1px solid rgba(245,184,81,.42);
+  border-radius:6px;padding:1px 3px 1px 7px;flex:0 1 auto;min-width:0;
+}
+.fchip code{color:var(--focus);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fchip .x{
+  width:14px;height:14px;flex:0 0 14px;border-radius:4px;font-size:11px;line-height:1;
+  color:#8A6E42;display:inline-flex;align-items:center;justify-content:center;
+}
+.fchip .x:hover{background:rgba(245,184,81,.35);color:#1A1204}
+.fchip-empty{font-size:11.5px;color:var(--ink3)}
+.tag-focus{font-size:10px;font-weight:650;letter-spacing:.04em;color:#1A1204;
+  background:var(--focus);border-radius:4px;padding:1px 5px;flex:0 0 auto}
+
+/* ── 首屏骨架（§2 性能：骨架先出、内容后到） ── */
+.tree-pane,.content-pane,.chat{position:relative}
+.skel{
+  position:absolute;inset:0;z-index:6;background:var(--surface);
+  display:none;flex-direction:column;gap:9px;padding:46px 12px 12px;
+  pointer-events:none;
+}
+.content-pane .skel{background:var(--bg);padding-top:44px}
+.skel-chat{background:var(--surface);padding-top:56px}
+.skel .sk{display:block;height:12px;border-radius:6px;background:#1E1E24}
+.skel .sk:nth-child(2n){background:#1A1A20}
+.skel::before{
+  content:"首屏骨架 · 内容后台加载中";
+  font-size:11px;color:var(--ink3);letter-spacing:.04em;
+}
+.is-booting .skel{display:flex}
+.is-booting .tree,
+.is-booting .msgs,
+.is-booting .view,
+.is-booting .pane-foot .foot-row:nth-child(n+2){visibility:hidden}
