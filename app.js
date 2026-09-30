@@ -118,6 +118,17 @@ function load() {
     if (typeof r.projectMode !== 'boolean') r.projectMode = !!(r.projects && r.projects.length);
     if (!Array.isArray(r.recent)) r.recent = [];
     if (typeof r.activePlan === 'undefined') r.activePlan = null;
+    // 老提交记录：`files` 曾经存的是**文件数（数字）** —— 归一成对象，否则下面按文件比对会错乱
+    (r.gitLog || []).forEach((g, i) => {
+      if (typeof g.files !== 'object' || g.files === null) {
+        const n = typeof g.files === 'number' ? g.files : 0;
+        g.count = g.count ?? n;
+        g.files = {};
+        g.legacy = true;                       // 老记录：没有内容，只能显示条数
+      }
+      if (!g.seq) g.seq = (r.gitLog.length - i);
+      if (!g.ts) g.ts = Date.now();
+    });
     return r;
   } catch { return null; }
 }
@@ -152,7 +163,8 @@ document.addEventListener('click', e => {
   if (a) { e.preventDefault(); const b = $('#btnHistoryHead') || $('#btnHistory'); b && b.click(); }
 });
 function toast(html) {
-  const t = $('#toast'); t.innerHTML = html; t.hidden = false;
+  const t = $('#toast'); if (!t) return;
+  t.innerHTML = html; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2800);
 }
 
@@ -163,9 +175,14 @@ document.addEventListener('mousedown', () => {
   if (menuDyn) menuDyn.hidden = true;
 }, true);
 window.addEventListener('error', e => {
-  // 任何未捕获异常都让他说出来 —— 「点了没反应」必须能被看见
-  console.error('[页面异常]', e.message);
-  if (typeof toast === 'function') toast('⚠️ 页面异常：' + e.message);
+  // ⚠️ 只处理**脚本异常**。资源加载失败（favicon/图片 404）也会冒到 window.error，
+  // 但 e.target 是那个元素、没有 e.message —— 不挡掉的话，任何一个 404 都会让
+  // 屏幕上冒出「页面异常」，看起来就像按钮坏了（用户报的"总是页面异常"就有一半是它）。
+  if (e && e.target && e.target !== window && e.target.tagName) return;
+  const msg = (e && e.message) || '';
+  if (!msg) return;
+  console.error('[页面异常]', msg, e.error);
+  if (typeof toast === 'function') toast('⚠️ 页面异常：' + msg);
 });
 let modalOnOk = null;
 function openModal({ title, text = '', value = null, okText = '确定', onOk }) {
@@ -291,11 +308,17 @@ function renderNav() {
         <button class="pmore" title="选项（含会话 ID）">⋯</button>`;
       row.querySelector('.pname').textContent = c.title;
       row.querySelector('.pmore').onclick = ev => { ev.stopPropagation(); openProjChatMenu(c, p, ev.currentTarget); };
+      row.oncontextmenu = ev => {
+        ev.preventDefault();
+        openProjChatMenu(c, p, ev.currentTarget, { x: ev.clientX + 4, y: ev.clientY + 4 });
+      };
       row.onclick = () => {
         S.activeProjChat = c.id; S.activePlan = null; S.tempMode = false;
-        S.projectMode = true;
+        // ⭐ 点**对话** → 编辑区**自动折叠**、并取消之前选中的文件（§18.5）
+        S.projectMode = false;
+        S.activeTab = -1; S.currentFile = null;
         save(); renderNav(); renderContent(); renderComposerControls();
-        toast(`进入「${escapeHtml(c.title)}」 —— 参考：项目内容 + 这段对话自己的上下文`);
+        toast(`进入「${escapeHtml(c.title)}」（编辑区已折叠）—— 参考：项目内容 + 这段对话自己的上下文`);
       };
       chatBox.appendChild(row);
     });
@@ -345,6 +368,10 @@ function renderNav() {
       e.stopPropagation(); pl.pinned = false; save(true); renderNav(); toast('已取消置顶');
     };
     el.onclick = () => selectTempCard(pl.id);
+    el.oncontextmenu = ev => {
+      ev.preventDefault();
+      openCardMenu(pl, ev.currentTarget, { x: ev.clientX + 4, y: ev.clientY + 4 });
+    };
     return el;
   };
   // 分组：头行可点折叠，卡在 children 里
@@ -526,7 +553,7 @@ function renderTreeInto(project, nodes, container, prefix) {
                 S.focusFiles = (S.focusFiles || []).filter(x => !(x.p === project.id && x.f === rel));
                 save(true); renderNav(); renderTabs(); renderContent(); renderContext();
                 toast('已删除 ' + rel); } }) }
-        ], ev.currentTarget);
+        ], ev.currentTarget, { x: ev.clientX + 4, y: ev.clientY + 4 });
       };
     } else {
       row.className += ' dir';
@@ -534,6 +561,39 @@ function renderTreeInto(project, nodes, container, prefix) {
         <span class="n-name dir"></span>`;
       row.querySelector('.n-name').textContent = n.name;
       row.onclick = () => { n.open = !n.open; save(); renderNav(); };
+      row.oncontextmenu = ev => {
+        ev.preventDefault();
+        const dirPath = fullPath(rel, project);
+        showMenu([
+          { label: n.open ? '折叠' : '展开', action: () => { n.open = !n.open; save(); renderNav(); } },
+          { sep: true },
+          { label: '重命名文件夹', action: () => askModal({ title: '重命名文件夹', value: n.name,
+              okText: '重命名', onOk: v => {
+                if (!v || !v.trim()) return;
+                const parent = prefix ? findNode(prefix, project.tree, '') : null;
+                const pool = parent && parent.children ? parent.children : project.tree;
+                const kid = pool.find(c => c.name === n.name && c.type === 'dir');
+                if (kid) { kid.name = v.trim(); save(true); renderNav(); toast('已重命名（原型只改树）'); }
+              } }) },
+          { label: '新建文件', action: () => askModal({ title: `在「${n.name}」里新建文件`,
+              text: '写文件名（例如 notes.md）', value: '', okText: '创建', onOk: v => {
+                if (!v || !v.trim()) return;
+                const parent = prefix ? findNode(prefix, project.tree, '') : null;
+                const pool = parent && parent.children ? parent.children : project.tree;
+                if (!pool) return;
+                const name = v.trim();
+                pool.push({ name, type: 'file' });
+                const rp = (prefix ? prefix + '/' : '') + n.name + '/' + name;
+                project.files[rp] = '# ' + name + '\n';
+                n.open = true;
+                save(true); renderNav(); toast('已新建 ' + rp);
+              } }) },
+          { sep: true },
+          { label: '复制路径', action: () => { navigator.clipboard?.writeText(dirPath); toast('已复制 ' + dirPath); } },
+          { label: '在访达中显示', action: () => toast('在访达中显示 ' + dirPath) },
+          { label: '移动位置…', action: () => toast('移动到…（原型先记一笔）') }
+        ], ev.currentTarget, { x: ev.clientX + 4, y: ev.clientY + 4 });
+      };
       container.appendChild(row);
       const kids = document.createElement('div');
       kids.className = 'proj-tree';
@@ -556,7 +616,12 @@ function onFileRowClick(project, rel, ev) {
       : `已移出重点参考 · ${rel}`);
     return;
   }
-  openInTab(project.id, rel);                    // 普通单击 = 打开
+  // 普通单击 = 打开文件，**并自动打开编辑区**（唯一三个能自动开编辑区的入口之一，§18.5）
+  S.projectMode = true;
+  S.tempMode = false;
+  S.activeProjChat = null;
+  S.activePlan = null;
+  openInTab(project.id, rel);
 }
 
 /// 侧栏搜索：只过滤树（在侧栏顶部那个框）
@@ -685,7 +750,7 @@ function addMenuAction(act) {
 
 /* ── 对话卡的选项菜单（完全参考小米：重命名/置顶/未读/…/删除，§14.6） ── */
 let menuCardObj = null;          // null = 默认卡
-function openCardMenu(pl, anchor) {
+function openCardMenu(pl, anchor, xy) {
   menuCardObj = pl;
   closeMenus();
   const m = $('#menuCard');
@@ -712,10 +777,11 @@ function openCardMenu(pl, anchor) {
     <div class="menu-sep"></div>
     <button data-act="delete" class="danger">删除对话</button>`;
   $$('button', m).forEach(b => b.onclick = () => cardMenuAction(b.dataset.act));
-  const r = anchor.getBoundingClientRect();
+  const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+  const left = xy ? xy.x : (r ? r.left : 100), top = xy ? xy.y : (r ? r.bottom + 4 : 100);
   m.hidden = false;
-  m.style.left = Math.min(r.left, innerWidth - 230) + 'px';
-  m.style.top = (r.bottom + 4) + 'px';
+  m.style.left = Math.max(6, Math.min(left, innerWidth - 240)) + 'px';
+  m.style.top = Math.max(6, Math.min(top, innerHeight - 340)) + 'px';
 }
 function cardMenuAction(act) {
   const pl = menuCardObj; closeMenus();
@@ -805,7 +871,7 @@ function cardMenuAction(act) {
   }
 }
 /// 项目内对话的选项：与临时卡同一套，另外多两件 —— 会话 ID、发送到会话（§15.8 agent↔agent）
-function openProjChatMenu(c, p, anchor) {
+function openProjChatMenu(c, p, anchor, xy) {
   showMenu([
     { label: '重命名', action: () => askModal({ title: '重命名对话', value: c.title, okText: '重命名',
         onOk: v => { if (v && v.trim()) { c.title = v.trim(); save(true); renderNav(); } } }) },
@@ -831,7 +897,7 @@ function openProjChatMenu(c, p, anchor) {
           p.chats = (p.chats || []).filter(x => x.id !== c.id);
           save(true); renderNav(); toast('已删除');
         } }) }
-  ], anchor);
+  ], anchor, xy);
 }
 
 function projList() {
@@ -843,6 +909,8 @@ function selectTempCard(id) {
   S.activePlan = id;
   S.activeProjChat = null;          // 选临时卡 = 不再是"项目对话"上下文（§17.4）
   S.tempMode = true;
+  S.projectMode = false;            // 选对话 → 编辑区自动折叠（§18.5）
+  S.activeTab = -1; S.currentFile = null;   // 同时取消之前选中的文件
   S.projectMode = false;                     // 临时卡不在项目模式里
   // ⚠️ 不要把 activeProject 置空：标签还指着它的文件
   save(); renderNav(); renderContent(); renderComposerControls();
@@ -978,12 +1046,27 @@ function renderContext() {
   chips.innerHTML = ''; list.innerHTML = ''; list.hidden = true;
   more.textContent = n ? `重点 ${n}` : '重点';
   more.classList.toggle('is-zero', !n);
-  more.onclick = () => {
-    list.hidden = !list.hidden;
-    if (list.hidden) return;
-    if (!n) {
+  if (n) buildFocusList();          // 内容准备好；**开关的 onclick 绑在 bind 里**（更稳）
+
+  // 行里最多露 3 枚（横向放不下就靠 overflow 截断），其余去 + 里
+  focuses.slice(0, 3).forEach(e => chips.appendChild(focusChipEl(e)));
+
+  const inProject = S.projectMode && proj();
+  const card = S.activePlan && S.activePlan !== 'default'
+    ? (S.plans.find(x => x.id === S.activePlan) || null) : null;
+  $('#chatCtxProject').textContent = inProject ? proj().path
+    : (card ? `对话卡 · ${card.title}` : '对话模式（无项目文件）');
+  $('#chatCtxProject').title = $('#chatCtxProject').textContent;
+  renderCrumbs();
+}
+function buildFocusList() {
+  const list = $('#focusList');
+  const focuses = S.focusFiles || [];
+  {
+    list.innerHTML = '';
+    if (!focuses.length) {
       list.innerHTML = `<div style="padding:10px;color:var(--ink3);font-size:12px">
-        还没有重点参考。<br><b>⌘+单击</b> 文件加入，<b>Shift+单击</b> 范围多选。</div>`;
+        还没有重点参考。<br><b>Shift / ⌘ + 单击</b> 文件加入（可跨项目）。</div>`;
       return;
     }
     focuses.forEach(entry => {
@@ -1002,18 +1085,15 @@ function renderContext() {
       };
       list.appendChild(it);
     });
-  };
-  // 行里最多露 3 枚（横向放不下就靠 overflow 截断），其余去 + 里
-  focuses.slice(0, 3).forEach(e => chips.appendChild(focusChipEl(e)));
-
-  const inProject = S.projectMode && proj();
-  const card = S.activePlan && S.activePlan !== 'default'
-    ? (S.plans.find(x => x.id === S.activePlan) || null) : null;
-  $('#chatCtxProject').textContent = inProject ? proj().path
-    : (card ? `对话卡 · ${card.title}` : '对话模式（无项目文件）');
-  $('#chatCtxProject').title = $('#chatCtxProject').textContent;
-  renderCrumbs();
+  }
 }
+function toggleFocusList() {
+  const list = $('#focusList'); if (!list) return;
+  const willOpen = list.hidden;
+  if (willOpen) buildFocusList();
+  list.hidden = !willOpen;
+}
+
 
 function renderCrumbs() {
   const rel = relOfActiveTab(), p = proj();
@@ -1645,7 +1725,7 @@ function dragSplit(el, apply) {
 let menuTabIndex = null;
 let menuDyn = null;
 /// 通用弹出菜单：给一串 {label, danger?, action?} 就画出来（分组菜单 / 卡片附加项都用它）
-function showMenu(items, anchor) {
+function showMenu(items, anchor, xy) {
   closeMenus();                              // 任何菜单打开前先关掉其它（含分组/卡片/项目）
   closeGitPanel();
   if (!menuDyn) {
@@ -1663,10 +1743,12 @@ function showMenu(items, anchor) {
     b.onclick = () => { menuDyn.hidden = true; it.action && it.action(); };
     menuDyn.appendChild(b);
   });
-  const r = anchor.getBoundingClientRect();
+  const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+  const left = xy ? xy.x : (r ? r.left : 100);
+  const top = xy ? xy.y : (r ? r.bottom + 4 : 100);
   menuDyn.hidden = false;
-  menuDyn.style.left = Math.min(r.left, innerWidth - 250) + 'px';
-  menuDyn.style.top = (r.bottom + 4) + 'px';
+  menuDyn.style.left = Math.max(6, Math.min(left, innerWidth - 250)) + 'px';
+  menuDyn.style.top = Math.max(6, Math.min(top, innerHeight - 320)) + 'px';
 }
 /// 标签条最左的 ☰：**纵向列出全部标签**（横向看不全时用，§13.4）
 function openTabsPopover() {
@@ -1758,7 +1840,15 @@ function bind() {
     $('#btnGitHist').onclick = e => {
       e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget);
     };
+    // 文件头那颗「恢复」= 同一个提交恢复面板（§18.2：文件位置上必须有恢复入口）
+    $('#btnRestoreFile').onclick = e => { e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget, true); };
   } catch (e) { console.error('[bind] 提交/恢复 绑定失败', e); }
+
+  // 重点折叠开关（§18.6：以前"点不开" —— 绑一次，不靠每次渲染才生效）
+  try {
+    const fm = $('#btnFocusMore');
+    if (fm) fm.onclick = e => { e.stopPropagation(); toggleFocusList(); };
+  } catch (e) { console.error('[bind] 重点开关绑定失败', e); }
 
   try {
   $$('#modeChips .chip').forEach(c => c.onclick = () => {
@@ -2013,6 +2103,7 @@ function bind() {
 
 /// 提交 = 一个**可恢复的快照**：第几次 + 时间 + 改了哪些文件 + 整份内容（§16.1）
 function commitGit() {
+ try {
   const p = proj(); if (!p) { toast('还没有项目可提交'); return; }
   const id = Math.random().toString(16).slice(2, 9);
   const files = JSON.parse(JSON.stringify(p.files));
@@ -2025,6 +2116,10 @@ function commitGit() {
   const btn = $('#btnCommitGit');
   openGitPanel(btn, true);
   toast(`已提交 第 <b>${seq}</b> 次 · ${fmtTime(now())}`);
+ } catch (e) {
+   console.error('[提交失败]', e);
+   toast('⚠️ 提交失败：' + e.message);
+ }
 }
 
 /// 行级 diff（红 = 上一版的行，绿 = 这一版的行）
@@ -2051,6 +2146,7 @@ function lineDiff(oldText, newText) {
 function changedFilesOf(index) {
   const g = S.gitLog[index];
   const prev = S.gitLog[index + 1];
+  if (!g || typeof g.files !== 'object' || g.files === null) return [];
   const keys = Object.keys(g.files);
   if (!prev) return keys.map(k => ({ file: k, kind: 'new', diff: lineDiff('', g.files[k]) }));
   return keys.filter(k => prev.files[k] !== g.files[k])
@@ -2065,6 +2161,7 @@ function diffStat(diff) {
 
 /// 提交记录面板（§16.1 卡片化 + §16.2 排版重心在时间与文件数）
 function openGitPanel(anchor, force) {
+ try {
   let el = document.getElementById('gitPanel');
   if (!el) { el = document.createElement('div'); el.className = 'git-panel'; el.id = 'gitPanel'; document.body.appendChild(el); }
   if (!force && !el.hidden) { el.hidden = true; return; }
@@ -2160,6 +2257,10 @@ function openGitPanel(anchor, force) {
   } else {
     el.hidden = false;
   }
+ } catch (e) {
+   console.error('[恢复面板失败]', e);
+   toast('⚠️ 恢复面板打不开：' + e.message);
+ }
 }
 
 function renderModes() {
