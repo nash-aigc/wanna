@@ -12,32 +12,27 @@
 
   <!-- ── 导航栏：模式条不变（图文/语音/视频）+「项目」开关 ── -->
   <header class="topbar">
-    <div class="brand">
-      <span class="brand-dot"></span>
-      <span class="brand-name" id="brandName">对话</span>
-      <span class="brand-sub" id="brandSub">连续 · 历史对话</span>
-    </div>
-
-    <div class="modes-slot" id="modesSlotTop">
-      <div class="modes" id="modeChips" role="tablist" aria-label="聊天模式">
-        <button class="chip is-on" data-mode="imageText">图文</button>
-        <button class="chip" data-mode="voice">语音</button>
-        <button class="chip" data-mode="video">视频</button>
-      </div>
-    </div>
-    <button class="btn btn-primary" id="btnProjectMode" title="进入项目模式（上下文换成项目文件夹）">项目</button>
+    <!-- 最左：编辑区 开/关（滑块）—— 开=项目三栏，关=只剩 左栏+对话（§15.4 你拍板） -->
+    <button class="editor-switch" id="editorSwitch" title="编辑区开 / 关">
+      <span class="es-track"><span class="es-knob"></span></span>
+      <span class="es-label">编辑区</span>
+    </button>
 
     <div class="ctx" id="ctxStrip">
       <span class="ctx-item ctx-project" title="项目绝对路径">
-        <i class="ico ico-folder"></i><code id="ctxProjectPath">未进入项目模式</code>
+        <i class="ico ico-folder"></i><code id="ctxProjectPath">对话模式（无项目）</code>
       </span>
     </div>
 
+    <!-- 通话：**固定在刘海右侧**（顶栏这一格位置永远不动，不跟随模式条） -->
+    <button class="btn btn-ghost call-fixed" id="btnCallFixed"
+            title="通话 = 当前模式的通话">📞 通话</button>
+
     <div class="topbar-right">
-      <button class="btn btn-ghost" id="btnLayout" title="对话位置：右 ⇄ 中 ⇄ 左">对话·右</button>
-      <button class="btn btn-ghost" id="btnSettings" title="设置（默认对话位置）">⚙</button>
+      <button class="btn btn-ghost" id="btnLayout" title="对话位置">对话·右</button>
       <button class="btn btn-ghost" id="btnFs" title="全屏（⌘⇧F / F11）">⛶</button>
-      <button class="btn btn-ghost" id="btnToggleEditor" title="只留 文件夹 + 对话（编辑区随时能打开）">◫ 编辑区</button>
+      <button class="btn btn-ghost" id="btnGitHist" title="提交历史与恢复">恢复</button>
+      <button class="btn btn-ghost" id="btnSettings" title="设置">⚙</button>
       <button class="btn btn-ghost" id="btnCommitGit">提交</button>
       <button class="btn btn-icon" id="btnClose" title="关闭，回到会话页">✕</button>
     </div>
@@ -50,6 +45,15 @@
       <div class="skel" id="skelNav" aria-hidden="true">
         <i class="sk" style="width:56%"></i><i class="sk" style="width:78%"></i>
         <i class="sk" style="width:64%"></i><i class="sk" style="width:70%"></i>
+      </div>
+
+      <!-- 左栏顶部：旧项目的快捷入口（设置 / 历史 / 添加 / 角色 / 录音） -->
+      <div class="nav-quick" id="navQuick">
+        <button data-q="settings">⚙ 设置</button>
+        <button data-q="history">🕘 历史</button>
+        <button data-q="add">＋ 添加</button>
+        <button data-q="roles">👤 角色</button>
+        <button data-q="record">🎙 录音</button>
       </div>
 
       <!-- 搜索框在**侧栏顶部**（按你给的图） -->
@@ -206,14 +210,21 @@
 
       <!-- 页头：左 图文/语音/视频（进项目模式后从导航栏搬进来）· 右 音色/通话/角色/选项 -->
       <div class="chat-nav">
-        <div class="modes-slot" id="modesSlotChat"></div>
+        <div class="modes-slot" id="modesSlotChat">
+          <div class="modes" id="modeChips" role="tablist" aria-label="聊天模式">
+            <button class="chip is-on" data-mode="imageText">图文</button>
+            <button class="chip" data-mode="voice">语音</button>
+            <button class="chip" data-mode="video">视频</button>
+          </div>
+        </div>
         <div class="chat-nav-right">
-          <button class="hchip" id="hcVoice" hidden>音色</button>
-          <button class="hchip" id="hcCall">📞 通话</button>
           <button class="hchip" id="hcRole">👤 角色</button>
-          <button class="hchip" id="hcOptions">⚙ 选项</button>
+          <button class="hchip" id="hcOptions">选项 ⌄</button>
         </div>
       </div>
+
+      <!-- 选项面板：音色在这里（§15.3），按模式给不同内容 -->
+      <div class="opt-panel" id="optPanel" hidden></div>
 
       <div class="msgs" id="msgs"></div>
 

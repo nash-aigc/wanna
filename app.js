@@ -164,15 +164,39 @@ function confirmModal(opts) { openModal({ okText: '确定', ...opts }); }
 /* ============================================================
    左栏：MiMo 式项目栏
    ============================================================ */
+/// 单击重点参考标签 → 展开并滚到左边那个文件，闪一下（§15.9）
+function locateFileInTree(rel) {
+  const row = [...document.querySelectorAll('#projectList .node-row')].find(x => x.dataset.rel === rel);
+  if (!row) { toast('这个文件不在当前展开的项目里'); return; }
+  let el = row.parentElement;
+  while (el && el !== document.getElementById('projectList')) {
+    if (el.classList && el.classList.contains('proj-subs')) { el.classList.remove('closed'); }
+    if (el.classList && el.classList.contains('proj')) { el.classList.remove('closed'); }
+    if (el.classList && el.classList.contains('proj-tree')) el.style.display = '';
+    if (el.classList && el.classList.contains('sub-kids')) el.classList.remove('closed');
+    el = el.parentElement;
+  }
+  $$('#projectList .proj').forEach(w => w.classList.remove('closed'));
+  $$('#projectList .proj-subs').forEach(w => w.classList.remove('closed'));
+  $$('#projectList .sub-kids').forEach(w => w.classList.remove('closed'));
+  row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1100);
+  toast(`已定位到 <b>${escapeHtml(rel)}</b>（双击这个标签 = 在编辑区打开）`);
+}
+
 function renderNav() {
   const inProject = S.projectMode && !!proj();
   $('#ctxProjectPath').textContent = inProject ? proj().path
     : (S.projects.length ? `对话模式 · 已有 ${S.projects.length} 个项目` : '对话模式（没有项目）');
   $('#ctxProjectPath').title = $('#ctxProjectPath').textContent;
-  $('#brandName').textContent = inProject ? '项目' : '对话';
-  $('#brandSub').textContent = inProject ? (proj() ? proj().name : '') : '连续 · 历史对话';
-  $('#btnProjectMode').classList.toggle('is-active', inProject);
-  $('#btnProjectMode').textContent = inProject ? '项目 · 开' : '项目';
+  // 编辑区开关 = 项目模式的唯一入口（§15.4 你拍板：不做"项目开关"，做"编辑区开关"）
+  const sw = $('#editorSwitch');
+  if (sw) {
+    sw.classList.toggle('is-on', inProject);
+    sw.title = inProject ? '编辑区开着 —— 左 文件夹 ｜ 中 编辑 ｜ 右 对话'
+                         : '编辑区关着 —— 只剩 左栏 + 对话（= 临时/对话模式）';
+  }
 
   const planOpen = S.planOpen !== false;
   $('#btnProjSect').classList.toggle('closed', !S.navOpen);
@@ -195,13 +219,76 @@ function renderNav() {
         ${p.pinned ? '<span class="proj-pin">📌</span>' : ''}
         <button class="proj-more" title="更多">⋯</button>
       </div>
-      <div class="proj-tree"></div>`;
+      </div>`;
     wrap.querySelector('.proj-name').textContent = p.name;
     wrap.querySelector('.proj-name').title = p.path;
     wrap.querySelector('.proj-caret').onclick = e => { e.stopPropagation(); p.open = !p.open; save(); renderNav(); };
     wrap.querySelector('.proj-row').onclick = () => selectProject(p.id);
     wrap.querySelector('.proj-more').onclick = e => { e.stopPropagation(); openProjMenu(p, e.currentTarget); };
-    renderTreeInto(p, p.tree, wrap.querySelector('.proj-tree'), '');
+
+    // 展开后先给两个分组：**对话**（针对这个项目的对话）｜**文件**（原来的树，逻辑不变）
+    const sub = document.createElement('div');
+    sub.className = 'proj-subs' + (p.open ? '' : ' closed');
+    sub.innerHTML = `
+      <div class="sub-head" data-sub="chats">
+        <span class="tw">▶</span><span class="st">对话</span><span class="sc">${(p.chats||[]).length}</span>
+        <button class="sadd" title="给这个项目新建一段对话">＋</button>
+      </div>
+      <div class="sub-kids" data-kids="chats"></div>
+      <div class="sub-head" data-sub="files">
+        <span class="tw">▶</span><span class="st">文件</span><span class="sc">${countFiles(p.tree)}</span>
+      </div>
+      <div class="sub-kids" data-kids="files"></div>`;
+    sub.querySelector('.sub-head[data-sub="chats"]').onclick = ev => {
+      if (ev.target.classList.contains('sadd')) return;
+      sub.querySelector('[data-kids="chats"]').classList.toggle('closed');
+      sub.querySelector('.sub-head[data-sub="chats"] .tw').classList.toggle('open');
+    };
+    sub.querySelector('.sub-head[data-sub="files"]').onclick = () => {
+      sub.querySelector('[data-kids="files"]').classList.toggle('closed');
+      sub.querySelector('.sub-head[data-sub="files"] .tw').classList.toggle('open');
+    };
+    sub.querySelector('.sadd').onclick = ev => {
+      ev.stopPropagation();
+      askModal({ title: `给「${p.name}」新建对话`, text: '这一段参考的是**当前项目的内容**（+ 这段对话自己的上下文）。',
+        value: `对话 ${(p.chats || []).length + 1}`, okText: '新建', onOk: v => {
+          p.chats = p.chats || [];
+          p.chats.push({ id: 'c' + now(), sid: newSid(), title: (v||'').trim() || '对话', ts: now() });
+          save(true); renderNav(); toast('已新建项目内对话（带会话 ID）');
+        }});
+    };
+    // 对话分组里的卡
+    const chatBox = sub.querySelector('[data-kids="chats"]');
+    (p.chats || []).forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'plan-row' + (S.activeProjChat === c.id ? ' is-on' : '');
+      row.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
+        ${c.pinned ? '<span class="ppin">📌</span>' : ''}
+        <span class="psid" title="会话 ID（点击复制）">${c.sid}</span>
+        <button class="pmore" title="选项">⋯</button>`;
+      row.querySelector('.pname').textContent = c.title;
+      row.querySelector('.psid').onclick = ev => {
+        ev.stopPropagation();
+        navigator.clipboard?.writeText(c.sid);
+        toast(`已复制会话 ID <b>${c.sid}</b> —— 可以把任务发给它`);
+      };
+      row.querySelector('.pmore').onclick = ev => { ev.stopPropagation(); openProjChatMenu(c, p, ev.currentTarget); };
+      row.onclick = () => {
+        S.activeProjChat = c.id; S.activePlan = null; S.tempMode = false;
+        S.projectMode = true;
+        save(); renderNav(); renderContent(); renderComposerControls();
+        toast(`进入「${escapeHtml(c.title)}」 —— 参考：项目内容 + 这段对话自己的上下文`);
+      };
+      chatBox.appendChild(row);
+    });
+    if (!(p.chats || []).length) {
+      chatBox.innerHTML = `<div class="plan-empty">还没有项目对话 —— 点右边 ＋（参考这个项目）</div>`;
+    }
+
+    // 文件分组：原来的树，一个字没改，只是放进「文件」这个显示区里
+    const fileBox = sub.querySelector('[data-kids="files"]');
+    renderTreeInto(p, p.tree, fileBox, '');
+    wrap.appendChild(sub);
     host.appendChild(wrap);
   });
   if (!S.projects.length) {
@@ -222,7 +309,7 @@ function renderNav() {
   defCard.querySelector('.pmore').onclick = e => { e.stopPropagation(); openCardMenu(null, e.currentTarget); };
   ph.appendChild(defCard);
 
-  const groups = S.plans.filter(x => x.isGroup);
+  const groups = S.plans.filter(x => x.isGroup).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
   const loose = S.plans.filter(x => !x.isGroup && !x.group);
   const renderCard = pl => {
     const el = document.createElement('div');
@@ -251,10 +338,31 @@ function renderNav() {
     head.innerHTML = `<span class="gc">▶</span><span class="gname"></span>
       <span class="gcount">${kids.length} 张</span>`;
     head.querySelector('.gname').textContent = g.title;
-    head.onclick = () => {
+    head.onclick = ev => {
+      if (ev.target.classList.contains('gmore')) return;
       S.groupOpen = S.groupOpen || {};
       S.groupOpen[g.title] = !(S.groupOpen[g.title] !== false);
       save(); renderNav();
+    };
+    head.insertAdjacentHTML('beforeend', '<button class="gmore" title="分组选项">⋯</button>');
+    head.querySelector('.gmore').onclick = ev => {
+      ev.stopPropagation();
+      showMenu([
+        { label: '重命名分组', action: () => askModal({ title: '重命名分组', value: g.title, okText: '重命名',
+            onOk: v => { if (v && v.trim()) {
+              const old = g.title; g.title = v.trim();
+              S.plans.forEach(x => { if (x.group === old) x.group = g.title; });
+              if (S.groupOpen && old in S.groupOpen) { S.groupOpen[g.title] = S.groupOpen[old]; delete S.groupOpen[old]; }
+              save(true); renderNav(); } } }) },
+        { label: g.pinned ? '取消置顶分组' : '置顶分组（放最上面）', action: () => {
+            g.pinned = !g.pinned; save(true); renderNav(); } },
+        { sep: true },
+        { label: '删除分组', danger: true, action: () => confirmModal({ title: '删除这个分组？',
+            text: g.title + '\n（组里的对话卡会移到最外层，不会删对话）', okText: '删除', onOk: () => {
+              S.plans = S.plans.filter(x => x.id !== g.id);
+              S.plans.forEach(x => { if (x.group === g.title) x.group = null; });
+              save(true); renderNav(); } }) }
+      ], ev.currentTarget);
     };
     ph.appendChild(head);
     const box = document.createElement('div');
@@ -287,6 +395,12 @@ function selectProject(id) {
   else { S.tabs = []; S.activeTab = 0; S.currentFile = null; S.focusFiles = []; }
   save(); renderNav(); renderTabs(); renderContent(); renderContext();
 }
+function countFiles(nodes) {
+  let n = 0;
+  nodes.forEach(x => { if (x.type === 'file') n++; else n += countFiles(x.children || []); });
+  return n;
+}
+const newSid = () => 'cs_' + Math.random().toString(16).slice(2, 10);
 function firstFile(nodes) {
   for (const n of nodes) { if (n.type === 'file') return n.name; if (n.children) { const f = firstFile(n.children); if (f) return f; } }
   return null;
@@ -328,6 +442,11 @@ function renderTreeInto(project, nodes, container, prefix) {
       row.title = fullPath(rel, project) + '\n单击=打开 · ⌘单击=选为重点 · Shift单击=范围选';
       // ⭐ 选择语义（§12.2）：单击只打开；⌘ 切换重点；Shift 范围多选
       row.onclick = ev => onFileRowClick(project, rel, ev);
+      row.ondblclick = () => {                 // 双击 = 编辑区关着也自动打开
+        S.projectMode = true;
+        openInTab(project.id, rel);
+        save(); renderNav(); renderContent();
+      };
       row.dataset.rel = rel;
     } else {
       row.className += ' dir';
@@ -405,7 +524,9 @@ function openProjMenu(p, anchor) {
 }
 function closeMenus() {
   ['#menuAddProject','#menuAddTemp','#menuProj','#menuTabs','#menuSettings','#tabsPopover','#menuCard']
-    .forEach(id => { const el = $(id); if (el) el.hidden = true; });
+    .forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+  if (menuDyn) menuDyn.hidden = true;
+  const gp = document.getElementById('gitPanel'); if (gp) gp.hidden = true;
 }
 
 function projMenuAction(act) {
@@ -593,6 +714,36 @@ function cardMenuAction(act) {
       break;
   }
 }
+/// 项目内对话的选项：与临时卡同一套，另外多两件 —— 会话 ID、发送到会话（§15.8 agent↔agent）
+function openProjChatMenu(c, p, anchor) {
+  showMenu([
+    { label: '重命名', action: () => askModal({ title: '重命名对话', value: c.title, okText: '重命名',
+        onOk: v => { if (v && v.trim()) { c.title = v.trim(); save(true); renderNav(); } } }) },
+    { label: c.pinned ? '取消置顶' : '置顶对话', action: () => { c.pinned = !c.pinned; save(true); renderNav(); } },
+    { label: c.unread ? '标记为已读' : '标记为未读', action: () => { c.unread = !c.unread; save(true); renderNav(); } },
+    { label: '在新对话中继续', action: () => toast('在新对话中继续「' + c.title + '」') },
+    { sep: true },
+    { title: '会话 ID · ' + c.sid },
+    { label: '复制会话 ID', action: () => { navigator.clipboard?.writeText(c.sid); toast('已复制 ' + c.sid); } },
+    { label: '发送到会话…', action: () => askModal({ title: '发送到会话',
+        text: '填目标会话 ID（另一个对话的 ID）。发过去会自动激活那个会话窗口 —— agent 与 agent 之间靠它对话。',
+        value: '', okText: '发送', onOk: v => {
+          if (!v || !v.trim()) return;
+          toast(`已把任务发给 <b>${escapeHtml(v.trim())}</b> —— 那个会话会被自动激活`);
+        } }) },
+    { sep: true },
+    { label: '在 Finder 中显示', action: () => toast('在 Finder 中显示 ' + p.path) },
+    { label: '复制工作目录', action: () => { navigator.clipboard?.writeText(p.path); toast('已复制 ' + p.path); } },
+    { label: '导出对话记录', action: () => toast('导出这段对话的记录（原型导 JSON）') },
+    { sep: true },
+    { label: '删除对话', danger: true, action: () => confirmModal({ title: '删除这段对话？',
+        text: c.title, okText: '删除', onOk: () => {
+          p.chats = (p.chats || []).filter(x => x.id !== c.id);
+          save(true); renderNav(); toast('已删除');
+        } }) }
+  ], anchor);
+}
+
 function projList() {
   if (!S.projects.length) { toast('还没有项目可移动'); return null; }
   return S.projects.map(x => x.name).join(' / ');
@@ -707,6 +858,16 @@ function focusChipEl(rel) {
   el.innerHTML = `${treeIconSVG(rel, false)}<span class="fname"></span>
     <button class="x" title="取消参考">×</button>`;
   el.querySelector('.fname').textContent = rel;
+  el.querySelector('.fname').title = fullPath(rel) + '\n单击=定位到左边的文件 · 双击=在编辑区打开';
+  el.querySelector('.fname').onclick = ev => { ev.stopPropagation(); locateFileInTree(rel); };
+  el.querySelector('.fname').ondblclick = ev => {
+    ev.stopPropagation();
+    if (proj()) {
+      S.projectMode = true;
+      openInTab(S.activeProject, rel);
+      save(); renderNav(); renderContent();
+    }
+  };
   el.querySelector('.x').onclick = () => {
     S.focusFiles = S.focusFiles.filter(x => x !== rel);
     save(); renderNav(); renderContext();
@@ -768,19 +929,13 @@ function renderCrumbs() {
   $('#fullPathLabel').title = fullPath(rel);
 }
 
-/// §14.4 / §14.5：对话模式天然没有编辑区；项目模式可以把它藏起来（按钮在顶栏「提交」旁）
+/// §15.4：一个滑块 = 编辑区开/关。开 = 项目三栏；关 = 只剩 左栏 + 对话。
 function applyWorkspaceVisibility() {
-  const main = $('#main'), btn = $('#btnToggleEditor');
+  const main = $('#main');
   if (!main) return;
-  const hide = !S.projectMode || S.hideEditor;
-  main.classList.toggle('no-workspace', hide);
-  if (!btn) return;
-  btn.disabled = !S.projectMode;
-  btn.style.opacity = S.projectMode ? '' : '.4';
-  btn.textContent = S.projectMode && S.hideEditor ? '＋ 编辑区' : '◫ 编辑区';
-  btn.title = S.projectMode
-    ? (S.hideEditor ? '把中间的编辑区打开' : '收起中间编辑区 —— 只留 文件夹 + 对话')
-    : '对话模式本来就没有编辑区（左栏 + 对话，两栏）';
+  main.classList.toggle('no-workspace', !S.projectMode);
+  const sw = $('#editorSwitch');
+  if (sw) sw.classList.toggle('is-on', !!S.projectMode);
 }
 
 function renderContent() {
@@ -1301,6 +1456,31 @@ function reply(q) {
 /* ============================================================
    搜索 / 路径 / 编辑按钮 / 工具栏
    ============================================================ */
+/// 选项面板：音色在这一层（§15.3）。三种模式内容不同 —— 照你两张截图的排布。
+function renderOptPanel() {
+  const p = $('#optPanel'); if (!p) return;
+  const row = (k, v, sub) => `<div class="opt-row"><span class="ok">${k}</span>
+    <span class="ov">${v}</span>${sub ? `<span class="os">${sub}</span>` : ''}<span class="oc">⌄</span></div>`;
+  let html = '';
+  if (S.mode === 'voice') {
+    html += row('模式', '全双工', '全双工 3.0 Flash');
+    html += row('模式', '三段式', '标准三段式');
+    html += row('音色', 'longanqian', '随所选模式');
+  } else if (S.mode === 'video') {
+    html += row('模型', 'deepseek-flash', '视频');
+    html += row('音色', '默认');
+    html += row('摄像头', '已开启', '跟当前软件一致');
+  } else {
+    html += row('模型', 'deepseek-flash');
+    html += row('音色', '默认', '在这一层选');
+    html += row('语速', '1.25×');
+    html += row('工具', '21 个');
+  }
+  p.innerHTML = `<div class="opt-head">选项 · ${S.mode === 'voice' ? '语音' : S.mode === 'video' ? '视频' : '图文'}</div>${html}
+    <div class="opt-note">音色放在这一层（页头右侧只有 角色 与 选项）。</div>`;
+  $$('.opt-row', p).forEach(r => r.onclick = () => toast('原型只记状态 —— 落 SwiftUI 接真实选择器'));
+}
+
 function setLayout(layout) {
   S.layout = layout;
   const main = $('#main');
@@ -1313,16 +1493,17 @@ function setLayout(layout) {
   toast(say[layout]);
 }
 function cycleLayout() {
+  // 编辑区关着 = 没有中间那一栏，只有 左 / 右（§15.4 你的第 3 点）
+  if (!S.projectMode) {
+    setLayout(S.layout === 'left' || S.layout === 'center' ? 'right' : 'left');
+    return;
+  }
   setLayout(S.layout === 'right' ? 'center' : S.layout === 'center' ? 'left' : 'right');
 }
 /// 进项目模式：把导航栏那排 图文/语音/视频 **搬进对话框**（§12.0.5）
 /// ⭐ 图文/语音/视频 **永远画在对话窗里**（§14.3）：对话窗在哪，它们就在哪。
 /// 项目模式和对话模式都一样 —— 顶栏不再放它们（#modesSlotTop 被 CSS 藏掉）。
-function placeModeChips() {
-  const chips = $('#modeChips'), target = $('#modesSlotChat');
-  if (!chips || !target) return;
-  if (chips.parentElement !== target) target.appendChild(chips);
-}
+function placeModeChips() { /* 模式条本来就在对话窗页头里，不需要搬 */ }
 function toggleFullscreen() {
   const app = $('.app');
   app.classList.toggle('fs');
@@ -1345,6 +1526,29 @@ function dragSplit(el, apply) {
 }
 
 let menuTabIndex = null;
+let menuDyn = null;
+/// 通用弹出菜单：给一串 {label, danger?, action?} 就画出来（分组菜单 / 卡片附加项都用它）
+function showMenu(items, anchor) {
+  if (!menuDyn) {
+    menuDyn = document.createElement('div');
+    menuDyn.className = 'menu'; menuDyn.id = 'menuDyn';
+    document.body.appendChild(menuDyn);
+  }
+  menuDyn.innerHTML = '';
+  items.forEach(it => {
+    if (it.sep) { menuDyn.insertAdjacentHTML('beforeend', '<div class="menu-sep"></div>'); return; }
+    if (it.title) { menuDyn.insertAdjacentHTML('beforeend', `<div class="menu-title">${escapeHtml(it.title)}</div>`); return; }
+    const b = document.createElement('button');
+    b.textContent = it.label;
+    if (it.danger) b.className = 'danger';
+    b.onclick = () => { menuDyn.hidden = true; it.action && it.action(); };
+    menuDyn.appendChild(b);
+  });
+  const r = anchor.getBoundingClientRect();
+  menuDyn.hidden = false;
+  menuDyn.style.left = Math.min(r.left, innerWidth - 250) + 'px';
+  menuDyn.style.top = (r.bottom + 4) + 'px';
+}
 /// 标签条最左的 ☰：**纵向列出全部标签**（横向看不全时用，§13.4）
 function openTabsPopover() {
   const m = $('#tabsPopover');
@@ -1432,19 +1636,21 @@ function bind() {
     toast(c.dataset.conv === 'temporary' ? '临时对话 —— 这一段不写进任何会话'
                                         : '连续对话 —— 接着这条会话往下聊');
   });
-  $('#ccNew').onclick = () => toast('新建 —— 原型里等价于左栏「临时 ＋ → 新建」');
-  // 页头右组
-  ['#hcCall','#hcRole','#hcOptions','#hcVoice'].forEach(id => {
-    const el = $(id); if (!el) return;
-    el.onclick = () => {
-      if (id === '#hcVoice') { toast('音色面板：照搬当前软件（按音色选）'); return; }
-      el.classList.toggle('is-on');
-      toast(({ '#hcCall':'通话', '#hcRole':'角色', '#hcOptions':'选项' })[id]
-        + (el.classList.contains('is-on') ? ' · 开' : ' · 关'));
-    };
+  // 「＋新建」= 在**临时区**新建一段对话（§15.5）
+  $('#ccNew').onclick = () => addMenuAction('newCard');
+  // 顶栏「恢复」= 提交历史面板（§15.2）
+  $('#btnGitHist').onclick = e => { e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget); };
+  // 左栏顶部快捷入口（保留你旧项目那排）
+  $$('#navQuick button').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const q = b.dataset.q;
+    if (q === 'settings') { $('#btnSettings').click(); }
+    else if (q === 'history') toggleHistoryView();
+    else if (q === 'add') openMenuAt('#menuAddProject', b);
+    else if (q === 'roles') toast('角色：进入角色设置（落 SwiftUI 打开 设置 → 角色）');
+    else if (q === 'record') toast('录音：进入录音页（落 SwiftUI 打开 设置 → 录音）');
   });
-
-  // 段头折叠（§12.4：项目 / 临时规划 各一块，各有一个 ＋）
+  // 段头折叠（项目 / 临时）
   $('#btnProjSect').onclick = () => { S.navOpen = !S.navOpen; save(); renderNav(); };
   $('#btnPlanSect').onclick = () => { S.planOpen = S.planOpen === false; save(); renderNav(); };
 
@@ -1461,20 +1667,38 @@ function bind() {
   $('#btnEmptyFolder').onclick = () => addMenuAction('useFolder');
   $$('#menuAddProject button, #menuAddTemp button').forEach(b => b.onclick = () => addMenuAction(b.dataset.act));
   $$('#menuProj button').forEach(b => b.onclick = () => projMenuAction(b.dataset.act));
-  // 标签页右键菜单
   $$('#menuTabs button').forEach(b => b.onclick = () => tabMenuAction(b.dataset.act));
-  // 设置（默认对话位置）
-  $$('#menuSettings button').forEach(b => b.onclick = s => settingsAction(b.dataset.act, b));
+  $$('#menuSettings button').forEach(b => b.onclick = () => settingsAction(b.dataset.act, b));
   document.addEventListener('click', e => {
     if (!e.target.closest('.menu') && !e.target.closest('#btnAddProject') && !e.target.closest('#btnAddPlan')
         && !e.target.closest('.proj-more') && !e.target.closest('#btnSettings')
-        && !e.target.closest('#btnTabsCollapse')) closeMenus();
+        && !e.target.closest('#btnTabsCollapse') && !e.target.closest('.pmore') && !e.target.closest('.gmore')) closeMenus();
     if (!e.target.closest('.focus-row')) $('#focusList').hidden = true;
+    if (!e.target.closest('#optPanel') && !e.target.closest('#hcOptions')) {
+      const op = $('#optPanel'); if (op) { op.hidden = true; $('#hcOptions')?.classList.remove('is-on'); }
+    }
+    if (!e.target.closest('#gitPanel') && !e.target.closest('#btnGitHist')) {
+      const gp = document.getElementById('gitPanel'); if (gp) gp.hidden = true;
+    }
   });
 
-  // 本软件风格的模态（§12.3）
+  // 页头右组：只有 角色 + 选项（音色在选项里，通话在顶栏固定格）
+  $('#hcRole').onclick = () => toast('角色：这一段对话里它扮演的角色（照搬当前软件的角色清单）');
+  $('#hcOptions').onclick = () => {
+    const p = $('#optPanel');
+    p.hidden = !p.hidden;
+    $('#hcOptions').classList.toggle('is-on', !p.hidden);
+    if (!p.hidden) renderOptPanel();
+  };
+
+  // 本软件风格的模态（§12.3：不许再用系统 prompt / confirm）
   $('#modalCancel').onclick = closeModal;
-  $('#modalOk').onclick = () => { const v = $('#modalInput').value; const fn = modalOnOk; closeModal(); fn && fn(v); };
+  $('#modalOk').onclick = () => {
+    const v = $('#modalInput').value;
+    const fn = modalOnOk;
+    closeModal();
+    if (fn) fn(v);
+  };
   $('#modalBack').onclick = e => { if (e.target.id === 'modalBack') closeModal(); };
   $('#modalInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); $('#modalOk').click(); }
@@ -1507,26 +1731,22 @@ function bind() {
   $('#btnFsExit').onclick = toggleFullscreen;
   $('#btnLayout').onclick = cycleLayout;
   $('#btnLayout2').onclick = cycleLayout;
-  // ⭐ 「项目」= 进入 / 退出**项目模式**（§12.0）：不是新页面，是同一个界面的两种状态
-  $('#btnProjectMode').onclick = () => {
-    if (S.projectMode) {
-      S.projectMode = false;
-      save(); renderNav(); renderContent(); renderContext();
-      toast('已退出项目模式 —— 回到对话模式（连续对话 / 历史对话，功能不变）');
-    } else if (proj()) {
+  // ⭐ 编辑区开关（一个按钮带滑块，点一下开、点一下关）—— 放顶栏最左
+  $('#editorSwitch').onclick = () => {
+    if (!S.projectMode) {
+      if (!S.projects.length) { addMenuAction('newBlank'); return; }
       S.projectMode = true; S.tempMode = false;
       save(); renderNav(); renderContent(); renderContext();
-      toast('进入项目模式 —— 上下文换成这个项目文件夹与选中的文件');
+      toast('编辑区已开 —— 左 文件夹 ｜ 中 编辑 ｜ 右 对话');
     } else {
-      addMenuAction('newBlank');
+      S.projectMode = false;
+      save(); renderNav(); renderContent(); renderContext();
+      toast('编辑区已关 —— 只剩 左栏 + 对话（就是临时模式）');
     }
   };
-  $('#btnToggleEditor').onclick = () => {
-    if (!S.projectMode) { toast('对话模式本来就没有编辑区 —— 就是 左栏 + 对话 两栏'); return; }
-    S.hideEditor = !S.hideEditor;
-    save(); renderContent();
-    toast(S.hideEditor ? '编辑区已收起 —— 只剩 文件夹 + 对话（像小米客户端）'
-                       : '编辑区已打开');
+  $('#btnCallFixed').onclick = () => {
+    const m = S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频';
+    toast(`通话 = 当前<b>${m}</b>模式的通话（位置固定在刘海右侧，不随模式条移动）`);
   };
   $('#btnClose').onclick = () => toast('（原型）关闭 = 回到原来的会话页');
   $('#btnCommitGit').onclick = commitGit;
@@ -1625,14 +1845,74 @@ function bind() {
   });
 }
 
+/// 提交 = 一个**可恢复的快照**：短 ID + 时间 + 整份文件内容（§15.2）
 function commitGit() {
-  const p = proj(); if (!p) { toast('还没有项目'); return; }
-  S.gitLog.unshift({ ts: now(), path: p.path, files: Object.keys(p.files).length });
+  const p = proj(); if (!p) { toast('还没有项目可提交'); return; }
+  const id = Math.random().toString(16).slice(2, 9);
+  const files = JSON.parse(JSON.stringify(p.files));
+  S.gitLog.unshift({ id, ts: now(), projectId: p.id, name: p.name, path: p.path, files,
+                     count: Object.keys(files).length });
+  if (S.gitLog.length > 30) S.gitLog.pop();
   save(true); renderNav();
-  const rel = histFile();
-  if (rel) pushHistory(rel, '提交', fileContent(rel), `提交快照（${S.gitLog.length}）`);
-  addMsg('sys', `已提交一次快照：<code>${p.path}</code> · ${Object.keys(p.files).length} 个文件 · 第 ${S.gitLog.length} 次`);
-  toast(`提交成功 · 第 <b>${S.gitLog.length}</b> 次（原型记快照，落 SwiftUI 后接真 git）`);
+  toast(`已提交 <b>${id}</b> · ${fmtTime(now())} · ${Object.keys(files).length} 个文件 → 点顶栏「恢复」`);
+}
+/// 恢复面板：每条一个 ID、一个时间、两个恢复入口（默认恢复**文件**）
+function openGitPanel(anchor) {
+  let el = document.getElementById('gitPanel');
+  if (!el) { el = document.createElement('div'); el.className = 'git-panel'; el.id = 'gitPanel'; document.body.appendChild(el); }
+  if (!el.hidden) { el.hidden = true; return; }
+  const rows = S.gitLog.length ? S.gitLog.map((g, i) => `
+    <div class="git-row">
+      <div class="git-meta"><code class="git-id" data-id="${g.id}">${g.id}</code>
+        <span>${fmtTime(g.ts)} · ${g.count} 个文件 · ${escapeHtml(g.name)}</span></div>
+      <div class="git-acts">
+        <button data-a="copy" data-i="${i}" title="复制这个 ID">⧉ ID</button>
+        <button data-a="file" data-i="${i}">恢复文件</button>
+        <button data-a="proj" data-i="${i}">恢复整个项目</button>
+      </div>
+    </div>`).join('') : '<div class="git-empty">还没有提交 —— 点顶栏「提交」存一版。</div>';
+  el.innerHTML = `
+    <div class="git-head">提交历史 · 恢复
+      <button class="git-x" id="gitX">✕</button></div>
+    <div class="git-hint">提交是不是最好的恢复方式？<b>小改</b> → 恢复单个文件；<b>改了代码、想整体回退</b> →
+      恢复整个项目（等于 git 一次回退）。每条都有 <b>ID + 时间</b>，可复制。</div>
+    ${rows}`;
+  $('#gitX').onclick = () => { el.hidden = true; };
+  $$('.git-acts button', el).forEach(b => b.onclick = () => {
+    const g = S.gitLog[+b.dataset.i]; if (!g) return;
+    if (b.dataset.a === 'copy') {
+      navigator.clipboard?.writeText(g.id);
+      toast(`已复制提交 ID <b>${g.id}</b>`);
+      return;
+    }
+    const p = S.projects.find(x => x.id === g.projectId) || proj();
+    if (!p) { toast('这个项目已经不在了'); return; }
+    if (b.dataset.a === 'proj') {
+      const before = JSON.stringify(p.files);
+      p.files = JSON.parse(JSON.stringify(g.files));
+      pushHistory(relOfActiveTab() || Object.keys(g.files)[0], '恢复', fileContent(relOfActiveTab() || Object.keys(g.files)[0]),
+        `恢复整个项目到 ${g.id}`);
+      save(true); renderNav(); renderContent();
+      toast(before === JSON.stringify(p.files)
+        ? `整个项目本来就是 <b>${g.id}</b> 那一版`
+        : `已把整个项目恢复到 <b>${g.id}</b>（${fmtTime(g.ts)}）`);
+    } else {
+      const rel = relOfActiveTab();
+      if (!rel || !(rel in g.files)) { toast('当前打开的文件不在这一版里 —— 先点开那个文件，或用「恢复整个项目」'); return; }
+      const cur = p.files[rel];
+      p.files[rel] = g.files[rel];
+      pushHistory(rel, '恢复', g.files[rel], `恢复到提交 ${g.id}`, true);
+      save(true); renderNav(); renderContent();
+      toast(cur === g.files[rel]
+        ? `当前文件本来就是 <b>${g.id}</b> 那一版`
+        : `已把 <b>${rel}</b> 恢复到 <b>${g.id}</b>`);
+    }
+    el.hidden = true;
+  });
+  const r = anchor.getBoundingClientRect();
+  el.hidden = false;
+  el.style.left = Math.max(8, Math.min(r.left - 320, innerWidth - 420)) + 'px';
+  el.style.top = (r.bottom + 6) + 'px';
 }
 
 function renderModes() {
@@ -1671,10 +1951,11 @@ function renderComposerControls() {
     toast(`${b.textContent}：${b.classList.contains('is-on') ? '开' : '关'}（原型只记状态）`);
   });
 
-  // 页头：音色只在图文页画（其余页没有这颗）
-  $('#hcVoice').hidden = S.mode !== 'imageText';
   $('#composerModeLabel').textContent =
     `${S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频'} · ${conv === 'temporary' ? '临时对话' : '连续对话'}`;
+  // 选项面板开着时，切模式要跟着换内容（音色/模型那一层是按模式给的）
+  const op = $('#optPanel');
+  if (op && !op.hidden) renderOptPanel();
   renderModes();
 }
 /// 旧名字保留：所有调用点（切模式 / 选卡 / 进项目）都走同一处
