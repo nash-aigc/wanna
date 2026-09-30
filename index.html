@@ -57,10 +57,27 @@
         <button data-q="record">🎙 录音</button>
       </div>
 
-      <!-- 搜索框在**侧栏顶部**（按你给的图） -->
-      <div class="nav-search">
-        <span class="ns-ico">🔍</span>
-        <input id="navSearch" placeholder="搜索文件…" spellcheck="false">
+      <!-- 搜索框在**侧栏顶部**（按你给的图）；点它 → 输入框下面弹出**范围 + 内容类型**面板（§20.11） -->
+      <div class="nav-search-wrap">
+        <div class="nav-search">
+          <span class="ns-ico">🔍</span>
+          <input id="navSearch" placeholder="搜索文件…" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="search-pop" id="searchPop" hidden>
+          <div class="sp-title">搜索范围</div>
+          <div class="sp-scopes" id="searchScopes">
+            <button data-scope="project">项目区（默认使用这个）</button>
+            <button data-scope="default">默认区</button>
+            <button data-scope="computer">本地计算机（含外置硬盘）</button>
+          </div>
+          <div class="sp-title">搜索内容</div>
+          <div class="sp-types" id="searchTypes">
+            <label><input type="checkbox" data-type="folder"> 文件夹</label>
+            <label><input type="checkbox" data-type="file"> 文件</label>
+            <label><input type="checkbox" data-type="content"> 文件内容</label>
+          </div>
+          <div class="sp-results" id="searchResults"></div>
+        </div>
       </div>
 
       <div class="nav-scroll" id="navScroll">
@@ -71,10 +88,10 @@
         </div>
         <div id="projectList"></div>
 
-        <!-- 临时规划块（自己的加号）—— 独立于项目 -->
+        <!-- 「默认」块（§20.9，原「临时」）：默认项目文件夹 + 与项目同一套对话（§20.10） -->
         <div class="nav-head nav-head-2">
-          <button class="sect" id="btnPlanSect">临时 <span class="caret">⌄</span></button>
-          <button class="plus" id="btnAddPlan" title="新建一张对话卡片">＋</button>
+          <button class="sect" id="btnPlanSect">默认 <span class="caret">⌄</span></button>
+          <button class="plus" id="btnAddPlan" title="给「默认」新建分组 / 对话">＋</button>
         </div>
         <div id="planList"></div>
       </div>
@@ -98,9 +115,6 @@
         <button class="tab-collapse" id="btnTabsCollapse" title="折叠显示所有标签页">☰</button>
         <div class="tabs" id="tabs"></div>
         <button class="tab-add" id="btnNewTab" title="新建标签">＋</button>
-        <div class="tabbar-right">
-          <button class="tbtn" id="btnLayout2" title="对话位置：右侧 ⇄ 中间">◫</button>
-        </div>
       </div>
 
       <div class="file-head" id="fileHead">
@@ -129,9 +143,7 @@
           <button data-md="code">&lt;/&gt; 代码</button>
         </div>
         <div class="md-right">
-          <button class="fbtn hist-btn" id="btnHistory" title="查看这个文件的修改历史与恢复">历史 <span id="histCount">0</span></button>
           <div class="viewmodes" id="viewModes">
-            <button class="vm" data-vm="code" title="只看源码">&lt;/&gt; 查看代码</button>
             <button class="vm" data-vm="edit" title="编辑">✎ 编辑</button>
             <button class="vm is-on" data-vm="preview" title="实时预览">预览</button>
           </div>
@@ -280,11 +292,8 @@
     <button data-act="newBlank">空白项目（文件夹）</button>
     <button data-act="useFolder">现有项目（文件夹）</button>
   </div>
-  <!-- 临时 ＋ ：只有两项（加载的是对话，不是文件夹） -->
-  <div class="menu" id="menuAddTemp" hidden>
-    <button data-act="newGroup">分组</button>
-    <button data-act="newCard">新建</button>
-  </div>
+  <!-- 语速：点开是**多档**，不是开关（§20.5） -->
+  <div class="menu" id="menuRate" hidden></div>
   <!-- 标签页右键 -->
   <div class="menu" id="menuTabs" hidden>
     <button data-act="pin">固定标签页</button>

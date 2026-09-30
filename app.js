@@ -77,7 +77,7 @@ function samplePDF() {
 
 /* ── 状态 ───────────────────────────────────── */
 let S = load() || {
-  projects: [sampleProject()],
+  projects: [sampleProject(), defaultProjectSeed()],   // §20.9：末尾那个是「默认」项目文件夹
   activeProject: 'p1',
   tempMode: false,                 // 默认卡片（不加项目 = 临时对话）是否选中
   projectMode: true,              // **项目模式**（需求 §12.0）：进来就是项目模式，点「项目」退回对话模式
@@ -97,6 +97,9 @@ let S = load() || {
   recentOpen: true,
   mode: 'imageText',
   chatMode: 'continuous',
+  speechRate: 1,                   // §20.5 语速档（0.75 / 1 / 1.25 / 1.5 / 2）
+  searchScope: 'project',          // §20.11 范围：项目区（默认）/ 默认区 / 本地计算机
+  searchTypes: { folder: true, file: true, content: false },   // 「文件内容」默认不勾
   history: {},
   gitLog: [],
   chat: [],
@@ -107,6 +110,8 @@ function load() {
   try {
     const r = JSON.parse(localStorage.getItem(LS_KEY));
     if (!r || !Array.isArray(r.projects)) return null;
+    // §20.9：老存档里没有「默认」这个项目文件夹 —— 补一个（放末尾，免得抢走 S.projects[0] 的兜底）
+    if (!r.projects.some(p => p && p.isDefault)) r.projects.push(defaultProjectSeed());
     if (!Array.isArray(r.focusFiles)) r.focusFiles = [];
     // 老数据是字符串 rel → 迁成 {p,f}（跨项目多选要分清是哪个项目）
     if (r.focusFiles.some(x => typeof x === 'string')) {
@@ -118,6 +123,13 @@ function load() {
     if (typeof r.projectMode !== 'boolean') r.projectMode = !!(r.projects && r.projects.length);
     if (!Array.isArray(r.recent)) r.recent = [];
     if (typeof r.activePlan === 'undefined') r.activePlan = null;
+    // §20.3：「查看代码」那颗按钮删了 —— 老存档里的 code 态在屏幕上再没有出口，迁回分栏
+    if (r.mdVariant === 'code') r.mdVariant = 'split';
+    if (typeof r.speechRate !== 'number') r.speechRate = 1;   // §20.5 语速档
+    // §20.11 搜索：范围默认「项目区」，内容类型默认 文件夹+文件、**文件内容不勾**
+    if (r.searchScope !== 'project' && r.searchScope !== 'default' && r.searchScope !== 'computer') r.searchScope = 'project';
+    const t = r.searchTypes && typeof r.searchTypes === 'object' ? r.searchTypes : {};
+    r.searchTypes = { folder: t.folder !== false, file: t.file !== false, content: !!t.content };
     // 老提交记录：`files` 曾经存的是**文件数（数字）** —— 归一成对象，否则下面按文件比对会错乱
     (r.gitLog || []).forEach((g, i) => {
       if (typeof g.files !== 'object' || g.files === null) {
@@ -143,7 +155,34 @@ function save(immediate = false) {
 /// 标签永远指向某个项目的文件，所以这条兜底保证 proj() 不会莫名变 null。
 const proj = () => S.projects.find(p => p.id === S.activeProject)
   || (S.tabs[S.activeTab] ? S.projects.find(p => p.id === S.tabs[S.activeTab].p) : null)
-  || S.projects[0] || null;
+  || realProjects()[0] || S.projects[0] || null;
+
+/* ── §20.9 默认项目文件夹 ─────────────────────
+   「默认」不是一个空壳：它**就是一个项目文件夹**（用户根目录），
+   只是被钉在自己的区块里、不进「项目」列表 —— 除了这一点，与项目完全相同（§20.10）。
+   ⚠️ `defaultProjectSeed` 会在 `load()` 里被调用（S 初始化那一行），
+   所以它**只用字符串字面量**，不能引用下面任何 const —— 那时它们还在 TDZ 里。 */
+const realProjects = () => S.projects.filter(p => p && !p.isDefault);
+const defaultProject = () => S.projects.find(p => p && p.isDefault) || null;
+const defaultFolderPath = () => (defaultProject() || {}).path || '/Users/mjm';
+function defaultProjectSeed() {
+  return {
+    id: 'p_default', isDefault: true, name: '默认', path: '/Users/mjm',
+    pinned: false, open: true,
+    files: {
+      '默认项目文件夹.md': `# 默认项目文件夹\n\n这一格就是**默认的项目文件夹** —— 默认指向计算机用户的根目录\n（\`/Users/mjm\`），可以在左栏点那一行改路径。\n\n## 它什么时候被用上\n\n- **没选任何项目**时（默认卡 / 临时对话），提问与内容参考都用这个文件夹\n- 快捷键触发的那一问，带的就是这个路径\n- 左栏顶部搜索的「**默认区**」搜的就是这里的文件\n\n> 这份文件是原型自带的样例内容（浏览器里没有真正的文件系统）。\n`,
+    },
+    tree: [{ name: '默认项目文件夹.md', type: 'file' }],
+    chats: [],                        // ⚠️ 默认区的对话不放这里，放 S.plans（老数据都在那儿）
+  };
+}
+/// §20.9.4：这一轮该带哪个文件夹 ——
+/// 选了真项目（项目模式开着 / 点的是项目里的对话卡）就是那个项目；
+/// 其余（默认卡、临时对话、编辑区关着）= **默认项目文件夹**（快捷键那一问带的就是它）。
+function contextFolderPath() {
+  const p = proj();
+  return (p && !S.tempMode && (S.projectMode || !!S.activeProjChat)) ? p.path : defaultFolderPath();
+}
 const relOfActiveTab = () => (S.tabs[S.activeTab] || {}).f || null;
 const fullPath = (rel, p = proj()) => p ? `${p.path}/${rel}` : rel || '';
 const fileContent = rel => (proj() && proj().files[rel]) || '';
@@ -160,7 +199,7 @@ const histFile = () => S.currentFile || relOfActiveTab();
 let toastTimer;
 document.addEventListener('click', e => {
   const a = e.target.closest && e.target.closest('[data-jump-history]');
-  if (a) { e.preventDefault(); const b = $('#btnHistoryHead') || $('#btnHistory'); b && b.click(); }
+  if (a) { e.preventDefault(); const b = $('#btnHistoryHead'); b && b.click(); }
 });
 function toast(html) {
   const t = $('#toast'); if (!t) return;
@@ -177,11 +216,10 @@ document.addEventListener('click', e => {
   if (btn) { e.stopPropagation(); toggleFocusList(); }
 }, true);
 
-// §17.1：点菜单外面（任何地方）就关掉所有菜单 —— 独立于 bind，断链也生效
-document.addEventListener('mousedown', () => {
-  document.querySelectorAll('.menu').forEach(m => { if (m) m.hidden = true; });
-  if (menuDyn) menuDyn.hidden = true;
-}, true);
+// §17.1「点外面就关菜单」只能挂在 **click 的气泡阶段**（bind() 里那条 document click）。
+// ⚠️ 这里曾经是 `mousedown` + capture —— capture 先于菜单项收到 mousedown 就把菜单 hidden 掉，
+// mouseup 于是落到 body，菜单项的 onclick **一次都不会执行**（实测：设置菜单点「对话在左」，
+// 菜单自己关了、布局纹丝不动）。菜单在自己的动作里 closeMenus() 收场，外面那条 click 够用。
 window.addEventListener('error', e => {
   // ⚠️ 只处理**脚本异常**。资源加载失败（favicon/图片 404）也会冒到 window.error，
   // 但 e.target 是那个元素、没有 e.message —— 不挡掉的话，任何一个 404 都会让
@@ -213,30 +251,218 @@ function confirmModal(opts) { openModal({ okText: '确定', ...opts }); }
    ============================================================ */
 /// 单击重点参考标签 → 展开并滚到左边那个文件，闪一下（§15.9）
 function locateFileInTree(rel, pid) {
-  const row = [...document.querySelectorAll('#projectList .node-row')]
+  // 两个区块的树都在 #navScroll 下面（§20.9：「默认」也有一棵文件树）
+  const row = [...document.querySelectorAll('#navScroll .node-row')]
     .find(x => x.dataset.rel === rel && (!pid || x.dataset.pid === pid));
   if (!row) { toast('这个文件不在当前展开的项目里'); return; }
   let el = row.parentElement;
-  while (el && el !== document.getElementById('projectList')) {
+  while (el && el !== document.getElementById('navScroll')) {
     if (el.classList && el.classList.contains('proj-subs')) { el.classList.remove('closed'); }
     if (el.classList && el.classList.contains('proj')) { el.classList.remove('closed'); }
     if (el.classList && el.classList.contains('proj-tree')) el.style.display = '';
     if (el.classList && el.classList.contains('sub-kids')) el.classList.remove('closed');
     el = el.parentElement;
   }
-  $$('#projectList .proj').forEach(w => w.classList.remove('closed'));
-  $$('#projectList .proj-subs').forEach(w => w.classList.remove('closed'));
-  $$('#projectList .sub-kids').forEach(w => w.classList.remove('closed'));
+  $$('#navScroll .proj').forEach(w => w.classList.remove('closed'));
+  $$('#navScroll .proj-subs').forEach(w => w.classList.remove('closed'));
+  $$('#navScroll .sub-kids').forEach(w => w.classList.remove('closed'));
   row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   row.classList.add('flash');
   setTimeout(() => row.classList.remove('flash'), 1100);
-  toast(`已定位到 <b>${escapeHtml(rel)}</b>（双击这个标签 = 在编辑区打开）`);
+  toast(`已定位到 <b>${escapeHtml(rel)}</b>`
+    + (row.classList.contains('dir') ? '' : '（双击这个标签 = 在编辑区打开）'));
+}
+
+/* ============================================================
+   §20.10 对话列表的**唯一一份**实现
+   —— 「默认」区块与每个项目的「对话」分组都用它，改一处两边同时变。
+   两者唯一差别 = pool（S.plans ⇄ p.chats）与 scope（选中谁、工作目录是谁）。
+   ============================================================ */
+const poolOf = scope => scope.kind === 'default'
+  ? S.plans
+  : (scope.project.chats = scope.project.chats || []);
+const convCount = pool => pool.filter(x => !x.isGroup).length;
+/// 分组折叠状态的 key：默认区沿用**老的 title key**（不丢你已有的折叠状态），
+/// 项目区带项目 id —— 否则两个项目里同名的分组会一起折。
+const groupOpenKey = (g, scope) => scope.kind === 'default' ? g.title : `${scope.project.id}|${g.title}`;
+
+/// 子分组头（对话 / 文件）的折叠 —— 项目行和「默认」区块共用同一份
+function wireSubHead(root, key) {
+  const head = root.querySelector(`.sub-head[data-sub="${key}"]`);
+  const kids = root.querySelector(`[data-kids="${key}"]`);
+  if (!head || !kids) return;
+  head.onclick = ev => {
+    if (ev.target.classList.contains('sadd')) return;
+    kids.classList.toggle('closed');
+    head.querySelector('.tw').classList.toggle('open');
+  };
+}
+
+function selectProjChat(c, p) {
+  S.activeProjChat = c.id; S.activePlan = null; S.tempMode = false;
+  S.projectMode = false;                 // ⭐ 点对话 → 编辑区自动折叠、取消选中文件（§18.5）
+  S.activeTab = -1; S.currentFile = null;
+  save(); renderNav(); renderContent(); renderComposerControls(); renderContext();
+  toast(`进入「${escapeHtml(c.title)}」（编辑区已折叠）—— 参考：${escapeHtml(p.name)} + 这段对话自己的上下文`);
+}
+
+/// 只有「默认」区块有的一张卡：按主快捷键进来就是它（§20.9）
+function defaultCardRow() {
+  const el = document.createElement('div');
+  el.className = 'plan-row' + (S.activePlan === null || S.activePlan === 'default' ? ' is-on' : '');
+  el.innerHTML = `<span class="plan-dot" style="background:var(--ok)"></span>
+    <span class="pname">默认</span><span class="pdef">快捷键进的就是它</span>
+    <button class="pmore" title="选项">⋯</button>`;
+  el.title = `默认对话卡片：按主快捷键进来就是这一张\n项目文件夹 = ${defaultFolderPath()}`;
+  el.onclick = () => selectTempCard('default');
+  el.querySelector('.pmore').onclick = e => {
+    e.stopPropagation(); openConvCardMenu(null, { kind: 'default' }, e.currentTarget);
+  };
+  return el;
+}
+
+/// 一张对话卡 —— 两个区块共用（差别只有"点下去选中谁"）
+function convCardRow(item, scope) {
+  const isDefault = scope.kind === 'default';
+  const selected = isDefault ? (S.activePlan === item.id) : (S.activeProjChat === item.id);
+  const el = document.createElement('div');
+  el.className = 'plan-row' + (selected ? ' is-on' : '');
+  // 没置顶就不画 📌 —— 置顶的入口在 ⋯ 菜单里（§16.4）
+  el.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
+    ${item.unread ? '<span class="punread" title="未读"></span>' : ''}
+    <button class="pmore" title="选项（含会话 ID）">⋯</button>`
+    + (item.pinned ? `<span class="ppin" title="已置顶（点一下取消）">📌</span>` : '');
+  el.querySelector('.pname').textContent = item.title;
+  const pinEl = el.querySelector('.ppin');
+  if (pinEl) pinEl.onclick = e => {
+    e.stopPropagation(); item.pinned = false; save(true); renderNav(); toast('已取消置顶');
+  };
+  el.querySelector('.pmore').onclick = e => {
+    e.stopPropagation(); openConvCardMenu(item, scope, e.currentTarget);
+  };
+  el.oncontextmenu = ev => {
+    ev.preventDefault();
+    openConvCardMenu(item, scope, ev.currentTarget, { x: ev.clientX + 4, y: ev.clientY + 4 });
+  };
+  el.onclick = () => isDefault ? selectTempCard(item.id) : selectProjChat(item, scope.project);
+  return el;
+}
+
+/// 分组菜单（重命名 / 置顶 / 删除）—— 两个区块同一份，pool 由 scope 现取
+function groupMenuItems(g, scope) {
+  const writePool = rest => { if (scope.kind === 'default') S.plans = rest; else scope.project.chats = rest; };
+  return [
+    { label: '重命名分组', action: () => askModal({ title: '重命名分组', value: g.title, okText: '重命名',
+        onOk: v => { if (v && v.trim()) {
+          const old = g.title;
+          g.title = v.trim();
+          poolOf(scope).forEach(x => { if (x.group === old) x.group = g.title; });
+          if (S.groupOpen) {
+            const oldKey = groupOpenKey({ title: old }, scope), newKey = groupOpenKey(g, scope);
+            if (oldKey in S.groupOpen) { S.groupOpen[newKey] = S.groupOpen[oldKey]; delete S.groupOpen[oldKey]; }
+          }
+          save(true); renderNav(); toast('已重命名分组'); } } }) },
+    { label: g.pinned ? '取消置顶分组' : '置顶分组（放最上面）', action: () => {
+        g.pinned = !g.pinned; save(true); renderNav(); } },
+    { sep: true },
+    { label: '删除分组', danger: true, action: () => confirmModal({ title: '删除这个分组？',
+        text: g.title + '\n（组里的对话卡会移到最外层，不会删对话）', okText: '删除', onOk: () => {
+          const pool = poolOf(scope);
+          pool.forEach(x => { if (x.group === g.title) x.group = null; });
+          writePool(pool.filter(x => x.id !== g.id));
+          save(true); renderNav(); toast('已删除分组'); } }) }
+  ];
+}
+
+/// 把一个分组（头 + 组里的卡）挂到 host 上 —— 两处共用
+function appendGroup(host, g, pool, scope) {
+  const open = (S.groupOpen || {})[groupOpenKey(g, scope)] !== false;
+  const kids = pool.filter(x => !x.isGroup && x.group === g.title);
+  const head = document.createElement('div');
+  head.className = 'plan-group' + (open ? '' : ' closed');
+  head.innerHTML = `<span class="gc">▶</span><span class="gname"></span>
+    <span class="gcount">${kids.length} 张</span><button class="gmore" title="分组选项">⋯</button>`;
+  head.querySelector('.gname').textContent = g.title;
+  head.onclick = ev => {
+    if (ev.target.classList.contains('gmore')) return;
+    const key = groupOpenKey(g, scope);
+    S.groupOpen = S.groupOpen || {};
+    S.groupOpen[key] = !(S.groupOpen[key] !== false);
+    save(); renderNav();
+  };
+  head.querySelector('.gmore').onclick = ev => {
+    ev.stopPropagation();
+    showMenu(groupMenuItems(g, scope), ev.currentTarget);
+  };
+  const box = document.createElement('div');
+  box.className = 'plan-children' + (open ? '' : ' closed');
+  kids.forEach(k => box.appendChild(convCardRow(k, scope)));
+  host.appendChild(head);
+  host.appendChild(box);
+}
+
+/// ⭐ 对话列表的**唯一实现**：默认区与每个项目的对话分组都走它（§20.10.1）
+function renderConvList(host, pool, scope) {
+  host.innerHTML = '';
+  const items = Array.isArray(pool) ? pool : [];
+  if (scope.kind === 'default') host.appendChild(defaultCardRow());
+  const groups = items.filter(x => x.isGroup).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  const loose = items.filter(x => !x.isGroup && !x.group);
+  groups.forEach(g => appendGroup(host, g, items, scope));
+  loose.forEach(c => host.appendChild(convCardRow(c, scope)));
+  if (!items.length) {
+    host.insertAdjacentHTML('beforeend',
+      `<div class="plan-empty">还没有对话 —— 点上面的 <b>＋</b>：<b>分组</b> / <b>新建</b>。</div>`);
+  }
+}
+
+/// ⭐ 「＋」的**唯一实现**：默认区的 ＋、每个项目对话分组的 ＋、输入框上方的「＋新建」都走它
+function openConvAddMenu(scope, anchor) {
+  const pool = poolOf(scope);
+  showMenu([
+    { label: '分组', action: () => askModal({ title: '新建分组',
+        text: scope.kind === 'default' ? '把几张对话卡归到一个组里（只是分组，不是项目）。'
+                                       : `归到「${scope.project.name}」下面（只是分组，不是新项目）。`,
+        value: '新分组', okText: '创建', onOk: v => {
+          const title = (v || '').trim() || '新分组';
+          poolOf(scope).push({ id: 'g' + now(), title, ts: now(), isGroup: true });
+          save(true); renderNav(); toast(`已建分组 <b>${escapeHtml(title)}</b> —— 之后「新建」的对话卡会归到它下面`);
+        } }) },
+    { label: '新建', action: () => askModal({ title: '新建对话',
+        text: scope.kind === 'default'
+          ? '一张新的对话卡 —— 项目文件夹用默认那个（不另带项目）。'
+          : `这一段参考的是**「${scope.project.name}」的内容**（+ 这段对话自己的上下文）。`,
+        value: `对话 ${convCount(poolOf(scope)) + 1}`, okText: '新建', onOk: v => {
+          const p2 = poolOf(scope);
+          const lastGroup = [...p2].reverse().find(x => x.isGroup);
+          const id = (scope.kind === 'default' ? 't' : 'c') + now();
+          p2.push({ id, sid: newSid(), title: (v || '').trim() || `对话 ${p2.length + 1}`,
+                    ts: now(), group: lastGroup ? lastGroup.title : null });
+          save(true);
+          if (scope.kind === 'default') selectTempCard(id); else renderNav();
+          toast(`已新建对话 <b>${escapeHtml((v || '').trim() || '对话')}</b>`);
+        } }) }
+  ], anchor);
+}
+
+/// §20.9.3：点「默认」区块里那条文件夹行 → 改路径
+function editDefaultFolderPath() {
+  const d = defaultProject(); if (!d) return;
+  askModal({ title: '默认项目文件夹',
+    text: '默认 = 计算机用户的根目录。快捷键提问、内容参考、搜索里的「默认区」都用它。',
+    value: d.path, okText: '保存', onOk: v => {
+      const path = (v || '').trim(); if (!path) return;
+      d.path = path; save(true); renderNav(); renderContext();
+      toast(`默认项目文件夹已改为 <b>${escapeHtml(path)}</b>`);
+    }});
 }
 
 function renderNav() {
   const inProject = S.projectMode && !!proj();
-  $('#ctxProjectPath').textContent = inProject ? proj().path
-    : (S.projects.length ? `对话模式 · 已有 ${S.projects.length} 个项目` : '对话模式（没有项目）');
+  // §20.9.4：没选任何项目时，顶栏这一格给的就是**默认项目文件夹**（快捷键提问带的就是它）
+  const ctxPath = contextFolderPath();
+  const usingDefaultFolder = ctxPath === defaultFolderPath();
+  $('#ctxProjectPath').textContent = usingDefaultFolder ? `默认 ${ctxPath}` : ctxPath;
   $('#ctxProjectPath').title = $('#ctxProjectPath').textContent;
   // 编辑区开关 = 项目模式的唯一入口（§15.4 你拍板：不做"项目开关"，做"编辑区开关"）
   const sw = $('#editorSwitch');
@@ -255,8 +481,10 @@ function renderNav() {
   // ── 项目块 ──
   const host = $('#projectList'); host.innerHTML = '';
   const active = proj();
-  const ordered = [...S.projects].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  const ordered = [...realProjects()].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
   ordered.forEach(p => {
+    const scope = { kind: 'project', project: p };
+    const pool = poolOf(scope);
     const wrap = document.createElement('div');
     wrap.className = 'proj' + (p.open ? '' : ' closed');
     wrap.innerHTML = `
@@ -270,168 +498,77 @@ function renderNav() {
       </div>`;
     wrap.querySelector('.proj-name').textContent = p.name;
     wrap.querySelector('.proj-name').title = p.path;
-    wrap.querySelector('.proj-caret').onclick = e => { e.stopPropagation(); p.open = !p.open; save(); renderNav(); };
-    wrap.querySelector('.proj-row').onclick = () => selectProject(p.id);
+    // §20.1：**整行**（左箭头 / 中间名字 / 右侧空白）点下去都是折叠 ⇄ 展开 ——
+    // 展开的那一下顺带选中（选中才有上下文）。箭头不用单独绑：它冒泡到整行就是同一件事。
+    wrap.querySelector('.proj-row').onclick = () => {
+      if (p.open) { p.open = false; save(); renderNav(); }
+      else selectProject(p.id);
+    };
     wrap.querySelector('.proj-more').onclick = e => { e.stopPropagation(); openProjMenu(p, e.currentTarget); };
 
-    // 展开后先给两个分组：**对话**（针对这个项目的对话）｜**文件**（原来的树，逻辑不变）
+    // 展开后先给两个分组：**对话**（与默认区完全同一套，§20.10）｜**文件**（原来的树）
     const sub = document.createElement('div');
     sub.className = 'proj-subs' + (p.open ? '' : ' closed');
     sub.innerHTML = `
       <div class="sub-head" data-sub="chats">
-        <span class="tw">▶</span><span class="st">对话</span><span class="sc">${(p.chats||[]).length}</span>
-        <button class="sadd" title="给这个项目新建一段对话">＋</button>
+        <span class="tw">▶</span><span class="st">对话</span><span class="sc">${convCount(pool)}</span>
+        <button class="sadd" title="给这个项目新建分组 / 对话">＋</button>
       </div>
       <div class="sub-kids" data-kids="chats"></div>
       <div class="sub-head" data-sub="files">
         <span class="tw">▶</span><span class="st">文件</span><span class="sc">${countFiles(p.tree)}</span>
       </div>
       <div class="sub-kids" data-kids="files"></div>`;
-    sub.querySelector('.sub-head[data-sub="chats"]').onclick = ev => {
-      if (ev.target.classList.contains('sadd')) return;
-      sub.querySelector('[data-kids="chats"]').classList.toggle('closed');
-      sub.querySelector('.sub-head[data-sub="chats"] .tw').classList.toggle('open');
-    };
-    sub.querySelector('.sub-head[data-sub="files"]').onclick = () => {
-      sub.querySelector('[data-kids="files"]').classList.toggle('closed');
-      sub.querySelector('.sub-head[data-sub="files"] .tw').classList.toggle('open');
-    };
-    sub.querySelector('.sadd').onclick = ev => {
-      ev.stopPropagation();
-      askModal({ title: `给「${p.name}」新建对话`, text: '这一段参考的是**当前项目的内容**（+ 这段对话自己的上下文）。',
-        value: `对话 ${(p.chats || []).length + 1}`, okText: '新建', onOk: v => {
-          p.chats = p.chats || [];
-          p.chats.push({ id: 'c' + now(), sid: newSid(), title: (v||'').trim() || '对话', ts: now() });
-          save(true); renderNav(); toast('已新建项目内对话（带会话 ID）');
-        }});
-    };
-    // 对话分组里的卡
-    const chatBox = sub.querySelector('[data-kids="chats"]');
-    (p.chats || []).forEach(c => {
-      const row = document.createElement('div');
-      row.className = 'plan-row' + (S.activeProjChat === c.id ? ' is-on' : '');
-      row.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
-        ${c.pinned ? '<span class="ppin">📌</span>' : ''}
-        ${c.unread ? '<span class="punread" title="未读"></span>' : ''}
-        <button class="pmore" title="选项（含会话 ID）">⋯</button>`;
-      row.querySelector('.pname').textContent = c.title;
-      row.querySelector('.pmore').onclick = ev => { ev.stopPropagation(); openProjChatMenu(c, p, ev.currentTarget); };
-      row.oncontextmenu = ev => {
-        ev.preventDefault();
-        openProjChatMenu(c, p, ev.currentTarget, { x: ev.clientX + 4, y: ev.clientY + 4 });
-      };
-      row.onclick = () => {
-        S.activeProjChat = c.id; S.activePlan = null; S.tempMode = false;
-        // ⭐ 点**对话** → 编辑区**自动折叠**、并取消之前选中的文件（§18.5）
-        S.projectMode = false;
-        S.activeTab = -1; S.currentFile = null;
-        save(); renderNav(); renderContent(); renderComposerControls();
-        toast(`进入「${escapeHtml(c.title)}」（编辑区已折叠）—— 参考：项目内容 + 这段对话自己的上下文`);
-      };
-      chatBox.appendChild(row);
-    });
-    if (!(p.chats || []).length) {
-      chatBox.innerHTML = `<div class="plan-empty">还没有项目对话 —— 点右边 ＋（参考这个项目）</div>`;
-    }
-
-    // 文件分组：原来的树，一个字没改，只是放进「文件」这个显示区里
-    const fileBox = sub.querySelector('[data-kids="files"]');
-    renderTreeInto(p, p.tree, fileBox, '');
+    wireSubHead(sub, 'chats');
+    wireSubHead(sub, 'files');
+    sub.querySelector('.sadd').onclick = ev => { ev.stopPropagation(); openConvAddMenu(scope, ev.currentTarget); };
+    renderConvList(sub.querySelector('[data-kids="chats"]'), pool, scope);
+    renderTreeInto(p, p.tree, sub.querySelector('[data-kids="files"]'), '');
     wrap.appendChild(sub);
     host.appendChild(wrap);
   });
-  if (!S.projects.length) {
+  if (!realProjects().length) {
     host.innerHTML = `<div style="padding:8px 10px 12px;color:var(--ink3);font-size:12px">
       还没有项目文件夹。点右边 <b style="color:var(--ink2)">＋</b>：
       <b>空白项目（文件夹）</b> / <b>现有项目（文件夹）</b>。</div>`;
   }
 
-  // ── 「临时」块：加载的是**对话**不是文件夹（§13.2）；分组可展开/折叠（§14.1） ──
+  // ── 「默认」块（§20.9：原「临时」）：默认项目文件夹 + 与项目**完全同一套**对话（§20.10） ──
   const ph = $('#planList'); ph.innerHTML = '';
-  const defCard = document.createElement('div');
-  defCard.className = 'plan-row' + (S.activePlan === null || S.activePlan === 'default' ? ' is-on' : '');
-  defCard.innerHTML = `<span class="plan-dot" style="background:var(--ok)"></span>
-    <span class="pname">默认</span><span class="pdef">快捷键进的就是它</span>
-    <button class="pmore" title="选项">⋯</button>`;
-  defCard.title = '默认对话卡片：按主快捷键进来就是这一张';
-  defCard.onclick = () => selectTempCard('default');
-  defCard.querySelector('.pmore').onclick = e => { e.stopPropagation(); openCardMenu(null, e.currentTarget); };
-  ph.appendChild(defCard);
+  const defScope = { kind: 'default' };
 
-  const groups = S.plans.filter(x => x.isGroup).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-  const loose = S.plans.filter(x => !x.isGroup && !x.group);
-  const renderCard = pl => {
-    const el = document.createElement('div');
-    el.className = 'plan-row' + (S.activePlan === pl.id ? ' is-on' : '');
-    // 没置顶就不画 📌 —— 置顶的入口在 ⋯ 菜单里（§16.4）
-    el.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
-      ${pl.unread ? '<span class="punread" title="未读"></span>' : ''}
-      <button class="pmore" title="选项">⋯</button>`
-      + (pl.pinned ? `<span class="ppin" title="已置顶（点一下取消）">📌</span>` : '');
-    el.querySelector('.pname').textContent = pl.title;
-    el.querySelector('.pname').onclick = () => selectTempCard(pl.id);
-    el.querySelector('.pmore').onclick = e => { e.stopPropagation(); openCardMenu(pl, e.currentTarget); };
-    const pinEl = el.querySelector('.ppin');
-    if (pinEl) pinEl.onclick = e => {
-      e.stopPropagation(); pl.pinned = false; save(true); renderNav(); toast('已取消置顶');
-    };
-    el.onclick = () => selectTempCard(pl.id);
-    el.oncontextmenu = ev => {
-      ev.preventDefault();
-      openCardMenu(pl, ev.currentTarget, { x: ev.clientX + 4, y: ev.clientY + 4 });
-    };
-    return el;
-  };
-  // 分组：头行可点折叠，卡在 children 里
-  groups.forEach(g => {
-    const open = (S.groupOpen || {})[g.title] !== false;
-    const kids = S.plans.filter(x => !x.isGroup && x.group === g.title);
-    const head = document.createElement('div');
-    head.className = 'plan-group' + (open ? '' : ' closed');
-    head.innerHTML = `<span class="gc">▶</span><span class="gname"></span>
-      <span class="gcount">${kids.length} 张</span>`;
-    head.querySelector('.gname').textContent = g.title;
-    head.onclick = ev => {
-      if (ev.target.classList.contains('gmore')) return;
-      S.groupOpen = S.groupOpen || {};
-      S.groupOpen[g.title] = !(S.groupOpen[g.title] !== false);
-      save(); renderNav();
-    };
-    head.insertAdjacentHTML('beforeend', '<button class="gmore" title="分组选项">⋯</button>');
-    head.querySelector('.gmore').onclick = ev => {
-      ev.stopPropagation();
-      showMenu([
-        { label: '重命名分组', action: () => askModal({ title: '重命名分组', value: g.title, okText: '重命名',
-            onOk: v => { if (v && v.trim()) {
-              const old = g.title; g.title = v.trim();
-              S.plans.forEach(x => { if (x.group === old) x.group = g.title; });
-              if (S.groupOpen && old in S.groupOpen) { S.groupOpen[g.title] = S.groupOpen[old]; delete S.groupOpen[old]; }
-              save(true); renderNav(); } } }) },
-        { label: g.pinned ? '取消置顶分组' : '置顶分组（放最上面）', action: () => {
-            g.pinned = !g.pinned; save(true); renderNav(); } },
-        { sep: true },
-        { label: '删除分组', danger: true, action: () => confirmModal({ title: '删除这个分组？',
-            text: g.title + '\n（组里的对话卡会移到最外层，不会删对话）', okText: '删除', onOk: () => {
-              S.plans = S.plans.filter(x => x.id !== g.id);
-              S.plans.forEach(x => { if (x.group === g.title) x.group = null; });
-              save(true); renderNav(); } }) }
-      ], ev.currentTarget);
-    };
-    ph.appendChild(head);
-    const box = document.createElement('div');
-    box.className = 'plan-children' + (open ? '' : ' closed');
-    kids.forEach(k => box.appendChild(renderCard(k)));
-    ph.appendChild(box);
-  });
-  loose.forEach(c => ph.appendChild(renderCard(c)));
+  // ① 文件夹行 —— 点一下改路径（§20.9.3）
+  const folderRow = document.createElement('div');
+  folderRow.className = 'def-folder';
+  folderRow.innerHTML = `<span class="df-ico">📁</span><code class="df-path"></code>`;
+  folderRow.querySelector('.df-path').textContent = defaultFolderPath();
+  folderRow.title = `默认项目文件夹\n快捷键提问 / 内容参考都用它\n点一下修改路径`;
+  folderRow.onclick = editDefaultFolderPath;
+  ph.appendChild(folderRow);
 
-  if (!S.plans.length) {
-    ph.insertAdjacentHTML('beforeend',
-      `<div class="plan-empty">还没有别的对话卡 —— 点右边 ＋：<b>分组</b> / <b>新建</b>。</div>`);
+  // ② 对话 —— 与项目区**同一份** renderConvList（pool 不同而已）
+  const defConv = document.createElement('div');
+  defConv.className = 'conv-block';
+  ph.appendChild(defConv);
+  renderConvList(defConv, poolOf(defScope), defScope);
+
+  // ③ 文件 —— 与项目区**同一份** renderTreeInto + wireSubHead
+  const dp = defaultProject();
+  if (dp) {
+    const fileWrap = document.createElement('div');
+    fileWrap.className = 'proj-subs';
+    fileWrap.innerHTML = `
+      <div class="sub-head" data-sub="files">
+        <span class="tw">▶</span><span class="st">文件</span><span class="sc">${countFiles(dp.tree)}</span>
+      </div>
+      <div class="sub-kids" data-kids="files"></div>`;
+    wireSubHead(fileWrap, 'files');
+    renderTreeInto(dp, dp.tree, fileWrap.querySelector('[data-kids="files"]'), '');
+    ph.appendChild(fileWrap);
   }
 
   $('#gitLogCount').textContent = `${S.gitLog.length} 次提交`;
-  filterTree($('#navSearch') ? $('#navSearch').value : '');
+  filterTree($('#navSearch') ? $('#navSearch').value : '', S.searchScope);
   placeModeChips();                         // 项目模式下，模式条并进对话框
 }
 
@@ -568,6 +705,9 @@ function renderTreeInto(project, nodes, container, prefix) {
       row.innerHTML = `<span class="tw${n.open ? ' open' : ''}">▶</span>${treeIconSVG(rel, true)}
         <span class="n-name dir"></span>`;
       row.querySelector('.n-name').textContent = n.name;
+      // 目录行也要带 rel/pid —— 搜索结果里的「文件夹」靠它定位（§20.11.4）
+      row.dataset.rel = rel;
+      row.dataset.pid = project.id;
       row.onclick = () => { n.open = !n.open; save(); renderNav(); };
       row.oncontextmenu = ev => {
         ev.preventDefault();
@@ -633,29 +773,168 @@ function onFileRowClick(project, rel, ev) {
 }
 
 /// 侧栏搜索：只过滤树（在侧栏顶部那个框）
-function filterTree(q) {
-  const kw = (q || '').trim().toLowerCase();
-  $$('#projectList .node-row').forEach(row => {
+/// §20.11.5：范围 = 项目区 / 默认区 时，**照旧实时过滤左边那一棵树**
+/// （两个区块各一棵 —— 只过滤当前范围那一棵，另一棵原样显示）
+function filterTree(q, scope) {
+  const scopeName = scope || S.searchScope || 'project';
+  // 本地计算机范围跟左边这棵树无关（它搜的是整机），所以不过滤
+  const kw = scopeName === 'computer' ? '' : (q || '').trim().toLowerCase();
+  const container = scopeName === 'default' ? $('#planList') : $('#projectList');
+  $$('#navScroll .node-row').forEach(row => {
+    const inScope = !container || container.contains(row);
     const rel = row.dataset.rel || '';
     const name = (row.querySelector('.n-name')?.textContent || '').toLowerCase();
-    const hit = !kw || name.includes(kw) || rel.toLowerCase().includes(kw);
+    const hit = !inScope || !kw || name.includes(kw) || rel.toLowerCase().includes(kw);
     row.style.display = hit ? '' : 'none';
-    if (hit && kw && rel) {
+    if (inScope && hit && kw) {
       // 命中的行，把它的祖先文件夹都展开
       let el = row.parentElement;
-      while (el && el !== $('#projectList')) {
-        if (el.classList.contains('proj')) { el.classList.remove('closed'); break; }
+      while (el && el !== $('#navScroll')) {
+        if (el.classList.contains('proj-tree')) el.style.display = '';
+        else if (el.classList.contains('proj') || el.classList.contains('proj-subs')
+              || el.classList.contains('sub-kids')) el.classList.remove('closed');
+        if (el.classList.contains('proj')) break;
         el = el.parentElement;
       }
     }
   });
-  if (kw) $$('#projectList .proj').forEach(w => w.classList.remove('closed'));
+  if (kw && scopeName !== 'default') $$('#projectList .proj').forEach(w => w.classList.remove('closed'));
+  if (kw && scopeName === 'default') $$('#planList .proj-subs').forEach(w => w.classList.remove('closed'));
+}
+
+/* ============================================================
+   §20.11 顶部搜索：面板（范围 + 内容类型）+ 结果
+   ============================================================ */
+const SEARCH_SCOPES = {
+  project: '项目区',
+  default: '默认区',
+  computer: '本地计算机'
+};
+function searchProjectsFor(scope) {
+  return scope === 'default' ? [defaultProject()].filter(Boolean) : realProjects();
+}
+function walkTreeEntries(nodes, project, prefix, out) {
+  (nodes || []).forEach(n => {
+    const rel = prefix ? `${prefix}/${n.name}` : n.name;
+    if (n.type === 'dir') {
+      out.push({ kind: 'folder', project, rel, name: n.name });
+      walkTreeEntries(n.children || [], project, rel, out);
+    } else {
+      out.push({ kind: 'file', project, rel, name: n.name });
+    }
+  });
+  return out;
+}
+function openSearchPop(open) {
+  const p = $('#searchPop');
+  if (!p) return;
+  p.hidden = !open;
+  if (open) renderSearchPop();
+}
+function renderSearchPop() {
+  const scope = S.searchScope || 'project';
+  const types = S.searchTypes || { folder: true, file: true, content: false };
+  $$('#searchScopes button').forEach(b => b.classList.toggle('is-on', b.dataset.scope === scope));
+  $$('#searchTypes input').forEach(i => { i.checked = !!types[i.dataset.type]; });
+  runSearch();
+}
+function runSearch() {
+  const res = $('#searchResults'); if (!res) return;
+  const qRaw = ($('#navSearch') && $('#navSearch').value || '').trim();
+  const q = qRaw.toLowerCase();
+  const scope = S.searchScope || 'project';
+  const types = S.searchTypes || { folder: true, file: true, content: false };
+
+  if (scope === 'computer') {
+    res.innerHTML = `<div class="sp-note">本地计算机（含外置硬盘）<b>需要系统权限</b>：<br>`
+      + `落地版会遍历 <code>/</code> 与 <code>/Volumes</code> 下的每一卷。<br>`
+      + `浏览器原型没有文件系统访问权 —— <b>这里不编造文件</b>。</div>`;
+    return;
+  }
+  if (!qRaw) {
+    res.innerHTML = `<div class="sp-note">输入关键字开始搜 · 范围：<b>${SEARCH_SCOPES[scope]}</b><br>`
+      + `能搜到：${[types.folder && '文件夹', types.file && '文件', types.content && '文件内容'].filter(Boolean).join(' / ') || '（内容类型一个都没勾）'}</div>`;
+    return;
+  }
+
+  const entries = [];
+  searchProjectsFor(scope).forEach(p => walkTreeEntries(p.tree || [], p, '', entries));
+  const hits = [];
+  entries.forEach(e => {
+    const relL = e.rel.toLowerCase(), nameL = e.name.toLowerCase();
+    if (e.kind === 'folder') {
+      if (types.folder && (nameL.includes(q) || relL.includes(q))) hits.push({ type: 'folder', e });
+      return;
+    }
+    if (types.file && (nameL.includes(q) || relL.includes(q))) hits.push({ type: 'file', e });
+    if (types.content) {
+      const text = e.project.files[e.rel] || '';
+      const idx = text.toLowerCase().indexOf(q);
+      if (idx >= 0) {
+        const from = Math.max(0, idx - 28);
+        hits.push({ type: 'content', e, snippet: (from ? '…' : '') + text.slice(from, idx + qRaw.length + 60).replace(/\s+/g, ' ') });
+      }
+    }
+  });
+
+  if (!hits.length) {
+    res.innerHTML = `<div class="sp-note">「${escapeHtml(qRaw)}」在<b>${SEARCH_SCOPES[scope]}</b>里没有命中</div>`;
+    return;
+  }
+  const kindLabel = { folder: '文件夹', file: '文件', content: '内容' };
+  res.innerHTML = hits.slice(0, 40).map((h, i) =>
+    `<div class="sp-item" data-i="${i}">
+       <span class="sp-kind sp-k-${h.type}">${kindLabel[h.type]}</span>
+       <span class="sp-body"><span class="sp-name"></span>
+         <span class="sp-path"></span>${h.snippet ? `<span class="sp-snip"></span>` : ''}</span>
+     </div>`).join('');
+  $$('.sp-item', res).forEach((el, i) => {
+    const h = hits[i];
+    el.querySelector('.sp-name').textContent = h.e.name;
+    el.querySelector('.sp-path').textContent = `${h.e.project.name} · ${h.e.project.path}/${h.e.rel}`;
+    const sn = el.querySelector('.sp-snip');
+    if (sn) sn.textContent = h.snippet;
+    el.onclick = () => searchJump(h);
+  });
+}
+/// 点结果 = 跳过去：文件/内容 → 在编辑区打开；文件夹 → 展开定位（§20.11.4）
+function searchJump(hit) {
+  const p = hit.e.project, rel = hit.e.rel;
+  if (hit.type === 'folder') {
+    openDirPath(p, rel);
+    save(); renderNav();
+    locateFileInTree(rel, p.id);
+    openSearchPop(false);
+    return;
+  }
+  S.projectMode = true;
+  S.tempMode = false;
+  S.activeProjChat = null;
+  S.activePlan = null;
+  openInTab(p.id, rel);
+  save(); renderNav(); renderContent(); renderContext();
+  openSearchPop(false);
+}
+/// 把一条目录路径上的每一层都展开（搜索结果是「文件夹」时用）
+function openDirPath(project, rel) {
+  project.open = true;
+  let nodes = project.tree || [];
+  for (const part of rel.split('/')) {
+    const node = nodes.find(n => n.name === part && n.type === 'dir');
+    if (!node) return false;
+    node.open = true;
+    nodes = node.children || [];
+  }
+  return true;
 }
 
 /* ── 项目菜单（更多…） ───────────────────────── */
 let menuProject = null;
 function openProjMenu(p, anchor) {
+  // ⚠️ 这里**不做"再点一次就关"**：#menuProj 是**每行一颗 ⋯ 共用同一个菜单元素**，
+  // 按"开没开来判"会把"点另一行的 ⋯"误判成"关掉"（那颗菜单不会打开）。右键同理。
   menuProject = p;
+  closeMenus();                             // §17.1：任何菜单打开前先关掉别的
   const m = $('#menuProj');
   const r = anchor.getBoundingClientRect();
   m.hidden = false;
@@ -697,7 +976,9 @@ function projMenuAction(act) {
         okText: '删除', onOk: () => {
           S.projects = S.projects.filter(x => x.id !== p.id);
           if (S.activeProject === p.id) {
-            S.activeProject = S.projects[0] ? S.projects[0].id : null;
+            // 兜底要挑**真项目** —— 「默认」那个 isDefault 的项目文件夹永远在，拿它当兜底会把人带进默认区
+            const next = realProjects()[0] || null;
+            S.activeProject = next ? next.id : null;
             S.tabs = []; S.activeTab = 0; S.currentFile = null; S.focusFiles = [];
             S.projectMode = false;
           }
@@ -709,11 +990,12 @@ function projMenuAction(act) {
         okText: '归档', onOk: () => {
           S.projects = S.projects.filter(x => x.id !== p.id);
           if (S.activeProject === p.id) {
-            S.activeProject = S.projects[0] ? S.projects[0].id : null;
+            const next = realProjects()[0] || null;     // 同上：别拿「默认」当兜底
+            S.activeProject = next ? next.id : null;
             S.tabs = []; S.activeTab = 0; S.currentFile = null; S.focusFiles = [];
             S.tempMode = true;
             S.projectMode = false;                // 没有项目 → 回到对话模式（§12.0）
-            if (S.projects[0]) selectProject(S.projects[0].id);
+            if (next) selectProject(next.id);
           }
           save(true); renderAll();
           toast('已归档 —— 现在是对话模式，右边照常能聊');
@@ -723,6 +1005,9 @@ function projMenuAction(act) {
 }
 
 /* ── 两个加号，各两项（§13.2） ─────────────── */
+/// 项目 ＋ 的两项（空白项目 / 现有项目）。
+/// ⚠️ 分组 / 新建对话**不在这里** —— 那两项归 `openConvAddMenu(scope)`（§20.10.2），
+/// 因为它们是"对话层"的动作，两个区块共用一份，与"加一个项目文件夹"不是一回事。
 function addMenuAction(act) {
   closeMenus();
   if (act === 'newBlank') {
@@ -737,40 +1022,28 @@ function addMenuAction(act) {
         const path = (v || '').trim(); if (!path) return;
         createProject(path.split('/').filter(Boolean).pop() || '项目', path);
       }});
-  } else if (act === 'newCard') {
-    askModal({ title: '新建对话', text: '一张新的对话卡 —— 不带任何项目、不参考任何文件夹。',
-      value: `对话 ${S.plans.filter(x => !x.isGroup).length + 1}`, okText: '新建', onOk: v => {
-        const title = (v || '').trim() || `对话 ${S.plans.length + 1}`;
-        const lastGroup = [...S.plans].reverse().find(x => x.isGroup);
-        const id = 't' + now();
-        S.plans.push({ id, title, ts: now(), group: lastGroup ? lastGroup.title : null });
-        save(true); selectTempCard(id); toast(`已新建对话卡 <b>${escapeHtml(title)}</b>`);
-      }});
-  } else if (act === 'newGroup') {
-    askModal({ title: '新建分组', text: '把几张对话卡归到一个组里（只是分组，不是项目）。',
-      value: '新分组', okText: '创建', onOk: v => {
-        const title = (v || '').trim() || '新分组';
-        S.plans.push({ id: 'g' + now(), title, ts: now(), isGroup: true });
-        save(true); renderNav(); toast(`已建分组 <b>${escapeHtml(title)}</b> —— 之后「新建」的对话卡会归到它下面`);
-      }});
   }
 }
 
-/* ── 对话卡的选项菜单（完全参考小米：重命名/置顶/未读/…/删除，§14.6） ── */
+/* ── 对话卡的选项菜单（完全参考小米：重命名/置顶/未读/…/删除，§14.6）
+   ⭐ **两个区块共用这一份**（§20.10.3）——「默认」区与每个项目的对话分组
+   打开的是同一个菜单、跑的是同一个 action，唯一差别是 `scope`（改哪个池子、工作目录是谁）。 */
 let menuCardObj = null;          // null = 默认卡
-function openCardMenu(pl, anchor, xy) {
-  menuCardObj = pl;
+let menuCardScope = null;        // { kind:'default' } | { kind:'project', project }
+function openConvCardMenu(item, scope, anchor, xy) {
+  menuCardObj = item;
+  menuCardScope = scope;
   closeMenus();
   const m = $('#menuCard');
-  if (pl && !pl.sid) { pl.sid = newSid(); save(true); }
-  const pinLabel = pl ? (pl.pinned ? '取消置顶' : '置顶对话') : '置顶对话';
+  if (item && !item.sid) { item.sid = newSid(); save(true); }
+  const pinLabel = item ? (item.pinned ? '取消置顶' : '置顶对话') : '置顶对话';
   m.innerHTML = `
     <button data-act="rename">重命名</button>
     <button data-act="pin">${pinLabel}</button>
     <button data-act="unread">标记为未读</button>
     <button data-act="continue">在新对话中继续</button>
     <div class="menu-sep"></div>
-    <div class="menu-title">会话 ID${pl && pl.sid ? ' · ' + pl.sid : ''}</div>
+    <div class="menu-title">会话 ID${item && item.sid ? ' · ' + item.sid : ''}</div>
     <button data-act="copySid">复制会话 ID</button>
     <button data-act="sendSid">发送到会话…</button>
     <div class="menu-sep"></div>
@@ -784,16 +1057,23 @@ function openCardMenu(pl, anchor, xy) {
     <button data-act="export">导出对话记录</button>
     <div class="menu-sep"></div>
     <button data-act="delete" class="danger">删除对话</button>`;
-  $$('button', m).forEach(b => b.onclick = () => cardMenuAction(b.dataset.act));
+  $$('button', m).forEach(b => b.onclick = () => convCardMenuAction(b.dataset.act));
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
   const left = xy ? xy.x : (r ? r.left : 100), top = xy ? xy.y : (r ? r.bottom + 4 : 100);
   m.hidden = false;
   m.style.left = Math.max(6, Math.min(left, innerWidth - 240)) + 'px';
   m.style.top = Math.max(6, Math.min(top, innerHeight - 340)) + 'px';
 }
-function cardMenuAction(act) {
-  const pl = menuCardObj; closeMenus();
+function convCardMenuAction(act) {
+  const pl = menuCardObj, scope = menuCardScope; closeMenus();
+  if (!scope) return;
   const name = pl ? pl.title : '默认';
+  const folder = scope.kind === 'default' ? defaultFolderPath() : scope.project.path;
+  // 所有"从列表里拿掉"的动作都走这一处 —— 改哪个池子由 scope 决定
+  const removeFromPool = () => {
+    const rest = poolOf(scope).filter(x => x.id !== pl.id);
+    if (scope.kind === 'default') S.plans = rest; else scope.project.chats = rest;
+  };
   switch (act) {
     case 'rename':
       if (!pl) { toast('默认卡不能重命名'); return; }
@@ -815,22 +1095,23 @@ function cardMenuAction(act) {
       break;
     case 'toGroup': {
       if (!pl) { toast('默认卡不参与分组'); return; }
-      const gs = (S.plans || []).filter(x => x.isGroup).map(x => x.title);
-      if (!gs.length) { toast('还没有分组 —— 左栏 ＋ → 先建一个分组'); return; }
+      const gs = poolOf(scope).filter(x => x.isGroup).map(x => x.title);
+      if (!gs.length) { toast('还没有分组 —— 上面的 ＋ → 先建一个分组'); return; }
       askModal({ title: '放入分组', text: '可选：' + gs.join(' / ') + '\n（填组名；留空 = 移出分组）',
         value: pl.group || '', okText: '放进去', onOk: v => {
-          const name = (v || '').trim();
-          pl.group = name || null;
+          const gname = (v || '').trim();
+          pl.group = gname || null;
           save(true); renderNav();
-          toast(name ? `已把「${escapeHtml(pl.title)}」放入分组 <b>${escapeHtml(name)}</b>`
-                     : `已把「${escapeHtml(pl.title)}」移出分组`);
+          toast(gname ? `已把「${escapeHtml(pl.title)}」放入分组 <b>${escapeHtml(gname)}</b>`
+                      : `已把「${escapeHtml(pl.title)}」移出分组`);
         }});
       break; }
     case 'toProject': {
       const names = projList(); if (!names) return;
       askModal({ title: '移动至项目', text: '可选：' + names, value: '', okText: '移动', onOk: v => {
         if (!pl) { toast('默认卡不能移动'); return; }
-        S.plans = S.plans.filter(x => x.id !== pl.id);
+        removeFromPool();
+        if (scope.kind === 'default' && S.activePlan === pl.id) S.activePlan = 'default';
         save(true); renderNav();
         toast(`已把「${escapeHtml(pl.title)}」移至项目 ${escapeHtml((v||'').trim())}`);
       }});
@@ -838,8 +1119,9 @@ function cardMenuAction(act) {
     case 'archive':
       confirmModal({ title: '归档这段对话？', text: name + '\n（归档后不出现在这个列表里）', okText: '归档', onOk: () => {
         if (!pl) { toast('默认卡不归档'); return; }
-        S.plans = S.plans.filter(x => x.id !== pl.id);
-        if (S.activePlan === pl.id) S.activePlan = 'default';
+        removeFromPool();
+        if (scope.kind === 'default' && S.activePlan === pl.id) S.activePlan = 'default';
+        if (scope.kind === 'project' && S.activeProjChat === pl.id) S.activeProjChat = null;
         save(true); renderNav(); toast('已归档对话');
       }});
       break;
@@ -858,12 +1140,11 @@ function cardMenuAction(act) {
       break;
     case 'batch': toast('批量管理：多选改名 / 归档（原型先记一笔）'); break;
     case 'finder':
-      toast(pl && proj() ? `在 Finder 中显示 <code>${escapeHtml(proj().path)}</code>`
-                         : '这段对话没有工作目录（临时对话不带项目文件夹）');
+      toast(`在 Finder 中显示 <code>${escapeHtml(folder)}</code>`);
       break;
     case 'workdir':
-      if (proj()) { navigator.clipboard?.writeText(proj().path); toast(`已复制工作目录 <b>${escapeHtml(proj().path)}</b>`); }
-      else toast('这段对话没有工作目录（不带任何项目文件夹）');
+      navigator.clipboard?.writeText(folder);
+      toast(`已复制工作目录 <b>${escapeHtml(folder)}</b>`);
       break;
     case 'export':
       toast('导出对话记录：原型导出为 JSON（落 SwiftUI 走 NSPanel 存文件）');
@@ -871,46 +1152,18 @@ function cardMenuAction(act) {
     case 'delete':
       confirmModal({ title: '删除这段对话？', text: name + '\n不可恢复。', okText: '删除', onOk: () => {
         if (!pl) { toast('默认卡不能删'); return; }
-        S.plans = S.plans.filter(x => x.id !== pl.id);
-        if (S.activePlan === pl.id) S.activePlan = 'default';
+        removeFromPool();
+        if (scope.kind === 'default' && S.activePlan === pl.id) S.activePlan = 'default';
+        if (scope.kind === 'project' && S.activeProjChat === pl.id) S.activeProjChat = null;
         save(true); renderNav(); toast('已删除对话');
       }});
       break;
   }
 }
-/// 项目内对话的选项：与临时卡同一套，另外多两件 —— 会话 ID、发送到会话（§15.8 agent↔agent）
-function openProjChatMenu(c, p, anchor, xy) {
-  showMenu([
-    { label: '重命名', action: () => askModal({ title: '重命名对话', value: c.title, okText: '重命名',
-        onOk: v => { if (v && v.trim()) { c.title = v.trim(); save(true); renderNav(); } } }) },
-    { label: c.pinned ? '取消置顶' : '置顶对话', action: () => { c.pinned = !c.pinned; save(true); renderNav(); } },
-    { label: c.unread ? '标记为已读' : '标记为未读', action: () => { c.unread = !c.unread; save(true); renderNav(); } },
-    { label: '在新对话中继续', action: () => toast('在新对话中继续「' + c.title + '」') },
-    { sep: true },
-    { title: '会话 ID · ' + c.sid },
-    { label: '复制会话 ID', action: () => { navigator.clipboard?.writeText(c.sid); toast('已复制 ' + c.sid); } },
-    { label: '发送到会话…', action: () => askModal({ title: '发送到会话',
-        text: '填目标会话 ID（另一个对话的 ID）。发过去会自动激活那个会话窗口 —— agent 与 agent 之间靠它对话。',
-        value: '', okText: '发送', onOk: v => {
-          if (!v || !v.trim()) return;
-          toast(`已把任务发给 <b>${escapeHtml(v.trim())}</b> —— 那个会话会被自动激活`);
-        } }) },
-    { sep: true },
-    { label: '在 Finder 中显示', action: () => toast('在 Finder 中显示 ' + p.path) },
-    { label: '复制工作目录', action: () => { navigator.clipboard?.writeText(p.path); toast('已复制 ' + p.path); } },
-    { label: '导出对话记录', action: () => toast('导出这段对话的记录（原型导 JSON）') },
-    { sep: true },
-    { label: '删除对话', danger: true, action: () => confirmModal({ title: '删除这段对话？',
-        text: c.title, okText: '删除', onOk: () => {
-          p.chats = (p.chats || []).filter(x => x.id !== c.id);
-          save(true); renderNav(); toast('已删除');
-        } }) }
-  ], anchor, xy);
-}
 
 function projList() {
-  if (!S.projects.length) { toast('还没有项目可移动'); return null; }
-  return S.projects.map(x => x.name).join(' / ');
+  if (!realProjects().length) { toast('还没有项目可移动'); return null; }
+  return realProjects().map(x => x.name).join(' / ');
 }
 
 function selectTempCard(id) {
@@ -921,10 +1174,11 @@ function selectTempCard(id) {
   S.activeTab = -1; S.currentFile = null;   // 同时取消之前选中的文件
   S.projectMode = false;                     // 临时卡不在项目模式里
   // ⚠️ 不要把 activeProject 置空：标签还指着它的文件
-  save(); renderNav(); renderContent(); renderComposerControls();
+  save(); renderNav(); renderContent(); renderComposerControls(); renderContext();
   const pl = id === 'default' ? null : S.plans.find(x => x.id === id);
-  toast(id === 'default' ? '默认对话卡 —— 就是按快捷键进的那张'
-    : `对话卡：<b>${escapeHtml(pl ? pl.title : '')}</b> —— 不带项目、不参考文件夹`);
+  // §20.9.4：这一张卡带的项目文件夹 = **默认那个**（不是 activeProject）
+  toast(id === 'default' ? `默认对话卡 —— 按快捷键进的就是它<br>项目文件夹：<code>${escapeHtml(defaultFolderPath())}</code>`
+    : `对话卡：<b>${escapeHtml(pl ? pl.title : '')}</b><br>项目文件夹：<code>${escapeHtml(defaultFolderPath())}</code>（默认那个）`);
 }
 function createProject(name, path) {
   const id = 'p' + now();
@@ -995,12 +1249,11 @@ function renderTabs() {
   const host = $('#tabs'); host.innerHTML = '';
   S.tabs.forEach((t, i) => {
     const el = document.createElement('div');
-    el.className = 'tab' + (i === S.activeTab ? ' is-on' : '');
+    el.className = 'tab' + (i === S.activeTab ? ' is-on' : '') + (t.pinned ? ' is-pin' : '');
     const ic = iconFor(t.f);
     el.innerHTML = `<span class="fico ${ic.cls}"></span><span class="tname"></span><span class="tx" title="关闭标签">×</span>`;
     el.querySelector('.tname').textContent = t.f;
-    if (t.pinned) el.querySelector('.tname').classList.add('pinned');
-    el.title = t.f + (t.pinned ? '（已固定）' : '') + '\n右键：固定 / 复制 / 关闭…';
+    el.title = t.f + (t.pinned ? '（已固定 · 在最左、按钮变小；右键可取消）' : '') + '\n右键：固定 / 复制 / 关闭…';
     el.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
     el.onclick = e => {
       if (e.target.classList.contains('tx')) { closeTab(i); return; }
@@ -1062,8 +1315,11 @@ function renderContext() {
   const inProject = S.projectMode && proj();
   const card = S.activePlan && S.activePlan !== 'default'
     ? (S.plans.find(x => x.id === S.activePlan) || null) : null;
+  // §20.9.4：不在项目里时，这一行给的就是**默认项目文件夹**
+  const ctxPath = contextFolderPath();
+  const isDefaultCtx = ctxPath === defaultFolderPath() && !inProject;
   $('#chatCtxProject').textContent = inProject ? proj().path
-    : (card ? `对话卡 · ${card.title}` : '对话模式（无项目文件）');
+    : `${isDefaultCtx ? '默认 · ' : ''}${ctxPath}` + (card ? ` · ${card.title}` : '');
   $('#chatCtxProject').title = $('#chatCtxProject').textContent;
   renderCrumbs();
 }
@@ -1161,7 +1417,6 @@ function renderContent() {
   $('#tabbar').style.display = ''; $('#fileHead').style.display = '';
   $('#mdBar').style.display = kind === 'md' ? '' : 'none';
   $('#viewModes').style.display = kind === 'md' ? '' : 'none';
-  $('#btnHistory').style.display = '';
 
   if (S.tab === 'history') {
     $('#viewHistory').classList.add('is-on'); renderHistory();
@@ -1178,7 +1433,7 @@ function renderContent() {
 }
 
 function renderMdToolbar() {
-  const vm = { code: S.mdVariant === 'code', edit: S.mdVariant === 'edit', preview: S.mdVariant === 'preview' };
+  const vm = { edit: S.mdVariant === 'edit', preview: S.mdVariant === 'preview' };
   $$('#viewModes .vm').forEach(b => b.classList.toggle('is-on',
     S.mdVariant === 'split' ? b.dataset.vm === 'preview' : vm[b.dataset.vm]));
   $('#btnFoldCode').hidden = S.codeFolded;
@@ -1188,7 +1443,6 @@ function renderMdToolbar() {
 /// 工具栏上那颗「历史 N」的数字（§12.9：历史恢复按钮要看得见）
 function renderHistoryBadge() {
   const n = (S.history[histFile()] || []).length;
-  $('#histCount').textContent = n;
   const head = $('#histCountHead'); if (head) head.textContent = n;
   $('#histFile').textContent = histFile() ? fullPath(histFile()) : '—';
 }
@@ -1370,7 +1624,7 @@ function pushHistory(rel, source, content, summary, force = false) {
   list.unshift({ ts: now(), source, content, summary });
   if (list.length > 10) list.length = 10;              // 每文件留最近 10 次
   save();
-  if (document.body.contains($('#histCount'))) renderHistoryBadge();   // 工具栏那颗「历史 N」跟着变
+  renderHistoryBadge();                             // 文件头那颗「历史 N」跟着变
 }
 function renderHistory() {
   const rel = histFile(), list = S.history[rel] || [];
@@ -1606,8 +1860,11 @@ function sendChat() {
 function reply(q) {
   const p = proj(), focuses = S.focusFiles || [], focus = focuses[0];
   const fp = e => { const pr = projectById(e.p); return pr ? `${pr.path}/${e.f}` : e.f; };
-  const ctx = p ? `<code>${p.path}</code>` : '临时对话（不带项目）'
-    + (focuses.length ? ` · 重点参考 ${focuses.map(fp).map(x => `<code>${x}</code>`).join(' ')}` : '');
+  // §20.9.4：没选真项目时（默认卡 / 临时对话 / 编辑区关着），拼给模型的就是**默认项目文件夹**
+  const inProjectCtx = p && !S.tempMode && (S.projectMode || !!S.activeProjChat);
+  const ctx = inProjectCtx ? `<code>${p.path}</code>`
+    : `<code>${defaultFolderPath()}</code>`
+      + (focuses.length ? ` · 重点参考 ${focuses.map(fp).map(x => `<code>${x}</code>`).join(' ')}` : '');
   const demo = '本地演示回复 · 未接模型';
 
   if (p && /(脑图|思维导图|mindmap|分支|节点)/.test(q) && /(加|新增|添加|插入|来一个|来条)/.test(q)) {
@@ -1678,7 +1935,7 @@ function renderOptPanel() {
   } else {
     html += row('模型', 'deepseek-flash');
     html += row('音色', '默认', '在这一层选');
-    html += row('语速', '1.25×');
+    html += row('语速', rateLabelOf(S.speechRate));
     html += row('工具', '21 个');
   }
   p.innerHTML = `<div class="opt-head">选项 · ${S.mode === 'voice' ? '语音' : S.mode === 'video' ? '视频' : '图文'}</div>${html}
@@ -1762,13 +2019,15 @@ function showMenu(items, anchor, xy) {
 function openTabsPopover() {
   const m = $('#tabsPopover');
   if (!m.hidden) { m.hidden = true; return; }
+  closeMenus();                             // §17.1：开它之前先把别的菜单收掉
+  closeGitPanel();
   m.innerHTML = '';
   S.tabs.forEach((t, i) => {
     const it = document.createElement('div');
     it.className = 'mt-item' + (i === S.activeTab ? ' is-on' : '');
     it.innerHTML = `${treeIconSVG(t.f, false)}<span class="nm"></span>
       <span class="pin">${t.pinned ? '📌' : ''}</span>`;
-    it.querySelector('.nm').textContent = `${t.p}${t.f}`;
+    it.querySelector('.nm').textContent = `${(projectById(t.p) || {}).name || t.p} · ${t.f}`;
     it.onclick = () => { m.hidden = true; S.activeTab = i; S.currentFile = t.f;
       S.tab = extViewKind(t.f) === 'file' ? 'file' : extViewKind(t.f);
       save(); renderTabs(); renderContent(); renderContext(); renderNav(); };
@@ -1792,8 +2051,10 @@ function tabMenuAction(act) {
   const i = menuTabIndex; closeMenus();
   if (i === null || !S.tabs[i]) return;
   const t = S.tabs[i];
+  const activeBefore = S.tabs[S.activeTab];      // 增删/排序之后"当前打开的"还得是它
   switch (act) {
-    case 'pin': t.pinned = !t.pinned; break;
+    case 'pin': t.pinned = !t.pinned;
+      toast(t.pinned ? '已固定 —— 跑到最左侧、按钮变小' : '已取消固定'); break;
     case 'dup': S.tabs.splice(i + 1, 0, { ...t }); break;
     case 'close': S.tabs.splice(i, 1); break;
     case 'closeOthers': S.tabs = [t]; break;
@@ -1801,6 +2062,11 @@ function tabMenuAction(act) {
     case 'closeRight': S.tabs = S.tabs.slice(0, i + 1); break;
     case 'moveGroup': toast('移动到分组：原型里只记这次操作（落 SwiftUI 接标签分组）'); break;
   }
+  // §20.6 固定 = **移动到最左侧**：Array.sort 是稳定的 ——
+  // 固定的排前、未固定的排后，两组**内部**都保持原来的相对顺序。
+  S.tabs.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  const stillThere = S.tabs.indexOf(activeBefore);
+  if (stillThere >= 0) S.activeTab = stillThere;
   if (S.activeTab >= S.tabs.length) S.activeTab = S.tabs.length - 1;
   if (S.activeTab < 0) S.activeTab = 0;
   S.currentFile = (S.tabs[S.activeTab] || {}).f || null;
@@ -1865,23 +2131,14 @@ function bind() {
     toast(c.dataset.conv === 'temporary' ? '临时对话 —— 这一段不写进任何会话'
                                         : '连续对话 —— 接着这条会话往下聊');
   });
-  // 「＋新建」按你选中的地方走（§17.4）：
-  //  · 选的是**项目里的对话卡** → 新建一段**项目对话**（只有连续对话，落在「对话」分组里）
-  //  · 否则（临时区 / 默认卡） → 新建一张**临时对话卡**
-  $('#ccNew').onclick = () => {
+  // 「＋新建」按你选中的地方走（§17.4）—— 走的是**那一份** openConvAddMenu（§20.10.2）：
+  //  · 选的是**项目里的对话卡** → scope = 那个项目（分组/新建都落在它下面）
+  //  · 否则（默认区 / 默认卡）   → scope = 默认
+  $('#ccNew').onclick = e => {
+    e.stopPropagation();                    // 不挡住 document 的"点外面关菜单"
     const p = proj();
-    if (S.activeProjChat && p) {
-      askModal({ title: `给「${p.name}」新建对话`, text: '落在项目的「对话」分组里；只有**连续对话**这一种。',
-        value: `对话 ${(p.chats || []).length + 1}`, okText: '新建', onOk: v => {
-          p.chats = p.chats || [];
-          p.chats.push({ id: 'c' + now(), sid: newSid(),
-            title: (v || '').trim() || `对话 ${p.chats.length + 1}`, ts: now() });
-          save(true); renderNav();
-          toast(`已在项目「${escapeHtml(p.name)}」的对话分组里新建（连续对话）`);
-        }});
-      return;
-    }
-    addMenuAction('newCard');
+    if (S.activeProjChat && p) openConvAddMenu({ kind: 'project', project: p }, e.currentTarget);
+    else openConvAddMenu({ kind: 'default' }, e.currentTarget);
   };
   // 左栏顶部快捷入口（保留你旧项目那排）
   $$('#navQuick button').forEach(b => b.onclick = e => {
@@ -1898,19 +2155,22 @@ function bind() {
   $('#btnPlanSect').onclick = () => { S.planOpen = S.planOpen === false; save(); renderNav(); };
 
   const openMenuAt = (id, btn) => {
+    const m = $(id);
+    const wasOpen = !m.hidden;             // 下面的 closeMenus 会先关掉它，所以要**先记**
     closeMenus();                            // 互斥：不允许两个菜单同时开（§17.1）
     closeGitPanel();
-    const m = $(id), r = btn.getBoundingClientRect();
-    m.hidden = !m.hidden;
+    if (wasOpen) return;                     // 同一颗再点 = 关掉（否则永远关不上）
+    const r = btn.getBoundingClientRect();
+    m.hidden = false;
     m.style.left = Math.max(8, Math.min(r.left, innerWidth - 230)) + 'px';
     m.style.top = (r.bottom + 6) + 'px';
   };
   $('#btnAddProject').onclick = e => { e.stopPropagation(); openMenuAt('#menuAddProject', e.currentTarget); };
-  $('#btnAddPlan').onclick = e => { e.stopPropagation(); openMenuAt('#menuAddTemp', e.currentTarget); };
+  $('#btnAddPlan').onclick = e => { e.stopPropagation(); openConvAddMenu({ kind: 'default' }, e.currentTarget); };
   $('#btnEmptyAdd').onclick = () => addMenuAction('newBlank');
-  $('#btnEmptyPlan').onclick = () => addMenuAction('newCard');
+  $('#btnEmptyPlan').onclick = e => { e.stopPropagation(); openConvAddMenu({ kind: 'default' }, e.currentTarget); };
   $('#btnEmptyFolder').onclick = () => addMenuAction('useFolder');
-  $$('#menuAddProject button, #menuAddTemp button').forEach(b => b.onclick = () => addMenuAction(b.dataset.act));
+  $$('#menuAddProject button').forEach(b => b.onclick = () => addMenuAction(b.dataset.act));
   $$('#menuProj button').forEach(b => b.onclick = () => projMenuAction(b.dataset.act));
   $$('#menuTabs button').forEach(b => b.onclick = () => tabMenuAction(b.dataset.act));
   $$('#menuSettings button').forEach(b => b.onclick = () => settingsAction(b.dataset.act, b));
@@ -1934,6 +2194,8 @@ function bind() {
         && !e.target.closest('#btnCommitGit')) {
       const gp = document.getElementById('gitPanel'); if (gp) gp.hidden = true;
     }
+    // §20.11.7：点面板外面就关掉搜索面板
+    if (!e.target.closest('.nav-search-wrap')) openSearchPop(false);
   });
 
   // 页头右组：只有 角色 + 选项（音色在选项里，通话在顶栏固定格）
@@ -1962,8 +2224,25 @@ function bind() {
     if (e.key === 'Escape') e.stopPropagation();
   });
 
-  // 侧栏搜索（在侧栏顶部，过滤树）
-  $('#navSearch').oninput = e => filterTree(e.target.value);
+  // §20.11：点输入框 → 下面弹出「范围 + 内容类型 + 结果」；打字 → 跑搜索 + 照旧过滤树
+  $('#navSearch').addEventListener('focus', () => openSearchPop(true));
+  $('#navSearch').oninput = () => {
+    runSearch();
+    filterTree($('#navSearch').value, S.searchScope);
+  };
+  $('#navSearch').onkeydown = e => { if (e.key === 'Escape') { openSearchPop(false); e.stopPropagation(); } };
+  $$('#searchScopes button').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    S.searchScope = b.dataset.scope; save(true);
+    renderSearchPop();
+    filterTree($('#navSearch').value, S.searchScope);
+  });
+  $$('#searchTypes input').forEach(i => i.onchange = () => {
+    const t = S.searchTypes || { folder: true, file: true, content: false };
+    S.searchTypes = { ...t, [i.dataset.type]: i.checked };
+    save(true);
+    runSearch();
+  });
 
   $('#btnNewTab').onclick = () => { $('#navSearch').focus(); toast('用左栏顶部的搜索找文件，点它开新标签'); };
   $('#btnPath').onclick = () => {
@@ -1987,11 +2266,10 @@ function bind() {
   $('#btnFs2').onclick = toggleFullscreen;
   $('#btnFsExit').onclick = toggleFullscreen;
   $('#btnLayout').onclick = cycleLayout;
-  $('#btnLayout2').onclick = cycleLayout;
   // ⭐ 编辑区开关（一个按钮带滑块，点一下开、点一下关）—— 放顶栏最左
   $('#editorSwitch').onclick = () => {
     if (!S.projectMode) {
-      if (!S.projects.length) { addMenuAction('newBlank'); return; }
+      if (!realProjects().length) { addMenuAction('newBlank'); return; }
       S.projectMode = true; S.tempMode = false;
       save(); renderNav(); renderContent(); renderContext();
       toast('编辑区已开 —— 左 文件夹 ｜ 中 编辑 ｜ 右 对话');
@@ -2011,9 +2289,8 @@ function bind() {
   $$('#viewModes .vm').forEach(b => b.onclick = () => {
     const vm = b.dataset.vm;
     previewEditSession = false; clearTimeout(previewIdleTimer);
-    if (vm === 'code') S.mdVariant = 'code';
-    else if (vm === 'edit') S.mdVariant = 'edit';
-    else S.mdVariant = S.mdVariant === 'split' ? 'preview' : 'preview';
+    if (vm === 'edit') S.mdVariant = 'edit';
+    else S.mdVariant = 'preview';
     if (S.tab === 'mind') { S.tab = 'md'; }
     save(); renderContent();
     if (vm === 'edit') focusEditorAtLine(0);
@@ -2055,13 +2332,16 @@ function bind() {
     S.tab = kind === 'mind' ? 'mind' : kind === 'file' ? 'file' : 'md';
     save(); renderContent();
   };
-  $('#btnHistory').onclick = toggleHistoryView;
-  $('#btnHistoryHead').onclick = toggleHistoryView;   // 文件头常驻那颗（§13.6）
+  $('#btnHistoryHead').onclick = toggleHistoryView;   // 文件头那颗常驻的（§13.6 / §20.2：工具栏那颗已删）
   $('#btnTabsCollapse').onclick = e => { e.stopPropagation(); openTabsPopover(); };
   $('#btnSettings').onclick = e => {
-    e.stopPropagation(); closeMenus();
-    const m = $('#menuSettings'), r = e.currentTarget.getBoundingClientRect();
-    m.hidden = !m.hidden;
+    e.stopPropagation();
+    const m = $('#menuSettings');
+    const wasOpen = !m.hidden;             // 同上：先记再关
+    closeMenus();
+    if (wasOpen) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    m.hidden = false;
     m.style.left = Math.max(8, Math.min(r.left - 120, innerWidth - 220)) + 'px';
     m.style.top = (r.bottom + 6) + 'px';
     m.querySelector('[data-act="defLeft"]').classList.toggle('is-on', S.defaultLayout === 'left');
@@ -2276,6 +2556,32 @@ function renderModes() {
 
 /// ⭐ 输入框上方那一行（§13.1 完全照搬）：**左组恒定、右组随模式变**。
 /// 这就是他说的"图文右上角跟语音不一样、语音跟视频不一样" —— 三种模式各一套右组。
+
+/// §20.5：语速的档位与它的展开菜单（原项目有，之前只复现了按钮位置）
+const SPEECH_RATES = [0.75, 1, 1.25, 1.5, 2];
+const rateLabelOf = v => `${v}×`;
+function openRateMenu(anchor) {
+  const m = $('#menuRate');
+  const wasOpen = !m.hidden;              // 关掉别人的菜单会顺手关掉自己 —— 先记再关，否则永远关不上
+  closeMenus();
+  closeGitPanel();
+  if (wasOpen) return;
+  m.innerHTML = `<div class="menu-title">语速</div>`
+    + SPEECH_RATES.map(v => `<button data-rate="${v}"${S.speechRate === v ? ' class="is-on"' : ''}>`
+        + `${S.speechRate === v ? '✓ ' : ''}${rateLabelOf(v)}</button>`).join('');
+  $$('button', m).forEach(b => b.onclick = () => {
+    S.speechRate = parseFloat(b.dataset.rate);
+    save(true);
+    closeMenus();
+    renderComposerControls();
+    toast(`语速已设为 <b>${rateLabelOf(S.speechRate)}</b>`);
+  });
+  const r = anchor.getBoundingClientRect();
+  m.hidden = false;
+  m.style.left = Math.max(6, Math.min(r.left, innerWidth - 170)) + 'px';
+  m.style.top = (r.bottom + 6) + 'px';
+}
+
 function renderComposerControls() {
   // 左组：连续 ｜ 临时 ｜ ＋新建（连续=绿，临时=琥珀；与当前软件同一套极简竖线）
   $$('#ccLeft .cc[data-conv]').forEach(b => {
@@ -2285,23 +2591,31 @@ function renderComposerControls() {
   });
 
   // 右组：按模式给（屏幕只在临时对话下出现 —— 与 NotchHomeView 同一条规则）
+  // §20.4：**三种模式都没有「角色」** —— 原项目的那一行右组是 新建·屏幕·声音·语速，
+  //         角色的入口在对话窗页头的 👤 角色，不在这里。
   const conv = S.chatMode;
   const right = $('#ccRight');
   const item = (label, on = false) =>
     `<button class="cc${on ? ' is-on' : ''}" data-right="${label}">${label}</button><i class="vr"></i>`;
+  // §20.5：语速是**多档**，按钮文案在非默认档时带上当前档
+  const rateText = S.speechRate === 1 ? '语速' : `语速 ${rateLabelOf(S.speechRate)}`;
+  const rateBtn = `<button class="cc" data-rate-btn="1">${rateText}</button><i class="vr"></i>`;
   let html = '';
   if (S.mode === 'imageText') {
     if (conv === 'temporary') html += item('屏幕', true);
-    html += item('声音', true) + item('语速');
+    html += item('声音', true) + rateBtn;
   } else if (S.mode === 'voice') {
-    html += item('声音', true) + item('语速') + item('角色');
+    html += item('声音', true) + rateBtn;
   } else {                          // video
-    html += item('摄像', true) + item('屏幕', true) + item('语速') + item('角色');
+    html += item('摄像', true) + item('屏幕', true) + rateBtn;
   }
   right.innerHTML = html.replace(/<i class="vr"><\/i>$/, '');
-  $$('#ccRight .cc').forEach(b => b.onclick = () => {
-    b.classList.toggle('is-on');
-    toast(`${b.textContent}：${b.classList.contains('is-on') ? '开' : '关'}（原型只记状态）`);
+  $$('#ccRight .cc').forEach(b => {
+    if (b.dataset.rateBtn) { b.onclick = e => { e.stopPropagation(); openRateMenu(b); }; return; }
+    b.onclick = () => {
+      b.classList.toggle('is-on');
+      toast(`${b.textContent}：${b.classList.contains('is-on') ? '开' : '关'}（原型只记状态）`);
+    };
   });
 
   $('#composerModeLabel').textContent =
