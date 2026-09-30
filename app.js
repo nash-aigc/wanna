@@ -314,17 +314,17 @@ function renderNav() {
   const renderCard = pl => {
     const el = document.createElement('div');
     el.className = 'plan-row' + (S.activePlan === pl.id ? ' is-on' : '');
+    // 没置顶就不画 📌 —— 置顶的入口在 ⋯ 菜单里（§16.4）
     el.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
-      ${pl.pinned ? '<span class="ppin" title="已置顶">📌</span>' : ''}
       ${pl.unread ? '<span class="punread" title="未读"></span>' : ''}
-      <button class="pmore" title="选项">⋯</button>
-      <button class="ppin-btn" title="置顶">📌</button>`;
+      <button class="pmore" title="选项">⋯</button>`
+      + (pl.pinned ? `<span class="ppin" title="已置顶（点一下取消）">📌</span>` : '');
     el.querySelector('.pname').textContent = pl.title;
     el.querySelector('.pname').onclick = () => selectTempCard(pl.id);
     el.querySelector('.pmore').onclick = e => { e.stopPropagation(); openCardMenu(pl, e.currentTarget); };
-    el.querySelector('.ppin-btn').onclick = e => {
-      e.stopPropagation(); pl.pinned = !pl.pinned; save(true); renderNav();
-      toast(pl.pinned ? '已置顶' : '已取消置顶');
+    const pinEl = el.querySelector('.ppin');
+    if (pinEl) pinEl.onclick = e => {
+      e.stopPropagation(); pl.pinned = false; save(true); renderNav(); toast('已取消置顶');
     };
     el.onclick = () => selectTempCard(pl.id);
     return el;
@@ -395,6 +395,25 @@ function selectProject(id) {
   else { S.tabs = []; S.activeTab = 0; S.currentFile = null; S.focusFiles = []; }
   save(); renderNav(); renderTabs(); renderContent(); renderContext();
 }
+function removeFromTree(nodes, parts) {
+  const name = parts[parts.length - 1];
+  const i = nodes.findIndex(n => n.name === name && (parts.length === 1 || true));
+  if (i < 0) return false;
+  if (parts.length === 1) { nodes.splice(i, 1); return true; }
+  const n = nodes[i];
+  if (n.children && n.name === parts[0]) return removeFromTree(n.children, parts.slice(1));
+  return false;
+}
+function renameInTree(nodes, oldParts, newParts) {
+  const name = oldParts[oldParts.length - 1];
+  if (oldParts.length === 1) {
+    const n = nodes.find(x => x.name === name);
+    if (n) { n.name = newParts[newParts.length - 1]; return true; }
+    return false;
+  }
+  const n = nodes.find(x => x.name === oldParts[0]);
+  return n && n.children ? renameInTree(n.children, oldParts.slice(1), newParts.slice(1)) : false;
+}
 function countFiles(nodes) {
   let n = 0;
   nodes.forEach(x => { if (x.type === 'file') n++; else n += countFiles(x.children || []); });
@@ -448,6 +467,46 @@ function renderTreeInto(project, nodes, container, prefix) {
         save(); renderNav(); renderContent();
       };
       row.dataset.rel = rel;
+      row.oncontextmenu = ev => {
+        ev.preventDefault();
+        showMenu([
+          { label: '打开（在编辑区）', action: () => { S.projectMode = true; openInTab(project.id, rel);
+              save(); renderNav(); renderContent(); } },
+          { label: '定位（只选中不打开）', action: () => locateFileInTree(rel) },
+          { sep: true },
+          { label: '添加到对话（重点参考）', action: () => {
+              if (!S.focusFiles.includes(rel)) S.focusFiles.push(rel);
+              save(); renderNav(); renderContext();
+              toast(`已把 <b>${rel}</b> 加进这次对话的参考`); } },
+          { label: '复制路径', action: () => {
+              navigator.clipboard?.writeText(fullPath(rel, project));
+              toast('已复制 ' + fullPath(rel, project)); } },
+          { label: '在访达中显示', action: () => toast('在访达中显示 ' + fullPath(rel, project)) },
+          { sep: true },
+          { label: '重命名', action: () => askModal({ title: '重命名文件', text: rel, value: rel.split('/').pop(),
+              okText: '重命名', onOk: v => { if (!v || !v.trim()) return;
+                const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+                const nn = dir + v.trim();
+                if (nn in project.files) { toast('已经有同名文件了'); return; }
+                project.files[nn] = project.files[rel]; delete project.files[rel];
+                renameInTree(project.tree, rel.split('/'), nn.split('/'));
+                if (S.focusFiles.includes(rel)) S.focusFiles = S.focusFiles.map(x => x === rel ? nn : x);
+                if (relOfActiveTab() === rel) { S.tabs.forEach(t => { if (t.f === rel) t.f = nn; });
+                  S.currentFile = nn; S.tab = extViewKind(nn) === 'file' ? 'file' : extViewKind(nn); }
+                save(true); renderNav(); renderTabs(); renderContent(); renderContext();
+                toast('已重命名为 ' + nn); } }) },
+          { label: '删除文件', danger: true, action: () => confirmModal({ title: '删除这个文件？',
+              text: rel + '\n（原型只从这棵树里删，不动你磁盘）', okText: '删除', onOk: () => {
+                delete project.files[rel];
+                removeFromTree(project.tree, rel.split('/'));
+                S.tabs = S.tabs.filter(t => !(t.p === project.id && t.f === rel));
+                if (S.activeTab >= S.tabs.length) S.activeTab = Math.max(0, S.tabs.length - 1);
+                if (relOfActiveTab() !== rel) {} else S.currentFile = relOfActiveTab() || null;
+                S.focusFiles = S.focusFiles.filter(x => x !== rel);
+                save(true); renderNav(); renderTabs(); renderContent(); renderContext();
+                toast('已删除 ' + rel); } }) }
+        ], ev.currentTarget);
+      };
     } else {
       row.className += ' dir';
       row.innerHTML = `<span class="tw${n.open ? ' open' : ''}">▶</span>${treeIconSVG(rel, true)}
@@ -526,6 +585,9 @@ function closeMenus() {
   ['#menuAddProject','#menuAddTemp','#menuProj','#menuTabs','#menuSettings','#tabsPopover','#menuCard']
     .forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
   if (menuDyn) menuDyn.hidden = true;
+}
+/// 打开别的菜单/下拉时，顺手关掉提交面板（免得叠两层）
+function closeGitPanel() {
   const gp = document.getElementById('gitPanel'); if (gp) gp.hidden = true;
 }
 
@@ -1529,6 +1591,7 @@ let menuTabIndex = null;
 let menuDyn = null;
 /// 通用弹出菜单：给一串 {label, danger?, action?} 就画出来（分组菜单 / 卡片附加项都用它）
 function showMenu(items, anchor) {
+  closeGitPanel();
   if (!menuDyn) {
     menuDyn = document.createElement('div');
     menuDyn.className = 'menu'; menuDyn.id = 'menuDyn';
@@ -1655,6 +1718,7 @@ function bind() {
   $('#btnPlanSect').onclick = () => { S.planOpen = S.planOpen === false; save(); renderNav(); };
 
   const openMenuAt = (id, btn) => {
+    closeGitPanel();
     const m = $(id), r = btn.getBoundingClientRect();
     m.hidden = !m.hidden;
     m.style.left = Math.max(8, Math.min(r.left, innerWidth - 230)) + 'px';
@@ -1669,6 +1733,14 @@ function bind() {
   $$('#menuProj button').forEach(b => b.onclick = () => projMenuAction(b.dataset.act));
   $$('#menuTabs button').forEach(b => b.onclick = () => tabMenuAction(b.dataset.act));
   $$('#menuSettings button').forEach(b => b.onclick = () => settingsAction(b.dataset.act, b));
+  // 点外面必须关掉选项面板（§16.3 那个 bug：点外面不隐藏、会叠出两个）
+  document.addEventListener('click', e => {
+    const op = $('#optPanel');
+    if (op && !op.hidden && !e.target.closest('#optPanel') && !e.target.closest('#hcOptions')) {
+      op.hidden = true;
+      const h = $('#hcOptions'); if (h) h.classList.remove('is-on');
+    }
+  }, true);
   document.addEventListener('click', e => {
     if (!e.target.closest('.menu') && !e.target.closest('#btnAddProject') && !e.target.closest('#btnAddPlan')
         && !e.target.closest('.proj-more') && !e.target.closest('#btnSettings')
@@ -1677,7 +1749,8 @@ function bind() {
     if (!e.target.closest('#optPanel') && !e.target.closest('#hcOptions')) {
       const op = $('#optPanel'); if (op) { op.hidden = true; $('#hcOptions')?.classList.remove('is-on'); }
     }
-    if (!e.target.closest('#gitPanel') && !e.target.closest('#btnGitHist')) {
+    if (!e.target.closest('#gitPanel') && !e.target.closest('#btnGitHist')
+        && !e.target.closest('#btnCommitGit')) {
       const gp = document.getElementById('gitPanel'); if (gp) gp.hidden = true;
     }
   });
@@ -1748,7 +1821,6 @@ function bind() {
     const m = S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频';
     toast(`通话 = 当前<b>${m}</b>模式的通话（位置固定在刘海右侧，不随模式条移动）`);
   };
-  $('#btnClose').onclick = () => toast('（原型）关闭 = 回到原来的会话页');
   $('#btnCommitGit').onclick = commitGit;
 
   // md 工具栏
@@ -1845,74 +1917,155 @@ function bind() {
   });
 }
 
-/// 提交 = 一个**可恢复的快照**：短 ID + 时间 + 整份文件内容（§15.2）
+/// 提交 = 一个**可恢复的快照**：第几次 + 时间 + 改了哪些文件 + 整份内容（§16.1）
 function commitGit() {
   const p = proj(); if (!p) { toast('还没有项目可提交'); return; }
   const id = Math.random().toString(16).slice(2, 9);
   const files = JSON.parse(JSON.stringify(p.files));
-  S.gitLog.unshift({ id, ts: now(), projectId: p.id, name: p.name, path: p.path, files,
-                     count: Object.keys(files).length });
+  const seq = (S.gitLog[0] && S.gitLog[0].seq ? S.gitLog[0].seq : S.gitLog.length) + 1;
+  S.gitLog.unshift({ id, seq, ts: now(), projectId: p.id, name: p.name, path: p.path,
+                     files, count: Object.keys(files).length });
   if (S.gitLog.length > 30) S.gitLog.pop();
   save(true); renderNav();
-  toast(`已提交 <b>${id}</b> · ${fmtTime(now())} · ${Object.keys(files).length} 个文件 → 点顶栏「恢复」`);
+  // 提交完**直接把记录摊开** —— 你说点提交却看不到时间
+  const btn = $('#btnCommitGit');
+  openGitPanel(btn, true);
+  toast(`已提交 第 <b>${seq}</b> 次 · ${fmtTime(now())}`);
 }
-/// 恢复面板：每条一个 ID、一个时间、两个恢复入口（默认恢复**文件**）
-function openGitPanel(anchor) {
+
+/// 行级 diff（红 = 上一版的行，绿 = 这一版的行）
+function lineDiff(oldText, newText) {
+  const cap = 400;
+  const a = String(oldText ?? '').split('\n').slice(0, cap);
+  const b = String(newText ?? '').split('\n').slice(0, cap);
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { out.push({ t: '=', s: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: '-', s: a[i] }); i++; }
+    else { out.push({ t: '+', s: b[j] }); j++; }
+  }
+  while (i < m) out.push({ t: '-', s: a[i++] });
+  while (j < n) out.push({ t: '+', s: b[j++] });
+  return out;
+}
+/// 这一次提交**改了哪些文件**（相对上一次；首次 = 全部算新增）
+function changedFilesOf(index) {
+  const g = S.gitLog[index];
+  const prev = S.gitLog[index + 1];
+  const keys = Object.keys(g.files);
+  if (!prev) return keys.map(k => ({ file: k, kind: 'new', diff: lineDiff('', g.files[k]) }));
+  return keys.filter(k => prev.files[k] !== g.files[k])
+    .map(k => ({ file: k, kind: k in prev.files ? 'edit' : 'new',
+                 diff: lineDiff(prev.files[k] ?? '', g.files[k]) }));
+}
+function diffStat(diff) {
+  let add = 0, del = 0;
+  diff.forEach(l => { if (l.t === '+') add++; else if (l.t === '-') del++; });
+  return { add, del };
+}
+
+/// 提交记录面板（§16.1 卡片化 + §16.2 排版重心在时间与文件数）
+function openGitPanel(anchor, force) {
   let el = document.getElementById('gitPanel');
   if (!el) { el = document.createElement('div'); el.className = 'git-panel'; el.id = 'gitPanel'; document.body.appendChild(el); }
-  if (!el.hidden) { el.hidden = true; return; }
-  const rows = S.gitLog.length ? S.gitLog.map((g, i) => `
-    <div class="git-row">
-      <div class="git-meta"><code class="git-id" data-id="${g.id}">${g.id}</code>
-        <span>${fmtTime(g.ts)} · ${g.count} 个文件 · ${escapeHtml(g.name)}</span></div>
-      <div class="git-acts">
-        <button data-a="copy" data-i="${i}" title="复制这个 ID">⧉ ID</button>
+  if (!force && !el.hidden) { el.hidden = true; return; }
+  const rows = S.gitLog.length ? S.gitLog.map((g, i) => {
+    const seq = g.seq || (S.gitLog.length - i);
+    const changed = changedFilesOf(i);
+    const files = changed.map(c => {
+      const st = diffStat(c.diff);
+      return `<button class="gc-file" data-i="${i}" data-f="${escapeHtml(c.file)}" title="点开看改了哪几行">
+        <span class="gf-n">${escapeHtml(c.file.split('/').pop())}</span>
+        <span class="gf-add">+${st.add}</span><span class="gf-del">−${st.del}</span></button>`;
+    }).join('');
+    return `
+    <div class="git-card" data-i="${i}">
+      <div class="gc-top">
+        <b>第 ${seq} 次</b>
+        <span class="gc-time">${fmtTime(g.ts)}</span>
+        <span class="gc-count">${changed.length ? `改了 ${changed.length} 个文件` : `快照 ${g.count} 个文件`}</span>
+      </div>
+      <div class="gc-id"><code>${g.id}</code>
+        <button class="gc-copy" data-copy="${g.id}" title="复制 ID">⧉ 复制</button></div>
+      <div class="gc-files">${files || '<span class="gf-none">与上一版内容相同</span>'}</div>
+      <div class="gc-diff" hidden></div>
+      <div class="gc-acts">
         <button data-a="file" data-i="${i}">恢复文件</button>
         <button data-a="proj" data-i="${i}">恢复整个项目</button>
       </div>
-    </div>`).join('') : '<div class="git-empty">还没有提交 —— 点顶栏「提交」存一版。</div>';
+    </div>`;
+  }).join('') : '<div class="git-empty">还没有提交 —— 点「提交」存一版（存完这里就列出来）。</div>';
+
   el.innerHTML = `
-    <div class="git-head">提交历史 · 恢复
-      <button class="git-x" id="gitX">✕</button></div>
-    <div class="git-hint">提交是不是最好的恢复方式？<b>小改</b> → 恢复单个文件；<b>改了代码、想整体回退</b> →
-      恢复整个项目（等于 git 一次回退）。每条都有 <b>ID + 时间</b>，可复制。</div>
-    ${rows}`;
+    <div class="git-head">提交记录 · 恢复<button class="git-x" id="gitX">✕</button></div>
+    <div class="git-hint">每张卡片：<b>第几次 · 时间 · 改了几个文件</b>（重点），
+      ID 只是给你复制用的。点文件看<b>红绿 diff</b>（绿=这一版，红=上一版）。
+      小改 → 恢复文件；改了代码要整体回退 → 恢复整个项目。</div>
+    <div class="git-list">${rows}</div>`;
+
   $('#gitX').onclick = () => { el.hidden = true; };
-  $$('.git-acts button', el).forEach(b => b.onclick = () => {
+  $$('.gc-copy', el).forEach(b => b.onclick = () => {
+    navigator.clipboard?.writeText(b.dataset.copy);
+    toast(`已复制 ID <b>${b.dataset.copy}</b>`);
+  });
+  // 点文件 → 展开红绿 diff + 可一键在左侧定位
+  $$('.gc-file', el).forEach(b => b.onclick = () => {
+    const card = b.closest('.git-card');
+    const pane = card.querySelector('.gc-diff');
+    if (!pane.hidden && pane.dataset.f === b.dataset.f) { pane.hidden = true; return; }
+    const i = +b.dataset.i, file = b.dataset.f;
+    const changed = changedFilesOf(i).find(c => c.file === file);
+    if (!changed) { pane.hidden = false; pane.innerHTML = '（这个文件在这一版没有变化）'; return; }
+    const lines = changed.diff.slice(0, 300).map(l =>
+      `<div class="dl ${l.t === '+' ? 'add' : l.t === '-' ? 'del' : 'ctx'}">` +
+      `<span class="dl-t">${l.t === '+' ? '+' : l.t === '-' ? '−' : ' '}</span>` +
+      `<span class="dl-s">${escapeHtml(l.s) || ' '}</span></div>`).join('');
+    pane.dataset.f = file;
+    pane.hidden = false;
+    pane.innerHTML = `<div class="dl-head">
+        <span class="dl-file">${escapeHtml(file)}</span>
+        <button class="dl-loc" data-loc="${escapeHtml(file)}">在左侧定位</button>
+        <button class="dl-close">收起</button>
+      </div>${lines}` +
+      (changed.diff.length > 300 ? '<div class="dl-more">（只显示前 300 行）</div>' : '');
+    pane.querySelector('.dl-close').onclick = () => { pane.hidden = true; };
+    pane.querySelector('.dl-loc').onclick = () => { locateFileInTree(file); };
+  });
+  // 恢复
+  $$('.gc-acts button', el).forEach(b => b.onclick = () => {
     const g = S.gitLog[+b.dataset.i]; if (!g) return;
-    if (b.dataset.a === 'copy') {
-      navigator.clipboard?.writeText(g.id);
-      toast(`已复制提交 ID <b>${g.id}</b>`);
-      return;
-    }
     const p = S.projects.find(x => x.id === g.projectId) || proj();
     if (!p) { toast('这个项目已经不在了'); return; }
     if (b.dataset.a === 'proj') {
-      const before = JSON.stringify(p.files);
       p.files = JSON.parse(JSON.stringify(g.files));
-      pushHistory(relOfActiveTab() || Object.keys(g.files)[0], '恢复', fileContent(relOfActiveTab() || Object.keys(g.files)[0]),
-        `恢复整个项目到 ${g.id}`);
+      const rel = relOfActiveTab();
+      if (rel && rel in p.files) pushHistory(rel, '恢复', p.files[rel], `恢复整个项目到 ${g.id}`, true);
       save(true); renderNav(); renderContent();
-      toast(before === JSON.stringify(p.files)
-        ? `整个项目本来就是 <b>${g.id}</b> 那一版`
-        : `已把整个项目恢复到 <b>${g.id}</b>（${fmtTime(g.ts)}）`);
+      el.hidden = true;
+      toast(`已把整个项目恢复到 <b>第 ${g.seq || '?'} 次</b>（${fmtTime(g.ts)}）`);
     } else {
       const rel = relOfActiveTab();
-      if (!rel || !(rel in g.files)) { toast('当前打开的文件不在这一版里 —— 先点开那个文件，或用「恢复整个项目」'); return; }
-      const cur = p.files[rel];
+      if (!rel || !(rel in g.files)) { toast('当前文件不在这一版里 —— 先点开它，或用「恢复整个项目」'); return; }
       p.files[rel] = g.files[rel];
       pushHistory(rel, '恢复', g.files[rel], `恢复到提交 ${g.id}`, true);
       save(true); renderNav(); renderContent();
-      toast(cur === g.files[rel]
-        ? `当前文件本来就是 <b>${g.id}</b> 那一版`
-        : `已把 <b>${rel}</b> 恢复到 <b>${g.id}</b>`);
+      el.hidden = true;
+      toast(`已把 <b>${rel}</b> 恢复到 <b>${g.id}</b>（${fmtTime(g.ts)}）`);
     }
-    el.hidden = true;
   });
-  const r = anchor.getBoundingClientRect();
-  el.hidden = false;
-  el.style.left = Math.max(8, Math.min(r.left - 320, innerWidth - 420)) + 'px';
-  el.style.top = (r.bottom + 6) + 'px';
+  if (anchor) {
+    const r = anchor.getBoundingClientRect();
+    el.hidden = false;
+    el.style.left = Math.max(8, Math.min(r.left - 340, innerWidth - 440)) + 'px';
+    el.style.top = (r.bottom + 6) + 'px';
+  } else {
+    el.hidden = false;
+  }
 }
 
 function renderModes() {

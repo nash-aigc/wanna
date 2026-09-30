@@ -24,17 +24,18 @@
       </span>
     </div>
 
-    <!-- 通话：**固定在刘海右侧**（顶栏这一格位置永远不动，不跟随模式条） -->
+    <!-- 通话：**固定在刘海右侧**（位置永远不动，不跟随模式条） -->
     <button class="btn btn-ghost call-fixed" id="btnCallFixed"
             title="通话 = 当前模式的通话">📞 通话</button>
+    <!-- 对话位置：紧挨着对话按钮（你要求放它右边） -->
+    <button class="btn btn-ghost" id="btnLayout" title="对话位置：右 ⇄ 中 ⇄ 左">对话·右</button>
 
     <div class="topbar-right">
-      <button class="btn btn-ghost" id="btnLayout" title="对话位置">对话·右</button>
       <button class="btn btn-ghost" id="btnFs" title="全屏（⌘⇧F / F11）">⛶</button>
-      <button class="btn btn-ghost" id="btnGitHist" title="提交历史与恢复">恢复</button>
       <button class="btn btn-ghost" id="btnSettings" title="设置">⚙</button>
-      <button class="btn btn-ghost" id="btnCommitGit">提交</button>
-      <button class="btn btn-icon" id="btnClose" title="关闭，回到会话页">✕</button>
+      <!-- 提交 与 恢复 是一个逻辑，挨在一起 -->
+      <button class="btn btn-ghost" id="btnCommitGit" title="存一版并打开提交记录">提交</button>
+      <button class="btn btn-ghost" id="btnGitHist" title="提交记录与恢复">恢复</button>
     </div>
   </header>
 
