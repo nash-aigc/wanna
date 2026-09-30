@@ -10,7 +10,7 @@
 <body>
 <div class="app">
 
-  <!-- ── 顶部：模式条保持不变（图文 / 语音 / 视频） ── -->
+  <!-- ── 顶部：模式条不变（图文/语音/视频）+ 全功能 + 右上布局/全屏 ── -->
   <header class="topbar">
     <div class="brand">
       <span class="brand-dot"></span>
@@ -23,126 +23,186 @@
       <button class="chip" data-mode="voice">语音</button>
       <button class="chip" data-mode="video">视频</button>
     </div>
-
-    <!-- 入口按钮：**贴在模式条右端**（用户 2026-09-30：「放在视频按钮右侧」） -->
     <button class="btn btn-primary is-active" id="btnFullFeature" title="进入项目工作区">全功能</button>
 
-    <!-- 上下文条：项目绝对路径 + 重点参考（**可多选**，每个带 ×） -->
     <div class="ctx" id="ctxStrip">
-      <span class="ctx-item ctx-project" id="ctxProject" title="项目绝对路径">
-        <i class="ico ico-folder"></i><code id="ctxProjectPath">—</code>
+      <span class="ctx-item ctx-project" title="项目绝对路径">
+        <i class="ico ico-folder"></i><code id="ctxProjectPath">未添加项目</code>
       </span>
       <span class="ctx-sep"></span>
-      <span class="ctx-item ctx-focus" id="ctxFocus" title="重点参考（可多选）">
+      <span class="ctx-item ctx-focus" title="重点参考（可多选）">
         <i class="ico ico-star"></i>
         <span class="fchips" id="focusChips"></span>
       </span>
     </div>
 
     <div class="topbar-right">
-      <button class="btn btn-ghost" id="btnNewProject">新建项目</button>
-      <button class="btn btn-ghost" id="btnCommitGit">提交 git</button>
+      <button class="btn btn-ghost" id="btnLayout" title="对话位置：右侧 ⇄ 中间">对话·右</button>
+      <button class="btn btn-ghost" id="btnFs" title="全屏（⌘⇧F / F11）">⛶</button>
+      <button class="btn btn-ghost" id="btnCommitGit">提交</button>
       <button class="btn btn-icon" id="btnClose" title="关闭，回到会话页">✕</button>
     </div>
   </header>
 
-  <main class="main">
+  <main class="main" id="main">
 
-    <!-- ════ 左 80%：工作区 ════ -->
+    <!-- ════ 左：MiMo 式项目栏（256pt 实测宽度） ════ -->
+    <aside class="nav" id="navPane">
+      <div class="skel" id="skelNav" aria-hidden="true">
+        <i class="sk" style="width:56%"></i><i class="sk" style="width:78%"></i>
+        <i class="sk" style="width:64%"></i><i class="sk" style="width:70%"></i>
+        <i class="sk" style="width:50%"></i>
+      </div>
+
+      <div class="nav-head">
+        <button class="sect" id="btnProjSect">项目 <span class="caret" id="projCaret">⌄</span></button>
+        <button class="plus" id="btnAddProject" title="添加项目文件夹">＋</button>
+      </div>
+
+      <div class="nav-scroll" id="navScroll">
+        <!-- 不添加项目文件夹时的「默认卡片」：临时对话 -->
+        <button class="dflt-card" id="defaultCard" title="没有项目文件，直接和 AI 对话">
+          <i class="dico"></i>
+          <span class="dtext">临时对话</span>
+          <span class="dsub">不带任何项目文件</span>
+        </button>
+
+        <div id="projectList"></div>
+
+        <div class="nav-head nav-head-2" id="recentHead">
+          <button class="sect" id="btnRecentSect">最近 <span class="caret">⌄</span></button>
+        </div>
+        <div id="recentList"></div>
+      </div>
+
+      <div class="nav-foot">
+        <div class="foot-row"><span class="k">首屏</span><span id="loadStat">加载中…</span></div>
+        <div class="foot-row"><span class="k">快照</span><span id="gitLogCount">0 次提交</span></div>
+      </div>
+    </aside>
+
+    <div class="split split-v" id="vSplit" title="拖动调整宽度"></div>
+
+    <!-- ════ 中：内容区 ════ -->
     <section class="workspace" id="workspace">
+      <div class="skel" id="skelWork" aria-hidden="true">
+        <i class="sk" style="width:40%"></i><i class="sk" style="width:72%"></i>
+        <i class="sk" style="width:66%"></i><i class="sk" style="width:84%"></i>
+      </div>
 
-      <!-- 左：文件夹工作区（VSCode 式树） -->
-      <aside class="tree-pane">
-        <!-- 骨架：点开「全功能」后**立刻**可见的占位（§2 性能：骨架先出、内容后到） -->
-        <div class="skel" id="skelTree" aria-hidden="true">
-          <i class="sk" style="width:70%"></i><i class="sk" style="width:52%"></i>
-          <i class="sk" style="width:64%"></i><i class="sk" style="width:44%"></i>
-          <i class="sk" style="width:58%"></i><i class="sk" style="width:40%"></i>
+      <!-- 多标签 -->
+      <div class="tabbar" id="tabbar">
+        <div class="tabs" id="tabs"></div>
+        <button class="tab-add" id="btnNewTab" title="新建标签">＋</button>
+        <div class="tabbar-right">
+          <button class="tbtn" id="btnLayout2" title="对话位置：右侧 ⇄ 中间">◫</button>
         </div>
-        <div class="pane-head">
-          <span class="pane-title">文件夹</span>
-          <span class="pane-meta" id="treeCount"></span>
-        </div>
-        <div class="tree" id="fileTree" role="tree"></div>
-        <div class="pane-foot">
-          <div class="foot-row"><span class="k">项目</span><code id="treeProjectPath">—</code></div>
-          <div class="foot-row"><span class="k">快照</span><span id="gitLogCount">0 次提交</span></div>
-          <div class="foot-row"><span class="k">首屏</span><span id="loadStat">加载中…</span></div>
-        </div>
-      </aside>
+      </div>
 
-      <div class="v-split" id="vSplit" title="拖动调整宽度"></div>
-
-      <!-- 中：内容区 -->
-      <section class="content-pane">
-        <div class="skel" id="skelContent" aria-hidden="true">
-          <i class="sk" style="width:38%"></i>
-          <i class="sk" style="width:88%"></i><i class="sk" style="width:76%"></i>
-          <i class="sk" style="width:82%"></i><i class="sk" style="width:56%"></i>
+      <!-- 面包屑 + 搜索 + 完整路径 + 编辑/在访达/全屏 -->
+      <div class="file-head" id="fileHead">
+        <nav class="crumbs" id="crumbs"></nav>
+        <div class="fsearch">
+          <input id="fileSearch" placeholder="搜索文件…" spellcheck="false">
+          <div class="fsearch-drop" id="searchDrop" hidden></div>
         </div>
-        <div class="pane-head content-head">
-          <div class="tabs" id="contentTabs" role="tablist">
-            <button class="tab is-on" data-tab="md">正文</button>
-            <button class="tab" data-tab="mind">脑图</button>
-            <button class="tab" data-tab="history">历史 <i class="badge" id="historyBadge">0</i></button>
+        <button class="pathbtn" id="btnPath" title="点击复制完整路径">
+          <code id="fullPathLabel">—</code>
+        </button>
+        <div class="facts">
+          <button class="fbtn" id="btnEdit">编辑</button>
+          <button class="fbtn" id="btnHistory">历史</button>
+          <button class="fbtn" id="btnFinder">在访达中显示</button>
+          <button class="fbtn icon" id="btnFs2" title="全屏（⌘⇧F）">⛶</button>
+        </div>
+      </div>
+
+      <!-- Orca 式 markdown 工具栏 + 右上 查看代码/编辑/预览 -->
+      <div class="md-bar" id="mdBar">
+        <div class="md-tools">
+          <button data-md="h1">H1</button><button data-md="h2">H2</button><button data-md="h3">H3</button>
+          <span class="tsep"></span>
+          <button data-md="bold"><b>B</b></button><button data-md="italic"><i>I</i></button>
+          <span class="tsep"></span>
+          <button data-md="list">• 列表</button><button data-md="quote">❝ 引用</button>
+          <button data-md="link">🔗 链接</button><button data-md="image">🖼 图片</button>
+          <button data-md="code">&lt;/&gt; 代码</button>
+        </div>
+        <div class="viewmodes" id="viewModes">
+          <button class="vm" data-vm="code" title="只看源码">&lt;/&gt; 查看代码</button>
+          <button class="vm" data-vm="edit" title="编辑">✎ 编辑</button>
+          <button class="vm is-on" data-vm="preview" title="实时预览">预览</button>
+        </div>
+      </div>
+
+      <!-- 空态：没有项目 / 没有文件 -->
+      <div class="empty" id="viewEmpty">
+        <div class="empty-card">
+          <div class="empty-title" id="emptyTitle">还没有项目文件夹</div>
+          <div class="empty-sub" id="emptySub">加一个项目，所有对话都围绕它进行；<br>或者什么都不加 —— 直接在右边「临时对话」。</div>
+          <div class="empty-acts">
+            <button class="btn btn-primary" id="btnEmptyAdd">＋ 添加项目文件夹</button>
+            <button class="btn btn-ghost" id="btnEmptyTemp">临时对话</button>
           </div>
-          <div class="file-title" id="fileTitle">未打开文件</div>
-          <div class="tools" id="contentTools"></div>
         </div>
+      </div>
 
-        <!-- 正文：实时编辑 + 实时预览 -->
-        <div class="view view-md is-on" id="viewMd">
-          <div class="md-split" id="mdSplit">
-            <textarea class="md-source" id="mdSource" spellcheck="false"
-                      placeholder="在这里编辑 Markdown…（改动会自动备份历史）"></textarea>
-            <div class="v-gutter" id="mdGutter"></div>
-            <article class="md-preview" id="mdPreview"></article>
-          </div>
+      <!-- 正文：左源码 右预览（点预览进编辑，ESC 回预览） -->
+      <div class="view view-md" id="viewMd">
+        <div class="md-split" id="mdSplit">
+          <textarea class="md-source" id="mdSource" spellcheck="false" placeholder="在这里编辑 Markdown…（改动自动备份历史）"></textarea>
+          <div class="v-gutter"></div>
+          <article class="md-preview" id="mdPreview"></article>
         </div>
+      </div>
 
-        <!-- 脑图：mermaid 源码 + 图，代码可折叠 -->
-        <div class="view view-mind" id="viewMind">
-          <div class="mind-layout" id="mindLayout">
-            <div class="mind-code" id="mindCodePane">
-              <div class="code-head">
-                <span class="code-name">脑图.mmd <em>（mermaid）</em></span>
-                <button class="btn btn-mini" id="btnFoldCode">折叠代码 ▸ 只看图</button>
-              </div>
-              <textarea class="code-src" id="mindSource" spellcheck="false"></textarea>
-              <div class="code-err" id="mindErr"></div>
+      <!-- 其它文件：HTML / PDF / 代码 —— **直接在窗口里显示**（对 MiMo 的优化） -->
+      <div class="view view-file" id="viewFile">
+        <iframe id="previewFrame" title="文件预览" sandbox="allow-same-origin"></iframe>
+        <pre class="code-view" id="codeView" hidden></pre>
+      </div>
+
+      <!-- 脑图 -->
+      <div class="view view-mind" id="viewMind">
+        <div class="mind-layout" id="mindLayout">
+          <div class="mind-code" id="mindCodePane">
+            <div class="code-head">
+              <span class="code-name">脑图.mmd <em>(mermaid)</em></span>
+              <button class="btn btn-mini" id="btnFoldCode">折叠代码 ▸</button>
             </div>
-            <div class="mind-canvas-wrap" id="mindCanvasWrap">
-              <div class="mind-bar">
-                <span class="mind-hint">点节点可折叠 / 展开分支</span>
-                <button class="btn btn-mini" id="btnShowCode" hidden>展开代码</button>
-                <button class="btn btn-mini" id="btnFit">适应窗口</button>
-              </div>
-              <div class="mind-canvas" id="mindCanvas"></div>
+            <textarea class="code-src" id="mindSource" spellcheck="false"></textarea>
+            <div class="code-err" id="mindErr"></div>
+          </div>
+          <div class="mind-canvas-wrap">
+            <div class="mind-bar">
+              <span class="mind-hint">点节点折叠 / 展开分支</span>
+              <button class="btn btn-mini" id="btnShowCode" hidden>展开代码</button>
+              <button class="btn btn-mini" id="btnFit">适应窗口</button>
             </div>
+            <div class="mind-canvas" id="mindCanvas"></div>
           </div>
         </div>
+      </div>
 
-        <!-- 历史：自动备份 + 恢复 -->
-        <div class="view view-history" id="viewHistory">
-          <div class="hist-head">
-            <div>
-              <div class="hist-file" id="histFile">—</div>
-              <div class="hist-note">任何一次编辑（手改 / 对话改 / 恢复）都会自动存一版，这里只列<strong>当前文件</strong>的历史。</div>
-            </div>
-            <button class="btn btn-ghost" id="btnHistClear">清空本文件历史</button>
+      <!-- 历史 -->
+      <div class="view view-history" id="viewHistory">
+        <div class="hist-head">
+          <div>
+            <div class="hist-file" id="histFile">—</div>
+            <div class="hist-note">任何一次编辑（手改 / 对话改 / 恢复）自动存一版，<strong>每文件最近 10 次</strong>。</div>
           </div>
-          <ul class="hist-list" id="histList"></ul>
+          <button class="btn btn-ghost" id="btnHistClear">清空本文件历史</button>
         </div>
-      </section>
+        <ul class="hist-list" id="histList"></ul>
+      </div>
     </section>
 
-    <div class="h-split" id="hSplit" title="拖动调整对话宽度"></div>
+    <div class="split split-h" id="hSplit" title="按住左右拖动，调整对话宽度"></div>
 
-    <!-- ════ 右：对话窗口 ════ -->
+    <!-- ════ 右：对话 ════ -->
     <aside class="chat" id="chatPane">
       <div class="skel skel-chat" id="skelChat" aria-hidden="true">
-        <i class="sk" style="width:60%"></i><i class="sk" style="width:86%"></i>
-        <i class="sk" style="width:44%"></i>
+        <i class="sk" style="width:56%"></i><i class="sk" style="width:84%"></i><i class="sk" style="width:40%"></i>
       </div>
       <div class="chat-head">
         <div class="chat-modes" id="chatModes">
@@ -152,17 +212,14 @@
         </div>
         <div class="chat-status" id="chatStatus">围绕当前项目</div>
       </div>
-
       <div class="msgs" id="msgs"></div>
-
       <div class="chat-foot">
-        <div class="chat-ctx" id="chatCtx">
+        <div class="chat-ctx">
           <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">—</code></span>
           <span class="cctx" id="chatCtxFocusWrap"><i class="ico ico-star"></i><code id="chatCtxFocus">—</code></span>
         </div>
         <div class="composer">
-          <textarea id="chatInput" rows="2"
-            placeholder="围绕项目提问或让它改脑图…（回车发送）"></textarea>
+          <textarea id="chatInput" rows="2" placeholder="围绕项目提问，或让它改脑图…（回车发送）"></textarea>
           <div class="composer-bar">
             <span class="composer-hint" id="composerHint">回车发送 · Shift+回车换行</span>
             <button class="btn btn-primary" id="btnSend">发送</button>
@@ -171,6 +228,22 @@
       </div>
     </aside>
   </main>
+
+  <!-- 弹出菜单（添加项目 / 项目更多） -->
+  <div class="menu" id="menuAdd" hidden>
+    <button data-act="newBlank">＋ 新建空白项目</button>
+    <button data-act="useFolder">📁 使用现有文件夹</button>
+  </div>
+  <div class="menu" id="menuProj" hidden>
+    <button data-act="batch">批量管理</button>
+    <button data-act="finder">在访达中显示</button>
+    <button data-act="copyPath">复制工作路径</button>
+    <button data-act="reveal">文件位置</button>
+    <button data-act="rename">重命名项目</button>
+    <button data-act="pin">置顶项目</button>
+    <div class="menu-sep"></div>
+    <button data-act="archive" class="danger">归档</button>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
 </div>
