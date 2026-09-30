@@ -92,9 +92,14 @@ code{font-family:var(--mono);font-size:11.5px}
 /* ── 左侧项目栏（MiMo 复刻） ─────────────────── */
 .nav{flex:0 0 var(--nav-w);min-width:170px;max-width:38vw;display:flex;flex-direction:column;
   background:var(--nav-bg);border-right:1px solid var(--line);position:relative}
-.nav-head{height:34px;flex:0 0 34px;display:flex;align-items:center;justify-content:space-between;
-  padding:0 8px 0 16px}
-.nav-head-2{margin-top:10px;border-top:1px solid var(--line);padding-top:0}
+/* §22.4 「项目」「默认」= 两张**小卡片**，整卡可点（点了就是展开/折叠），右侧 ＋ 另算 */
+.nav-head{height:36px;flex:0 0 36px;display:flex;align-items:center;justify-content:space-between;
+  margin:6px 0 4px;padding:0 3px 0 6px;border-radius:9px;background:#1B1B1E;
+  border:1px solid var(--line2);cursor:pointer}
+.nav-head:hover{border-color:#3C3C42;background:#1F1F22}
+.nav-head .sect{flex:1;min-width:0;text-align:left;height:100%}
+.nav-head .caret{margin-left:2px}
+.nav-head-2{margin-top:12px;border-top:0;padding-top:0}
 .sect{font-size:12px;color:var(--ink3);display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px}
 .sect:hover{background:#1F1F22;color:var(--ink2)}
 .caret{font-size:10px;transition:transform .15s}
@@ -103,9 +108,6 @@ code{font-family:var(--mono);font-size:11.5px}
   display:flex;align-items:center;justify-content:center}
 .plus:hover{background:#242428;color:var(--ink)}
 .nav-scroll{flex:1;overflow:auto;padding:4px 8px 12px}
-.nav-foot{border-top:1px solid var(--line);padding:6px 12px;background:#111113}
-.foot-row{display:flex;gap:8px;font-size:11px;color:var(--ink3)}
-.foot-row .k{flex:0 0 30px}
 
 /* 默认卡片：不加项目文件夹 = 临时对话 */
 .dflt-card{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;
@@ -376,9 +378,10 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* 模式条的两个插槽：顶栏里 / 对话框里 */
 .modes-slot{display:flex;align-items:center;min-width:0}
-#modesSlotChat{width:100%}
-#modesSlotChat .modes{width:100%}
-#modesSlotChat .chip{flex:1}
+#modesSlotChat{width:auto}
+#modesSlotChat .modes{width:auto;gap:4px}
+/* §22.3：三颗**定宽靠左**，中间留白，角色/选项靠右 —— 不再 flex:1 撑满 */
+#modesSlotChat .chip{flex:0 0 62px;justify-content:center}
 #modesSlotChat:empty{display:none}
 .chat-head:has(#modesSlotChat .modes){padding-top:8px}
 
@@ -423,7 +426,7 @@ code{font-family:var(--mono);font-size:11.5px}
   background:#0F0F11;border:1px solid var(--line);border-radius:8px;flex:0 0 auto}
 .nav-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;font-size:12.5px}
 .ns-ico{font-size:11px;opacity:.6}
-.nav-head-2{margin-top:14px;border-top:1px solid var(--line);padding-top:0}
+.nav-head-2{margin-top:12px;border-top:0;padding-top:0}
 .nav-scroll{padding-top:2px}
 .plan-row{display:flex;align-items:center;gap:8px;height:34px;padding:0 8px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--ink2)}
 .plan-row:hover{background:#1F1F22;color:var(--ink)}
@@ -531,8 +534,9 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* 页头：左 模式条（搬进来的）· 右 通话/角色/选项 —— 与顶部导航同一套极简竖线 */
 .chat-nav{display:flex;align-items:center;gap:8px;height:38px;flex:0 0 38px;
+  justify-content:space-between;
   padding:0 8px 0 10px;border-bottom:1px solid var(--line)}
-.chat-nav .modes-slot{flex:1;min-width:0}
+.chat-nav .modes-slot{flex:0 0 auto;min-width:0}
 .chat-nav-right{display:flex;align-items:center;flex:0 0 auto}
 .hchip{height:22px;padding:0 8px;font-size:12.5px;color:var(--ink3);border-radius:0;
   display:inline-flex;align-items:center;gap:4px}
@@ -629,8 +633,9 @@ code{font-family:var(--mono);font-size:11.5px}
    ============================================================ */
 /* 对话模式 / 隐藏编辑区：**只有 左栏 + 对话**，中间不留任何东西 */
 .main.no-workspace .workspace,
-.main.no-workspace .split-h,
-.main.no-workspace .split-v{display:none}
+.main.no-workspace .split-h{display:none}
+/* §22.6 编辑区关着时，左栏**照样能拖宽** —— 所以 split-v 不跟着藏 */
+.main.no-workspace .split-v{display:block}
 .main.no-workspace .chat{flex:1 1 auto;max-width:none;border-left:1px solid var(--line)}
 /* 模式条永远在对话窗里（跟着对话窗位置走） */
 #modesSlotTop{display:none}
@@ -830,18 +835,19 @@ code{font-family:var(--mono);font-size:11.5px}
 .search-pop{position:absolute;top:36px;left:0;right:0;background:#1A1A1C;
   border:1px solid var(--line2);border-radius:10px;padding:8px 8px 6px;
   box-shadow:0 16px 34px rgba(0,0,0,.55);max-height:min(60vh,420px);display:flex;flex-direction:column}
-.sp-title{font-size:10.5px;color:var(--ink3);letter-spacing:.06em;margin:2px 2px 5px}
-.sp-scopes{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
-.sp-scopes button{text-align:left;height:26px;padding:0 8px;border-radius:7px;font-size:12px;
-  color:var(--ink2);border:1px solid transparent;background:#141416}
-.sp-scopes button:hover{background:#242428;color:var(--ink)}
-.sp-scopes button.is-on{color:#CFE4FF;border-color:rgba(10,132,255,.55);background:rgba(10,132,255,.13)}
-.sp-types{display:flex;flex-wrap:wrap;gap:4px 10px;margin-bottom:7px}
-.sp-types label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);cursor:pointer}
-.sp-types input{accent-color:var(--accent)}
-.sp-results{overflow:auto;border-top:1px solid var(--line);padding-top:6px;min-height:34px}
-.sp-note{font-size:11.5px;color:var(--ink3);line-height:1.65;padding:4px 2px 6px}
-.sp-note code{font-family:var(--mono);color:var(--focus)}
+/* §22.8 两行：标题 + 一组**长方形选项按钮**（不再是竖排，也不再是勾选框） */
+.sp-row{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.sp-title{flex:0 0 auto;font-size:11px;color:var(--ink3);letter-spacing:.04em}
+.sp-def{margin-left:auto;flex:0 0 auto;font-size:10.5px;color:var(--ink3);
+  padding:2px 6px;border-radius:5px;background:#141416;border:1px solid var(--line)}
+.sp-scopes,.sp-types{display:flex;gap:5px;min-width:0;flex-wrap:wrap}
+.sp-scopes button,.sp-types button{height:24px;padding:0 9px;border-radius:7px;font-size:12px;
+  color:var(--ink3);border:1px solid var(--line2);background:#141416;white-space:nowrap}
+.sp-scopes button:hover,.sp-types button:hover{background:#242428;color:var(--ink2);border-color:#3C3C42}
+.sp-scopes button.is-on,.sp-types button.is-on{
+  color:#CFE4FF;border-color:rgba(10,132,255,.65);background:rgba(10,132,255,.16);font-weight:600}
+.sp-results{overflow:auto;border-top:1px solid var(--line);padding-top:6px;min-height:10px}
+/* §22.8.3 说明文字全删了 —— 结果区为空就是没结果，不再解释 */
 .sp-item{display:flex;gap:7px;align-items:flex-start;padding:5px 6px;border-radius:7px;cursor:pointer}
 .sp-item:hover{background:#242428}
 .sp-kind{flex:0 0 auto;font-size:10px;line-height:15px;height:15px;padding:0 5px;border-radius:4px;
@@ -923,3 +929,195 @@ code{font-family:var(--mono);font-size:11.5px}
 /* §21.4 菜单可能比一屏还高（标签菜单 18 项）—— 给它封顶并自己滚，
    否则贴边之后最后几项仍在屏幕外，点不到 */
 .menu{max-height:calc(100vh - 16px);overflow:auto}
+
+/* §22.9.7 终端面板（＋→终端 / Claude Code / Pi / 快捷指令的「终端」动作都用它） */
+.term-panel{position:absolute;left:0;right:0;bottom:0;height:46%;z-index:30;
+  display:flex;flex-direction:column;background:#0B0B0D;border-top:1px solid var(--line2);
+  box-shadow:0 -10px 30px rgba(0,0,0,.5)}
+.term-head{display:flex;align-items:center;gap:8px;height:30px;flex:0 0 30px;
+  padding:0 8px 0 11px;background:#141416;border-bottom:1px solid var(--line)}
+.term-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 9px}
+.term-title{font-size:12px;color:var(--ink);font-weight:600}
+.term-path{font-size:11px;color:var(--ink3);font-family:var(--mono);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.term-close{width:20px;height:20px;border-radius:5px;color:var(--ink3);font-size:12px;
+  display:flex;align-items:center;justify-content:center}
+.term-close:hover{background:#2A2A2E;color:var(--ink)}
+.term-body{flex:1;margin:0;padding:10px 12px;overflow:auto;font-family:var(--mono);
+  font-size:12px;line-height:1.65;color:#C6D4E8;white-space:pre-wrap;word-break:break-word}
+.term-body .t-cmd{color:#4ADE80}
+.term-body .t-dim{color:#6B6B74}
+.term-body .t-agent{color:#8FC6FF}
+/* §22.9.5 ＋ 菜单里的分组标题 */
+#menuNewTab .menu-title{padding-left:10px}
+
+/* ============================================================
+   §22.14 浏览器页（排版照 Orca：顶栏 chrome + 正文；左侧树不变）
+   细节取自 reference/orca —— 工具栏按钮顺序与 ⋯ 菜单逐项对齐它的
+   src/renderer/src/components/browser-pane/assemble-chrome/browser-chrome-toolbar.tsx:212-267
+   ============================================================ */
+.view-browser{gap:0}
+.br-toolbar{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:40px;
+  padding:0 8px;background:var(--nav-bg);border-bottom:1px solid var(--line)}
+.br-nav{display:flex;gap:2px;flex:0 0 auto}
+.br-nav button{width:26px;height:26px;border-radius:7px;color:var(--ink3);font-size:14px;
+  display:flex;align-items:center;justify-content:center}
+.br-nav button:hover{background:#242428;color:var(--ink)}
+.br-addr{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:7px;height:28px;
+  padding:0 10px;border-radius:9px;background:#0F0F11;border:1px solid var(--line)}
+.br-addr:focus-within{border-color:rgba(10,132,255,.6)}
+.br-ico{font-size:12px;opacity:.7;flex:0 0 auto}
+.br-addr input{flex:1;min-width:0;border:0;outline:0;background:transparent;
+  font-size:12.5px;color:var(--ink);font-family:var(--mono)}
+.br-tools{display:flex;align-items:center;gap:3px;flex:0 0 auto}
+.br-import{height:26px;padding:0 9px;border-radius:8px;font-size:12px;color:var(--ink2);
+  background:#1F1F22;border:1px solid var(--line2);display:flex;align-items:center;gap:5px}
+.br-import:hover{background:#242428;color:var(--ink)}
+.br-tool{width:26px;height:26px;border-radius:7px;color:var(--ink3);font-size:13px;
+  display:flex;align-items:center;justify-content:center}
+.br-tool:hover{background:#242428;color:var(--ink)}
+.br-tool.is-on{background:rgba(10,132,255,.18);color:#CFE4FF;border:1px solid rgba(10,132,255,.55)}
+.br-body{flex:1;min-height:0;position:relative;background:#0A0A0C;display:flex;
+  align-items:center;justify-content:center;overflow:hidden}
+.br-empty{text-align:center;color:var(--ink3)}
+.br-empty-ico{font-size:34px;opacity:.5;margin-bottom:8px}
+.br-empty-t{font-size:15px;color:var(--ink2);font-weight:600}
+.br-empty-s{font-size:12px;margin-top:4px}
+#brFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff;display:block}
+#brCanvas{position:absolute;inset:0;cursor:crosshair;z-index:3}
+.br-hint{position:absolute;left:10px;top:10px;z-index:4;padding:5px 9px;border-radius:7px;
+  background:rgba(10,10,12,.9);border:1px solid var(--line2);color:#8FC6FF;font-size:11.5px;
+  pointer-events:none;max-width:70%}
+.br-body.vp-frame{align-items:flex-start;justify-content:center;background:#111113;padding-top:14px}
+.br-body.vp-frame #brFrame,.br-body.vp-frame #brEmpty{position:static;inset:auto;
+  border:1px solid var(--line2);border-radius:6px;overflow:hidden}
+.br-body.vp-frame #brFrame{width:var(--vp-w);height:var(--vp-h);max-width:100%}
+.br-body.vp-frame #brEmpty{width:var(--vp-w);height:var(--vp-h);max-width:100%;
+  display:flex;flex-direction:column;align-items:center;justify-content:center}
+/* §22.14 浏览器标签的图标 + ⋯ 菜单里的副标题 */
+.fico.web{background:#3B82F6;color:#fff}
+#menuBrMore button,#menuBrCookie button,#menuBrViewport button{
+  display:flex;align-items:center;justify-content:space-between;gap:14px}
+.mi-sub{font-size:11px;color:var(--ink3);font-family:var(--mono)}
+
+/* §22.10 拆分半屏（只读）+ §22.7 拖动中的标签 */
+.ws-split{position:absolute;top:0;bottom:0;width:42%;z-index:12;display:flex;flex-direction:column;
+  background:#0F0F11;border-right:1px solid var(--line2)}
+.ws-split[data-side="right"]{right:0;left:auto;border-right:0;border-left:1px solid var(--line2)}
+.ws-split[data-side="left"]{left:0;right:auto}
+.ws-split-head{display:flex;align-items:center;gap:8px;height:32px;flex:0 0 32px;padding:0 8px;
+  background:#141416;border-bottom:1px solid var(--line)}
+.ws-split-name{flex:1;min-width:0;font-size:12px;color:var(--ink2);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ws-split-close{width:20px;height:20px;border-radius:5px;color:var(--ink3);font-size:12px;
+  display:flex;align-items:center;justify-content:center}
+.ws-split-close:hover{background:#2A2A2E;color:var(--ink)}
+.ws-split-body{flex:1;min-height:0;overflow:auto;padding:14px 16px;font-size:13px;line-height:1.7;
+  color:var(--ink2)}
+.ws-split-body h1{font-size:20px;color:var(--ink);margin:0 0 10px}
+.ws-split-body h2{font-size:16px;color:var(--ink);margin:16px 0 8px}
+.ws-split-body h3{font-size:14px;color:var(--ink);margin:14px 0 6px}
+.ws-split-body p{margin:8px 0}
+.ws-split-body code{font-family:var(--mono);background:#1B1B1F;border:1px solid var(--line);
+  border-radius:4px;padding:1px 5px;font-size:12px}
+.ws-split-body pre{background:#121214;border:1px solid var(--line);border-radius:8px;
+  padding:10px 12px;overflow:auto;font-family:var(--mono);font-size:12px}
+.ws-split-body ul,.ws-split-body ol{padding-left:20px;margin:8px 0}
+.ws-split-body table{border-collapse:collapse;margin:8px 0}
+.ws-split-body td,.ws-split-body th{border:1px solid var(--line2);padding:4px 8px;font-size:12px}
+.tab.dragging,.tv-item.dragging{opacity:.45;outline:1px dashed var(--accent)}
+
+/* §22.13 排队 / 打断 */
+.q-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.q-label{font-size:11px;color:var(--ink3)}
+.q-opt{height:22px;padding:0 9px;border-radius:6px;font-size:11.5px;color:var(--ink3);
+  border:1px solid var(--line2);background:#141416}
+.q-opt:hover{background:#242428;color:var(--ink2)}
+.q-opt.is-on{color:#CFE4FF;border-color:rgba(10,132,255,.6);background:rgba(10,132,255,.16);font-weight:600}
+.q-badge{min-width:20px;height:20px;padding:0 6px;border-radius:10px;font-size:11px;font-weight:700;
+  color:#08172B;background:#7DD3FC;line-height:20px}
+.q-badge:hover{background:#A5DDFC}
+
+/* §22.11 快捷指令（标签条最右，＋ 的右边） */
+.qc-split{display:flex;align-items:center;flex:0 0 auto;margin-left:4px;
+  border:1px solid var(--line2);border-radius:8px;overflow:hidden;background:#1A1A1C}
+.qc-split:hover{border-color:#3C3C42}
+.qc-run{height:24px;padding:0 8px;font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:5px}
+.qc-run:hover{background:#242428;color:var(--ink)}
+.qc-run #qcName{max-width:86px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qc-pick{width:20px;height:24px;font-size:11px;color:var(--ink3);border-left:1px solid var(--line2)}
+.qc-pick:hover{background:#242428;color:var(--ink)}
+
+/* §22.11 新建快捷命令模态（字段照用户那张图，样式仍走本软件 .modal） */
+.qc-modal{width:460px;max-width:92vw;padding:18px 20px 14px}
+.qc-sub{font-size:12px;color:var(--ink3);margin:-4px 0 14px}
+.qc-label{font-size:12px;color:var(--ink2);margin:10px 0 5px}
+.qc-grid{display:grid;grid-template-columns:1fr 186px;gap:12px;align-items:end}
+.qc-col{min-width:0}
+.qc-seg{display:flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden;height:34px}
+.qc-seg button{flex:1;font-size:13px;color:var(--ink3);background:#141416}
+.qc-seg button+button{border-left:1px solid var(--line2)}
+.qc-seg button:hover{background:#242428;color:var(--ink2)}
+.qc-seg button.is-on{background:rgba(10,132,255,.18);color:#CFE4FF;font-weight:600}
+.qc-cmd{width:100%;min-height:150px;resize:vertical;background:#121214;border:1px solid var(--line2);
+  border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:13px;color:var(--ink);
+  outline:none;line-height:1.6}
+.qc-cmd:focus{border-color:rgba(10,132,255,.6)}
+.qc-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;
+  padding:8px 10px;background:#141416;border:1px solid var(--line2);border-radius:8px}
+.qc-toggle{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);cursor:pointer}
+.qc-toggle input{accent-color:var(--accent);width:15px;height:15px}
+.qc-hint{font-size:11px;color:#5D5D66}
+.qc-adv{margin-top:10px}
+.qc-adv-btn{font-size:12.5px;color:var(--ink2);padding:4px 6px;border-radius:6px}
+.qc-adv-btn:hover{background:#242428;color:var(--ink)}
+.qc-adv-body{margin-top:4px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;background:#141416}
+.qc-proj{margin-top:8px}
+.qc-proj-btn{height:30px;padding:0 10px;border-radius:7px;font-size:12.5px;color:var(--ink2);
+  border:1px solid var(--line2);background:#1A1A1C}
+.qc-proj-btn:hover{border-color:#3C3C42;color:var(--ink)}
+.qc-kbd{font-size:11px;opacity:.7;margin-left:4px}
+
+/* §22.12 项目添加/编辑模态 */
+.proj-modal{width:470px;max-width:92vw;padding:18px 20px 14px}
+.pj-label{font-size:12px;color:var(--ink2);margin:12px 0 5px}
+.pj-list{display:flex;flex-direction:column;gap:6px;min-height:38px;
+  background:#141416;border:1px solid var(--line2);border-radius:8px;padding:7px 8px}
+.pj-row{display:flex;align-items:center;gap:8px;height:28px;padding:0 4px 0 6px;border-radius:6px}
+.pj-row:hover{background:#1F1F22}
+.pj-row+.pj-row{border-top:1px solid var(--line)}
+.pj-path{flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--ink2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pj-badge{flex:0 0 auto;font-size:10.5px;padding:2px 7px;border-radius:5px;
+  background:rgba(10,132,255,.16);border:1px solid rgba(10,132,255,.55);color:#CFE4FF}
+.pj-set{flex:0 0 auto;font-size:11px;color:var(--ink3);padding:2px 6px;border-radius:5px;
+  border:1px solid var(--line2)}
+.pj-set:hover{border-color:#3C3C42;color:var(--ink)}
+.pj-x{flex:0 0 auto;width:20px;height:20px;border-radius:5px;color:var(--ink3);font-size:12px;
+  display:flex;align-items:center;justify-content:center}
+.pj-x:hover{background:#2A2A2E;color:var(--red)}
+.pj-add{margin-top:7px;height:30px;width:100%;border-radius:8px;border:1px dashed var(--line2);
+  color:var(--ink2);font-size:12.5px}
+.pj-add:hover{border-color:#3C3C42;color:var(--ink);background:#17171A}
+
+/* ============================================================
+   §22.1 垂直标签 = 正文**左侧**的一列（左右排布，不再上下堆叠）
+   ============================================================ */
+.ws-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.ws-main{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+.workspace.side-tabs .ws-body{flex-direction:row}
+.workspace.side-tabs .tabs-vertical{flex:0 0 var(--tv-w,268px);max-height:none;height:auto;
+  border-bottom:0;border-right:1px solid var(--line);position:relative;padding-bottom:6px}
+.workspace.side-tabs .ws-main{flex:1;min-width:0;min-height:0}
+/* §22.1.2 列宽可拖（复用 .split 那个胶囊手柄的观感） */
+.tv-gutter{display:none}
+.workspace.side-tabs .tv-gutter{display:block;position:absolute;top:0;right:-6px;bottom:0;width:12px;
+  cursor:col-resize;z-index:6}
+.tv-gutter::after{content:"";position:absolute;left:4px;right:4px;top:50%;transform:translateY(-50%);
+  height:46px;border-radius:4px;background:#26262A;opacity:.75;transition:opacity .12s,height .12s}
+.tv-gutter:hover::after,.tv-gutter.drag::after{opacity:1;height:70px;background:var(--accent);
+  box-shadow:0 0 0 3px rgba(10,132,255,.18)}
+/* §22.1.4 自定义图标 */
+.fico.custom{display:flex;align-items:center;justify-content:center;font-size:11px;line-height:1;
+  background:#2A2A2E;color:var(--ink)}
+#menuIcon .gcolors{padding:6px 8px 8px}

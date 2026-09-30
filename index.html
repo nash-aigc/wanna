@@ -63,18 +63,24 @@
           <span class="ns-ico">🔍</span>
           <input id="navSearch" placeholder="搜索文件…" spellcheck="false" autocomplete="off">
         </div>
+        <!-- §22.8：两行（范围 / 内容），短文案；内容用**长方形选项按钮**（点中=高亮），不用勾选框 -->
         <div class="search-pop" id="searchPop" hidden>
-          <div class="sp-title">搜索范围</div>
-          <div class="sp-scopes" id="searchScopes">
-            <button data-scope="project">项目区（默认使用这个）</button>
-            <button data-scope="default">默认区</button>
-            <button data-scope="computer">本地计算机（含外置硬盘）</button>
+          <div class="sp-row">
+            <span class="sp-title">搜索范围</span>
+            <div class="sp-scopes" id="searchScopes">
+              <button data-scope="project">项目区</button>
+              <button data-scope="default">默认区</button>
+              <button data-scope="computer">计算机</button>
+            </div>
+            <span class="sp-def" id="spDefaultTag">默认项目区</span>
           </div>
-          <div class="sp-title">搜索内容</div>
-          <div class="sp-types" id="searchTypes">
-            <label><input type="checkbox" data-type="folder"> 文件夹</label>
-            <label><input type="checkbox" data-type="file"> 文件</label>
-            <label><input type="checkbox" data-type="content"> 文件内容</label>
+          <div class="sp-row">
+            <span class="sp-title">搜索内容</span>
+            <div class="sp-types" id="searchTypes">
+              <button data-type="folder">文件夹</button>
+              <button data-type="file">文件</button>
+              <button data-type="content">文件内容</button>
+            </div>
           </div>
           <div class="sp-results" id="searchResults"></div>
         </div>
@@ -96,10 +102,6 @@
         <div id="planList"></div>
       </div>
 
-      <div class="nav-foot">
-        <div class="foot-row"><span class="k">首屏</span><span id="loadStat">加载中…</span></div>
-        <div class="foot-row"><span class="k">快照</span><span id="gitLogCount">0 次提交</span></div>
-      </div>
     </aside>
 
     <div class="split split-v" id="vSplit" title="拖动：项目 ｜ 内容"></div>
@@ -117,16 +119,24 @@
         <button class="tab-collapse" id="btnTabsCollapse" title="折叠显示所有标签页">☰</button>
         <div class="tabs" id="tabs"></div>
         <button class="tab-add" id="btnNewTab" title="新建标签">＋</button>
+        <!-- §22.11 快捷指令：一个按钮替换一行动作，显示在所有标签的最右（＋ 的右边） -->
+        <div class="qc-split" id="qcSplit">
+          <button class="qc-run" id="qcRun" title="执行这条快捷指令">▶ <span id="qcName">GT推送</span></button>
+          <button class="qc-pick" id="qcPick" title="选择其它快捷指令 / 新建">⌄</button>
+        </div>
       </div>
 
-      <!-- §21.3 垂直形态：照你给的第 ④ 张图（搜索 + 固定的小图标 + 分组） -->
+      <!-- §21.3 垂直形态 + §22.1 垂直时挪到正文**左侧**（左右排布，不再上下堆叠） -->
+      <div class="ws-body" id="wsBody">
       <div class="tabs-vertical" id="tabsVertical" hidden>
         <input class="tv-search" id="tvSearch" placeholder="搜索标签页…" spellcheck="false" autocomplete="off">
         <div class="tv-pinned" id="tvPinned"></div>
         <div class="tv-list" id="tvList"></div>
         <button class="tv-new" id="tvNew">＋ 新建标签页</button>
+        <div class="tv-gutter" id="tvGutter" title="拖动调整标签列宽"></div>
       </div>
 
+      <div class="ws-main" id="wsMain">
       <div class="file-head" id="fileHead">
         <nav class="crumbs" id="crumbs"></nav>
         <button class="pathbtn" id="btnPath" title="点击复制完整路径">
@@ -188,26 +198,82 @@
         <pre class="code-view" id="codeView" hidden></pre>
       </div>
 
+      <!-- §22.10 「将标签页移至拆分」：内容区横向劈成两半，这一半只读显示那个标签 -->
+      <div class="ws-split" id="wsSplit" hidden>
+        <div class="ws-split-head">
+          <span class="fico md" id="wsSplitIco"></span>
+          <span class="ws-split-name" id="wsSplitName">—</span>
+          <button class="ws-split-close" id="wsSplitClose" title="退出拆分">✕</button>
+        </div>
+        <div class="ws-split-body" id="wsSplitBody"></div>
+      </div>
+
+      <!-- §22.14 浏览器页：排版照 Orca（顶栏 chrome + 左侧仍是我们的树 + 右侧网页） -->
+      <div class="view view-browser" id="viewBrowser" hidden>
+        <div class="br-toolbar">
+          <div class="br-nav">
+            <button id="brBack" title="后退">←</button>
+            <button id="brFwd" title="前进">→</button>
+            <button id="brReload" title="重新加载">⟳</button>
+          </div>
+          <div class="br-addr">
+            <span class="br-ico">🌐</span>
+            <input id="brUrl" placeholder="搜索或输入网址" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="br-tools">
+            <button class="br-import" id="brImport" title="导入 Cookie">⬇ 导入</button>
+            <button class="br-tool" id="brGrab" title="抓取页面元素">◎</button>
+            <button class="br-tool" id="brNote" title="注释页面元素">⊞</button>
+            <button class="br-tool" id="brDraw" title="在截图上绘制">✎</button>
+            <button class="br-tool" id="brCode" title="查看源码 / 开发者工具">&lt;&gt;</button>
+            <button class="br-tool" id="brExt" title="在系统浏览器打开">↗</button>
+            <button class="br-tool" id="brMore" title="更多">⋯</button>
+          </div>
+        </div>
+        <div class="br-body" id="brBody">
+          <!-- 新标签页（照 Orca：居中一句话，不在地址栏下面塞建议列表） -->
+          <div class="br-empty" id="brEmpty">
+            <div class="br-empty-ico">🌐</div>
+            <div class="br-empty-t">New Tab</div>
+            <div class="br-empty-s">在上面的地址栏输入网址开始浏览</div>
+          </div>
+          <iframe id="brFrame" title="网页预览" hidden></iframe>
+          <canvas id="brCanvas" hidden></canvas>
+          <div class="br-hint" id="brHint" hidden></div>
+        </div>
+      </div>
+
       <!-- 脑图 -->
       <div class="view view-mind" id="viewMind">
+        <!-- §22.9.3 这一行**横跨整个脑图视图**（不在画布那一栏里）——
+             代码栏一开一合不会带着它左右跑，折叠按钮的 x 坐标因此恒定 -->
+        <div class="mind-bar">
+          <button class="btn btn-mini" id="btnFoldCode">折叠代码</button>
+          <span class="mind-hint">点节点折叠 / 展开分支</span>
+          <button class="btn btn-mini" id="btnFit">适应窗口</button>
+        </div>
         <div class="mind-layout" id="mindLayout">
           <div class="mind-code" id="mindCodePane">
             <div class="code-head">
               <span class="code-name">脑图.mmd <em>(mermaid)</em></span>
-              <button class="btn btn-mini" id="btnFoldCode">折叠代码 ▸</button>
             </div>
             <textarea class="code-src" id="mindSource" spellcheck="false"></textarea>
             <div class="code-err" id="mindErr"></div>
           </div>
           <div class="mind-canvas-wrap">
-            <div class="mind-bar">
-              <span class="mind-hint">点节点折叠 / 展开分支</span>
-              <button class="btn btn-mini" id="btnShowCode" hidden>展开代码</button>
-              <button class="btn btn-mini" id="btnFit">适应窗口</button>
-            </div>
             <div class="mind-canvas" id="mindCanvas"></div>
           </div>
         </div>
+      </div>
+
+      <!-- §22.9.7 / §22.11.5 终端面板：＋里的「终端」「Claude Code」「Pi」都落到这儿 -->
+      <div class="term-panel" id="termPanel" hidden>
+        <div class="term-head">
+          <span class="term-dot"></span><span class="term-title" id="termTitle">终端</span>
+          <span class="term-path" id="termPath"></span>
+          <button class="term-close" id="termClose" title="关闭终端">✕</button>
+        </div>
+        <pre class="term-body" id="termBody"></pre>
       </div>
 
       <!-- 历史 -->
@@ -225,6 +291,8 @@
         </div>
         <ul class="hist-list" id="histList"></ul>
       </div>
+      </div><!-- /ws-main -->
+      </div><!-- /ws-body -->
     </section>
 
     <div class="split split-h" id="hSplit" title="拖动：内容 ｜ 对话"></div>
@@ -263,6 +331,13 @@
           <div class="focus-list" id="focusList" hidden></div>
         </div>
 
+        <!-- §22.13 多条消息：排队（默认）⇄ 打断 —— 放在「选中的文件」与「项目路径」之间 -->
+        <div class="q-row" id="qRow">
+          <span class="q-label">发送方式</span>
+          <button class="q-opt is-on" data-policy="queue">排队</button>
+          <button class="q-opt" data-policy="interrupt">打断</button>
+        </div>
+
         <!-- ② 中间：项目 / 对话卡路径（§21.5：输入框上面只剩「选中的文件」+「项目路径」） -->
         <div class="chat-ctx">
           <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">对话模式（无项目）</code></span>
@@ -284,6 +359,7 @@
                 <button class="cc cc-new" id="ccNew">＋ 新建</button>
               </span>
               <span class="cc-right" id="ccRight"><!-- 按模式渲染 --></span>
+              <button class="q-badge" id="qBadge" hidden title="排队中的消息（点开可单条取消）">0</button>
               <button class="btn btn-primary" id="btnSend">发送</button>
             </span>
           </div>
@@ -297,11 +373,76 @@
     <button data-act="newBlank">空白项目（文件夹）</button>
     <button data-act="useFolder">现有项目（文件夹）</button>
   </div>
+  <!-- §22.9.5 编辑区 ＋ 的下拉（显示在按钮正下方） -->
+  <div class="menu" id="menuNewTab" hidden>
+    <button data-act="newFile">新建文件</button>
+    <button data-act="terminal">终端</button>
+    <button data-act="browser">新浏览器选项卡</button>
+    <button data-act="search">搜索</button>
+    <button data-act="url">输入网址</button>
+    <button data-act="folder">打开项目文件夹</button>
+    <div class="menu-sep"></div>
+    <div class="menu-title">Agent</div>
+    <button data-act="agentClaude">Claude Code</button>
+    <button data-act="agentPi">Pi</button>
+  </div>
   <!-- 语速：点开是**多档**，不是开关（§20.5） -->
   <div class="menu" id="menuRate" hidden></div>
+  <!-- §22.11 快捷指令列表 -->
+  <div class="menu" id="menuQc" hidden></div>
+  <!-- §22.11 新建快捷命令（字段照用户给的那张「添加快捷命令」图） -->
+  <div class="modal-back" id="qcBack" hidden>
+    <div class="modal qc-modal" role="dialog" aria-modal="true">
+      <div class="modal-title">添加快捷命令</div>
+      <div class="qc-sub">保存的条目会显示在标签栏菜单中，一键即可运行。</div>
+      <div class="qc-grid">
+        <div class="qc-col">
+          <div class="qc-label">标签</div>
+          <input class="modal-input" id="qcLabel" placeholder="启动开发服务器" spellcheck="false">
+        </div>
+        <div class="qc-col">
+          <div class="qc-label">操作</div>
+          <div class="qc-seg" id="qcOp">
+            <button data-op="terminal" class="is-on">终端</button>
+            <button data-op="agent">智能体</button>
+          </div>
+        </div>
+      </div>
+      <div class="qc-label">命令</div>
+      <textarea class="qc-cmd" id="qcCmd" placeholder="npm run dev" spellcheck="false"></textarea>
+      <div class="qc-foot">
+        <label class="qc-toggle"><input type="checkbox" id="qcAppend" checked><span></span>Append Enter — 立即运行</label>
+        <span class="qc-hint">拖动角点以调整大小</span>
+      </div>
+      <div class="qc-adv">
+        <button class="qc-adv-btn" id="qcAdvBtn">高级 ⌃</button>
+        <div class="qc-adv-body" id="qcAdvBody" hidden>
+          <div class="qc-label">范围</div>
+          <div class="qc-seg" id="qcScope">
+            <button data-scope="global" class="is-on">全局</button>
+            <button data-scope="project">项目</button>
+          </div>
+          <div class="qc-proj" id="qcProjWrap" hidden>
+            <button class="qc-proj-btn" id="qcProjBtn">▾ 选择项目</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-acts">
+        <button class="btn btn-ghost" id="qcCancel">取消</button>
+        <button class="btn btn-primary" id="qcSave">保存 <span class="qc-kbd">⌘ Enter</span></button>
+      </div>
+    </div>
+  </div>
+
   <!-- 标签页右键（§21.4A：条目按你给的图定，UI 用本项目菜单样式） -->
   <div class="menu" id="menuTabs" hidden></div>
-  <!-- 标签组右键（§21.4B：改名 + 8 个颜色点 + 组操作） -->
+  <!-- §22.14 浏览器 ⋯ 下拉（档案 / 新档案 / 导入 Cookie / 视口尺寸 / 浏览器设置） -->
+  <div class="menu" id="menuBrMore" hidden></div>
+  <!-- §22.14 导入 Cookie 的二级 -->
+  <div class="menu" id="menuBrCookie" hidden></div>
+  <!-- §22.14 视口尺寸 -->
+  <div class="menu" id="menuBrViewport" hidden></div>
+  <!-- §22.14 标签组右键（§21.4B：改名 + 8 个颜色点 + 组操作） -->
   <div class="menu" id="menuTabGroup" hidden></div>
   <!-- 临时卡片右键：放入分组 / 删除 -->
   <div class="menu" id="menuCard" hidden></div>
@@ -311,6 +452,10 @@
     <button data-act="defLeft">对话在左</button>
     <button data-act="defCenter">对话在中</button>
     <button data-act="defRight">对话在右</button>
+    <div class="menu-sep"></div>
+    <div class="menu-title">发送方式（§22.13）</div>
+    <button data-act="policyQueue">排队 —— 上一条答完再发</button>
+    <button data-act="policyInterrupt">打断 —— 直接顶掉上一条</button>
     <div class="menu-sep"></div>
     <button data-act="resetHist">清空当前文件历史</button>
   </div>
@@ -324,12 +469,30 @@
     <button data-act="finder">在访达中显示</button>
     <button data-act="copyPath">复制工作路径</button>
     <button data-act="reveal">文件位置</button>
-    <button data-act="rename">重命名项目</button>
+    <button data-act="rename">编辑显示名…</button>
     <button data-act="pin">置顶项目</button>
     <button data-act="export">导出对话记录</button>
     <div class="menu-sep"></div>
     <button data-act="delete" class="danger">删除项目</button>
     <button data-act="archive" class="danger">归档</button>
+  </div>
+
+  <!-- §22.12 添加/编辑项目：改**显示名**（不碰文件夹）+ 主要文件夹 + 其他文件夹（Codex 式） -->
+  <div class="modal-back" id="projBack" hidden>
+    <div class="modal proj-modal" role="dialog" aria-modal="true">
+      <div class="modal-title" id="pjTitle">现有项目（文件夹）</div>
+      <div class="pj-label">显示名称</div>
+      <input class="modal-input" id="pjName" placeholder="左栏显示的名字（不改文件夹本身）" spellcheck="false">
+      <div class="pj-label">主要工作目录</div>
+      <input class="modal-input" id="pjPath" placeholder="/Users/you/项目" spellcheck="false">
+      <div class="pj-label">还会参考的文件夹</div>
+      <div class="pj-list" id="pjList"></div>
+      <button class="pj-add" id="pjAddFolder">＋ 添加本地文件夹</button>
+      <div class="modal-acts">
+        <button class="btn btn-ghost" id="pjCancel">取消</button>
+        <button class="btn btn-primary" id="pjOk">添加</button>
+      </div>
+    </div>
   </div>
 
   <!-- 本软件风格的模态（不用系统 prompt/confirm） -->

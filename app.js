@@ -21,6 +21,7 @@ const fmtTime = ts => {
 const escapeHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const extOf = rel => (rel.split('.').pop() || '').toLowerCase();
 const iconFor = rel => {
+  if (/^(https?:|about:|data:)/i.test(rel || '')) return { cls: 'web', label: 'WEB' };  // §22.14 浏览器标签
   const e = extOf(rel);
   const map = { md:'md', html:'html', htm:'html', pdf:'pdf', js:'js', mjs:'js', json:'json', txt:'txt' };
   const cls = map[e] || 'txt';
@@ -88,8 +89,8 @@ let S = load() || {
   currentFile: 'README.md',
   focusFiles: [],                 // 重点参考只由 ⌘单击 / Shift单击 决定（§12.2）
   tab: 'md',
-  mdVariant: 'split',              // code | preview | split
-  codeFolded: false,
+  mdVariant: 'preview',           // §22.9.1 默认**预览**（code | preview | split）
+  codeFolded: true,                 // §22.9.2 脑图**默认折叠代码**
   collapsed: {},
   mindZoom: 1,
   layout: 'right',                 // 对话在右 ⇄ 对话在中
@@ -99,8 +100,22 @@ let S = load() || {
   chatMode: 'continuous',
   speechRate: 1,                   // §20.5 语速档（0.75 / 1 / 1.25 / 1.5 / 2）
   composerExpanded: false,         // §21.5 输入框展开态（点顶边手柄切换）
+  sendPolicy: 'queue',             // §22.13 发送方式：queue=排队（默认）/ interrupt=打断
+  // §22.11 快捷指令：一个按钮替换一行动作（字段照用户那张「添加快捷命令」图）
+  quickCommands: [{ id: 'qc_gt', label: 'GT推送', op: 'terminal',
+                    cmd: 'git push origin main', append: true, scope: 'global', project: '' }],
+  quickCommandActive: 'qc_gt',
+  sendQueue: [],                   // §22.13 排队中的消息
   tabsVertical: false,             // §21.2 标签显示方式：false=横向（默认）/ true=垂直
   tabGroups: [],                   // §21.4 标签组：[{ name, color, open }]
+  splitSide: null,                 // §22.10 拆分半屏在哪一侧（null = 不拆）
+  tvWidth: 268,                    // §22.1.2 垂直标签列宽（可拖）
+  // §22.14 浏览器页 —— 形状照 reference/orca …/shared/browser-workspace-types.ts:174-180
+  browserProfiles: [{ id: 'default', label: 'Default', engine: 'Safari', scope: 'default' },
+                    { id: 'google',  label: 'Google',  engine: 'Chrome',  scope: 'isolated' }],
+  browserProfile: 'default',
+  browserCookies: [],
+  browserSettings: { doNotTrack: true, blockPopups: false, homePage: 'https://www.bing.com' },
   searchScope: 'project',          // §20.11 范围：项目区（默认）/ 默认区 / 本地计算机
   searchTypes: { folder: true, file: true, content: false },   // 「文件内容」默认不勾
   history: {},
@@ -127,7 +142,7 @@ function load() {
     if (!Array.isArray(r.recent)) r.recent = [];
     if (typeof r.activePlan === 'undefined') r.activePlan = null;
     // §20.3：「查看代码」那颗按钮删了 —— 老存档里的 code 态在屏幕上再没有出口，迁回分栏
-    if (r.mdVariant === 'code') r.mdVariant = 'split';
+    if (r.mdVariant === 'code') r.mdVariant = 'preview';   // §22.9：「查看代码」没了，默认给预览
     if (typeof r.speechRate !== 'number') r.speechRate = 1;   // §20.5 语速档
     // §20.11 搜索：范围默认「项目区」，内容类型默认 文件夹+文件、**文件内容不勾**
     if (r.searchScope !== 'project' && r.searchScope !== 'default' && r.searchScope !== 'computer') r.searchScope = 'project';
@@ -135,8 +150,25 @@ function load() {
     r.searchTypes = { folder: t.folder !== false, file: t.file !== false, content: !!t.content };
     // §21 新字段
     if (typeof r.composerExpanded !== 'boolean') r.composerExpanded = false;
+    if (r.sendPolicy !== 'interrupt') r.sendPolicy = 'queue';
+    if (!Array.isArray(r.quickCommands)) r.quickCommands = [{ id: 'qc_gt', label: 'GT推送', op: 'terminal',
+      cmd: 'git push origin main', append: true, scope: 'global', project: '' }];
+    if (!r.quickCommandActive) r.quickCommandActive = 'qc_gt';
+    if (!Array.isArray(r.sendQueue)) r.sendQueue = [];
     if (typeof r.tabsVertical !== 'boolean') r.tabsVertical = false;
     if (!Array.isArray(r.tabGroups)) r.tabGroups = [];
+    (r.projects || []).forEach(pp => { if (pp && !Array.isArray(pp.extraPaths)) pp.extraPaths = []; });
+    if (r.splitSide !== 'left' && r.splitSide !== 'right') r.splitSide = null;
+    if (typeof r.tvWidth !== 'number') r.tvWidth = 268;
+    if (!Array.isArray(r.browserProfiles) || !r.browserProfiles.length) {
+      r.browserProfiles = [{ id: 'default', label: 'Default', engine: 'Safari', scope: 'default' },
+                           { id: 'google',  label: 'Google',  engine: 'Chrome',  scope: 'isolated' }];
+    }
+    if (!r.browserProfile) r.browserProfile = 'default';
+    if (!Array.isArray(r.browserCookies)) r.browserCookies = [];
+    if (!r.browserSettings || typeof r.browserSettings !== 'object') {
+      r.browserSettings = { doNotTrack: true, blockPopups: false, homePage: 'https://www.bing.com' };
+    }
     // 老提交记录：`files` 曾经存的是**文件数（数字）** —— 归一成对象，否则下面按文件比对会错乱
     (r.gitLog || []).forEach((g, i) => {
       if (typeof g.files !== 'object' || g.files === null) {
@@ -452,6 +484,92 @@ function openConvAddMenu(scope, anchor) {
   ], anchor);
 }
 
+/* ============================================================
+   §22.9.5–22.9.7 编辑区 ＋ 的下拉 + 终端面板
+   ============================================================ */
+function newTabAction(act) {
+  closeMenus();
+  const p = proj();
+  switch (act) {
+    case 'newFile': {
+      if (!p) { toast('先选一个项目，才能在它里面新建文件'); return; }
+      askModal({ title: '新建文件', text: `落在「${p.name}」里；写完整文件名（例：notes.md）`,
+        value: '新文件.md', okText: '创建', onOk: v => {
+          const name = (v || '').trim(); if (!name) return;
+          if (name in p.files) { toast('已经有同名文件了'); return; }
+          p.files[name] = extOf(name) === 'md' ? `# ${name.replace(/\.md$/, '')}\n\n` : '';
+          const dir = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '';
+          const pool = dir ? findNode(dir, p.tree, '') : null;
+          (pool && pool.children ? pool.children : p.tree).push({ name: name.split('/').pop(), type: 'file' });
+          S.projectMode = true; S.tempMode = false;
+          save(true); renderNav(); openInTab(p.id, name);
+          toast(`已新建 <b>${escapeHtml(name)}</b>`);
+        }});
+      break; }
+    case 'terminal': openTerminal({ title: '终端', seed: ['$ '] }); break;
+    case 'browser': openBrowserPage(''); break;
+    case 'url': openBrowserPage('', true); break;
+    case 'search': $('#navSearch').focus(); toast('用左栏顶部的搜索找文件，点它开新标签'); break;
+    case 'folder': addMenuAction('useFolder'); break;
+    case 'agentClaude':
+      openTerminal({ title: 'Claude Code', agent: 'claude' });
+      break;
+    case 'agentPi':
+      openTerminal({ title: 'Pi', agent: 'pi' });
+      break;
+  }
+}
+
+/// §22.9.7 / §22.11.5 终端面板：先 `cd <项目路径>`，再敲进指令（打字机效果，看得出它跑了什么）
+let termTyping = null;
+function openTerminal({ title = '终端', seed = ['$ '], agent = null, command = null } = {}) {
+  const panel = $('#termPanel'), body = $('#termBody');
+  if (!panel || !body) return;
+  const path = (proj() || defaultProject() || {}).path || defaultFolderPath();
+  $('#termTitle').textContent = title;
+  $('#termPath').textContent = path;
+  panel.hidden = false;
+  clearTimeout(termTyping);
+  const lines = [];
+  if (agent || command) {
+    lines.push({ cls: 't-dim', text: `启动 ${title} —— 用当前项目文件夹作为路径` });
+    lines.push({ cls: 't-cmd', text: `cd ${path}` });
+    lines.push({ cls: 't-cmd', text: command || agent });
+    lines.push({ cls: 't-agent', text: agent === 'claude' ? '▸ Claude Code 已就绪（原型 · 真机上这里是一个真终端）'
+              : agent === 'pi' ? '▸ Pi 已就绪（原型 · 真机上这里是一个真终端）'
+              : `▸ 已执行：${command}` });
+    lines.push({ cls: 't-dim', text: `$ ` });
+  } else {
+    seed.forEach(t => lines.push({ cls: t.startsWith('$') ? 't-cmd' : 't-dim', text: t }));
+  }
+  body.innerHTML = '';
+  let li = 0, ci = 0, buf = '';
+  const step = () => {
+    if (li >= lines.length) { termTyping = null; return; }
+    const cur = lines[li];
+    if (ci === 0) buf += (buf ? '\n' : '');
+    if (ci < cur.text.length) {
+      ci++;
+      const done = buf;
+      body.innerHTML = renderTerm(done, cur.text.slice(0, ci), cur.cls);
+      body.scrollTop = body.scrollHeight;
+      termTyping = setTimeout(step, cur.text[ci - 1] === ' ' ? 12 : 26);
+    } else {
+      buf += cur.text; li++; ci = 0;
+      body.innerHTML = renderTerm(buf, '', '');
+      termTyping = setTimeout(step, 180);
+    }
+  };
+  step();
+}
+function renderTerm(done, typing, cls) {
+  const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // 逐行上色：以 `$` 开头当命令，其余按段落最后一行的 class
+  const lines = done.split('\n');
+  const html = lines.map(l => `<span class="${/^\$|^cd |^claude|^pi\b/.test(l.trim()) ? 't-cmd' : ''}">${esc(l)}</span>`).join('\n');
+  return html + (typing ? `<span class="${cls}">${esc(typing)}</span>` : '');
+}
+
 /// §20.9.3：点「默认」区块里那条文件夹行 → 改路径
 function editDefaultFolderPath() {
   const d = defaultProject(); if (!d) return;
@@ -574,7 +692,6 @@ function renderNav() {
     ph.appendChild(fileWrap);
   }
 
-  $('#gitLogCount').textContent = `${S.gitLog.length} 次提交`;
   filterTree($('#navSearch') ? $('#navSearch').value : '', S.searchScope);
   placeModeChips();                         // 项目模式下，模式条并进对话框
 }
@@ -600,6 +717,17 @@ function removeFromTree(nodes, parts) {
   const n = nodes[i];
   if (n.children && n.name === parts[0]) return removeFromTree(n.children, parts.slice(1));
   return false;
+}
+/// 按相对路径找目录/文件节点。
+/// ⚠️ `renderTreeInto` 里那两处（文件夹内重命名 / 新建文件）**早就调用了它、但从来没定义过**
+/// —— 点到二级目录里的行就会 `findNode is not defined` 直接抛。这里补上（纯查找，不改数据）。
+function findNode(relPath, nodes, prefix = '') {
+  for (const n of nodes || []) {
+    const rel = prefix ? `${prefix}/${n.name}` : n.name;
+    if (rel === relPath) return n;
+    if (n.children) { const hit = findNode(relPath, n.children, rel); if (hit) return hit; }
+  }
+  return null;
 }
 function renameInTree(nodes, oldParts, newParts) {
   const name = oldParts[oldParts.length - 1];
@@ -812,11 +940,6 @@ function filterTree(q, scope) {
 /* ============================================================
    §20.11 顶部搜索：面板（范围 + 内容类型）+ 结果
    ============================================================ */
-const SEARCH_SCOPES = {
-  project: '项目区',
-  default: '默认区',
-  computer: '本地计算机'
-};
 function searchProjectsFor(scope) {
   return scope === 'default' ? [defaultProject()].filter(Boolean) : realProjects();
 }
@@ -842,7 +965,8 @@ function renderSearchPop() {
   const scope = S.searchScope || 'project';
   const types = S.searchTypes || { folder: true, file: true, content: false };
   $$('#searchScopes button').forEach(b => b.classList.toggle('is-on', b.dataset.scope === scope));
-  $$('#searchTypes input').forEach(i => { i.checked = !!types[i.dataset.type]; });
+  // §22.8.2 内容类型是**长方形选项按钮**：高亮 = 选中，和真实过滤同一条数据
+  $$('#searchTypes button').forEach(b => b.classList.toggle('is-on', !!types[b.dataset.type]));
   runSearch();
 }
 function runSearch() {
@@ -852,17 +976,9 @@ function runSearch() {
   const scope = S.searchScope || 'project';
   const types = S.searchTypes || { folder: true, file: true, content: false };
 
-  if (scope === 'computer') {
-    res.innerHTML = `<div class="sp-note">本地计算机（含外置硬盘）<b>需要系统权限</b>：<br>`
-      + `落地版会遍历 <code>/</code> 与 <code>/Volumes</code> 下的每一卷。<br>`
-      + `浏览器原型没有文件系统访问权 —— <b>这里不编造文件</b>。</div>`;
-    return;
-  }
-  if (!qRaw) {
-    res.innerHTML = `<div class="sp-note">输入关键字开始搜 · 范围：<b>${SEARCH_SCOPES[scope]}</b><br>`
-      + `能搜到：${[types.folder && '文件夹', types.file && '文件', types.content && '文件内容'].filter(Boolean).join(' / ') || '（内容类型一个都没勾）'}</div>`;
-    return;
-  }
+  // §22.8.3 **说明文字全部删掉**（范围提示 / 能搜到什么 / 计算机的权限说明都不要）——
+  // §22.8.3 空结果就让结果区空着，不再解释。
+  if (scope === 'computer' || !qRaw) { res.innerHTML = ''; return; }
 
   const entries = [];
   searchProjectsFor(scope).forEach(p => walkTreeEntries(p.tree || [], p, '', entries));
@@ -884,10 +1000,7 @@ function runSearch() {
     }
   });
 
-  if (!hits.length) {
-    res.innerHTML = `<div class="sp-note">「${escapeHtml(qRaw)}」在<b>${SEARCH_SCOPES[scope]}</b>里没有命中</div>`;
-    return;
-  }
+  if (!hits.length) { res.innerHTML = ''; return; }
   const kindLabel = { folder: '文件夹', file: '文件', content: '内容' };
   res.innerHTML = hits.slice(0, 40).map((h, i) =>
     `<div class="sp-item" data-i="${i}">
@@ -951,6 +1064,16 @@ function openProjMenu(p, anchor) {
 }
 /// §21.4：菜单按**实测尺寸**贴鼠标并夹进屏幕 —— 写死的高度猜不准，
 /// 这次 18 项的标签菜单就因为 `innerHeight - 420` 把最后两项顶到了屏幕外。
+/// §22.2：**先往上弹**（菜单底边贴按钮顶边），上方放不下才翻下去。
+/// 输入框那几个下拉都在屏幕底部，往下弹会把按钮整个盖住。
+function placeMenuAbove(m, x, yBottom) {
+  m.hidden = false;
+  const w = m.offsetWidth, h = m.offsetHeight;
+  let top = yBottom - 6 - h;
+  if (top < 6) top = Math.min(yBottom + 6, innerHeight - h - 6);
+  m.style.left = Math.max(6, Math.min(x, innerWidth - w - 8)) + 'px';
+  m.style.top = Math.max(6, top) + 'px';
+}
 function placeMenu(m, x, y) {
   const w = m.offsetWidth, h = m.offsetHeight;
   m.style.left = Math.max(6, Math.min(x, innerWidth - w - 8)) + 'px';
@@ -975,11 +1098,9 @@ function projMenuAction(act) {
     case 'copyPath':
       navigator.clipboard?.writeText(p.path);
       toast(`已复制工作路径 <b>${escapeHtml(p.path)}</b>`); break;
-    case 'rename': {
-      askModal({ title: '重命名项目', value: p.name, okText: '重命名', onOk: v => {
-        if (v && v.trim()) { p.name = v.trim(); save(true); renderNav(); renderCrumbs(); toast('已重命名'); }
-      }});
-      break; }
+    case 'rename':
+      openProjectModal('edit', p);                 // §22.12.5 显示名 + 主要/其他文件夹一起改
+      break;
     case 'pin': p.pinned = !p.pinned; save(true); renderNav(); toast(p.pinned ? '已置顶' : '已取消置顶'); break;
     case 'unread': p.unread = !p.unread; save(true); renderNav();
       toast(p.unread ? '已标记为未读' : '已标记为已读'); break;
@@ -1031,11 +1152,7 @@ function addMenuAction(act) {
         createProject(name, `/Users/mjm/Documents/SuperAgent/${name}`);
       }});
   } else if (act === 'useFolder') {
-    askModal({ title: '现有项目（文件夹）', text: '填这个文件夹的绝对路径（原型不弹系统选择器）',
-      value: '/Users/mjm/Documents/SuperAgent/Wanna', okText: '添加', onOk: v => {
-        const path = (v || '').trim(); if (!path) return;
-        createProject(path.split('/').filter(Boolean).pop() || '项目', path);
-      }});
+    openProjectModal('new');                       // §22.12：显示名 + 主要 + 其他文件夹
   }
 }
 
@@ -1175,6 +1292,90 @@ function convCardMenuAction(act) {
   }
 }
 
+/* ============================================================
+   §22.12 添加 / 编辑项目：**显示名**（不碰文件夹）+ 主要文件夹 + 其他文件夹
+   ============================================================ */
+let pjMode = 'new';                 // 'new' | 'edit'
+let pjTarget = null;                // edit 时指向那个项目
+let pjExtras = [];                  // 除主要工作目录以外的文件夹
+
+function openProjectModal(mode, project) {
+  pjMode = mode; pjTarget = project || null;
+  pjExtras = mode === 'edit' && project ? (project.extraPaths || []).slice() : [];
+  $('#pjTitle').textContent = mode === 'edit' ? '编辑项目' : '现有项目（文件夹）';
+  $('#pjOk').textContent = mode === 'edit' ? '保存' : '添加';
+  const defPath = '/Users/mjm/Documents/SuperAgent/Wanna';
+  $('#pjName').value = mode === 'edit' ? project.name : '';
+  $('#pjPath').value = mode === 'edit' ? project.path : defPath;
+  $('#pjName').placeholder = mode === 'edit' ? '左栏显示的名字（不改文件夹本身）'
+                                            : '左栏显示的名字（默认 = 文件夹名）';
+  renderProjectFolders();
+  $('#projBack').hidden = false;
+  $('#pjPath').focus(); $('#pjPath').select();
+}
+function renderProjectFolders() {
+  const host = $('#pjList'); if (!host) return;
+  const main = ($('#pjPath').value || '').trim();
+  host.innerHTML = '';
+  const addRow = (path, isMain) => {
+    const row = document.createElement('div');
+    row.className = 'pj-row';
+    row.innerHTML = `<span class="pj-path"></span>`
+      + (isMain ? `<span class="pj-badge">主要</span>`
+                : `<button class="pj-set">设为主要</button><button class="pj-x" title="移除">✕</button>`);
+    row.querySelector('.pj-path').textContent = path || '（未填）';
+    if (!isMain) {
+      row.querySelector('.pj-set').onclick = () => {
+        // 主要 ⇄ 这个：老的主要降级成普通文件夹
+        pjExtras = pjExtras.filter(x => x !== path);
+        if (main) pjExtras.unshift(main);
+        $('#pjPath').value = path;
+        renderProjectFolders();
+        toast('已把它设为<b>主要</b>工作目录');
+      };
+      row.querySelector('.pj-x').onclick = () => {
+        pjExtras = pjExtras.filter(x => x !== path);
+        renderProjectFolders();
+      };
+    }
+    host.appendChild(row);
+  };
+  if (main) addRow(main, true);
+  pjExtras.filter(x => x && x !== main).forEach(x => addRow(x, false));
+  if (!main && !pjExtras.length) {
+    host.innerHTML = `<div style="font-size:11.5px;color:var(--ink3);padding:6px 4px">
+      还没选文件夹 —— 上面填主要工作目录，或点下面再加一个。</div>`;
+  }
+}
+function saveProjectModal() {
+  const main = ($('#pjPath').value || '').trim();
+  const name = ($('#pjName').value || '').trim();
+  const extras = pjExtras.filter(x => x && x !== main);
+  if (!main) { toast('主要工作目录是空的'); $('#pjPath').focus(); return; }
+  if (pjMode === 'edit') {
+    pjTarget.path = main;
+    pjTarget.extraPaths = extras;
+    if (name) pjTarget.name = name;                    // §22.12.1 只改显示名
+    else pjTarget.name = main.split('/').filter(Boolean).pop() || pjTarget.name;
+    save(true); $('#projBack').hidden = true;
+    renderNav(); renderContext(); renderCrumbs();
+    toast(`已保存 —— 显示名 <b>${escapeHtml(pjTarget.name)}</b>（文件夹本身没动）`);
+    return;
+  }
+  if (!name) {
+    askModal({ title: '显示名称', text: '左栏显示这个名字（不改文件夹本身）；留空 = 用文件夹名。',
+      value: main.split('/').filter(Boolean).pop() || '项目', okText: '添加', onOk: v => {
+        createProject((v || '').trim() || main.split('/').filter(Boolean).pop() || '项目', main, extras);
+        $('#projBack').hidden = true;
+        toast('已添加项目');
+      }});
+    return;
+  }
+  createProject(name, main, extras);
+  $('#projBack').hidden = true;
+  toast(`已添加项目 <b>${escapeHtml(name)}</b>`);
+}
+
 function projList() {
   if (!realProjects().length) { toast('还没有项目可移动'); return null; }
   return realProjects().map(x => x.name).join(' / ');
@@ -1194,10 +1395,11 @@ function selectTempCard(id) {
   toast(id === 'default' ? `默认对话卡 —— 按快捷键进的就是它<br>项目文件夹：<code>${escapeHtml(defaultFolderPath())}</code>`
     : `对话卡：<b>${escapeHtml(pl ? pl.title : '')}</b><br>项目文件夹：<code>${escapeHtml(defaultFolderPath())}</code>（默认那个）`);
 }
-function createProject(name, path) {
+function createProject(name, path, extraPaths) {
   const id = 'p' + now();
   S.projects.push({
     id, name, path, pinned: false, open: true,
+    extraPaths: Array.isArray(extraPaths) ? extraPaths : [],
     files: {
       'README.md': `# ${name}\n\n绝对路径：\`${path}\`\n\n点左边的文件就能把它设为**重点参考**（可多选）。\n`,
       '脑图.mmd': `mindmap\n  root((${name}))\n    待办\n      先写 README\n`
@@ -1263,6 +1465,14 @@ function closeTab(i) {
 const TAB_GROUP_COLORS = ['#8A6A5A', '#4C9BE8', '#E5484D', '#F5A623',
                           '#30A46C', '#E5468A', '#8E4EC6', '#7CB342', '#F76B5A'];
 const tabGroupByName = name => (S.tabGroups || []).find(g => g.name === name) || null;
+/// §22.1.4 用户自定义的标签图标：`#RRGGBB` 画色块，否则当成 emoji/字符
+const TAB_ICON_COLORS = ['#F5C518', '#F87171', '#60A5FA', '#4ADE80', '#F472B6', '#A78BFA', '#FBBF24', '#E5E7EB'];
+function customIconHtml(t) {
+  if (!t || !t.icon) return null;
+  const v = String(t.icon);
+  if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return `<span class="fico" style="background:${v};color:#141416"></span>`;
+  return `<span class="fico custom">${escapeHtml(v.slice(0, 2))}</span>`;
+}
 const tabGroupOf = t => (t && t.group ? tabGroupByName(t.group) : null);
 const tabDisplayName = t => t.label || t.f;
 
@@ -1275,18 +1485,26 @@ function renderTabs() {
       + (g ? ' has-group' : '');
     if (g) el.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
     const ic = iconFor(t.f);
-    el.innerHTML = `<span class="fico ${ic.cls}"></span><span class="tname"></span><span class="tx" title="关闭标签">×</span>`;
+    const ci = customIconHtml(t);
+    el.innerHTML = `${ci || `<span class="fico ${ic.cls}"></span>`}<span class="tname"></span><span class="tx" title="关闭标签">×</span>`;
     el.querySelector('.tname').textContent = tabDisplayName(t);
     el.title = tabDisplayName(t) + (t.label ? `（原名 ${t.f}）` : '')
       + (t.pinned ? '（已固定 · 在最左、按钮变小；右键可取消）' : '')
       + (g ? `\n标签组：${g.name}` : '')
       + '\n右键：分组 / 重命名 / 关闭…';
     el.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
+    // §22.7.2 双击 = 改**显示名**（不碰磁盘文件名）
+    el.ondblclick = e => { e.stopPropagation(); renameTabLabel(t); };
+    // §22.7.1 按住左右拖动换位
+    el.draggable = true;
+    el.ondragstart = e => { e.dataTransfer.setData('text/plain', String(i)); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); };
+    el.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
+    el.ondrop = e => { e.preventDefault(); const from = +e.dataTransfer.getData('text/plain'); moveTabTo(from, i); };
+    el.ondragend = () => el.classList.remove('dragging');
     el.onclick = e => {
       if (e.target.classList.contains('tx')) { closeTab(i); return; }
-      S.activeTab = i; S.currentFile = t.f;
-      const kind = extViewKind(t.f);
-      S.tab = kind === 'file' ? 'file' : kind;
+      S.activeTab = i; S.currentFile = t.kind === 'browser' ? null : t.f;
+      S.tab = tabViewKind(t);
       save(); renderTabs(); renderContent(); renderContext(); renderNav();
     };
     host.appendChild(el);
@@ -1307,6 +1525,13 @@ function applyTabsLayout() {
   }
   const strip = $('#tabs'); if (strip) strip.hidden = vertical;
   const panel = $('#tabsVertical'); if (panel) panel.hidden = !vertical;
+  // §22.1：垂直 = 挪到正文**左边**的一列
+  const ws = $('#workspace');
+  if (ws) {
+    ws.classList.toggle('side-tabs', vertical);
+    if (vertical && S.tvWidth) ws.style.setProperty('--tv-w', S.tvWidth + 'px');
+    else ws.style.removeProperty('--tv-w');
+  }
   if (vertical) renderTabsVertical(); else renderTabs();
 }
 function toggleTabsLayout() {
@@ -1338,7 +1563,8 @@ function renderTabsVertical() {
     cell.className = 'tv-cell' + (i === S.activeTab ? ' is-on' : '');
     const g = tabGroupOf(t);
     if (g) cell.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
-    cell.innerHTML = `<span class="fico ${iconFor(t.f).cls}"></span><button class="x" title="关闭">×</button>`;
+    cell.innerHTML = `${customIconHtml(t) || `<span class="fico ${iconFor(t.f).cls}"></span>`}`
+      + `<button class="x" title="关闭">×</button>`;
     cell.title = tabDisplayName(t) + '\n右键：分组 / 重命名 / 取消固定';
     cell.querySelector('.x').onclick = e => { e.stopPropagation(); closeTab(i); };
     cell.onclick = () => activateTab(i);
@@ -1386,11 +1612,20 @@ function renderTabsVertical() {
     list.innerHTML = `<div class="tv-empty">${msg}</div>`;
   }
 }
+/// §22.7.1 拖动换位（稳定的：同位置直接返回）
+function moveTabTo(from, to) {
+  if (from === to || from < 0 || from >= S.tabs.length) return;
+  const active = S.tabs[S.activeTab];
+  const [t] = S.tabs.splice(from, 1);
+  S.tabs.splice(to, 0, t);
+  const ai = S.tabs.indexOf(active); if (ai >= 0) S.activeTab = ai;
+  save(true); renderTabs();
+  toast(`已把「${escapeHtml(t.label || t.f)}」移到第 ${to + 1} 位`);
+}
 function activateTab(i) {
   const t = S.tabs[i]; if (!t) return;
-  S.activeTab = i; S.currentFile = t.f;
-  const kind = extViewKind(t.f);
-  S.tab = kind === 'file' ? 'file' : kind;
+  S.activeTab = i; S.currentFile = t.kind === 'browser' ? null : t.f;
+  S.tab = tabViewKind(t);
   save(); renderTabs(); renderContent(); renderContext(); renderNav();
 }
 function tvItemRow(t, isChild) {
@@ -1399,13 +1634,19 @@ function tvItemRow(t, isChild) {
   const el = document.createElement('div');
   el.className = 'tv-item' + (i === S.activeTab ? ' is-on' : '') + (isChild ? ' is-child' : '');
   if (g) el.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
-  el.innerHTML = `<span class="fico ${iconFor(t.f).cls}"></span><span class="nm"></span>
-    <button class="x" title="关闭">×</button>`;
+  el.innerHTML = `${customIconHtml(t) || `<span class="fico ${iconFor(t.f).cls}"></span>`}
+    <span class="nm"></span><button class="x" title="关闭">×</button>`;
   el.querySelector('.nm').textContent = tabDisplayName(t);
   el.title = tabDisplayName(t) + (t.label ? `（原名 ${t.f}）` : '');
   el.querySelector('.x').onclick = e => { e.stopPropagation(); closeTab(i); };
   el.onclick = () => activateTab(i);
+  el.ondblclick = e => { e.stopPropagation(); renameTabLabel(t); };
   el.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
+  el.draggable = true;
+  el.ondragstart = e => { e.dataTransfer.setData('text/plain', String(i)); el.classList.add('dragging'); };
+  el.ondragover = e => { e.preventDefault(); };
+  el.ondrop = e => { e.preventDefault(); moveTabTo(+e.dataTransfer.getData('text/plain'), i); };
+  el.ondragend = () => el.classList.remove('dragging');
   return el;
 }
 function tvGroupRow(grp, members) {
@@ -1425,7 +1666,7 @@ function tvGroupRow(grp, members) {
 /* ============================================================
    内容区
    ============================================================ */
-function renderAll() { renderNav(); renderTabs(); renderContext(); renderContent(); renderModes(); renderChatModes(); renderChat(); }
+function renderAll() { renderNav(); renderTabs(); renderContext(); renderContent(); renderModes(); renderChatModes(); renderChat(); renderSendPolicy(); renderQuickCommandBar(); }
 
 function focusChipEl(entry) {
   const rel = entry.f, pr = projectById(entry.p);
@@ -1515,7 +1756,39 @@ function toggleFocusList() {
 }
 
 
+/// §22.10 拆分半屏：只读显示那一个标签的内容（md 渲染成 HTML，其它给原文）
+function renderSplitPane() {
+  const el = $('#wsSplit'); if (!el) return;
+  const side = S.splitSide;
+  const t = (side && typeof S.splitIndex === 'number') ? S.tabs[S.splitIndex] : null;
+  if (!side || !t) { el.hidden = true; return; }
+  el.hidden = false;
+  el.dataset.side = side;
+  $('#wsSplitName').textContent = t.label || t.f;
+  const ic = iconFor(t.f);
+  const ico = $('#wsSplitIco'); ico.className = `fico ${ic.cls}`;
+  const pr = projectById(t.p);
+  const body = $('#wsSplitBody');
+  if (t.kind === 'browser') { body.innerHTML = `<p>浏览器标签不参与拆分（原型只拆文件）。</p>`; return; }
+  const content = (pr && pr.files[t.f]) || '';
+  const e = extOf(t.f);
+  if (e === 'md') body.innerHTML = mdToHtml(content);
+  else if (e === 'html' || e === 'htm') body.innerHTML = `<p style="color:var(--ink3)">HTML 页面在主视图里预览；拆分这一侧只给源码：</p><pre>${escapeHtml(content)}</pre>`;
+  else if (content === '__PDF__') body.innerHTML = `<p style="color:var(--ink3)">PDF 不参与拆分（主视图里已经是渲染后的页面）。</p>`;
+  else body.innerHTML = `<pre>${escapeHtml(content)}</pre>`;
+}
+
 function renderCrumbs() {
+  const at = S.tabs[S.activeTab];
+  if (at && at.kind === 'browser') {
+    const c = $('#crumbs'); c.innerHTML = '';
+    const a = document.createElement('span'); a.className = 'c-proj'; a.textContent = '浏览器';
+    const s2 = document.createElement('span'); s2.className = 'c-sep'; s2.textContent = '›';
+    const f = document.createElement('span'); f.className = 'c-file'; f.textContent = at.label || '新标签页';
+    c.append(a, s2, f);
+    $('#fullPathLabel').textContent = at.url || '（新标签页）';
+    return;
+  }
   const rel = relOfActiveTab(), p = proj();
   $('#crumbs').innerHTML = '';
   if (!p || !rel) { $('#crumbs').innerHTML = `<span class="c-proj">临时对话</span>`; $('#fullPathLabel').textContent = '—'; return; }
@@ -1539,8 +1812,23 @@ function applyWorkspaceVisibility() {
 function renderContent() {
   applyWorkspaceVisibility();
   const rel = relOfActiveTab(), p = proj();
+  const activeTab = S.tabs[S.activeTab];
   const hasFile = !!(p && rel);
-  ['#viewMd','#viewFile','#viewMind','#viewHistory'].forEach(s => $(s).classList.remove('is-on'));
+  ['#viewMd','#viewFile','#viewMind','#viewHistory','#viewBrowser'].forEach(s => $(s).classList.remove('is-on'));
+  const vb = $('#viewBrowser'); if (vb) vb.hidden = true;
+
+  // §22.14 浏览器标签：不走「项目 / 文件」那套门槛 —— 它自己就是一整页
+  if (activeTab && activeTab.kind === 'browser') {
+    $('#viewEmpty').classList.add('is-off');
+    $('#tabbar').style.display = '';
+    $('#fileHead').style.display = 'none';
+    $('#mdBar').style.display = 'none';
+    vb.hidden = false; vb.classList.add('is-on');
+    renderBrowser();
+    renderSplitPane();
+    renderHistoryBadge();
+    return;
+  }
 
   // 没进项目模式 = **对话模式**（§12.0）：中间不显示工作区，右边还是原来那个对话窗口
   if (!S.projectMode) {
@@ -1574,6 +1862,8 @@ function renderContent() {
   $('#mdBar').style.display = kind === 'md' ? '' : 'none';
   $('#viewModes').style.display = kind === 'md' ? '' : 'none';
 
+  renderSplitPane();                     // §22.10 有拆分就画那半边
+
   if (S.tab === 'history') {
     $('#viewHistory').classList.add('is-on'); renderHistory();
   } else if (kind === 'md') {
@@ -1592,8 +1882,7 @@ function renderMdToolbar() {
   const vm = { edit: S.mdVariant === 'edit', preview: S.mdVariant === 'preview' };
   $$('#viewModes .vm').forEach(b => b.classList.toggle('is-on',
     S.mdVariant === 'split' ? b.dataset.vm === 'preview' : vm[b.dataset.vm]));
-  $('#btnFoldCode').hidden = S.codeFolded;
-  $('#btnShowCode').hidden = !S.codeFolded;
+  // §22.9.3 折叠按钮只剩一颗、恒在 .mind-bar 最左 —— 这里不再藏/露它
 }
 
 /// 工具栏上那颗「历史 N」的数字（§12.9：历史恢复按钮要看得见）
@@ -1942,6 +2231,8 @@ function renderMind() {
     nodeLayer.appendChild(g);
     if (!S.collapsed[n.id]) n.children.forEach(draw);
   })(parsed.root);
+  const fb = $('#btnFoldCode');
+  if (fb) { fb.hidden = false; fb.textContent = S.codeFolded ? '展开代码' : '折叠代码'; }
   const wrap = $('#mindCanvas'); wrap.innerHTML = ''; wrap.appendChild(svg);
   $('#mindLayout').classList.toggle('code-folded', S.codeFolded);
   renderMdToolbar();
@@ -2006,12 +2297,58 @@ function renderChat() {
   });
   host.scrollTop = host.scrollHeight;
 }
+/// §22.13 —— replyBusy 模拟"上一条还没答完"（原型没有真模型，用一个定时器当生成窗口）
+let replyBusy = false, replyTimer = null;
+function renderSendPolicy() {
+  const pol = S.sendPolicy || 'queue';
+  $$('#qRow .q-opt').forEach(b => b.classList.toggle('is-on', b.dataset.policy === pol));
+  const q = S.sendQueue || [];
+  const badge = $('#qBadge');
+  if (badge) { badge.hidden = q.length === 0; badge.textContent = String(q.length); }
+}
+function setSendPolicy(p) {
+  S.sendPolicy = p; save(true); renderSendPolicy();
+  toast(p === 'queue' ? '发送方式：<b>排队</b> —— 上一条答完再发' : '发送方式：<b>打断</b> —— 直接顶掉上一条');
+}
+function dispatchReply(text) {
+  addMsg('user', escapeHtml(text));
+  replyBusy = true;
+  replyTimer = setTimeout(() => {
+    reply(text);
+    replyTimer = setTimeout(() => {
+      replyBusy = false;
+      const q = S.sendQueue || [];
+      if (q.length) { const next = q.shift(); save(true); renderSendPolicy(); dispatchReply(next); }
+    }, 900);
+  }, 360);
+}
 function sendChat() {
   const ta = $('#chatInput'), text = ta.value.trim();
   if (!text) return;
   ta.value = ''; ta.focus();                    // 发送后清空，光标留在框里
-  addMsg('user', escapeHtml(text));
-  setTimeout(() => reply(text), 360);
+  if (replyBusy && (S.sendPolicy || 'queue') === 'queue') {
+    S.sendQueue = S.sendQueue || []; S.sendQueue.push(text);
+    save(true); renderSendPolicy();
+    toast(`已排队 —— 上一条答完自动发（队列 <b>${S.sendQueue.length}</b> 条）`);
+    return;
+  }
+  if (replyBusy && S.sendPolicy === 'interrupt') {
+    clearTimeout(replyTimer); replyBusy = false;
+    toast('已<b>打断</b>上一条，改发这一条');
+  }
+  dispatchReply(text);
+}
+/// §22.13.6 队列徽标：点开看列表，可单条取消
+function openQueueMenu(anchor) {
+  const q = S.sendQueue || [];
+  if (!q.length) return;
+  showMenu(
+    [{ title: `排队中 ${q.length} 条` }]
+      .concat(q.map((text, i) => ({ label: `取消第 ${i + 1} 条 · ${String(text).slice(0, 14)}`,
+        action: () => { S.sendQueue.splice(i, 1); save(true); renderSendPolicy(); toast('已取消一条排队消息'); } })))
+      .concat([{ sep: true }, { label: '清空队列', danger: true,
+        action: () => { S.sendQueue = []; save(true); renderSendPolicy(); toast('已清空队列'); } }]),
+    anchor);
 }
 function reply(q) {
   const p = proj(), focuses = S.focusFiles || [], focus = focuses[0];
@@ -2111,11 +2448,7 @@ function setLayout(layout) {
   toast(say[layout]);
 }
 function cycleLayout() {
-  // 编辑区关着 = 没有中间那一栏，只有 左 / 右（§15.4 你的第 3 点）
-  if (!S.projectMode) {
-    setLayout(S.layout === 'left' || S.layout === 'center' ? 'right' : 'left');
-    return;
-  }
+  // §22.6.2 推翻 §15.4「编辑区关着只有 左/右」—— 编辑区关着也照样能切 左/中/右
   setLayout(S.layout === 'right' ? 'center' : S.layout === 'center' ? 'left' : 'right');
 }
 /// 进项目模式：把导航栏那排 图文/语音/视频 **搬进对话框**（§12.0.5）
@@ -2185,8 +2518,8 @@ function openTabsPopover() {
     it.innerHTML = `${treeIconSVG(t.f, false)}<span class="nm"></span>
       <span class="pin">${t.pinned ? '📌' : ''}</span>`;
     it.querySelector('.nm').textContent = `${(projectById(t.p) || {}).name || t.p} · ${tabDisplayName(t)}`;
-    it.onclick = () => { m.hidden = true; S.activeTab = i; S.currentFile = t.f;
-      S.tab = extViewKind(t.f) === 'file' ? 'file' : extViewKind(t.f);
+    it.onclick = () => { m.hidden = true; S.activeTab = i; S.currentFile = t.kind === 'browser' ? null : t.f;
+      S.tab = tabViewKind(t);
       save(); renderTabs(); renderContent(); renderContext(); renderNav(); };
     m.appendChild(it);
   });
@@ -2195,7 +2528,8 @@ function openTabsPopover() {
   m.hidden = false;
   m.style.left = r.left + 'px'; m.style.top = (r.bottom + 6) + 'px';
 }
-/// §21.4A 右键标签页 —— **功能类型**照用户给的那张图，**样式**走本项目自己的 .menu
+/// §22.10 右键标签页 = 用户给的那张图（拆分/改名/固定/关闭一族/预览/路径）
+///          + §21.4A 保留下来的全部条目。UI 仍是本项目 .menu。
 function openTabMenu(index, ev) {
   menuTabIndex = index;
   menuTabXY = { x: ev.clientX, y: ev.clientY };
@@ -2204,10 +2538,28 @@ function openTabMenu(index, ev) {
   const m = $('#menuTabs');
   const groups = S.tabGroups || [];
   const last = index >= S.tabs.length - 1;
+  const isBrowser = t.kind === 'browser';
+  const rel = isBrowser ? null : t.f;
+  const isMd = rel && extOf(rel) === 'md';
   m.innerHTML = `
+    <div class="menu-title">${escapeHtml(t.label || t.f)}</div>
+    <button data-act="splitTo">将标签页移至拆分 ›</button>
+    <button data-act="renameFile">重命名</button>
+    <button data-act="pin">${t.pinned ? '取消固定标签' : '固定标签'}</button>
+    <div class="menu-sep"></div>
+    <button data-act="close">关闭</button>
+    <button data-act="closeOthers"${S.tabs.length < 2 ? ' disabled' : ''}>关闭其他</button>
+    <button data-act="closeAll"${S.tabs.length < 1 ? ' disabled' : ''}>关闭所有编辑器选项卡</button>
+    <button data-act="closeRight"${last ? ' disabled' : ''}>关闭右侧的选项卡</button>
+    <button data-act="closeLeft"${index <= 0 ? ' disabled' : ''}>关闭左侧的选项卡</button>
+    <div class="menu-sep"></div>
+    ${isMd ? '<button data-act="openPreview">打开 Markdown 预览</button>' : ''}
+    ${rel ? `<button data-act="copyPath">复制路径</button>
+             <button data-act="copyRelPath">复制相对路径</button>
+             <button data-act="reveal">在 Finder 中显示</button>` : ''}
+    <div class="menu-sep"></div>
     <button data-act="openBelow">在下方新增标签页</button>
     <button data-act="splitView">使用当前标签页创建新的拆分视图</button>
-    <div class="menu-sep"></div>
     <button data-act="toNewGroup">移动至新标签组</button>
     ${groups.length ? `<button data-act="joinGroup">加入标签组…</button>` : ''}
     ${t.group ? `<button data-act="leaveGroup">移出当前标签组</button>
@@ -2216,19 +2568,12 @@ function openTabMenu(index, ev) {
     <div class="menu-sep"></div>
     <button data-act="reload">重新加载</button>
     <button data-act="dup">复制标签页</button>
-    <button data-act="pin">${t.pinned ? '取消固定' : '固定'}</button>
-    <button data-act="rename">重命名标签页</button>
+    <button data-act="renameLabel">重命名标签页</button>
+    <button data-act="customIcon">自定义图标…</button>
     <button data-act="mute">将这个网站静音</button>
     <div class="menu-sep"></div>
-    <button data-act="layout">${S.tabsVertical ? '水平显示标签页' : '垂直显示标签页'}</button>
-    <div class="menu-sep"></div>
-    <button data-act="close">关闭</button>
-    <button data-act="closeOthers"${S.tabs.length < 2 ? ' disabled' : ''}>关闭其他标签页</button>
-    <button data-act="closeLeft"${index <= 0 ? ' disabled' : ''}>关闭左侧标签页</button>
-    <button data-act="closeRight"${last ? ' disabled' : ''}>关闭右侧标签页</button>
-    <button data-act="closeBelow"${last ? ' disabled' : ''}>关闭下方标签页</button>`;
+    <button data-act="layout">${S.tabsVertical ? '水平显示标签页' : '垂直显示标签页'}</button>`;
   $$('button', m).forEach(b => b.onclick = () => tabMenuAction(b.dataset.act));
-  // 菜单有 18 项、比一屏还高 —— 必须按**实测尺寸**贴边，否则最后一两项跑到屏幕外点不到
   m.hidden = false;
   placeMenu(m, ev.clientX, ev.clientY);
 }
@@ -2243,6 +2588,29 @@ function tabMenuAction(act) {
   switch (act) {
     case 'openBelow': openTabAfter(i); return;
     case 'splitView': toast('拆分视图：原型先记一笔（落 SwiftUI 走双栏）'); return;
+    case 'splitTo': {
+      const x = menuTabXY;
+      showMenu([
+        { label: '拆分到左侧', action: () => setSplitSide('left', i) },
+        { label: '拆分到右侧', action: () => setSplitSide('right', i) },
+      ], null, x);
+      return; }
+    case 'renameFile': renameTabFile(t); return;
+    case 'copyPath': {
+      const pr = projectById(t.p); if (!pr) return;
+      navigator.clipboard?.writeText(`${pr.path}/${t.f}`);
+      toast(`已复制路径 <b>${escapeHtml(pr.path + '/' + t.f)}</b>`); return; }
+    case 'copyRelPath':
+      navigator.clipboard?.writeText(t.f);
+      toast(`已复制相对路径 <b>${escapeHtml(t.f)}</b>`); return;
+    case 'reveal': {
+      const pr = projectById(t.p);
+      toast(pr ? `在 Finder 中显示 <b>${escapeHtml(pr.path + '/' + t.f)}</b>` : '没有项目路径'); return; }
+    case 'openPreview':
+      S.tab = 'md'; S.mdVariant = 'preview';
+      save(); renderContent(); toast('已切到 Markdown 预览'); return;
+    case 'closeAll': S.tabs = []; S.activeTab = 0; S.currentFile = null; S.projectMode = false;
+      save(); renderTabs(); renderContent(); renderContext(); toast('已关闭所有标签'); return;
     case 'toNewGroup': moveToNewTabGroup(t); return;
     case 'joinGroup': {
       const groups = S.tabGroups || [];
@@ -2259,6 +2627,21 @@ function tabMenuAction(act) {
     case 'toWindow': toast('移至新窗口：原型先记一笔（落 SwiftUI 走新 NSWindow）'); return;
     case 'reload': save(); renderContent(); renderTabs(); toast(`已重新加载 <b>${escapeHtml(t.f)}</b>`); return;
     case 'rename': renameTabLabel(t); return;
+    case 'customIcon': {
+      const x = menuTabXY;
+      showMenu([{ title: '图标' }]
+        .concat(TAB_ICON_COLORS.map(c => ({ label: `${c}  ●`, action: () => { t.icon = c; save(true); renderTabs(); toast('图标已改'); } })))
+        .concat([{ sep: true },
+          { label: '输入 emoji / 字符…', action: () => askModal({ title: '自定义图标',
+              text: '填 1–2 个字符当标签图标；留空 = 恢复成文件类型图标。',
+              value: (t.icon && !String(t.icon).startsWith('#')) ? t.icon : '', okText: '用它',
+              onOk: v => { const s2 = (v || '').trim();
+                if (s2) { t.icon = s2.slice(0, 2); toast('图标已改'); }
+                else { delete t.icon; toast('已恢复文件类型图标'); }
+                save(true); renderTabs(); } }) },
+          { label: '恢复默认（文件类型图标）', action: () => { delete t.icon; save(true); renderTabs(); } }]),
+        null, x);
+      return; }
     case 'mute': toast('这个标签没有音频可静音（原型先记一笔）'); return;
     case 'layout': toggleTabsLayout(); return;
     case 'pin': t.pinned = !t.pinned;
@@ -2301,6 +2684,38 @@ function openTabAfter(i) {
   save(); renderTabs(); renderContent(); renderContext(); renderNav();
   toast(`已在下方新增标签：<b>${escapeHtml(found.rel)}</b>`);
 }
+/// §22.7.3 右键「重命名」= **重命名这个文件**（与文件树右键那一套同一语义）
+function renameTabFile(t) {
+  if (t.kind === 'browser') { renameTabLabel(t); return; }
+  const pr = projectById(t.p); if (!pr) return;
+  askModal({ title: '重命名文件', text: t.f, value: t.f.split('/').pop(), okText: '重命名', onOk: v => {
+    const nn = (v || '').trim(); if (!nn || nn === t.f.split('/').pop()) return;
+    const dir = t.f.includes('/') ? t.f.slice(0, t.f.lastIndexOf('/') + 1) : '';
+    const target = dir + nn;
+    if (target in pr.files) { toast('已经有同名文件了'); return; }
+    pr.files[target] = pr.files[t.f]; delete pr.files[t.f];
+    renameInTree(pr.tree, t.f.split('/'), target.split('/'));
+    S.focusFiles = (S.focusFiles || []).filter(x => !(x.p === pr.id && x.f === t.f));
+    S.tabs.forEach(x => { if (x.p === pr.id && x.f === t.f) x.f = target; });
+    if (S.currentFile === t.f) S.currentFile = target;
+    save(true); renderNav(); renderTabs(); renderContent(); renderContext();
+    toast(`已重命名为 <b>${escapeHtml(target)}</b>`);
+  }});
+}
+
+/// §22.10 「将标签页移至拆分」—— 内容区横向劈成两半，这一半显示那个标签
+function setSplitSide(side, index) {
+  const t = S.tabs[index]; if (!t) return;
+  if (S.splitSide === side && S.splitIndex === index) {
+    S.splitSide = null; S.splitIndex = undefined;
+    toast('已退出拆分');
+  } else {
+    S.splitSide = side; S.splitIndex = index;
+    toast(`已把「${escapeHtml(t.label || t.f)}」放到${side === 'left' ? '左' : '右'}半边（原型只做只读预览）`);
+  }
+  save(true); renderContent();
+}
+
 /// 改的是**显示名**，不碰磁盘上的文件名；留空 = 恢复原名
 function renameTabLabel(t) {
   askModal({ title: '重命名标签页',
@@ -2415,6 +2830,8 @@ function settingsAction(act, btn) {
   if (act === 'defLeft') { S.defaultLayout = 'left'; setLayout('left'); }
   else if (act === 'defCenter') { S.defaultLayout = 'center'; setLayout('center'); }
   else if (act === 'defRight') { S.defaultLayout = 'right'; setLayout('right'); }
+  else if (act === 'policyQueue') { setSendPolicy('queue'); return; }
+  else if (act === 'policyInterrupt') { setSendPolicy('interrupt'); return; }
   else if (act === 'resetHist') {
     const rel = histFile(); if (!rel) return;
     confirmModal({ title: '清空这个文件的全部历史？', text: rel, okText: '清空', onOk: () => {
@@ -2487,9 +2904,17 @@ function bind() {
     else if (q === 'roles') toast('角色：进入角色设置（落 SwiftUI 打开 设置 → 角色）');
     else if (q === 'record') toast('录音：进入录音页（落 SwiftUI 打开 设置 → 录音）');
   });
-  // 段头折叠（项目 / 临时）
-  $('#btnProjSect').onclick = () => { S.navOpen = !S.navOpen; save(); renderNav(); };
-  $('#btnPlanSect').onclick = () => { S.planOpen = S.planOpen === false; save(); renderNav(); };
+  // 段头折叠（§22.4：整张**卡片**可点，不只是那行字）
+  // 绑在 .nav-head 上，点卡片任意位置（含字、含留白）都算；＋ 自己 stopPropagation，不会串。
+  const headOf = el => el && el.closest('.nav-head');
+  headOf($('#btnProjSect')).onclick = e => {
+    if (e.target.closest('.plus')) return;
+    S.navOpen = !S.navOpen; save(); renderNav();
+  };
+  headOf($('#btnPlanSect')).onclick = e => {
+    if (e.target.closest('.plus')) return;
+    S.planOpen = S.planOpen === false; save(); renderNav();
+  };
 
   const openMenuAt = (id, btn) => {
     const m = $(id);
@@ -2574,14 +2999,74 @@ function bind() {
     renderSearchPop();
     filterTree($('#navSearch').value, S.searchScope);
   });
-  $$('#searchTypes input').forEach(i => i.onchange = () => {
+  $$('#searchTypes button').forEach(b => b.onclick = e => {
+    e.stopPropagation();
     const t = S.searchTypes || { folder: true, file: true, content: false };
-    S.searchTypes = { ...t, [i.dataset.type]: i.checked };
+    S.searchTypes = { ...t, [b.dataset.type]: !t[b.dataset.type] };   // 点中=开、再点=关
     save(true);
-    runSearch();
+    renderSearchPop();
+    filterTree($('#navSearch').value, S.searchScope);
   });
 
-  $('#btnNewTab').onclick = () => { $('#navSearch').focus(); toast('用左栏顶部的搜索找文件，点它开新标签'); };
+  // §22.9.5 ＋ 改成**下拉**（显示在按钮正下方）
+  $('#btnNewTab').onclick = e => { e.stopPropagation(); openMenuAt('#menuNewTab', e.currentTarget); };
+  $$('#menuNewTab button').forEach(b => b.onclick = () => newTabAction(b.dataset.act));
+  $('#termClose').onclick = () => { $('#termPanel').hidden = true; };
+  // §22.11 快捷指令
+  $('#qcRun').onclick = () => { const id = $('#qcRun').dataset.id; if (id) runQuickCommand(id); else openQuickCommandModal(null); };
+  $('#qcPick').onclick = e => { e.stopPropagation(); openQuickCommandMenu(e.currentTarget); };
+  $('#qcCancel').onclick = closeQuickCommandModal;
+  $('#qcSave').onclick = saveQuickCommand;
+  $('#qcBack').onclick = e => { if (e.target.id === 'qcBack') closeQuickCommandModal(); };
+  $('#qcCmd').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveQuickCommand(); }
+    if (e.key === 'Escape') e.stopPropagation();
+  });
+  $('#qcLabel').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#qcCmd').focus(); }
+    if (e.key === 'Escape') e.stopPropagation(); });
+  $$('#qcOp button').forEach(b => b.onclick = () => { if (qcDraft) { qcDraft.op = b.dataset.op; paintQcModal(); } });
+  $$('#qcScope button').forEach(b => b.onclick = () => { if (qcDraft) { qcDraft.scope = b.dataset.scope; paintQcModal(); } });
+  $('#qcAdvBtn').onclick = () => { const b = $('#qcAdvBody'); b.hidden = !b.hidden; };
+  $('#qcProjBtn').onclick = e => {
+    e.stopPropagation();                       // 不让 document 的"点外面关菜单"当场关掉刚开的那个
+    if (!qcDraft) return;
+    const names = realProjects().map(p => p.name);
+    if (!names.length) { toast('还没有项目可选'); return; }
+    showMenu(names.map(n => ({ label: n + (qcDraft.project === n ? '  ✓' : ''), action: () => {
+      qcDraft.project = n; paintQcModal();
+    } })).concat([{ sep: true }, { label: '（未选，对所有项目生效）', action: () => { qcDraft.project = ''; paintQcModal(); } }]),
+      $('#qcProjBtn'));
+  };
+  renderQuickCommandBar();
+  // §22.12 项目添加/编辑模态
+  $('#pjCancel').onclick = () => { $('#projBack').hidden = true; };
+  $('#pjOk').onclick = saveProjectModal;
+  $('#projBack').onclick = e => { if (e.target.id === 'projBack') $('#projBack').hidden = true; };
+  $('#pjPath').addEventListener('input', renderProjectFolders);
+  $('#pjPath').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveProjectModal(); } if (e.key === 'Escape') e.stopPropagation(); });
+  $('#pjName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveProjectModal(); } if (e.key === 'Escape') e.stopPropagation(); });
+  $('#pjAddFolder').onclick = e => {
+    e.stopPropagation();
+    askModal({ title: '添加本地文件夹', text: '这个项目还会参考的其它文件夹（绝对路径；原型不弹系统选择器）',
+      value: '/Users/mjm/Documents/SuperAgent/', okText: '添加', onOk: v => {
+        const p2 = (v || '').trim(); if (!p2) return;
+        if (!pjExtras.includes(p2)) pjExtras.push(p2);
+        renderProjectFolders();
+      }});
+  };
+  $('#wsSplitClose').onclick = () => { S.splitSide = null; S.splitIndex = undefined; save(true); renderContent(); toast('已退出拆分'); };
+  // §22.14 浏览器 chrome
+  $('#brUrl').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); navigateBrowser($('#brUrl').value); } });
+  $('#brBack').onclick = () => toast('后退：原型只记录一次（真机走 webview.navigationHistory）');
+  $('#brFwd').onclick = () => toast('前进：原型只记录一次（真机走 webview.navigationHistory）');
+  $('#brReload').onclick = () => { const t = activeTabObj(); if (t && t.url) { const f = $('#brFrame'); f.dataset.src = ''; renderBrowser(); } };
+  $('#brGrab').onclick = () => setBrMode('grab');
+  $('#brNote').onclick = () => setBrMode('note');
+  $('#brDraw').onclick = () => setBrMode('draw');
+  $('#brImport').onclick = e => { e.stopPropagation(); openBrCookie(e.currentTarget); };
+  $('#brMore').onclick = e => { e.stopPropagation(); openBrMore(e.currentTarget); };
+  $('#brCode').onclick = () => toast('&lt;&gt; 开发者工具：真机走 `guest.openDevTools()`（reference/orca …/browser-manager-viewport.ts:16）');
+  $('#brExt').onclick = () => { const t = activeTabObj(); if (t && t.url) window.open(t.url, '_blank', 'noopener'); else toast('还没有网址'); };
   $('#btnPath').onclick = () => {
     const t = $('#fullPathLabel').textContent;
     if (t === '—') return;
@@ -2647,7 +3132,6 @@ function bind() {
     window.__mindT = setTimeout(() => { pushHistory(MIND_FILE, '手改', $('#mindSource').value, '脑图源码编辑'); renderMind(); }, 700);
   });
   $('#btnFoldCode').onclick = toggleCodeFold;
-  $('#btnShowCode').onclick = toggleCodeFold;
   $('#btnFit').onclick = () => {
     const wrap = $('#mindCanvas'), svg = wrap.querySelector('svg'); if (!svg) return;
     const vb = svg.getAttribute('viewBox').split(' ').map(Number);
@@ -2677,6 +3161,14 @@ function bind() {
   $('#tvSearch').oninput = () => renderTabsVertical();
   $('#tvNew').onclick = e => { e.stopPropagation(); $('#navSearch').focus();
     toast('用左栏顶部的搜索找文件，点它开新标签'); };
+  // §22.1.2 拖标签列宽（只改原点不动窗口，和 .split 手柄同一套手感）
+  dragSplit($('#tvGutter'), e => {
+    const ws = $('#workspace').getBoundingClientRect();
+    const w = Math.max(170, Math.min(460, e.clientX - ws.left));
+    S.tvWidth = Math.round(w);
+    $('#workspace').style.setProperty('--tv-w', S.tvWidth + 'px');
+  });
+  window.addEventListener('resize', () => { if (S.tabsVertical) applyTabsLayout(); });
   $('#btnSettings').onclick = e => {
     e.stopPropagation();
     const m = $('#menuSettings');
@@ -2690,9 +3182,16 @@ function bind() {
     m.querySelector('[data-act="defLeft"]').classList.toggle('is-on', S.defaultLayout === 'left');
     m.querySelector('[data-act="defCenter"]').classList.toggle('is-on', S.defaultLayout === 'center');
     m.querySelector('[data-act="defRight"]').classList.toggle('is-on', S.defaultLayout === 'right');
+    // §22.13.3 发送方式也在设置里能选
+    m.querySelector('[data-act="policyQueue"]').classList.toggle('is-on', (S.sendPolicy || 'queue') === 'queue');
+    m.querySelector('[data-act="policyInterrupt"]').classList.toggle('is-on', S.sendPolicy === 'interrupt');
   };
 
   $('#btnSend').onclick = sendChat;
+  // §22.13 排队 ⇄ 打断 + 队列徽标
+  $$('#qRow .q-opt').forEach(b => b.onclick = e => { e.stopPropagation(); setSendPolicy(b.dataset.policy); });
+  $('#qBadge').onclick = e => { e.stopPropagation(); openQueueMenu(e.currentTarget); };
+  renderSendPolicy();
   // §21.5.6/8 展开 ⇄ 收起：点**输入框顶边那条手柄**（旧的 ⤢ 是死按钮，连同那行说明一起删了）
   const applyComposerExpand = () => $('#composer').classList.toggle('is-expanded', !!S.composerExpanded);
   applyComposerExpand();
@@ -2933,9 +3432,8 @@ function openRateMenu(anchor) {
     toast(`语速已设为 <b>${rateLabelOf(S.speechRate)}</b>`);
   });
   const r = anchor.getBoundingClientRect();
-  m.hidden = false;
-  // §21.4 同一条规矩：按实测尺寸贴边 —— 输入框在屏幕底部，`r.bottom + 6` 会把它顶出视口
-  placeMenu(m, r.left, r.bottom + 6);
+  // §22.2：**弹在按钮上方**（下方会被按钮自己挡住）
+  placeMenuAbove(m, r.left, r.top);
 }
 
 function renderComposerControls() {
@@ -3005,9 +3503,342 @@ function boot() {
     requestAnimationFrame(() => {
       const tDone = Math.round(performance.now() - t0);
       app.classList.remove('is-booting');
-      $('#loadStat').textContent = `骨架 ${tSkeleton}ms · 内容 ${tDone}ms`;
     });
   }));
 }
 document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', boot) : boot();
+
+
+/* ============================================================
+   §22.11 快捷指令 —— 一个按钮替换一行动作（终端 / 智能体 + 范围）
+   ============================================================ */
+let qcEditing = null;          // 正在编辑的那条（null = 新建）
+let qcDraft = null;            // { label, op, cmd, append, scope, project }
+
+function quickCommandsVisible() {
+  const pname = (proj() || {}).name || '';
+  return (S.quickCommands || []).filter(c => c.scope !== 'project' || !c.project || c.project === pname);
+}
+function renderQuickCommandBar() {
+  const list = quickCommandsVisible();
+  const cur = list.find(c => c.id === S.quickCommandActive) || list[0];
+  const name = $('#qcName'), run = $('#qcRun'), split = $('#qcSplit');
+  if (!name) return;
+  split.hidden = list.length === 0 && !(S.quickCommands || []).length;
+  if (!cur) { name.textContent = '新建快捷指令'; run.title = '点右边 ⌄ 新建一条'; run.dataset.id = ''; return; }
+  S.quickCommandActive = cur.id;
+  name.textContent = cur.label;
+  run.title = `执行「${cur.label}」（${cur.op === 'agent' ? '智能体' : '终端'}）`;
+  run.dataset.id = cur.id;
+}
+function openQuickCommandMenu(anchor) {
+  closeMenus();
+  const m = $('#menuQc');
+  const list = quickCommandsVisible();
+  m.innerHTML = (list.length
+    ? list.map(c => `<button data-run="${c.id}">▶ ${escapeHtml(c.label)}<span class="mi-sub">${c.op === 'agent' ? '智能体' : '终端'}</span></button>`).join('')
+    : `<div class="menu-title">还没有快捷指令</div>`)
+    + `<div class="menu-sep"></div>
+       <button data-new="1">＋ 新建快捷指令…</button>`;
+  $$('#menuQc button').forEach(b => b.onclick = e => {
+    e.stopPropagation(); closeMenus();
+    if (b.dataset.new) { openQuickCommandModal(null); return; }
+    runQuickCommand(b.dataset.run);
+  });
+  m.hidden = false;
+  placeMenu(m, anchor.getBoundingClientRect().left - 60, anchor.getBoundingClientRect().bottom + 6);
+}
+function openQuickCommandModal(cmd) {
+  qcEditing = cmd;
+  qcDraft = cmd ? { ...cmd } : { label: '', op: 'terminal', cmd: '', append: true, scope: 'global', project: '' };
+  $('#qcLabel').value = qcDraft.label;
+  $('#qcCmd').value = qcDraft.cmd;
+  $('#qcAppend').checked = qcDraft.append !== false;
+  $('#qcAdvBody').hidden = true;
+  paintQcModal();
+  $('#qcBack').hidden = false;
+  $('#qcLabel').focus();
+}
+function paintQcModal() {
+  $$('#qcOp button').forEach(b => b.classList.toggle('is-on', b.dataset.op === qcDraft.op));
+  $$('#qcScope button').forEach(b => b.classList.toggle('is-on', b.dataset.scope === qcDraft.scope));
+  $('#qcProjWrap').hidden = qcDraft.scope !== 'project';
+  $('#qcProjBtn').textContent = '▾ ' + (qcDraft.project || '（未选，对所有项目生效）');
+}
+function closeQuickCommandModal() { $('#qcBack').hidden = true; qcEditing = null; qcDraft = null; }
+function saveQuickCommand() {
+  if (!qcDraft) return;
+  qcDraft.label = ($('#qcLabel').value || '').trim();
+  qcDraft.cmd = $('#qcCmd').value || '';
+  qcDraft.append = $('#qcAppend').checked;
+  if (!qcDraft.label) { toast('先给它起个「标签」'); $('#qcLabel').focus(); return; }
+  if (!qcDraft.cmd.trim()) { toast('命令是空的'); $('#qcCmd').focus(); return; }
+  S.quickCommands = S.quickCommands || [];
+  if (qcEditing) Object.assign(qcEditing, qcDraft);
+  else { const id = 'qc' + now(); S.quickCommands.push({ id, ...qcDraft }); S.quickCommandActive = id; }
+  save(true); renderQuickCommandBar();
+  closeQuickCommandModal();
+  toast(`已保存快捷指令 <b>${escapeHtml(qcDraft ? qcDraft.label : '')}</b>`);
+}
+/// 点它 = **真的跑**：终端 → 终端面板逐字敲入；智能体 → 同时把命令当首条指令发进对话
+function runQuickCommand(id) {
+  const c = (S.quickCommands || []).find(x => x.id === id) || quickCommandsVisible()[0];
+  if (!c) { toast('还没有快捷指令 —— 点 ⌄ 新建一条'); return; }
+  S.quickCommandActive = c.id; save(true); renderQuickCommandBar();
+  if (c.op === 'agent') {
+    addMsg('sys', `智能体 <b>${escapeHtml(c.label)}</b> 收到指令：<code>${escapeHtml(c.cmd)}</code>`
+      + `<br><span style="opacity:.7">原型 · 真机上这里起一个 agent 进程，把命令当首条指令</span>`);
+  }
+  openTerminal({ title: (c.op === 'agent' ? '🤖 ' : '⌨ ') + c.label, command: c.cmd });
+}
+
+/* ============================================================
+   §22.14 浏览器页 —— 细节从 reference/orca 取，不是照截图猜
+   视口预设照 reference/orca/src/shared/browser-viewport-presets.ts:13-68
+   工具栏顺序照 …/assemble-chrome/browser-chrome-toolbar.tsx:212-267
+   ⋯ 菜单照 …/assemble-chrome/BrowserToolbarMenu.tsx:99-252
+   ============================================================ */
+const BROWSER_VIEWPORT_PRESETS = [
+  { id: 'mobile-s',  label: 'Mobile S',  w: 320,  h: 568,  dsf: 2, mobile: true },
+  { id: 'mobile-m',  label: 'Mobile M',  w: 375,  h: 667,  dsf: 2, mobile: true },
+  { id: 'mobile-l',  label: 'Mobile L',  w: 425,  h: 812,  dsf: 2, mobile: true },
+  { id: 'tablet',    label: 'Tablet',    w: 768,  h: 1024, dsf: 2, mobile: true },
+  { id: 'laptop',    label: 'Laptop',    w: 1024, h: 768,  dsf: 1, mobile: false },
+  { id: 'laptop-l',  label: 'Laptop L',  w: 1440, h: 900,  dsf: 1, mobile: false },
+  { id: 'desktop',   label: 'Desktop',   w: 1920, h: 1080, dsf: 1, mobile: false },
+];
+const BROWSER_COOKIE_SOURCES = ['Safari', 'Google Chrome', 'Firefox', '从文件导入…'];
+let brMode = null;                 // null | 'grab' | 'note' | 'draw'
+let brDrawing = null;              // 正在画的这一笔
+let brStrokes = [];                // 本次绘制累计的笔迹（导出时一起带走）
+let brStrokeColor = '#FF4D4F';
+let brStrokeWidth = 4;
+const activeTabObj = () => S.tabs[S.activeTab] || null;
+const tabViewKind = t => (t && t.kind === 'browser') ? 'browser' : extViewKind(t.f);
+const hostOf = u => { try { return u ? new URL(u).host : ''; } catch { return ''; } };
+
+/// 开一张浏览器标签（§22.0.1 / §22.9.5）
+function openBrowserPage(url, focusUrl) {
+  const t = { p: (proj() || {}).id || null, f: url || '', kind: 'browser',
+              label: url ? (hostOf(url) || '网页') : '新标签页', url: url || '' };
+  S.tabs.push(t);
+  S.activeTab = S.tabs.length - 1;
+  S.currentFile = null;
+  S.tab = 'browser';
+  S.projectMode = true; S.tempMode = false;
+  save(true); renderTabs(); renderContent(); renderContext(); renderNav();
+  if (focusUrl !== false) { const i = $('#brUrl'); if (i) { i.focus(); i.select(); } }
+}
+
+function renderBrowser() {
+  const t = activeTabObj(); if (!t || t.kind !== 'browser') return;
+  const url = t.url || '';
+  const urlInput = $('#brUrl');
+  if (document.activeElement !== urlInput) urlInput.value = url;
+  const empty = $('#brEmpty'), frame = $('#brFrame');
+  const preset = BROWSER_VIEWPORT_PRESETS.find(p => p.id === t.viewportId);
+  const body = $('#brBody');
+  body.classList.toggle('vp-frame', !!preset);
+  if (preset) body.style.setProperty('--vp-w', preset.w + 'px');
+  if (preset) body.style.setProperty('--vp-h', preset.h + 'px');
+  if (url) {
+    empty.hidden = true; frame.hidden = false;
+    if (frame.dataset.src !== url) { frame.src = url; frame.dataset.src = url; }
+  } else {
+    empty.hidden = false; frame.hidden = true; frame.removeAttribute('src'); frame.dataset.src = '';
+  }
+  $('#brImport').textContent = `⬇ 导入`;
+  $('#brGrab').classList.toggle('is-on', brMode === 'grab');
+  $('#brNote').classList.toggle('is-on', brMode === 'note');
+  $('#brDraw').classList.toggle('is-on', brMode === 'draw');
+}
+
+function navigateBrowser(raw) {
+  const t = activeTabObj(); if (!t || t.kind !== 'browser') return;
+  const v = (raw || '').trim(); if (!v) return;
+  const url = /^(https?:|about:|data:)/i.test(v) ? v
+           : (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(v) ? 'https://' + v : 'https://www.bing.com/search?q=' + encodeURIComponent(v));
+  t.url = url; t.f = url; t.label = hostOf(url) || '网页';
+  save(true); renderTabs(); renderBrowser(); renderContext();
+}
+
+/// 抓取/注释/绘制 三个工具共用一块画布（跨域读不到 DOM，所以走坐标 + 提示词，见 §22.0 的边界）
+function setBrMode(mode) {
+  const body = $('#brBody'), cv = $('#brCanvas');
+  if (brMode === mode) mode = null;
+  brMode = mode; brDrawing = null;
+  if (!mode) { cv.hidden = true; cv.style.pointerEvents = 'none'; $('#brHint').hidden = true; renderBrowser(); return; }
+  const r = body.getBoundingClientRect();
+  cv.width = Math.max(1, Math.round(r.width)); cv.height = Math.max(1, Math.round(r.height));
+  cv.style.pointerEvents = 'auto'; cv.hidden = false;
+  const hint = { grab: '点页面上任意位置 —— 记下坐标与视口，生成可直接粘给 agent 的提示词',
+                 note: '拖一个框选中元素 → 写一句你要它改什么（会进提示词）',
+                 draw: '直接画。画完点 ⓘ 导出（笔迹 + 视口 + 提示词进剪贴板）' }[mode];
+  $('#brHint').textContent = hint; $('#brHint').hidden = false;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  brStrokes = [];
+  const pt = e => { const b = cv.getBoundingClientRect(); return { x: Math.round(e.clientX - b.left), y: Math.round(e.clientY - b.top) }; };
+  cv.onmousedown = e => {
+    const p0 = pt(e);
+    if (mode === 'grab') { brMode = null; cv.hidden = true; $('#brHint').hidden = true; renderBrowser();
+      copyText(brGrabPrompt(p0, { w: cv.width, h: cv.height }), '已抓取坐标并把提示词复制到剪贴板'); return; }
+    brDrawing = { color: brStrokeColor, width: brStrokeWidth, pts: [p0] };
+    cv.onmousemove = ev => {
+      if (!brDrawing) return;
+      const p = pt(ev); brDrawing.pts.push(p);
+      ctx.strokeStyle = brDrawing.color; ctx.lineWidth = brDrawing.width;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const a = brDrawing.pts[brDrawing.pts.length - 2];
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    };
+    cv.onmouseup = () => {
+      cv.onmousemove = null;
+      if (brDrawing && brDrawing.pts.length > 1) brStrokes.push(brDrawing);
+      brDrawing = null;
+    };
+  };
+  cv.onmouseup = () => {};
+  renderBrowser();
+}
+function brBounds(strokes) {
+  const xs = strokes.flatMap(s => s.pts.map(p => p.x)), ys = strokes.flatMap(s => s.pts.map(p => p.y));
+  if (!xs.length) return null;
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+/// 提示词模板照 reference/orca …/annotate/browser-annotation-output.ts:162-224 的骨架
+function brPrompt({ title, kind, items, strokes }) {
+  const t = activeTabObj() || {};
+  const body = $('#brBody').getBoundingClientRect();
+  const lines = [
+    `## Design Feedback: ${title || '当前页面'}`, '',
+    `**URL:** ${t.url || '(新标签页)'}`,
+    `**Viewport:** ${Math.round(body.width)}x${Math.round(body.height)}`,
+    `**Source:** Wanna 浏览器页 · 抓取模式=${kind}`, ''
+  ];
+  items.forEach((it, i) => {
+    lines.push(`### ${i + 1}. ${it.label}`);
+    lines.push(`**Intent:** ${it.intent || '（未填）'}`);
+    const noDom = '_（跨域读不到 DOM；真机上走 Electron 的 guest.executeJavaScript(buildGuestOverlayScript("extractHover"))'
+                + ' —— reference/orca/src/main/browser/browser-manager-grab.ts:111-125）_';
+    lines.push(`**Selector:** ${it.selector || noDom}`);
+    lines.push(`**Bounds:** x=${it.x}, y=${it.y}, ${it.w}x${it.h}`);
+    if (it.comment) lines.push(`**Feedback:** ${it.comment}`);
+    lines.push('');
+  });
+  if (strokes && strokes.length) {
+    const b = brBounds(strokes);
+    lines.push(`### 绘制标注（${strokes.length} 笔）`);
+    lines.push(`**Bounds:** x=${b.x}, y=${b.y}, ${b.w}x${b.h}`);
+    lines.push(`**Colors:** ${[...new Set(strokes.map(s => s.color))].join(', ')}`);
+    lines.push('_底图截图需要 Electron 的 `webview.capturePage()`（reference/orca …/markup-base-image.ts:29）—— 原型里没有，所以只带笔迹与坐标。_');
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+function brGrabPrompt(p, vp) {
+  return brPrompt({ title: hostOf((activeTabObj() || {}).url) || '当前页面', kind: 'grab',
+    items: [{ label: '用户点选的位置', intent: '定位到这个坐标处的元素', selector: '', x: p.x, y: p.y, w: 1, h: 1 }] });
+}
+function copyText(text, ok) {
+  navigator.clipboard?.writeText(text);
+  toast(ok + `<br><code style="font-size:11px">${escapeHtml(text.split('\\n')[0])}…</code>`);
+}
+function finishDrawing(withComment) {
+  if (brDrawing) { brStrokes.push(brDrawing); brDrawing = null; }
+  if (!brStrokes.length) { toast('先画点什么'); return; }
+  const strokes = brStrokes;
+  const commit = comment => {
+    const prompt = brPrompt({ title: hostOf((activeTabObj() || {}).url) || '当前页面',
+      kind: withComment ? 'annotate' : 'draw',
+      items: withComment ? [{ label: '框选区域', intent: '按这条反馈改这里', selector: '',
+                              ...(brBounds(strokes) || { x: 0, y: 0, w: 0, h: 0 }), comment }] : [],
+      strokes });
+    copyText(prompt, withComment ? '已把这条标注写成提示词并复制' : '已把绘制标注复制到剪贴板');
+    brMode = null; $('#brCanvas').hidden = true; $('#brHint').hidden = true; renderBrowser();
+  };
+  if (withComment) askModal({ title: '这条标注要说什么？', value: '', okText: '生成提示词', onOk: commit });
+  else commit();
+}
+
+/// ⋯ 下拉：档案 / 新档案 / 导入 Cookie / 视口尺寸 / 浏览器设置（结构照 BrowserToolbarMenu.tsx）
+function openBrMore(anchor) {
+  closeMenus();
+  const m = $('#menuBrMore');
+  const profiles = S.browserProfiles || [];
+  const cur = S.browserProfile || 'default';
+  m.innerHTML = `<div class="menu-title">档案</div>`
+    + profiles.map(p => `<button data-act="profile" data-id="${p.id}">${p.id === cur ? '✓ ' : ''}${escapeHtml(p.label)}<span class="mi-sub">${escapeHtml(p.engine)}</span></button>`).join('')
+    + `<div class="menu-sep"></div>
+       <button data-act="newProfile">＋ 新档案…</button>
+       <button data-act="cookie">⬇ 导入 Cookie ›</button>
+       <button data-act="viewport">🖥 视口尺寸 ›</button>
+       <button data-act="settings">⚙ 浏览器设置…</button>`;
+  $$('#menuBrMore button').forEach(b => b.onclick = e => { e.stopPropagation(); brMoreAction(b.dataset.act, b.dataset.id, b); });
+  m.hidden = false; placeMenu(m, anchor.getBoundingClientRect().left - 150, anchor.getBoundingClientRect().bottom + 6);
+}
+function brMoreAction(act, id, btn) {
+  if (act === 'profile') {
+    S.browserProfile = id; save(true); closeMenus();
+    const p = (S.browserProfiles || []).find(x => x.id === id);
+    toast(`已切到档案 <b>${escapeHtml(p ? p.label : id)}</b>`);
+    renderBrowser(); return;
+  }
+  if (act === 'newProfile') {
+    closeMenus();
+    askModal({ title: '＋ 新档案', text: '给这个档案起个名字（Orca 里对应 `createBrowserSessionProfile(\'isolated\', name)`）。',
+      value: `档案 ${(S.browserProfiles || []).length + 1}`, okText: '创建', onOk: v => {
+        const label = (v || '').trim() || '新档案';
+        S.browserProfiles = S.browserProfiles || [];
+        S.browserProfiles.push({ id: 'p' + now(), label, engine: 'Safari', scope: 'isolated' });
+        save(true); toast(`已新建档案 <b>${escapeHtml(label)}</b>`);
+      }});
+    return;
+  }
+  if (act === 'cookie') { openBrCookie(btn); return; }
+  if (act === 'viewport') { openBrViewport(btn); return; }
+  if (act === 'settings') { closeMenus(); openBrSettings(); return; }
+}
+function openBrCookie(anchor) {
+  closeMenus();
+  const m = $('#menuBrCookie');
+  m.innerHTML = `<div class="menu-title">导入 Cookie</div>`
+    + BROWSER_COOKIE_SOURCES.map(s => `<button data-src="${escapeHtml(s)}">${escapeHtml(s)} ›</button>`).join('');
+  $$('#menuBrCookie button').forEach(b => b.onclick = e => {
+    e.stopPropagation(); closeMenus();
+    const src = b.dataset.src;
+    const n = 10 + Math.floor(Math.random() * 40);
+    S.browserCookies = S.browserCookies || [];
+    S.browserCookies.push({ from: src, count: n, at: now() });
+    save(true);
+    toast(`已从 <b>${escapeHtml(src)}</b> 导入 ${n} 条 cookie<br><code style="font-size:11px">真机走 reference/orca/src/main/browser/browser-cookie-import-pipeline.ts</code>`);
+  });
+  m.hidden = false; placeMenu(m, anchor.getBoundingClientRect().right + 6, anchor.getBoundingClientRect().top);
+}
+function openBrViewport(anchor) {
+  closeMenus();
+  const m = $('#menuBrViewport');
+  const t = activeTabObj() || {};
+  m.innerHTML = `<div class="menu-title">视口尺寸</div>`
+    + `<button data-vp="">${!t.viewportId ? '✓ ' : ''}Default</button>`
+    + BROWSER_VIEWPORT_PRESETS.map(p => `<button data-vp="${p.id}">${t.viewportId === p.id ? '✓ ' : ''}${p.label}<span class="mi-sub">${p.w}×${p.h}</span></button>`).join('');
+  $$('#menuBrViewport button').forEach(b => b.onclick = e => {
+    e.stopPropagation(); closeMenus();
+    const i = S.tabs.indexOf(activeTabObj());
+    if (i >= 0) { S.tabs[i].viewportId = b.dataset.vp || undefined; save(true); }
+    renderBrowser();
+    const p = BROWSER_VIEWPORT_PRESETS.find(x => x.id === b.dataset.vp);
+    toast(p ? `视口已设为 <b>${p.label} ${p.w}×${p.h}</b>（dsf ${p.dsf}${p.mobile ? ', mobile' : ''}）` : '视口已恢复 Default');
+  });
+  m.hidden = false; placeMenu(m, anchor.getBoundingClientRect().right - 200, anchor.getBoundingClientRect().bottom + 6);
+}
+function openBrSettings() {
+  const st = S.browserSettings || { doNotTrack: true, blockPopups: false, homePage: 'https://www.bing.com' };
+  openModal({ title: '浏览器设置',
+    text: `隐私追踪（Do Not Track）：${st.doNotTrack ? '开' : '关'}\n拦截弹窗：${st.blockPopups ? '开' : '关'}\n主页：${st.homePage}\n\n（点「保存」在两者之间切换 Do Not Track；更多项落 SwiftUI 的设置页）`,
+    value: st.homePage, okText: '保存',
+    onOk: v => { S.browserSettings = { ...st, homePage: (v || '').trim() || st.homePage, doNotTrack: !st.doNotTrack };
+      save(true); toast('浏览器设置已保存'); } });
+}
+
 })();
