@@ -364,12 +364,26 @@ code{font-family:var(--mono);font-size:11.5px}
 .is-booting .nav-scroll,.is-booting .msgs,.is-booting .view,
 .is-booting .tabbar,.is-booting .file-head,.is-booting .md-bar{visibility:hidden}
 
-/* ── 布局：对话在右（默认）⇄ 对话在中 ─────────── */
+/* ── 布局：对话在右（默认）⇄ 中 ⇄ 左 ─────────── */
 .main.center-layout .chat{order:3;flex:0 0 46%;max-width:none}
 .main.center-layout .split-h{order:4}
 .main.center-layout .workspace{order:5}
 .main.center-layout .nav{order:1}
 .main.center-layout .split-v{order:2}
+.main.left-layout .chat{order:1}
+.main.left-layout .split-h{order:2}
+.main.left-layout .nav{order:3}
+.main.left-layout .split-v{order:4}
+.main.left-layout .workspace{order:5}
+.main.left-layout .chat{border-left:0;border-right:1px solid var(--line)}
+
+/* 模式条的两个插槽：顶栏里 / 对话框里 */
+.modes-slot{display:flex;align-items:center;min-width:0}
+#modesSlotChat{width:100%}
+#modesSlotChat .modes{width:100%}
+#modesSlotChat .chip{flex:1}
+#modesSlotChat:empty{display:none}
+.chat-head:has(#modesSlotChat .modes){padding-top:8px}
 
 /* 全屏：藏顶栏 */
 .app.fs .topbar{display:none}
@@ -402,3 +416,114 @@ code{font-family:var(--mono);font-size:11.5px}
 @media (max-width:1150px){
   .pathbtn{display:none}
 }
+
+/* ============================================================
+   v3 · 第三批修正（需求 §12）
+   ============================================================ */
+
+/* ── 侧栏顶部搜索 + 临时规划块 ── */
+.nav-search{display:flex;align-items:center;gap:7px;margin:8px 8px 4px;padding:0 9px;height:30px;
+  background:#0F0F11;border:1px solid var(--line);border-radius:8px;flex:0 0 auto}
+.nav-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;font-size:12.5px}
+.ns-ico{font-size:11px;opacity:.6}
+.nav-head-2{margin-top:14px;border-top:1px solid var(--line);padding-top:0}
+.nav-scroll{padding-top:2px}
+.plan-row{display:flex;align-items:center;gap:8px;height:34px;padding:0 8px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--ink2)}
+.plan-row:hover{background:#1F1F22;color:var(--ink)}
+.plan-row.is-on{background:#242428;color:var(--ink)}
+.plan-dot{width:8px;height:8px;border-radius:3px;background:#7A5CFF;flex:0 0 8px}
+.plan-row .pdel{margin-left:auto;opacity:0;font-size:12px;color:var(--ink3);width:18px;height:18px;
+  border-radius:5px;display:flex;align-items:center;justify-content:center}
+.plan-row:hover .pdel{opacity:1}
+.plan-row .pdel:hover{background:#2E2E32;color:var(--red)}
+.plan-empty{padding:4px 10px 8px;color:var(--ink3);font-size:12px}
+
+/* ── 文件树：按用户给的图重画（线框彩色图标 + 圆角选中） ── */
+.tico{width:16px;height:16px;flex:0 0 16px;display:block}
+.node-row{height:30px;border-radius:8px;gap:7px;padding:0 8px}
+.node-row.is-sel{background:#2E2E32;box-shadow:none;color:var(--ink)}
+.node-row.is-focus-file{box-shadow:none}
+.node-row.is-focus-file .n-name{color:var(--ink);font-weight:500}
+.node-row.is-focus-file::after{content:"●";font-size:7px;color:var(--focus);margin-left:auto}
+.node-row .n-name{color:#D7D7DC}
+.node-row.dir .n-name,.node-row .n-name.dir{color:#D7D7DC}
+.proj-tree{padding-left:14px;border-left:0;margin-left:15px}
+.proj-tree .node-row{height:30px}
+
+/* ── 对话区：输入框上方的「重点参考」chips（可折叠 +N） ── */
+.focus-row{position:relative;margin-bottom:7px}
+.focus-chips{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.focus-chips:empty{display:none}
+.fchip{display:inline-flex;align-items:center;gap:4px;max-width:170px;background:rgba(245,184,81,.12);
+  border:1px solid rgba(245,184,81,.38);border-radius:7px;padding:2px 4px 2px 8px;min-width:0}
+.fchip .tico{width:13px;height:13px;flex:0 0 13px}
+.fchip .fname{color:var(--focus);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fchip .x{width:15px;height:15px;flex:0 0 15px;border-radius:5px;font-size:11px;color:#8A6E42;
+  display:inline-flex;align-items:center;justify-content:center}
+.fchip .x:hover{background:rgba(245,184,81,.35);color:#1A1204}
+.focus-more{height:23px;padding:0 8px;border-radius:7px;font-size:11.5px;color:var(--ink2);
+  background:#1D1D21;border:1px solid var(--line2)}
+.focus-more:hover{border-color:#3C3C42;color:var(--ink)}
+.focus-list{position:absolute;left:0;right:0;bottom:28px;z-index:40;background:#1D1D20;
+  border:1px solid var(--line2);border-radius:10px;padding:5px;box-shadow:0 14px 34px rgba(0,0,0,.55);
+  max-height:240px;overflow:auto;animation:pop .14s ease-out}
+.focus-item{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;cursor:pointer}
+.focus-item:hover{background:#28282D}
+.focus-item .fname{flex:1;min-width:0;font-size:12px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.focus-item .x{width:18px;height:18px;border-radius:5px;color:var(--ink3);font-size:12px;
+  display:flex;align-items:center;justify-content:center}
+.focus-item .x:hover{background:#33333A;color:var(--red)}
+.fchip-empty{font-size:11.5px;color:#5D5D66}
+
+/* ── 历史入口放进工具栏 ── */
+.md-right{display:flex;align-items:center;gap:8px;margin-left:auto;flex:0 0 auto}
+.hist-btn{border-color:rgba(245,184,81,.4);color:var(--focus);background:rgba(245,184,81,.08)}
+.hist-btn:hover{border-color:rgba(245,184,81,.8)}
+.hist-btn #histCount{display:inline-block;min-width:16px;height:16px;line-height:16px;border-radius:8px;
+  background:rgba(245,184,81,.22);font-size:10.5px;margin-left:3px;padding:0 4px}
+#btnHistBack{margin-bottom:6px}
+
+/* ── 源码 ｜ 预览 中间那条可拖的 gutter ── */
+.md-gutter{flex:0 0 7px;cursor:col-resize;background:transparent;position:relative}
+.md-gutter::after{content:"";position:absolute;left:2px;right:2px;top:50%;transform:translateY(-50%);
+  height:30px;border-radius:4px;background:#26262A;opacity:.5;transition:.12s}
+.md-gutter:hover::after,.md-gutter.drag::after{opacity:1;background:var(--accent);height:52px;
+  box-shadow:0 0 0 3px rgba(10,132,255,.18)}
+.view-md[data-variant="code"] .md-gutter,.view-md[data-variant="code"] .md-preview{display:none}
+.view-md[data-variant="preview"] .md-gutter,.view-md[data-variant="preview"] .md-source{display:none}
+.view-md[data-variant="preview"] .md-split{flex-direction:column}
+.md-source{flex:0 0 var(--md-src-w,50%);min-width:0}
+.md-preview{flex:1;min-width:0}
+
+/* ── 分割线手柄加宽（用户：内容 ｜ 对话 调不了） ── */
+.split{flex-basis:11px}
+.split::after{left:3.5px;right:3.5px;height:46px;opacity:.75}
+.split:hover::after,.split.drag::after{height:70px;opacity:1}
+
+/* ── 本软件风格的模态（替换系统 prompt / confirm） ── */
+.modal-back{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.55);
+  display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);animation:pop .14s ease-out}
+.modal-back[hidden]{display:none}
+.modal{width:400px;background:#1B1B1E;border:1px solid #303036;border-radius:14px;padding:18px 18px 14px;
+  box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.modal-title{font-size:15px;font-weight:650;color:var(--ink);margin-bottom:10px}
+.modal-text{font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:6px;white-space:pre-wrap}
+.modal-input{width:100%;height:34px;background:#111113;border:1px solid var(--line2);border-radius:9px;
+  padding:0 11px;font-size:13.5px;outline:0;margin-bottom:6px}
+.modal-input:focus{border-color:rgba(10,132,255,.7);box-shadow:0 0 0 3px rgba(10,132,255,.16)}
+.modal-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.modal-acts .btn{height:30px;padding:0 16px}
+
+/* ── 全屏退出：常驻按钮（iframe 吃 ESC 时的保底） ── */
+.fs-exit{position:fixed;top:14px;right:16px;z-index:140;height:30px;padding:0 13px;border-radius:9px;
+  background:#1D1D24;border:1px solid #3A3A42;color:var(--ink);font-size:12.5px;
+  box-shadow:0 10px 26px rgba(0,0,0,.5)}
+.fs-exit:hover{border-color:var(--accent);color:#fff;background:#20242C}
+.fs-exit[hidden]{display:none}
+.app.fs .fs-exit{display:block}
+
+/* ── 顶栏只留项目路径；顶部不再放 chips ── */
+.ctx-item.ctx-focus{display:none}
+
+/* ── 空态三个按钮 ── */
+.empty-acts{gap:8px;flex-wrap:wrap;justify-content:center}

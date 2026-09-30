@@ -3,36 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>全功能 · 项目工作区</title>
+<title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <div class="app">
 
-  <!-- ── 顶部：模式条不变（图文/语音/视频）+ 全功能 + 右上布局/全屏 ── -->
+  <!-- ── 导航栏：模式条不变（图文/语音/视频）+「项目」开关 ── -->
   <header class="topbar">
     <div class="brand">
       <span class="brand-dot"></span>
-      <span class="brand-name">全功能</span>
-      <span class="brand-sub">项目工作区</span>
+      <span class="brand-name" id="brandName">对话</span>
+      <span class="brand-sub" id="brandSub">连续 · 历史对话</span>
     </div>
 
-    <div class="modes" id="modeChips" role="tablist" aria-label="聊天模式">
-      <button class="chip is-on" data-mode="imageText">图文</button>
-      <button class="chip" data-mode="voice">语音</button>
-      <button class="chip" data-mode="video">视频</button>
+    <div class="modes-slot" id="modesSlotTop">
+      <div class="modes" id="modeChips" role="tablist" aria-label="聊天模式">
+        <button class="chip is-on" data-mode="imageText">图文</button>
+        <button class="chip" data-mode="voice">语音</button>
+        <button class="chip" data-mode="video">视频</button>
+      </div>
     </div>
-    <button class="btn btn-primary is-active" id="btnFullFeature" title="进入项目工作区">全功能</button>
+    <button class="btn btn-primary" id="btnProjectMode" title="进入项目模式（上下文换成项目文件夹）">项目</button>
 
     <div class="ctx" id="ctxStrip">
       <span class="ctx-item ctx-project" title="项目绝对路径">
-        <i class="ico ico-folder"></i><code id="ctxProjectPath">未添加项目</code>
-      </span>
-      <span class="ctx-sep"></span>
-      <span class="ctx-item ctx-focus" title="重点参考（可多选）">
-        <i class="ico ico-star"></i>
-        <span class="fchips" id="focusChips"></span>
+        <i class="ico ico-folder"></i><code id="ctxProjectPath">未进入项目模式</code>
       </span>
     </div>
 
@@ -46,33 +43,33 @@
 
   <main class="main" id="main">
 
-    <!-- ════ 左：MiMo 式项目栏（256pt 实测宽度） ════ -->
+    <!-- ════ 左：项目栏（MiMo 256pt） ════ -->
     <aside class="nav" id="navPane">
       <div class="skel" id="skelNav" aria-hidden="true">
         <i class="sk" style="width:56%"></i><i class="sk" style="width:78%"></i>
         <i class="sk" style="width:64%"></i><i class="sk" style="width:70%"></i>
-        <i class="sk" style="width:50%"></i>
       </div>
 
-      <div class="nav-head">
-        <button class="sect" id="btnProjSect">项目 <span class="caret" id="projCaret">⌄</span></button>
-        <button class="plus" id="btnAddProject" title="添加项目文件夹">＋</button>
+      <!-- 搜索框在**侧栏顶部**（按你给的图） -->
+      <div class="nav-search">
+        <span class="ns-ico">🔍</span>
+        <input id="navSearch" placeholder="搜索文件…" spellcheck="false">
       </div>
 
       <div class="nav-scroll" id="navScroll">
-        <!-- 不添加项目文件夹时的「默认卡片」：临时对话 -->
-        <button class="dflt-card" id="defaultCard" title="没有项目文件，直接和 AI 对话">
-          <i class="dico"></i>
-          <span class="dtext">临时对话</span>
-          <span class="dsub">不带任何项目文件</span>
-        </button>
-
+        <!-- 项目块（自己的加号） -->
+        <div class="nav-head">
+          <button class="sect" id="btnProjSect">项目 <span class="caret">⌄</span></button>
+          <button class="plus" id="btnAddProject" title="添加项目">＋</button>
+        </div>
         <div id="projectList"></div>
 
-        <div class="nav-head nav-head-2" id="recentHead">
-          <button class="sect" id="btnRecentSect">最近 <span class="caret">⌄</span></button>
+        <!-- 临时规划块（自己的加号）—— 独立于项目 -->
+        <div class="nav-head nav-head-2">
+          <button class="sect" id="btnPlanSect">临时规划 <span class="caret">⌄</span></button>
+          <button class="plus" id="btnAddPlan" title="新建临时规划">＋</button>
         </div>
-        <div id="recentList"></div>
+        <div id="planList"></div>
       </div>
 
       <div class="nav-foot">
@@ -81,7 +78,7 @@
       </div>
     </aside>
 
-    <div class="split split-v" id="vSplit" title="拖动调整宽度"></div>
+    <div class="split split-v" id="vSplit" title="拖动：项目 ｜ 内容"></div>
 
     <!-- ════ 中：内容区 ════ -->
     <section class="workspace" id="workspace">
@@ -90,7 +87,6 @@
         <i class="sk" style="width:66%"></i><i class="sk" style="width:84%"></i>
       </div>
 
-      <!-- 多标签 -->
       <div class="tabbar" id="tabbar">
         <div class="tabs" id="tabs"></div>
         <button class="tab-add" id="btnNewTab" title="新建标签">＋</button>
@@ -99,25 +95,19 @@
         </div>
       </div>
 
-      <!-- 面包屑 + 搜索 + 完整路径 + 编辑/在访达/全屏 -->
       <div class="file-head" id="fileHead">
         <nav class="crumbs" id="crumbs"></nav>
-        <div class="fsearch">
-          <input id="fileSearch" placeholder="搜索文件…" spellcheck="false">
-          <div class="fsearch-drop" id="searchDrop" hidden></div>
-        </div>
         <button class="pathbtn" id="btnPath" title="点击复制完整路径">
           <code id="fullPathLabel">—</code>
         </button>
         <div class="facts">
           <button class="fbtn" id="btnEdit">编辑</button>
-          <button class="fbtn" id="btnHistory">历史</button>
           <button class="fbtn" id="btnFinder">在访达中显示</button>
           <button class="fbtn icon" id="btnFs2" title="全屏（⌘⇧F）">⛶</button>
         </div>
       </div>
 
-      <!-- Orca 式 markdown 工具栏 + 右上 查看代码/编辑/预览 -->
+      <!-- Orca 式工具栏：插入 + 历史入口 + 三态 -->
       <div class="md-bar" id="mdBar">
         <div class="md-tools">
           <button data-md="h1">H1</button><button data-md="h2">H2</button><button data-md="h3">H3</button>
@@ -128,35 +118,39 @@
           <button data-md="link">🔗 链接</button><button data-md="image">🖼 图片</button>
           <button data-md="code">&lt;/&gt; 代码</button>
         </div>
-        <div class="viewmodes" id="viewModes">
-          <button class="vm" data-vm="code" title="只看源码">&lt;/&gt; 查看代码</button>
-          <button class="vm" data-vm="edit" title="编辑">✎ 编辑</button>
-          <button class="vm is-on" data-vm="preview" title="实时预览">预览</button>
-        </div>
-      </div>
-
-      <!-- 空态：没有项目 / 没有文件 -->
-      <div class="empty" id="viewEmpty">
-        <div class="empty-card">
-          <div class="empty-title" id="emptyTitle">还没有项目文件夹</div>
-          <div class="empty-sub" id="emptySub">加一个项目，所有对话都围绕它进行；<br>或者什么都不加 —— 直接在右边「临时对话」。</div>
-          <div class="empty-acts">
-            <button class="btn btn-primary" id="btnEmptyAdd">＋ 添加项目文件夹</button>
-            <button class="btn btn-ghost" id="btnEmptyTemp">临时对话</button>
+        <div class="md-right">
+          <button class="fbtn hist-btn" id="btnHistory" title="查看这个文件的修改历史与恢复">历史 <span id="histCount">0</span></button>
+          <div class="viewmodes" id="viewModes">
+            <button class="vm" data-vm="code" title="只看源码">&lt;/&gt; 查看代码</button>
+            <button class="vm" data-vm="edit" title="编辑">✎ 编辑</button>
+            <button class="vm is-on" data-vm="preview" title="实时预览">预览</button>
           </div>
         </div>
       </div>
 
-      <!-- 正文：左源码 右预览（点预览进编辑，ESC 回预览） -->
+      <!-- 空态：对话模式 / 还没选文件 -->
+      <div class="empty" id="viewEmpty">
+        <div class="empty-card">
+          <div class="empty-title" id="emptyTitle">对话模式</div>
+          <div class="empty-sub" id="emptySub">上面的 图文 / 语音 / 视频 就是原来的对话窗口。<br>点 <b>项目</b> 进入项目模式 —— 上下文换成项目文件夹、选中的文件、以及这个项目自己的 claude.md / hooks。</div>
+          <div class="empty-acts">
+            <button class="btn btn-primary" id="btnEmptyAdd">添加空白项目</button>
+            <button class="btn btn-ghost" id="btnEmptyPlan">添加临时规划</button>
+            <button class="btn btn-ghost" id="btnEmptyFolder">添加现有项目</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 正文 -->
       <div class="view view-md" id="viewMd">
         <div class="md-split" id="mdSplit">
           <textarea class="md-source" id="mdSource" spellcheck="false" placeholder="在这里编辑 Markdown…（改动自动备份历史）"></textarea>
-          <div class="v-gutter"></div>
+          <div class="md-gutter" id="mdGutter" title="拖动调整 源码 ｜ 预览 宽度"></div>
           <article class="md-preview" id="mdPreview"></article>
         </div>
       </div>
 
-      <!-- 其它文件：HTML / PDF / 代码 —— **直接在窗口里显示**（对 MiMo 的优化） -->
+      <!-- HTML / PDF / 代码：窗口内直接显示 -->
       <div class="view view-file" id="viewFile">
         <iframe id="previewFrame" title="文件预览" sandbox="allow-same-origin"></iframe>
         <pre class="code-view" id="codeView" hidden></pre>
@@ -188,6 +182,7 @@
       <div class="view view-history" id="viewHistory">
         <div class="hist-head">
           <div>
+            <button class="btn btn-mini" id="btnHistBack">← 返回</button>
             <div class="hist-file" id="histFile">—</div>
             <div class="hist-note">任何一次编辑（手改 / 对话改 / 恢复）自动存一版，<strong>每文件最近 10 次</strong>。</div>
           </div>
@@ -197,29 +192,36 @@
       </div>
     </section>
 
-    <div class="split split-h" id="hSplit" title="按住左右拖动，调整对话宽度"></div>
+    <div class="split split-h" id="hSplit" title="拖动：内容 ｜ 对话"></div>
 
-    <!-- ════ 右：对话 ════ -->
+    <!-- ════ 右：对话窗口（原来那个窗口，只换上下文） ════ -->
     <aside class="chat" id="chatPane">
       <div class="skel skel-chat" id="skelChat" aria-hidden="true">
         <i class="sk" style="width:56%"></i><i class="sk" style="width:84%"></i><i class="sk" style="width:40%"></i>
       </div>
       <div class="chat-head">
+        <!-- 进项目模式后，导航栏那排 图文/语音/视频 **并进对话框**（§12.0.5：导航栏跟对话框、输入框一体） -->
+        <div class="modes-slot" id="modesSlotChat"></div>
         <div class="chat-modes" id="chatModes">
           <button class="dchip is-on" data-chat="continuous">连续对话</button>
           <button class="dchip" data-chat="temporary">临时对话</button>
           <button class="dchip" data-chat="voice">语音</button>
         </div>
-        <div class="chat-status" id="chatStatus">围绕当前项目</div>
+        <div class="chat-status" id="chatStatus">对话模式</div>
       </div>
       <div class="msgs" id="msgs"></div>
       <div class="chat-foot">
+        <!-- 重点参考 chips：**在输入框正上方**，超过 3 个折叠成 +N -->
+        <div class="focus-row" id="focusRow">
+          <div class="focus-chips" id="focusChips"></div>
+          <button class="focus-more" id="btnFocusMore" hidden></button>
+          <div class="focus-list" id="focusList" hidden></div>
+        </div>
         <div class="chat-ctx">
-          <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">—</code></span>
-          <span class="cctx" id="chatCtxFocusWrap"><i class="ico ico-star"></i><code id="chatCtxFocus">—</code></span>
+          <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">对话模式（无项目）</code></span>
         </div>
         <div class="composer">
-          <textarea id="chatInput" rows="2" placeholder="围绕项目提问，或让它改脑图…（回车发送）"></textarea>
+          <textarea id="chatInput" rows="2" placeholder="输入问题，回车发送…"></textarea>
           <div class="composer-bar">
             <span class="composer-hint" id="composerHint">回车发送 · Shift+回车换行</span>
             <button class="btn btn-primary" id="btnSend">发送</button>
@@ -229,10 +231,11 @@
     </aside>
   </main>
 
-  <!-- 弹出菜单（添加项目 / 项目更多） -->
+  <!-- 添加菜单（三项） -->
   <div class="menu" id="menuAdd" hidden>
-    <button data-act="newBlank">＋ 新建空白项目</button>
-    <button data-act="useFolder">📁 使用现有文件夹</button>
+    <button data-act="newBlank">添加空白项目</button>
+    <button data-act="newPlan">添加临时规划</button>
+    <button data-act="useFolder">添加现有项目</button>
   </div>
   <div class="menu" id="menuProj" hidden>
     <button data-act="batch">批量管理</button>
@@ -244,6 +247,22 @@
     <div class="menu-sep"></div>
     <button data-act="archive" class="danger">归档</button>
   </div>
+
+  <!-- 本软件风格的模态（不用系统 prompt/confirm） -->
+  <div class="modal-back" id="modalBack" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-title" id="modalTitle">标题</div>
+      <div class="modal-text" id="modalText" hidden></div>
+      <input class="modal-input" id="modalInput" hidden>
+      <div class="modal-acts">
+        <button class="btn btn-ghost" id="modalCancel">取消</button>
+        <button class="btn btn-primary" id="modalOk">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全屏退出（iframe 吃掉 ESC 时的保底） -->
+  <button class="fs-exit" id="btnFsExit" hidden>⎋ 退出全屏</button>
 
   <div class="toast" id="toast" hidden></div>
 </div>
