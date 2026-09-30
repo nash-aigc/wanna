@@ -112,9 +112,19 @@
       </div>
 
       <div class="tabbar" id="tabbar">
+        <!-- §21.2 最左：显示方式（横向 ⇄ 垂直） -->
+        <button class="tab-collapse tab-layout" id="btnTabsLayout" title="显示方式：横向 ⇄ 垂直">▤</button>
         <button class="tab-collapse" id="btnTabsCollapse" title="折叠显示所有标签页">☰</button>
         <div class="tabs" id="tabs"></div>
         <button class="tab-add" id="btnNewTab" title="新建标签">＋</button>
+      </div>
+
+      <!-- §21.3 垂直形态：照你给的第 ④ 张图（搜索 + 固定的小图标 + 分组） -->
+      <div class="tabs-vertical" id="tabsVertical" hidden>
+        <input class="tv-search" id="tvSearch" placeholder="搜索标签页…" spellcheck="false" autocomplete="off">
+        <div class="tv-pinned" id="tvPinned"></div>
+        <div class="tv-list" id="tvList"></div>
+        <button class="tv-new" id="tvNew">＋ 新建标签页</button>
       </div>
 
       <div class="file-head" id="fileHead">
@@ -253,32 +263,27 @@
           <div class="focus-list" id="focusList" hidden></div>
         </div>
 
-        <!-- ② 中间：项目 / 对话卡路径 -->
+        <!-- ② 中间：项目 / 对话卡路径（§21.5：输入框上面只剩「选中的文件」+「项目路径」） -->
         <div class="chat-ctx">
           <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">对话模式（无项目）</code></span>
         </div>
 
-        <!-- ③ 紧贴输入框的那一行：连续/临时/新建 与右组（§14.2 顺序） -->
-        <div class="cc-row">
-          <div class="cc-left" id="ccLeft">
-            <button class="cc is-on" data-conv="continuous">连续</button><i class="vr"></i>
-            <button class="cc" data-conv="temporary">临时</button><i class="vr"></i>
-            <button class="cc cc-new" id="ccNew">＋ 新建</button>
-          </div>
-          <div class="cc-right" id="ccRight"><!-- 按模式渲染 --></div>
-        </div>
-
-        <!-- ④ 输入框 -->
-        <div class="composer">
-          <div class="composer-top">
-            <span class="composer-hint" id="composerHint">回车发送 · Shift+回车换行</span>
-            <button class="cx-btn" id="btnExpandBox" title="展开输入框">⤢</button>
-          </div>
-          <textarea id="chatInput" rows="3" placeholder="输入问题，回车发送…"></textarea>
+        <!-- ③ 输入框（§21.5）：原来那行「连续/临时/＋新建 … 右组」整行搬进了框内最后一行的右侧；
+             框顶那行「回车发送说明 + ⤢」删了 —— 文字直接顶到上沿；
+             展开/收起改成点**顶边那条手柄**（样式照 .split）。 -->
+        <div class="composer" id="composer">
+          <div class="composer-grip" id="composerGrip" role="button" tabindex="0"
+               title="展开 / 收起输入框"></div>
+          <textarea id="chatInput" placeholder="输入问题，回车发送…"></textarea>
           <div class="composer-bar">
             <span class="composer-mode" id="composerModeLabel">图文 · 连续对话</span>
-            <span class="composer-acts">
-              <button class="cx-btn" id="btnClearInput" title="清空输入">✕</button>
+            <span class="composer-controls">
+              <span class="cc-left" id="ccLeft">
+                <button class="cc is-on" data-conv="continuous">连续</button><i class="vr"></i>
+                <button class="cc" data-conv="temporary">临时</button><i class="vr"></i>
+                <button class="cc cc-new" id="ccNew">＋ 新建</button>
+              </span>
+              <span class="cc-right" id="ccRight"><!-- 按模式渲染 --></span>
               <button class="btn btn-primary" id="btnSend">发送</button>
             </span>
           </div>
@@ -294,18 +299,10 @@
   </div>
   <!-- 语速：点开是**多档**，不是开关（§20.5） -->
   <div class="menu" id="menuRate" hidden></div>
-  <!-- 标签页右键 -->
-  <div class="menu" id="menuTabs" hidden>
-    <button data-act="pin">固定标签页</button>
-    <button data-act="dup">复制标签页</button>
-    <div class="menu-sep"></div>
-    <button data-act="close">关闭标签页</button>
-    <button data-act="closeOthers">关闭其他标签页</button>
-    <button data-act="closeLeft">关闭左侧标签页</button>
-    <button data-act="closeRight">关闭右侧标签页</button>
-    <div class="menu-sep"></div>
-    <button data-act="moveGroup">移动标签分组</button>
-  </div>
+  <!-- 标签页右键（§21.4A：条目按你给的图定，UI 用本项目菜单样式） -->
+  <div class="menu" id="menuTabs" hidden></div>
+  <!-- 标签组右键（§21.4B：改名 + 8 个颜色点 + 组操作） -->
+  <div class="menu" id="menuTabGroup" hidden></div>
   <!-- 临时卡片右键：放入分组 / 删除 -->
   <div class="menu" id="menuCard" hidden></div>
   <!-- 设置：默认对话位置 -->

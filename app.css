@@ -167,13 +167,16 @@ code{font-family:var(--mono);font-size:11.5px}
 .workspace{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg);position:relative}
 .tabbar{height:36px;flex:0 0 36px;display:flex;align-items:center;gap:4px;padding:0 6px;
   background:var(--nav-bg);border-bottom:1px solid var(--line)}
-.tabs{display:flex;gap:4px;overflow:auto;flex:1;min-width:0;align-items:center}
+/* §21.1 标签**等宽** —— 只有等宽，× 才会在每个格子的同一相对位置，
+   连着点几个才是一条直线。放不下时**一起**缩到 min-width 然后整条横向滚动，
+   宁可滚动也不许出现"有的宽有的窄"。 */
+.tabs{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;flex:1;min-width:0;align-items:center}
 .tab{display:flex;align-items:center;gap:7px;height:27px;padding:0 6px 0 9px;border-radius:7px;
-  font-size:12px;color:var(--ink3);max-width:230px;background:transparent;border:1px solid transparent}
+  font-size:12px;color:var(--ink3);flex:1 1 0;min-width:96px;background:transparent;border:1px solid transparent}
 .tab:hover{background:#1F1F22;color:var(--ink2)}
 .tab.is-on{background:var(--bg);color:var(--ink);border-color:var(--line);border-bottom-color:var(--bg)}
-.tab .tname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tab .tx{width:15px;height:15px;border-radius:4px;font-size:11px;display:flex;align-items:center;justify-content:center;color:var(--ink3)}
+.tab .tname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab .tx{width:15px;height:15px;flex:0 0 15px;border-radius:4px;font-size:11px;display:flex;align-items:center;justify-content:center;color:var(--ink3)}
 .tab .tx:hover{background:#2E2E32;color:var(--ink)}
 .tab-add{width:24px;height:24px;border-radius:6px;color:var(--ink3)}
 .tab-add:hover{background:#242428;color:var(--ink)}
@@ -337,12 +340,6 @@ code{font-family:var(--mono);font-size:11.5px}
 .cctx{display:flex;align-items:center;gap:6px;min-width:0}
 .cctx code{color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #chatCtxFocusWrap.has-focus code{color:var(--focus)}
-.composer{background:var(--bg);border:1px solid var(--line2);border-radius:12px;padding:8px 10px 7px}
-.composer:focus-within{border-color:rgba(10,132,255,.6)}
-.composer textarea{width:100%;border:0;outline:0;background:transparent;resize:none;font-size:13px;
-  line-height:1.6;min-height:44px;max-height:150px}
-.composer-bar{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
-.composer-hint{font-size:10.5px;color:#5D5D66}
 
 /* ── 菜单 ─────────────────────────────────────── */
 .menu{position:fixed;z-index:80;min-width:186px;background:#1D1D20;border:1px solid var(--line2);
@@ -545,7 +542,6 @@ code{font-family:var(--mono);font-size:11.5px}
 .chat-nav .chip{padding:0 9px}
 
 /* 输入框上方那一行：22pt · 无底色无圆角 · 竖线分隔 · 选中绿（临时=琥珀） */
-.cc-row{display:flex;align-items:center;gap:6px;height:26px;margin-bottom:6px}
 .cc-left,.cc-right{display:flex;align-items:center;min-width:0}
 .cc-right{margin-left:auto;overflow:hidden}
 .cc{height:22px;padding:0 8px;font-size:12.5px;color:var(--ink3);border-radius:0;white-space:nowrap}
@@ -556,7 +552,6 @@ code{font-family:var(--mono);font-size:11.5px}
 .vr{width:1px;height:15px;background:#33333A;margin:0 2px;flex:0 0 1px}
 .cc-right .cc{color:var(--ink3)}
 .cc-right .cc.is-on{color:var(--ok)}
-.composer-mode{font-size:11px;color:#5D5D66}
 
 /* 重点参考：**一行**，最左侧一个 + 收纳（§13.3） */
 .focus-row{display:flex;align-items:center;gap:5px;margin-bottom:6px;
@@ -571,18 +566,33 @@ code{font-family:var(--mono);font-size:11.5px}
   max-height:260px;overflow:auto;animation:pop .14s ease-out}
 .focus-list[hidden]{display:none}
 
-/* 输入框：右上展开、右下 ✕、右侧发送 */
+/* 输入框（§21.5）：文字直接顶到上沿；**顶边那条手柄**负责展开/收起，样式照 .split */
 .composer{background:var(--bg);border:1px solid var(--line2);border-radius:12px;
-  padding:6px 8px 7px;position:relative}
+  padding:11px 8px 7px;position:relative}
 .composer:focus-within{border-color:rgba(10,132,255,.6)}
-.composer-top{display:flex;justify-content:flex-end;align-items:center;gap:4px;min-height:16px}
-.cx-btn{width:20px;height:20px;border-radius:6px;color:var(--ink3);font-size:12px;
-  display:flex;align-items:center;justify-content:center}
-.cx-btn:hover{background:#242428;color:var(--ink)}
+/* §21.5.7 手柄 = 图⑤那个拖动钮的横版：居中一枚小胶囊，常态半透明灰、
+   hover 变 accent 色 + 变长 + 光晕；展开后转 180°（同一个 transition 出动画） */
+.composer-grip{position:absolute;top:-7px;left:0;right:0;height:14px;z-index:2;
+  display:flex;justify-content:center;align-items:center;cursor:pointer;outline:none}
+.composer-grip::after{content:"";width:46px;height:5px;border-radius:3px;background:#26262A;
+  opacity:.55;transition:opacity .14s,width .14s,background .14s,box-shadow .14s,transform .2s ease}
+.composer-grip:hover::after{opacity:1;width:84px;background:var(--accent);
+  box-shadow:0 0 0 3px rgba(10,132,255,.18)}
+.composer.is-expanded .composer-grip::after{transform:rotate(180deg)}
 .composer textarea{width:100%;border:0;outline:0;background:transparent;resize:none;
-  font-size:13px;line-height:1.6;min-height:54px;max-height:180px}
-.composer-bar{display:flex;align-items:center;justify-content:space-between;margin-top:4px;gap:8px}
-.composer-acts{display:flex;align-items:center;gap:8px}
+  font-size:13px;line-height:1.6;min-height:54px;max-height:240px;transition:min-height .2s ease}
+.composer.is-expanded textarea{min-height:150px}
+.composer-bar{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:6px}
+.composer-mode{flex:0 1 auto;min-width:0;font-size:11px;color:var(--ink3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* §21.5.1 原来那行「连续/临时/＋新建 + 右组」整体挪到这里 —— 框内最后一行的**右侧** */
+.composer-controls{display:flex;align-items:center;justify-content:flex-end;
+  flex:1 1 auto;flex-wrap:wrap;gap:4px;min-width:0}
+.composer-controls .cc-left,.composer-controls .cc-right{display:flex;align-items:center;min-width:0}
+/* ⚠️ 老 `.cc-right{margin-left:auto}` 是 `.cc-row{justify-content:space-between}` 时代的遗留 ——
+   搬进框内之后它会把右组顶到最右、在两组之间撑出 220px 的空档，必须归零。 */
+.composer-controls .cc-right{overflow:hidden;margin-left:0}
+.composer-controls .cc{padding:0 5px}
 
 /* 标签条最左的折叠按钮 + 全部标签弹层 + 右键菜单标题 */
 /* §20.7：高度必须 = 标签的 27px，且字形自己居中 —— 否则 ☰ 的基线比标签文字低，看起来"靠下" */
@@ -597,10 +607,13 @@ code{font-family:var(--mono);font-size:11.5px}
 .menu-tabs-pop .mt-item:hover{background:#28282D;color:var(--ink)}
 .menu-tabs-pop .mt-item.is-on{color:var(--focus)}
 .menu-tabs-pop .mt-item .pin{margin-left:auto;font-size:11px}
-/* §20.6 固定的标签：排最左之外还要**变小**（高度 27→21、字号 12→11.5、内边距收紧、× 收起） */
-.tab.is-pin{height:21px;padding:0 4px 0 7px;gap:5px;font-size:11.5px}
+/* §20.6 固定的标签：排最左之外还要**变小**（高度 27→21、字号 12→11.5、内边距收紧、× 收起）
+   §21.1：它不参与等宽分配 —— 固定的本来就该窄，等宽只管普通标签。 */
+.tab.is-pin{height:21px;padding:0 4px 0 7px;gap:5px;font-size:11.5px;flex:0 0 auto;min-width:0}
 .tab.is-pin .tx{display:none}
 .tab.is-pin .fico{transform:scale(.85);transform-origin:left center}
+/* §21.4 分了组的标签：左侧一道组色（横向模式里也能看出归属） */
+.tab.has-group{box-shadow:inset 3px 0 0 var(--gc,#5A5A62)}
 /* 临时块的分组行 / 默认卡说明 */
 .plan-row .pname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pdef{font-size:10px;color:#5D5D66;flex:0 0 auto}
@@ -842,3 +855,71 @@ code{font-family:var(--mono);font-size:11.5px}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sp-snip{font-size:11px;color:var(--ink2);line-height:1.5;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* ============================================================
+   §21 第十二批：标签条（等宽 / 显示方式 / 垂直形态 / 分组）
+   ============================================================ */
+
+/* §21.2 tabbar 最左那颗「显示方式」 */
+.tab-layout{font-size:12px;border-right:0;margin-right:0}
+.tab-layout.is-on{color:#CFE4FF;background:rgba(10,132,255,.16)}
+
+/* §21.3 垂直形态（照用户给的第 ④ 张图）：出现在 tabbar 正下方 */
+.tabs-vertical{flex:0 1 auto;min-height:0;max-height:46%;display:flex;flex-direction:column;gap:7px;
+  padding:8px 8px 7px;background:var(--nav-bg);border-bottom:1px solid var(--line)}
+.tv-search{height:28px;flex:0 0 28px;border-radius:8px;border:1px solid var(--line);background:#0F0F11;
+  padding:0 10px;font-size:12.5px;color:var(--ink);outline:none}
+.tv-search:focus{border-color:rgba(10,132,255,.6)}
+/* §21.3.3 固定的标签缩成小图标：每行几个由面板宽度算（--tv-cols），**最多 4 行** */
+.tv-pinned{display:grid;gap:6px;grid-template-columns:repeat(var(--tv-cols,5),minmax(0,1fr))}
+.tv-pinned[hidden]{display:none}
+.tv-cell{position:relative;height:38px;border-radius:9px;border:1px solid var(--line2);background:#141416;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden}
+.tv-cell:hover{border-color:#3C3C42;background:#1A1A1C}
+.tv-cell.is-on{border-color:rgba(10,132,255,.65);background:rgba(10,132,255,.14)}
+.tv-cell .x{position:absolute;top:1px;right:2px;width:13px;height:13px;font-size:10px;border-radius:4px;
+  display:none;align-items:center;justify-content:center;color:var(--ink3);background:#2A2A2E}
+.tv-cell:hover .x{display:flex}
+.tv-cell .x:hover{color:var(--ink)}
+.tv-cell.more{font-size:11px;color:var(--ink3);cursor:default}
+.tv-list{overflow:auto;display:flex;flex-direction:column;gap:1px;min-height:0;flex:1 1 auto}
+.tv-item{display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;border-radius:8px;
+  cursor:pointer;color:var(--ink2);font-size:12.5px;min-width:0;position:relative;flex:0 0 auto}
+.tv-item:hover{background:#1F1F22;color:var(--ink)}
+.tv-item.is-on{background:#242428;color:var(--ink)}
+.tv-item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv-item .x{width:16px;height:16px;flex:0 0 16px;border-radius:4px;font-size:11px;display:flex;
+  align-items:center;justify-content:center;color:var(--ink3);opacity:0}
+.tv-item:hover .x{opacity:1}
+.tv-item .x:hover{background:#2E2E32;color:var(--ink)}
+.tv-item.is-child{margin-left:18px}
+/* 组员左边那条竖线用**组色**（照用户第 ④ 张图：那条线是棕红的，不是灰的） */
+.tv-item.is-child::before{content:"";position:absolute;left:-10px;top:0;bottom:0;width:2px;
+  background:var(--gc,#2A2A2E);opacity:.75}
+.tv-group{display:flex;align-items:center;gap:7px;height:30px;padding:0 8px;border-radius:8px;
+  cursor:pointer;font-size:12.5px;color:var(--ink);margin-top:5px;flex:0 0 auto}
+.tv-group:hover{background:#1F1F22}
+.tv-group .dot{width:9px;height:9px;border-radius:50%;background:var(--gc,#5A5A62);flex:0 0 9px}
+.tv-group .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv-group .ct{font-size:11px;color:var(--ink3);flex:0 0 auto}
+.tv-group .cv{font-size:9px;color:var(--ink3);transition:transform .15s;flex:0 0 auto}
+.tv-group.closed .cv{transform:rotate(-90deg)}
+.tv-new{height:30px;flex:0 0 30px;border-radius:8px;color:#7DD3FC;font-size:12.5px;font-weight:600}
+.tv-new:hover{background:#1F1F22}
+.tv-empty{font-size:12px;color:var(--ink3);padding:14px 6px;text-align:center}
+
+/* §21.4B 分组右键里的 8 个颜色点 */
+.gcolors{display:flex;gap:5px;padding:5px 9px 7px;justify-content:space-between}
+.gcolors button{width:17px;height:17px;border-radius:50%;border:2px solid transparent;flex:0 0 17px}
+.gcolors button:hover{transform:scale(1.12)}
+.gcolors button.is-on{border-color:#FFF}
+
+/* §21.4A 菜单里不可用的项（如「关闭下方标签页」在最后一个标签上）——
+   pointer-events:none 让点击落到 document，菜单照常关掉，不会卡在原地 */
+.menu button:disabled{opacity:.4;pointer-events:none}
+/* §21.3 固定标签的小图标格：图标放大一点才看得清 */
+.tv-cell .fico{width:22px;height:22px;flex:0 0 22px;font-size:10px;line-height:22px}
+.tv-item .fico{width:16px;height:16px;flex:0 0 16px;font-size:8px;line-height:16px}
+/* §21.4 菜单可能比一屏还高（标签菜单 18 项）—— 给它封顶并自己滚，
+   否则贴边之后最后几项仍在屏幕外，点不到 */
+.menu{max-height:calc(100vh - 16px);overflow:auto}

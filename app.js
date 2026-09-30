@@ -98,6 +98,9 @@ let S = load() || {
   mode: 'imageText',
   chatMode: 'continuous',
   speechRate: 1,                   // §20.5 语速档（0.75 / 1 / 1.25 / 1.5 / 2）
+  composerExpanded: false,         // §21.5 输入框展开态（点顶边手柄切换）
+  tabsVertical: false,             // §21.2 标签显示方式：false=横向（默认）/ true=垂直
+  tabGroups: [],                   // §21.4 标签组：[{ name, color, open }]
   searchScope: 'project',          // §20.11 范围：项目区（默认）/ 默认区 / 本地计算机
   searchTypes: { folder: true, file: true, content: false },   // 「文件内容」默认不勾
   history: {},
@@ -130,6 +133,10 @@ function load() {
     if (r.searchScope !== 'project' && r.searchScope !== 'default' && r.searchScope !== 'computer') r.searchScope = 'project';
     const t = r.searchTypes && typeof r.searchTypes === 'object' ? r.searchTypes : {};
     r.searchTypes = { folder: t.folder !== false, file: t.file !== false, content: !!t.content };
+    // §21 新字段
+    if (typeof r.composerExpanded !== 'boolean') r.composerExpanded = false;
+    if (typeof r.tabsVertical !== 'boolean') r.tabsVertical = false;
+    if (!Array.isArray(r.tabGroups)) r.tabGroups = [];
     // 老提交记录：`files` 曾经存的是**文件数（数字）** —— 归一成对象，否则下面按文件比对会错乱
     (r.gitLog || []).forEach((g, i) => {
       if (typeof g.files !== 'object' || g.files === null) {
@@ -942,6 +949,13 @@ function openProjMenu(p, anchor) {
   m.style.top = (r.bottom + 6) + 'px';
   m.querySelector('[data-act="pin"]').textContent = p.pinned ? '取消置顶' : '置顶项目';
 }
+/// §21.4：菜单按**实测尺寸**贴鼠标并夹进屏幕 —— 写死的高度猜不准，
+/// 这次 18 项的标签菜单就因为 `innerHeight - 420` 把最后两项顶到了屏幕外。
+function placeMenu(m, x, y) {
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(6, Math.min(x, innerWidth - w - 8)) + 'px';
+  m.style.top = Math.max(6, Math.min(y, innerHeight - h - 8)) + 'px';
+}
 function closeMenus() {
   // 直接按 class 关，不走 id 列表 —— §17.1 实测 id 列表这条路在某些时序下关不干净，
   // 而 `querySelectorAll('.menu')` 这条已经验证过是可靠的（点外面 → 0 个残留）。
@@ -1245,15 +1259,28 @@ function closeTab(i) {
   S.currentFile = relOfActiveTab() || null;
   save(); renderTabs(); renderContent(); renderContext();
 }
+/// §21.4 标签组：颜色取自用户给的那张「为此组命名」图（1 个默认棕 + 8 个色）
+const TAB_GROUP_COLORS = ['#8A6A5A', '#4C9BE8', '#E5484D', '#F5A623',
+                          '#30A46C', '#E5468A', '#8E4EC6', '#7CB342', '#F76B5A'];
+const tabGroupByName = name => (S.tabGroups || []).find(g => g.name === name) || null;
+const tabGroupOf = t => (t && t.group ? tabGroupByName(t.group) : null);
+const tabDisplayName = t => t.label || t.f;
+
 function renderTabs() {
   const host = $('#tabs'); host.innerHTML = '';
   S.tabs.forEach((t, i) => {
+    const g = tabGroupOf(t);
     const el = document.createElement('div');
-    el.className = 'tab' + (i === S.activeTab ? ' is-on' : '') + (t.pinned ? ' is-pin' : '');
+    el.className = 'tab' + (i === S.activeTab ? ' is-on' : '') + (t.pinned ? ' is-pin' : '')
+      + (g ? ' has-group' : '');
+    if (g) el.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
     const ic = iconFor(t.f);
     el.innerHTML = `<span class="fico ${ic.cls}"></span><span class="tname"></span><span class="tx" title="关闭标签">×</span>`;
-    el.querySelector('.tname').textContent = t.f;
-    el.title = t.f + (t.pinned ? '（已固定 · 在最左、按钮变小；右键可取消）' : '') + '\n右键：固定 / 复制 / 关闭…';
+    el.querySelector('.tname').textContent = tabDisplayName(t);
+    el.title = tabDisplayName(t) + (t.label ? `（原名 ${t.f}）` : '')
+      + (t.pinned ? '（已固定 · 在最左、按钮变小；右键可取消）' : '')
+      + (g ? `\n标签组：${g.name}` : '')
+      + '\n右键：分组 / 重命名 / 关闭…';
     el.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
     el.onclick = e => {
       if (e.target.classList.contains('tx')) { closeTab(i); return; }
@@ -1264,6 +1291,135 @@ function renderTabs() {
     };
     host.appendChild(el);
   });
+  if (S.tabsVertical) renderTabsVertical();
+}
+
+/* ============================================================
+   §21.2 / §21.3 标签显示方式：横向 ⇄ 垂直
+   ============================================================ */
+function applyTabsLayout() {
+  const vertical = !!S.tabsVertical;
+  const btn = $('#btnTabsLayout');
+  if (btn) {
+    btn.classList.toggle('is-on', vertical);
+    btn.textContent = vertical ? '▥' : '▤';
+    btn.title = vertical ? '显示方式：垂直（点回横向）' : '显示方式：横向（点看垂直列表）';
+  }
+  const strip = $('#tabs'); if (strip) strip.hidden = vertical;
+  const panel = $('#tabsVertical'); if (panel) panel.hidden = !vertical;
+  if (vertical) renderTabsVertical(); else renderTabs();
+}
+function toggleTabsLayout() {
+  S.tabsVertical = !S.tabsVertical;
+  save(true);
+  applyTabsLayout();
+  toast(S.tabsVertical ? '标签已切成<b>垂直</b>显示 —— 顶部能搜、固定的小图标最多 4 行'
+                       : '标签已切回<b>横向</b>显示');
+}
+
+/// §21.3 垂直形态：固定的小图标格 + 竖排列表（分组挂在组头下面）
+function renderTabsVertical() {
+  const panel = $('#tabsVertical'); if (!panel || panel.hidden) return;
+  const kw = (($('#tvSearch') && $('#tvSearch').value) || '').trim().toLowerCase();
+  const hit = t => !kw || tabDisplayName(t).toLowerCase().includes(kw) || t.f.toLowerCase().includes(kw);
+
+  // ── ① 固定的：缩成小图标，每行几个由面板宽度算，**最多 4 行** ──
+  const grid = $('#tvPinned');
+  const pinned = S.tabs.filter(t => t.pinned && hit(t));
+  const avail = Math.max(220, panel.clientWidth - 16);
+  const cols = Math.max(3, Math.min(14, Math.floor(avail / 44)));
+  grid.style.setProperty('--tv-cols', cols);
+  grid.hidden = pinned.length === 0;
+  grid.innerHTML = '';
+  const maxCells = cols * 4;                    // §21.3.3 最多 4 行
+  pinned.slice(0, maxCells).forEach(t => {
+    const i = S.tabs.indexOf(t);
+    const cell = document.createElement('div');
+    cell.className = 'tv-cell' + (i === S.activeTab ? ' is-on' : '');
+    const g = tabGroupOf(t);
+    if (g) cell.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
+    cell.innerHTML = `<span class="fico ${iconFor(t.f).cls}"></span><button class="x" title="关闭">×</button>`;
+    cell.title = tabDisplayName(t) + '\n右键：分组 / 重命名 / 取消固定';
+    cell.querySelector('.x').onclick = e => { e.stopPropagation(); closeTab(i); };
+    cell.onclick = () => activateTab(i);
+    cell.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
+    grid.appendChild(cell);
+  });
+  const overflow = pinned.length - Math.min(pinned.length, maxCells);
+  if (overflow > 0) {
+    const more = document.createElement('div');
+    more.className = 'tv-cell more';
+    more.textContent = `+${overflow}`;
+    more.title = `还有 ${overflow} 个固定标签没画出来（一行装不下超过 4 行）`;
+    more.onclick = () => toast(`固定标签太多 —— 面板宽度只够 ${maxCells} 个，还有 <b>${overflow}</b> 个收在这里`);
+    grid.appendChild(more);
+  }
+
+  // ── ② 竖排列表（保持 tab 原顺序；分组连续出现，组头 + 缩进的组员） ──
+  const list = $('#tvList'); list.innerHTML = '';
+  const body = S.tabs.filter(t => !t.pinned);
+  let idx = 0, drawn = 0;
+  while (idx < body.length) {
+    const t = body[idx];
+    if (!t.group) {
+      if (hit(t)) { list.appendChild(tvItemRow(t, false)); drawn++; }
+      idx++; continue;
+    }
+    const name = t.group;
+    const members = [];
+    while (idx < body.length && body[idx].group === name) { members.push(body[idx]); idx++; }
+    const grp = tabGroupByName(name) || { name, color: TAB_GROUP_COLORS[0], open: true };
+    const visible = members.filter(hit);
+    if (kw && !visible.length) continue;
+    list.appendChild(tvGroupRow(grp, members));
+    drawn++;
+    if (grp.open !== false) { visible.forEach(x => { list.appendChild(tvItemRow(x, true)); drawn++; }); }
+  }
+  if (!drawn) {
+    // 别一律喊「还没有标签」—— 标签可能只是**全被固定到上面那排小图标里**了
+    const anyVisiblePinned = pinned.length > 0;
+    const allPinned = S.tabs.length > 0 && !S.tabs.some(t => !t.pinned);
+    const msg = kw
+      ? (anyVisiblePinned ? '匹配的标签都在上面那排固定小图标里'
+                          : `没有匹配「${escapeHtml(kw)}」的标签`)
+      : (allPinned ? '标签都在上面那排固定小图标里' : '还没有标签 —— 点下面新建');
+    list.innerHTML = `<div class="tv-empty">${msg}</div>`;
+  }
+}
+function activateTab(i) {
+  const t = S.tabs[i]; if (!t) return;
+  S.activeTab = i; S.currentFile = t.f;
+  const kind = extViewKind(t.f);
+  S.tab = kind === 'file' ? 'file' : kind;
+  save(); renderTabs(); renderContent(); renderContext(); renderNav();
+}
+function tvItemRow(t, isChild) {
+  const i = S.tabs.indexOf(t);
+  const g = tabGroupOf(t);
+  const el = document.createElement('div');
+  el.className = 'tv-item' + (i === S.activeTab ? ' is-on' : '') + (isChild ? ' is-child' : '');
+  if (g) el.style.setProperty('--gc', g.color || TAB_GROUP_COLORS[0]);
+  el.innerHTML = `<span class="fico ${iconFor(t.f).cls}"></span><span class="nm"></span>
+    <button class="x" title="关闭">×</button>`;
+  el.querySelector('.nm').textContent = tabDisplayName(t);
+  el.title = tabDisplayName(t) + (t.label ? `（原名 ${t.f}）` : '');
+  el.querySelector('.x').onclick = e => { e.stopPropagation(); closeTab(i); };
+  el.onclick = () => activateTab(i);
+  el.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
+  return el;
+}
+function tvGroupRow(grp, members) {
+  const el = document.createElement('div');
+  const open = grp.open !== false;
+  el.className = 'tv-group' + (open ? '' : ' closed');
+  el.style.setProperty('--gc', grp.color || TAB_GROUP_COLORS[0]);
+  el.innerHTML = `<span class="dot"></span><span class="nm"></span>
+    <span class="ct">${members.length}</span><span class="cv">▼</span>`;
+  el.querySelector('.nm').textContent = grp.name;
+  el.title = `标签组「${grp.name}」· ${members.length} 个标签\n点 = 折叠/展开，右键 = 改名/换颜色/解散…`;
+  el.onclick = () => { grp.open = !grp.open; save(true); renderTabsVertical(); };
+  el.oncontextmenu = e => { e.preventDefault(); openTabGroupMenu(grp, { x: e.clientX, y: e.clientY }); };
+  return el;
 }
 
 /* ============================================================
@@ -1989,6 +2145,8 @@ function dragSplit(el, apply) {
 
 let menuTabIndex = null;
 let menuDyn = null;
+let menuTabXY = null;              // §21.4A 菜单要贴着鼠标（二级「加入标签组…」也从这里接）
+let menuTabGroupObj = null;
 /// 通用弹出菜单：给一串 {label, danger?, action?} 就画出来（分组菜单 / 卡片附加项都用它）
 function showMenu(items, anchor, xy) {
   closeMenus();                              // 任何菜单打开前先关掉其它（含分组/卡片/项目）
@@ -2012,8 +2170,7 @@ function showMenu(items, anchor, xy) {
   const left = xy ? xy.x : (r ? r.left : 100);
   const top = xy ? xy.y : (r ? r.bottom + 4 : 100);
   menuDyn.hidden = false;
-  menuDyn.style.left = Math.max(6, Math.min(left, innerWidth - 250)) + 'px';
-  menuDyn.style.top = Math.max(6, Math.min(top, innerHeight - 320)) + 'px';
+  placeMenu(menuDyn, left, top);
 }
 /// 标签条最左的 ☰：**纵向列出全部标签**（横向看不全时用，§13.4）
 function openTabsPopover() {
@@ -2027,7 +2184,7 @@ function openTabsPopover() {
     it.className = 'mt-item' + (i === S.activeTab ? ' is-on' : '');
     it.innerHTML = `${treeIconSVG(t.f, false)}<span class="nm"></span>
       <span class="pin">${t.pinned ? '📌' : ''}</span>`;
-    it.querySelector('.nm').textContent = `${(projectById(t.p) || {}).name || t.p} · ${t.f}`;
+    it.querySelector('.nm').textContent = `${(projectById(t.p) || {}).name || t.p} · ${tabDisplayName(t)}`;
     it.onclick = () => { m.hidden = true; S.activeTab = i; S.currentFile = t.f;
       S.tab = extViewKind(t.f) === 'file' ? 'file' : extViewKind(t.f);
       save(); renderTabs(); renderContent(); renderContext(); renderNav(); };
@@ -2038,21 +2195,72 @@ function openTabsPopover() {
   m.hidden = false;
   m.style.left = r.left + 'px'; m.style.top = (r.bottom + 6) + 'px';
 }
+/// §21.4A 右键标签页 —— **功能类型**照用户给的那张图，**样式**走本项目自己的 .menu
 function openTabMenu(index, ev) {
   menuTabIndex = index;
+  menuTabXY = { x: ev.clientX, y: ev.clientY };
   closeMenus();
-  const m = $('#menuTabs'); m.hidden = false;
-  m.style.left = Math.min(ev.clientX, innerWidth - 240) + 'px';
-  m.style.top = Math.min(ev.clientY, innerHeight - 280) + 'px';
-  const t = S.tabs[index];
-  m.querySelector('[data-act="pin"]').textContent = t && t.pinned ? '取消固定' : '固定标签页';
+  const t = S.tabs[index]; if (!t) return;
+  const m = $('#menuTabs');
+  const groups = S.tabGroups || [];
+  const last = index >= S.tabs.length - 1;
+  m.innerHTML = `
+    <button data-act="openBelow">在下方新增标签页</button>
+    <button data-act="splitView">使用当前标签页创建新的拆分视图</button>
+    <div class="menu-sep"></div>
+    <button data-act="toNewGroup">移动至新标签组</button>
+    ${groups.length ? `<button data-act="joinGroup">加入标签组…</button>` : ''}
+    ${t.group ? `<button data-act="leaveGroup">移出当前标签组</button>
+                 <button data-act="groupOptions">标签组选项…</button>` : ''}
+    <button data-act="toWindow">将标签页移至新窗口</button>
+    <div class="menu-sep"></div>
+    <button data-act="reload">重新加载</button>
+    <button data-act="dup">复制标签页</button>
+    <button data-act="pin">${t.pinned ? '取消固定' : '固定'}</button>
+    <button data-act="rename">重命名标签页</button>
+    <button data-act="mute">将这个网站静音</button>
+    <div class="menu-sep"></div>
+    <button data-act="layout">${S.tabsVertical ? '水平显示标签页' : '垂直显示标签页'}</button>
+    <div class="menu-sep"></div>
+    <button data-act="close">关闭</button>
+    <button data-act="closeOthers"${S.tabs.length < 2 ? ' disabled' : ''}>关闭其他标签页</button>
+    <button data-act="closeLeft"${index <= 0 ? ' disabled' : ''}>关闭左侧标签页</button>
+    <button data-act="closeRight"${last ? ' disabled' : ''}>关闭右侧标签页</button>
+    <button data-act="closeBelow"${last ? ' disabled' : ''}>关闭下方标签页</button>`;
+  $$('button', m).forEach(b => b.onclick = () => tabMenuAction(b.dataset.act));
+  // 菜单有 18 项、比一屏还高 —— 必须按**实测尺寸**贴边，否则最后一两项跑到屏幕外点不到
+  m.hidden = false;
+  placeMenu(m, ev.clientX, ev.clientY);
 }
 function tabMenuAction(act) {
-  const i = menuTabIndex; closeMenus();
+  const i = menuTabIndex;
+  const xy = menuTabXY;
+  closeMenus();
   if (i === null || !S.tabs[i]) return;
   const t = S.tabs[i];
   const activeBefore = S.tabs[S.activeTab];      // 增删/排序之后"当前打开的"还得是它
+
   switch (act) {
+    case 'openBelow': openTabAfter(i); return;
+    case 'splitView': toast('拆分视图：原型先记一笔（落 SwiftUI 走双栏）'); return;
+    case 'toNewGroup': moveToNewTabGroup(t); return;
+    case 'joinGroup': {
+      const groups = S.tabGroups || [];
+      if (!groups.length) { toast('还没有标签组 —— 先「移动至新标签组」'); return; }
+      showMenu(groups.map(g => ({ label: `加入「${g.name}」`, action: () => {
+        t.group = g.name; moveTabBesideItsGroup(t);
+        save(true); renderTabs(); toast(`已加入标签组 <b>${escapeHtml(g.name)}</b>`);
+      } })), null, xy);
+      return; }
+    case 'leaveGroup': t.group = null; save(true); renderTabs(); toast('已移出标签组'); return;
+    case 'groupOptions': {
+      const g = tabGroupByName(t.group); if (!g) return;
+      openTabGroupMenu(g, xy); return; }
+    case 'toWindow': toast('移至新窗口：原型先记一笔（落 SwiftUI 走新 NSWindow）'); return;
+    case 'reload': save(); renderContent(); renderTabs(); toast(`已重新加载 <b>${escapeHtml(t.f)}</b>`); return;
+    case 'rename': renameTabLabel(t); return;
+    case 'mute': toast('这个标签没有音频可静音（原型先记一笔）'); return;
+    case 'layout': toggleTabsLayout(); return;
     case 'pin': t.pinned = !t.pinned;
       toast(t.pinned ? '已固定 —— 跑到最左侧、按钮变小' : '已取消固定'); break;
     case 'dup': S.tabs.splice(i + 1, 0, { ...t }); break;
@@ -2060,7 +2268,8 @@ function tabMenuAction(act) {
     case 'closeOthers': S.tabs = [t]; break;
     case 'closeLeft': S.tabs = S.tabs.slice(i); break;
     case 'closeRight': S.tabs = S.tabs.slice(0, i + 1); break;
-    case 'moveGroup': toast('移动到分组：原型里只记这次操作（落 SwiftUI 接标签分组）'); break;
+    case 'closeBelow': S.tabs = S.tabs.slice(0, i + 1); break;
+    default: return;
   }
   // §20.6 固定 = **移动到最左侧**：Array.sort 是稳定的 ——
   // 固定的排前、未固定的排后，两组**内部**都保持原来的相对顺序。
@@ -2071,6 +2280,134 @@ function tabMenuAction(act) {
   if (S.activeTab < 0) S.activeTab = 0;
   S.currentFile = (S.tabs[S.activeTab] || {}).f || null;
   save(); renderTabs(); renderContent(); renderContext();
+}
+
+/* ── §21.4 标签组的四个动作（菜单 / 分组菜单共用） ───────── */
+/// 在这个标签**后面**插一个新标签（项目里还没打开的文件）
+function openTabAfter(i) {
+  const seen = new Set(S.tabs.map(x => `${x.p}|${x.f}`));
+  const pool = [...realProjects(), defaultProject()].filter(Boolean);
+  let found = null;
+  for (const p of pool) {
+    for (const rel of flatFiles(p)) {
+      if (!seen.has(`${p.id}|${rel}`)) { found = { p, rel }; break; }
+    }
+    if (found) break;
+  }
+  if (!found) { toast('所有项目的文件都已经打开了'); return; }
+  S.tabs.splice(i + 1, 0, { p: found.p.id, f: found.rel });
+  S.activeTab = i + 1; S.currentFile = found.rel;
+  S.tab = extViewKind(found.rel) === 'file' ? 'file' : extViewKind(found.rel);
+  save(); renderTabs(); renderContent(); renderContext(); renderNav();
+  toast(`已在下方新增标签：<b>${escapeHtml(found.rel)}</b>`);
+}
+/// 改的是**显示名**，不碰磁盘上的文件名；留空 = 恢复原名
+function renameTabLabel(t) {
+  askModal({ title: '重命名标签页',
+    text: `改的只是这一栏显示的名字，不会动磁盘上的文件。留空 = 恢复成 ${t.f}`,
+    value: t.label || '', okText: '重命名', onOk: v => {
+      const s = (v || '').trim();
+      if (s) t.label = s; else delete t.label;
+      save(true); renderTabs();
+      toast(s ? `标签已改名为 <b>${escapeHtml(s)}</b>` : '已恢复原名');
+    }});
+}
+/// 同组的标签必须**连着排**，否则垂直形态里组头和组员会被别的标签隔开
+function moveTabBesideItsGroup(t) {
+  const idx = S.tabs.indexOf(t); if (idx < 0) return;
+  const last = S.tabs.map(x => x.group || null).lastIndexOf(t.group);
+  if (last > idx) { S.tabs.splice(idx, 1); S.tabs.splice(last, 0, t); }
+}
+function moveToNewTabGroup(t) {
+  askModal({ title: '移动至新标签组',
+    text: '给这个组起个名字；写已有的组名就并进那个组。',
+    value: '新标签组', okText: '移动', onOk: v => {
+      const name = (v || '').trim() || '新标签组';
+      if (!tabGroupByName(name)) S.tabGroups.push({ name, color: TAB_GROUP_COLORS[0], open: true });
+      t.group = name; moveTabBesideItsGroup(t);
+      save(true); renderTabs();
+      toast(`已移动到标签组 <b>${escapeHtml(name)}</b>`);
+    }});
+}
+
+/// §21.4B 右键**标签组**（功能类型照「为此组命名 + 8 个颜色点」那张图）
+function openTabGroupMenu(grp, xy) {
+  menuTabGroupObj = grp;
+  closeMenus();
+  const m = $('#menuTabGroup');
+  const cur = grp.color || TAB_GROUP_COLORS[0];
+  m.innerHTML = `
+    <button data-act="rename">为此组命名</button>
+    <div class="gcolors">${TAB_GROUP_COLORS.map(c =>
+      `<button data-color="${c}" class="${c === cur ? 'is-on' : ''}" style="background:${c}" title="换成这个颜色"></button>`).join('')}</div>
+    <div class="menu-sep"></div>
+    <button data-act="addTab">在分组内添加新标签页</button>
+    <button data-act="toWindow">将分组移至新窗口</button>
+    <button data-act="bookmark">全部保存到收藏夹</button>
+    <div class="menu-sep"></div>
+    <button data-act="ungroup">解散标签组</button>
+    <button data-act="collapse">${grp.open === false ? '展开标签组' : '关闭标签组'}</button>
+    <button data-act="delete" class="danger">关闭并删除标签组</button>`;
+  $$('.gcolors button', m).forEach(b => b.onclick = () => {
+    grp.color = b.dataset.color; save(true); closeMenus();
+    renderTabs(); toast('标签组换色了');
+  });
+  $$('button[data-act]', m).forEach(b => b.onclick = () => tabGroupAction(b.dataset.act));
+  m.hidden = false;
+  const r = xy || menuTabXY || { x: 200, y: 200 };
+  placeMenu(m, r.x, r.y);
+}
+function tabGroupAction(act) {
+  const grp = menuTabGroupObj;
+  const x = menuTabXY;
+  closeMenus();
+  if (!grp) return;
+  const members = S.tabs.filter(t => t.group === grp.name);
+  switch (act) {
+    case 'rename':
+      askModal({ title: '为此组命名', value: grp.name, okText: '命名', onOk: v => {
+        const name = (v || '').trim(); if (!name || name === grp.name) return;
+        S.tabs.forEach(t => { if (t.group === grp.name) t.group = name; });
+        if (S.tabGroups) S.tabGroups.forEach(g => { if (g === grp) g.name = name; });
+        save(true); renderTabs(); toast(`标签组已改名为 <b>${escapeHtml(name)}</b>`);
+      }});
+      break;
+    case 'addTab': {
+      const lastMember = members[members.length - 1];
+      const at = lastMember ? S.tabs.indexOf(lastMember) : S.tabs.length - 1;
+      openTabAfter(at < 0 ? S.tabs.length - 1 : at);
+      const added = S.tabs[Math.min(S.tabs.length - 1, at + 1)];
+      if (added) { added.group = grp.name; moveTabBesideItsGroup(added); save(true); renderTabs(); }
+      break; }
+    case 'toWindow': toast('将分组移至新窗口：原型先记一笔（落 SwiftUI 走新 NSWindow）'); break;
+    case 'bookmark': toast('全部保存到收藏夹：原型先记一笔'); break;
+    case 'ungroup':
+      // 解散 = **组记录没了、标签全部留着**（只是不再分组）
+      members.forEach(t => { t.group = null; });
+      S.tabGroups = (S.tabGroups || []).filter(g => g !== grp);
+      save(true); renderTabs();
+      toast(`已解散标签组「${escapeHtml(grp.name)}」—— ${members.length} 个标签都还在`);
+      break;
+    case 'collapse':
+      grp.open = grp.open === false; save(true); renderTabsVertical();
+      toast(grp.open === false ? '已关闭（折叠）这个标签组' : '已展开这个标签组');
+      break;
+    case 'delete':
+      // 关闭并删除 = **组里所有标签一起关掉** + 组记录删掉
+      confirmModal({ title: '关闭并删除这个标签组？',
+        text: `${grp.name}\n会关掉里面的 ${members.length} 个标签（文件还在项目里，随时能再开）。`,
+        okText: '关闭并删除', onOk: () => {
+          members.forEach(t => { const k = S.tabs.indexOf(t); if (k >= 0) S.tabs.splice(k, 1); });
+          S.tabGroups = (S.tabGroups || []).filter(g => g !== grp);
+          if (S.activeTab >= S.tabs.length) S.activeTab = S.tabs.length - 1;
+          if (S.activeTab < 0) S.activeTab = 0;
+          S.currentFile = (S.tabs[S.activeTab] || {}).f || null;
+          save(true); renderTabs(); renderContent(); renderContext();
+          toast('已关闭并删除这个标签组');
+        }});
+      break;
+  }
+  void x;
 }
 /// 设置：默认对话位置（§13.5）
 function settingsAction(act, btn) {
@@ -2334,6 +2671,12 @@ function bind() {
   };
   $('#btnHistoryHead').onclick = toggleHistoryView;   // 文件头那颗常驻的（§13.6 / §20.2：工具栏那颗已删）
   $('#btnTabsCollapse').onclick = e => { e.stopPropagation(); openTabsPopover(); };
+  // §21.2 最左那颗：横向 ⇄ 垂直
+  $('#btnTabsLayout').onclick = e => { e.stopPropagation(); toggleTabsLayout(); };
+  // §21.3 垂直形态里的搜索 / 新建
+  $('#tvSearch').oninput = () => renderTabsVertical();
+  $('#tvNew').onclick = e => { e.stopPropagation(); $('#navSearch').focus();
+    toast('用左栏顶部的搜索找文件，点它开新标签'); };
   $('#btnSettings').onclick = e => {
     e.stopPropagation();
     const m = $('#menuSettings');
@@ -2350,6 +2693,20 @@ function bind() {
   };
 
   $('#btnSend').onclick = sendChat;
+  // §21.5.6/8 展开 ⇄ 收起：点**输入框顶边那条手柄**（旧的 ⤢ 是死按钮，连同那行说明一起删了）
+  const applyComposerExpand = () => $('#composer').classList.toggle('is-expanded', !!S.composerExpanded);
+  applyComposerExpand();
+  const toggleComposerExpand = () => {
+    S.composerExpanded = !S.composerExpanded;
+    save(true); applyComposerExpand();
+    const ta = $('#chatInput');
+    if (S.composerExpanded) ta.focus();
+    toast(S.composerExpanded ? '输入框已展开' : '输入框已收起');
+  };
+  $('#composerGrip').onclick = toggleComposerExpand;
+  $('#composerGrip').onkeydown = e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleComposerExpand(); }
+  };
   $('#chatInput').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
   });
@@ -2550,8 +2907,7 @@ function openGitPanel(anchor, force) {
 
 function renderModes() {
   $$('#modeChips .chip').forEach(c => c.classList.toggle('is-on', c.dataset.mode === S.mode));
-  $('#composerHint').textContent = S.mode === 'voice' ? '语音模式 · 回车发送文字'
-    : S.mode === 'video' ? '视频模式 · 回车发送' : '回车发送 · Shift+回车换行';
+  // §21.5.5 输入框里那行「回车发送…」说明连同 ⤢ 一起删了 —— 这里不再写任何东西
 }
 
 /// ⭐ 输入框上方那一行（§13.1 完全照搬）：**左组恒定、右组随模式变**。
@@ -2578,8 +2934,8 @@ function openRateMenu(anchor) {
   });
   const r = anchor.getBoundingClientRect();
   m.hidden = false;
-  m.style.left = Math.max(6, Math.min(r.left, innerWidth - 170)) + 'px';
-  m.style.top = (r.bottom + 6) + 'px';
+  // §21.4 同一条规矩：按实测尺寸贴边 —— 输入框在屏幕底部，`r.bottom + 6` 会把它顶出视口
+  placeMenu(m, r.left, r.bottom + 6);
 }
 
 function renderComposerControls() {
@@ -2618,8 +2974,9 @@ function renderComposerControls() {
     };
   });
 
+  // §21.5.2 这一行左边 = **当前模式**（连续/临时那两颗按钮就在同一行右侧，再写一遍是重复）
   $('#composerModeLabel').textContent =
-    `${S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频'} · ${conv === 'temporary' ? '临时对话' : '连续对话'}`;
+    S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频';
   // 选项面板开着时，切模式要跟着换内容（音色/模型那一层是按模式给的）
   const op = $('#optPanel');
   if (op && !op.hidden) renderOptPanel();
@@ -2635,7 +2992,7 @@ function boot() {
   app.classList.add('is-booting');
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const tSkeleton = Math.round(performance.now() - t0);
-    bind(); renderAll();
+    bind(); renderAll(); applyTabsLayout();
     $('#main').classList.toggle('center-layout', S.layout === 'center');
     $('#main').classList.toggle('left-layout', S.layout === 'left');
     if (!S.chat.length) {
