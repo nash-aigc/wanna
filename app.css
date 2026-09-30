@@ -527,3 +527,81 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* ── 空态三个按钮 ── */
 .empty-acts{gap:8px;flex-wrap:wrap;justify-content:center}
+
+/* ============================================================
+   v4 · §13 右侧对话窗 = 当前软件原样搬过来
+   ============================================================ */
+
+/* 页头：左 模式条（搬进来的）· 右 通话/角色/选项 —— 与顶部导航同一套极简竖线 */
+.chat-nav{display:flex;align-items:center;gap:8px;height:38px;flex:0 0 38px;
+  padding:0 8px 0 10px;border-bottom:1px solid var(--line)}
+.chat-nav .modes-slot{flex:1;min-width:0}
+.chat-nav-right{display:flex;align-items:center;flex:0 0 auto}
+.hchip{height:22px;padding:0 8px;font-size:12.5px;color:var(--ink3);border-radius:0;
+  display:inline-flex;align-items:center;gap:4px}
+.hchip:hover{color:var(--ink)}
+.hchip.is-on{color:var(--ok)}
+.hchip + .hchip{border-left:1px solid #2C2C31}
+.chat-nav .chip{padding:0 9px}
+
+/* 输入框上方那一行：22pt · 无底色无圆角 · 竖线分隔 · 选中绿（临时=琥珀） */
+.cc-row{display:flex;align-items:center;gap:6px;height:26px;margin-bottom:6px}
+.cc-left,.cc-right{display:flex;align-items:center;min-width:0}
+.cc-right{margin-left:auto;overflow:hidden}
+.cc{height:22px;padding:0 8px;font-size:12.5px;color:var(--ink3);border-radius:0;white-space:nowrap}
+.cc:hover{color:var(--ink2)}
+.cc.is-on{color:var(--ok);font-weight:600}
+.cc.is-on.temp{color:#F5B851}
+.cc-new{color:var(--ink3)}
+.vr{width:1px;height:15px;background:#33333A;margin:0 2px;flex:0 0 1px}
+.cc-right .cc{color:var(--ink3)}
+.cc-right .cc.is-on{color:var(--ok)}
+.composer-mode{font-size:11px;color:#5D5D66}
+
+/* 重点参考：**一行**，最左侧一个 + 收纳（§13.3） */
+.focus-row{display:flex;align-items:center;gap:5px;margin-bottom:6px;
+  flex-wrap:nowrap;overflow:hidden;position:relative}
+.focus-plus{height:22px;min-width:34px;padding:0 7px;border-radius:7px;font-size:11.5px;
+  color:var(--focus);background:rgba(245,184,81,.12);border:1px solid rgba(245,184,81,.4);flex:0 0 auto}
+.focus-plus:hover{border-color:rgba(245,184,81,.8)}
+.focus-plus.is-zero{color:#5D5D66;background:#18181B;border-color:var(--line)}
+.focus-chips{display:flex;gap:5px;min-width:0;overflow:hidden;flex-wrap:nowrap;align-items:center}
+.focus-list{position:absolute;left:0;right:0;bottom:26px;z-index:40;background:#1D1D20;
+  border:1px solid var(--line2);border-radius:10px;padding:5px;box-shadow:0 14px 34px rgba(0,0,0,.55);
+  max-height:260px;overflow:auto;animation:pop .14s ease-out}
+.focus-list[hidden]{display:none}
+
+/* 输入框：右上展开、右下 ✕、右侧发送 */
+.composer{background:var(--bg);border:1px solid var(--line2);border-radius:12px;
+  padding:6px 8px 7px;position:relative}
+.composer:focus-within{border-color:rgba(10,132,255,.6)}
+.composer-top{display:flex;justify-content:flex-end;align-items:center;gap:4px;min-height:16px}
+.cx-btn{width:20px;height:20px;border-radius:6px;color:var(--ink3);font-size:12px;
+  display:flex;align-items:center;justify-content:center}
+.cx-btn:hover{background:#242428;color:var(--ink)}
+.composer textarea{width:100%;border:0;outline:0;background:transparent;resize:none;
+  font-size:13px;line-height:1.6;min-height:54px;max-height:180px}
+.composer-bar{display:flex;align-items:center;justify-content:space-between;margin-top:4px;gap:8px}
+.composer-acts{display:flex;align-items:center;gap:8px}
+
+/* 标签条最左的折叠按钮 + 全部标签弹层 + 右键菜单标题 */
+.tab-collapse{width:26px;height:24px;border-radius:6px;color:var(--ink3);font-size:13px;
+  flex:0 0 auto;border-right:1px solid var(--line);margin-right:2px}
+.tab-collapse:hover{background:#242428;color:var(--ink)}
+.menu-title{font-size:11px;color:var(--ink3);padding:5px 10px 4px;letter-spacing:.05em}
+.menu-tabs-pop{min-width:260px}
+.menu-tabs-pop .mt-item{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;
+  border-radius:7px;font-size:12.5px;color:var(--ink2);cursor:pointer}
+.menu-tabs-pop .mt-item:hover{background:#28282D;color:var(--ink)}
+.menu-tabs-pop .mt-item.is-on{color:var(--focus)}
+.menu-tabs-pop .mt-item .pin{margin-left:auto;font-size:11px}
+.tab .tname.pinned::after{content:"📌";font-size:9px;margin-left:4px}
+/* 临时块的分组行 / 默认卡说明 */
+.plan-row .pname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pdef{font-size:10px;color:#5D5D66;flex:0 0 auto}
+.plan-group{display:flex;align-items:center;justify-content:space-between;height:28px;
+  padding:0 8px;margin-top:8px;font-size:11.5px;color:var(--ink3);
+  border-top:1px solid var(--line);letter-spacing:.03em}
+.gcount{font-size:10.5px;color:#5D5D66}
+.menu button.is-on{background:rgba(10,132,255,.16);color:#CFE4FF}
+#tabsPopover .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}

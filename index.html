@@ -34,7 +34,8 @@
     </div>
 
     <div class="topbar-right">
-      <button class="btn btn-ghost" id="btnLayout" title="对话位置：右侧 ⇄ 中间">对话·右</button>
+      <button class="btn btn-ghost" id="btnLayout" title="对话位置：右 ⇄ 中 ⇄ 左">对话·右</button>
+      <button class="btn btn-ghost" id="btnSettings" title="设置（默认对话位置）">⚙</button>
       <button class="btn btn-ghost" id="btnFs" title="全屏（⌘⇧F / F11）">⛶</button>
       <button class="btn btn-ghost" id="btnCommitGit">提交</button>
       <button class="btn btn-icon" id="btnClose" title="关闭，回到会话页">✕</button>
@@ -66,8 +67,8 @@
 
         <!-- 临时规划块（自己的加号）—— 独立于项目 -->
         <div class="nav-head nav-head-2">
-          <button class="sect" id="btnPlanSect">临时规划 <span class="caret">⌄</span></button>
-          <button class="plus" id="btnAddPlan" title="新建临时规划">＋</button>
+          <button class="sect" id="btnPlanSect">临时 <span class="caret">⌄</span></button>
+          <button class="plus" id="btnAddPlan" title="新建一张对话卡片">＋</button>
         </div>
         <div id="planList"></div>
       </div>
@@ -88,6 +89,7 @@
       </div>
 
       <div class="tabbar" id="tabbar">
+        <button class="tab-collapse" id="btnTabsCollapse" title="折叠显示所有标签页">☰</button>
         <div class="tabs" id="tabs"></div>
         <button class="tab-add" id="btnNewTab" title="新建标签">＋</button>
         <div class="tabbar-right">
@@ -101,6 +103,7 @@
           <code id="fullPathLabel">—</code>
         </button>
         <div class="facts">
+          <button class="fbtn hist-btn" id="btnHistoryHead" title="这个文件的修改历史与恢复">历史 <span id="histCountHead">0</span></button>
           <button class="fbtn" id="btnEdit">编辑</button>
           <button class="fbtn" id="btnFinder">在访达中显示</button>
           <button class="fbtn icon" id="btnFs2" title="全屏（⌘⇧F）">⛶</button>
@@ -134,9 +137,9 @@
           <div class="empty-title" id="emptyTitle">对话模式</div>
           <div class="empty-sub" id="emptySub">上面的 图文 / 语音 / 视频 就是原来的对话窗口。<br>点 <b>项目</b> 进入项目模式 —— 上下文换成项目文件夹、选中的文件、以及这个项目自己的 claude.md / hooks。</div>
           <div class="empty-acts">
-            <button class="btn btn-primary" id="btnEmptyAdd">添加空白项目</button>
-            <button class="btn btn-ghost" id="btnEmptyPlan">添加临时规划</button>
-            <button class="btn btn-ghost" id="btnEmptyFolder">添加现有项目</button>
+            <button class="btn btn-primary" id="btnEmptyAdd">空白项目（文件夹）</button>
+            <button class="btn btn-ghost" id="btnEmptyPlan">新建对话</button>
+            <button class="btn btn-ghost" id="btnEmptyFolder">现有项目（文件夹）</button>
           </div>
         </div>
       </div>
@@ -194,49 +197,99 @@
 
     <div class="split split-h" id="hSplit" title="拖动：内容 ｜ 对话"></div>
 
-    <!-- ════ 右：对话窗口（原来那个窗口，只换上下文） ════ -->
+    <!-- ════ 右：对话窗口 = 当前软件那一套**原样搬过来**（§13.1 完全相同） ════ -->
     <aside class="chat" id="chatPane">
       <div class="skel skel-chat" id="skelChat" aria-hidden="true">
         <i class="sk" style="width:56%"></i><i class="sk" style="width:84%"></i><i class="sk" style="width:40%"></i>
       </div>
-      <div class="chat-head">
-        <!-- 进项目模式后，导航栏那排 图文/语音/视频 **并进对话框**（§12.0.5：导航栏跟对话框、输入框一体） -->
+
+      <!-- 页头：左 图文/语音/视频（进项目模式后从导航栏搬进来）· 右 音色/通话/角色/选项 -->
+      <div class="chat-nav">
         <div class="modes-slot" id="modesSlotChat"></div>
-        <div class="chat-modes" id="chatModes">
-          <button class="dchip is-on" data-chat="continuous">连续对话</button>
-          <button class="dchip" data-chat="temporary">临时对话</button>
-          <button class="dchip" data-chat="voice">语音</button>
+        <div class="chat-nav-right">
+          <button class="hchip" id="hcVoice" hidden>音色</button>
+          <button class="hchip" id="hcCall">📞 通话</button>
+          <button class="hchip" id="hcRole">👤 角色</button>
+          <button class="hchip" id="hcOptions">⚙ 选项</button>
         </div>
-        <div class="chat-status" id="chatStatus">对话模式</div>
       </div>
+
       <div class="msgs" id="msgs"></div>
+
       <div class="chat-foot">
-        <!-- 重点参考 chips：**在输入框正上方**，超过 3 个折叠成 +N -->
+        <!-- 输入框上方那一行（22pt 极简 · 竖线分隔）：左组恒定，右组**随模式变** -->
+        <div class="cc-row">
+          <div class="cc-left" id="ccLeft">
+            <button class="cc is-on" data-conv="continuous">连续</button><i class="vr"></i>
+            <button class="cc" data-conv="temporary">临时</button><i class="vr"></i>
+            <button class="cc cc-new" id="ccNew">＋ 新建</button>
+          </div>
+          <div class="cc-right" id="ccRight"><!-- 按模式渲染 --></div>
+        </div>
+
+        <!-- 重点参考：**同一行**，放不下收到最左侧那个 + 里（§13.3） -->
         <div class="focus-row" id="focusRow">
+          <button class="focus-plus" id="btnFocusMore" title="展开全部重点参考">+0</button>
           <div class="focus-chips" id="focusChips"></div>
-          <button class="focus-more" id="btnFocusMore" hidden></button>
           <div class="focus-list" id="focusList" hidden></div>
         </div>
+
         <div class="chat-ctx">
           <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">对话模式（无项目）</code></span>
         </div>
+
+        <!-- 输入框：三行、右上展开、右下 ✕、右侧停止 -->
         <div class="composer">
-          <textarea id="chatInput" rows="2" placeholder="输入问题，回车发送…"></textarea>
-          <div class="composer-bar">
+          <div class="composer-top">
             <span class="composer-hint" id="composerHint">回车发送 · Shift+回车换行</span>
-            <button class="btn btn-primary" id="btnSend">发送</button>
+            <button class="cx-btn" id="btnExpandBox" title="展开输入框">⤢</button>
+          </div>
+          <textarea id="chatInput" rows="3" placeholder="输入问题，回车发送…"></textarea>
+          <div class="composer-bar">
+            <span class="composer-mode" id="composerModeLabel">图文 · 连续对话</span>
+            <span class="composer-acts">
+              <button class="cx-btn" id="btnClearInput" title="清空输入">✕</button>
+              <button class="btn btn-primary" id="btnSend">发送</button>
+            </span>
           </div>
         </div>
       </div>
     </aside>
   </main>
 
-  <!-- 添加菜单（三项） -->
-  <div class="menu" id="menuAdd" hidden>
-    <button data-act="newBlank">添加空白项目</button>
-    <button data-act="newPlan">添加临时规划</button>
-    <button data-act="useFolder">添加现有项目</button>
+  <!-- 项目 ＋ ：只有两项（都是文件夹） -->
+  <div class="menu" id="menuAddProject" hidden>
+    <button data-act="newBlank">空白项目（文件夹）</button>
+    <button data-act="useFolder">现有项目（文件夹）</button>
   </div>
+  <!-- 临时 ＋ ：只有两项（加载的是对话，不是文件夹） -->
+  <div class="menu" id="menuAddTemp" hidden>
+    <button data-act="newGroup">分组</button>
+    <button data-act="newCard">新建</button>
+  </div>
+  <!-- 标签页右键 -->
+  <div class="menu" id="menuTabs" hidden>
+    <button data-act="pin">固定标签页</button>
+    <button data-act="dup">复制标签页</button>
+    <div class="menu-sep"></div>
+    <button data-act="close">关闭标签页</button>
+    <button data-act="closeOthers">关闭其他标签页</button>
+    <button data-act="closeLeft">关闭左侧标签页</button>
+    <button data-act="closeRight">关闭右侧标签页</button>
+    <div class="menu-sep"></div>
+    <button data-act="moveGroup">移动标签分组</button>
+  </div>
+  <!-- 设置：默认对话位置 -->
+  <div class="menu" id="menuSettings" hidden>
+    <div class="menu-title">默认对话位置</div>
+    <button data-act="defLeft">对话在左</button>
+    <button data-act="defCenter">对话在中</button>
+    <button data-act="defRight">对话在右</button>
+    <div class="menu-sep"></div>
+    <button data-act="resetHist">清空当前文件历史</button>
+  </div>
+  <!-- 全部标签（折叠显示） -->
+  <div class="menu menu-tabs-pop" id="tabsPopover" hidden></div>
   <div class="menu" id="menuProj" hidden>
     <button data-act="batch">批量管理</button>
     <button data-act="finder">在访达中显示</button>

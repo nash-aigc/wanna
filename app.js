@@ -135,6 +135,10 @@ const MIND_FILE = '脑图.mmd';
 const histFile = () => S.currentFile || relOfActiveTab();
 
 let toastTimer;
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('[data-jump-history]');
+  if (a) { e.preventDefault(); const b = $('#btnHistoryHead') || $('#btnHistory'); b && b.click(); }
+});
 function toast(html) {
   const t = $('#toast'); t.innerHTML = html; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2800);
@@ -203,29 +207,45 @@ function renderNav() {
   if (!S.projects.length) {
     host.innerHTML = `<div style="padding:8px 10px 12px;color:var(--ink3);font-size:12px">
       还没有项目文件夹。点右边 <b style="color:var(--ink2)">＋</b>：
-      添加空白项目 / 添加临时规划 / 添加现有项目。</div>`;
+      <b>空白项目（文件夹）</b> / <b>现有项目（文件夹）</b>。</div>`;
   }
 
-  // ── 临时规划块（与项目分开，§12.4） ──
+  // ── 「临时」块：加载的是**对话**不是文件夹（§13.2）。默认那张卡恒在，＋ 只加卡 ──
   const ph = $('#planList'); ph.innerHTML = '';
+  const defCard = document.createElement('div');
+  defCard.className = 'plan-row' + (S.activePlan === null || S.activePlan === 'default' ? ' is-on' : '');
+  defCard.innerHTML = `<span class="plan-dot" style="background:var(--ok)"></span>
+    <span class="pname">默认</span><span class="pdef">快捷键进的就是它</span>`;
+  defCard.title = '默认对话卡片：按主快捷键进来就是这一张';
+  defCard.onclick = () => selectTempCard('default');
+  ph.appendChild(defCard);
+
   if (!S.plans.length) {
-    ph.innerHTML = `<div class="plan-empty">还没有临时规划 —— 点右边 ＋ 新建（不带任何项目文件）。</div>`;
+    ph.insertAdjacentHTML('beforeend',
+      `<div class="plan-empty">还没有别的对话卡 —— 点右边 ＋：<b>分组</b> / <b>新建</b>。</div>`);
   }
   S.plans.forEach(pl => {
     const el = document.createElement('div');
+    if (pl.isGroup) {
+      el.className = 'plan-group';
+      el.innerHTML = `<span class="gname"></span><span class="gcount">${S.plans.filter(x => !x.isGroup && x.group === pl.title).length} 张</span>`;
+      el.querySelector('.gname').textContent = '📁 ' + pl.title;
+      ph.appendChild(el);
+      return;
+    }
     el.className = 'plan-row' + (S.activePlan === pl.id ? ' is-on' : '');
     el.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
-      <button class="pdel" title="删除这个规划">✕</button>`;
+      <button class="pdel" title="删除这张对话卡">✕</button>`;
     el.querySelector('.pname').textContent = pl.title;
     el.querySelector('.pdel').onclick = e => {
       e.stopPropagation();
-      confirmModal({ title: '删除这个临时规划？', text: pl.title, okText: '删除', onOk: () => {
+      confirmModal({ title: '删除这张对话卡？', text: pl.title, okText: '删除', onOk: () => {
         S.plans = S.plans.filter(x => x.id !== pl.id);
-        if (S.activePlan === pl.id) S.activePlan = null;
-        save(true); renderNav(); toast('已删除临时规划');
+        if (S.activePlan === pl.id) S.activePlan = 'default';
+        save(true); renderNav(); toast('已删除');
       }});
     };
-    el.onclick = () => selectPlan(pl.id);
+    el.onclick = () => selectTempCard(pl.id);
     ph.appendChild(el);
   });
 
@@ -363,7 +383,10 @@ function openProjMenu(p, anchor) {
   m.style.top = (r.bottom + 6) + 'px';
   m.querySelector('[data-act="pin"]').textContent = p.pinned ? '取消置顶' : '置顶项目';
 }
-function closeMenus() { $('#menuAdd').hidden = true; $('#menuProj').hidden = true; }
+function closeMenus() {
+  ['#menuAddProject','#menuAddTemp','#menuProj','#menuTabs','#menuSettings','#tabsPopover']
+    .forEach(id => { const el = $(id); if (el) el.hidden = true; });
+}
 
 function projMenuAction(act) {
   const p = menuProject; closeMenus(); if (!p) return;
@@ -397,40 +420,48 @@ function projMenuAction(act) {
   }
 }
 
-/* ── 添加：三个选项（§12.1） ─────────────────── */
+/* ── 两个加号，各两项（§13.2） ─────────────── */
 function addMenuAction(act) {
   closeMenus();
   if (act === 'newBlank') {
-    askModal({ title: '添加空白项目', text: '给它起个名字（＝新建一个文件夹）',
+    askModal({ title: '空白项目', text: '也是一个文件夹 —— 给它起个名字，我在工作目录旁新建。',
       value: '新项目', okText: '创建', onOk: v => {
         const name = (v || '').trim() || '新项目';
         createProject(name, `/Users/mjm/Documents/SuperAgent/${name}`);
       }});
-  } else if (act === 'newPlan') {
-    askModal({ title: '添加临时规划', text: '不带任何项目文件，只是一段自己的规划。',
-      value: `规划 · ${new Date().getHours()}:${String(new Date().getMinutes()).padStart(2, '0')}`,
-      okText: '创建', onOk: v => {
-        const title = (v || '').trim() || '临时规划';
-        const id = 't' + now();
-        S.plans.unshift({ id, title, ts: now() });
-        save(true); selectPlan(id); toast(`已新建临时规划 <b>${escapeHtml(title)}</b>`);
-      }});
-  } else {
-    askModal({ title: '添加现有项目', text: '填这个文件夹的绝对路径（原型不弹系统选择器）',
+  } else if (act === 'useFolder') {
+    askModal({ title: '现有项目（文件夹）', text: '填这个文件夹的绝对路径（原型不弹系统选择器）',
       value: '/Users/mjm/Documents/SuperAgent/Wanna', okText: '添加', onOk: v => {
         const path = (v || '').trim(); if (!path) return;
         createProject(path.split('/').filter(Boolean).pop() || '项目', path);
       }});
+  } else if (act === 'newCard') {
+    askModal({ title: '新建对话', text: '一张新的对话卡 —— 不带任何项目、不参考任何文件夹。',
+      value: `对话 ${S.plans.filter(x => !x.isGroup).length + 1}`, okText: '新建', onOk: v => {
+        const title = (v || '').trim() || `对话 ${S.plans.length + 1}`;
+        const lastGroup = [...S.plans].reverse().find(x => x.isGroup);
+        const id = 't' + now();
+        S.plans.push({ id, title, ts: now(), group: lastGroup ? lastGroup.title : null });
+        save(true); selectTempCard(id); toast(`已新建对话卡 <b>${escapeHtml(title)}</b>`);
+      }});
+  } else if (act === 'newGroup') {
+    askModal({ title: '新建分组', text: '把几张对话卡归到一个组里（只是分组，不是项目）。',
+      value: '新分组', okText: '创建', onOk: v => {
+        const title = (v || '').trim() || '新分组';
+        S.plans.push({ id: 'g' + now(), title, ts: now(), isGroup: true });
+        save(true); renderNav(); toast(`已建分组 <b>${escapeHtml(title)}</b> —— 之后「新建」的对话卡会归到它下面`);
+      }});
   }
 }
-function selectPlan(id) {
+function selectTempCard(id) {
   S.activePlan = id;
   S.tempMode = true;
-  S.projectMode = false;                     // 临时规划不在项目模式里
-  // ⚠️ 不要把 activeProject 置空：标签还指着它的文件，置空后编辑会 `proj().files` 抛错
-  save(); renderNav(); renderContent(); renderChatModes();
-  const pl = S.plans.find(x => x.id === id);
-  toast(`临时规划：<b>${escapeHtml(pl ? pl.title : '')}</b> —— 上下文只有它自己`);
+  S.projectMode = false;                     // 临时卡不在项目模式里
+  // ⚠️ 不要把 activeProject 置空：标签还指着它的文件
+  save(); renderNav(); renderContent(); renderComposerControls();
+  const pl = id === 'default' ? null : S.plans.find(x => x.id === id);
+  toast(id === 'default' ? '默认对话卡 —— 就是按快捷键进的那张'
+    : `对话卡：<b>${escapeHtml(pl ? pl.title : '')}</b> —— 不带项目、不参考文件夹`);
 }
 function createProject(name, path) {
   const id = 'p' + now();
@@ -505,7 +536,9 @@ function renderTabs() {
     const ic = iconFor(t.f);
     el.innerHTML = `<span class="fico ${ic.cls}"></span><span class="tname"></span><span class="tx" title="关闭标签">×</span>`;
     el.querySelector('.tname').textContent = t.f;
-    el.title = t.f;
+    if (t.pinned) el.querySelector('.tname').classList.add('pinned');
+    el.title = t.f + (t.pinned ? '（已固定）' : '') + '\n右键：固定 / 复制 / 关闭…';
+    el.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
     el.onclick = e => {
       if (e.target.classList.contains('tx')) { closeTab(i); return; }
       S.activeTab = i; S.currentFile = t.f;
@@ -536,47 +569,44 @@ function focusChipEl(rel) {
   };
   return el;
 }
-/// 重点参考 chips：**在输入框正上方**（§12.8），超过 3 个折叠成 +N
+/// 重点参考：**必须同一行**（§13.3）—— 放不下的收到**最左侧那个 +** 里
 function renderContext() {
-  const focuses = S.focusFiles || [], has = focuses.length > 0;
+  const focuses = S.focusFiles || [], n = focuses.length;
   const chips = $('#focusChips'), more = $('#btnFocusMore'), list = $('#focusList');
   chips.innerHTML = ''; list.innerHTML = ''; list.hidden = true;
-  const MAX = 3;
-  if (!has) {
-    chips.innerHTML = `<span class="fchip-empty">${proj() && S.projectMode
-      ? '重点参考：⌘+单击选中 · Shift+单击范围选' : '对话模式 —— 没有重点文件'}</span>`;
-    more.hidden = true;
-  } else {
-    focuses.slice(0, MAX).forEach(rel => chips.appendChild(focusChipEl(rel)));
-    if (focuses.length > MAX) {
-      more.hidden = false;
-      more.textContent = `+${focuses.length - MAX}`;
-      more.onclick = () => {
-        list.hidden = !list.hidden;
-        if (list.hidden) return;
-        list.innerHTML = '';
-        focuses.forEach(rel => {
-          const it = document.createElement('div');
-          it.className = 'focus-item';
-          it.innerHTML = `${treeIconSVG(rel, false)}<span class="fname"></span>
-            <button class="x" title="取消参考">×</button>`;
-          it.querySelector('.fname').textContent = rel;
-          it.querySelector('.fname').title = fullPath(rel);
-          it.querySelector('.x').onclick = e => {
-            e.stopPropagation();
-            S.focusFiles = S.focusFiles.filter(x => x !== rel);
-            save(); renderNav(); renderContext();
-          };
-          list.appendChild(it);
-        });
+  more.textContent = n ? `重点 ${n}` : '重点';
+  more.classList.toggle('is-zero', !n);
+  more.onclick = () => {
+    list.hidden = !list.hidden;
+    if (list.hidden) return;
+    if (!n) {
+      list.innerHTML = `<div style="padding:10px;color:var(--ink3);font-size:12px">
+        还没有重点参考。<br><b>⌘+单击</b> 文件加入，<b>Shift+单击</b> 范围多选。</div>`;
+      return;
+    }
+    focuses.forEach(rel => {
+      const it = document.createElement('div');
+      it.className = 'focus-item';
+      it.innerHTML = `${treeIconSVG(rel, false)}<span class="fname"></span>
+        <button class="x" title="取消参考">×</button>`;
+      it.querySelector('.fname').textContent = rel;
+      it.querySelector('.fname').title = fullPath(rel);
+      it.querySelector('.x').onclick = e => {
+        e.stopPropagation();
+        S.focusFiles = S.focusFiles.filter(x => x !== rel);
+        save(); renderNav(); renderContext();
       };
-    } else more.hidden = true;
-  }
+      list.appendChild(it);
+    });
+  };
+  // 行里最多露 3 枚（横向放不下就靠 overflow 截断），其余去 + 里
+  focuses.slice(0, 3).forEach(rel => chips.appendChild(focusChipEl(rel)));
 
   const inProject = S.projectMode && proj();
-  const plan = S.activePlan ? S.plans.find(x => x.id === S.activePlan) : null;
+  const card = S.activePlan && S.activePlan !== 'default'
+    ? (S.plans.find(x => x.id === S.activePlan) || null) : null;
   $('#chatCtxProject').textContent = inProject ? proj().path
-    : (plan ? `临时规划 · ${plan.title}` : '对话模式（无项目）');
+    : (card ? `对话卡 · ${card.title}` : '对话模式（无项目文件）');
   $('#chatCtxProject').title = $('#chatCtxProject').textContent;
   renderCrumbs();
 }
@@ -657,6 +687,7 @@ function renderMdToolbar() {
 function renderHistoryBadge() {
   const n = (S.history[histFile()] || []).length;
   $('#histCount').textContent = n;
+  const head = $('#histCountHead'); if (head) head.textContent = n;
   $('#histFile').textContent = histFile() ? fullPath(histFile()) : '—';
 }
 
@@ -722,7 +753,12 @@ function onMdEdit() {
   proj().files[rel] = $('#mdSource').value;
   $('#mdPreview').innerHTML = mdToHtml(proj().files[rel]);
   clearTimeout(mdDebounce);
-  mdDebounce = setTimeout(() => { pushHistory(rel, '手改', proj().files[rel], '正文编辑'); save(); }, 700);
+  mdDebounce = setTimeout(() => {
+    pushHistory(rel, '手改', proj().files[rel], '正文编辑'); save();
+    const n = (S.history[rel] || []).length;
+    // 存完立刻告诉他，并给一个**可点的**跳转 —— 他两次都找不到恢复入口（§13.6）
+    toast(`已自动存一版历史（共 <b>${n}</b> 版） · <a href="#" data-jump-history>点这里恢复</a>`);
+  }, 700);
   if (previewEditSession) armPreviewIdleReturn();
   save();
 }
@@ -1146,33 +1182,131 @@ function dragSplit(el, apply) {
   });
 }
 
+let menuTabIndex = null;
+/// 标签条最左的 ☰：**纵向列出全部标签**（横向看不全时用，§13.4）
+function openTabsPopover() {
+  const m = $('#tabsPopover');
+  if (!m.hidden) { m.hidden = true; return; }
+  m.innerHTML = '';
+  S.tabs.forEach((t, i) => {
+    const it = document.createElement('div');
+    it.className = 'mt-item' + (i === S.activeTab ? ' is-on' : '');
+    it.innerHTML = `${treeIconSVG(t.f, false)}<span class="nm"></span>
+      <span class="pin">${t.pinned ? '📌' : ''}</span>`;
+    it.querySelector('.nm').textContent = `${t.p}${t.f}`;
+    it.onclick = () => { m.hidden = true; S.activeTab = i; S.currentFile = t.f;
+      S.tab = extViewKind(t.f) === 'file' ? 'file' : extViewKind(t.f);
+      save(); renderTabs(); renderContent(); renderContext(); renderNav(); };
+    m.appendChild(it);
+  });
+  if (!S.tabs.length) m.innerHTML = '<div class="mt-item">还没有标签</div>';
+  const r = $('#btnTabsCollapse').getBoundingClientRect();
+  m.hidden = false;
+  m.style.left = r.left + 'px'; m.style.top = (r.bottom + 6) + 'px';
+}
+function openTabMenu(index, ev) {
+  menuTabIndex = index;
+  closeMenus();
+  const m = $('#menuTabs'); m.hidden = false;
+  m.style.left = Math.min(ev.clientX, innerWidth - 240) + 'px';
+  m.style.top = Math.min(ev.clientY, innerHeight - 280) + 'px';
+  const t = S.tabs[index];
+  m.querySelector('[data-act="pin"]').textContent = t && t.pinned ? '取消固定' : '固定标签页';
+}
+function tabMenuAction(act) {
+  const i = menuTabIndex; closeMenus();
+  if (i === null || !S.tabs[i]) return;
+  const t = S.tabs[i];
+  switch (act) {
+    case 'pin': t.pinned = !t.pinned; break;
+    case 'dup': S.tabs.splice(i + 1, 0, { ...t }); break;
+    case 'close': S.tabs.splice(i, 1); break;
+    case 'closeOthers': S.tabs = [t]; break;
+    case 'closeLeft': S.tabs = S.tabs.slice(i); break;
+    case 'closeRight': S.tabs = S.tabs.slice(0, i + 1); break;
+    case 'moveGroup': toast('移动到分组：原型里只记这次操作（落 SwiftUI 接标签分组）'); break;
+  }
+  if (S.activeTab >= S.tabs.length) S.activeTab = S.tabs.length - 1;
+  if (S.activeTab < 0) S.activeTab = 0;
+  S.currentFile = (S.tabs[S.activeTab] || {}).f || null;
+  save(); renderTabs(); renderContent(); renderContext();
+}
+/// 设置：默认对话位置（§13.5）
+function settingsAction(act, btn) {
+  closeMenus();
+  if (act === 'defLeft') { S.defaultLayout = 'left'; setLayout('left'); }
+  else if (act === 'defCenter') { S.defaultLayout = 'center'; setLayout('center'); }
+  else if (act === 'defRight') { S.defaultLayout = 'right'; setLayout('right'); }
+  else if (act === 'resetHist') {
+    const rel = histFile(); if (!rel) return;
+    confirmModal({ title: '清空这个文件的全部历史？', text: rel, okText: '清空', onOk: () => {
+      delete S.history[rel]; save(true); renderHistory(); renderHistoryBadge();
+    }});
+    return;
+  }
+  save();
+  toast('默认对话位置已设为 ' + btn.textContent.trim() + '（下次进来用它）');
+}
+/// 历史开关（文件头那颗 + 工具栏那颗共用）
+function toggleHistoryView() {
+  if (!histFile()) { toast('先打开一个文件'); return; }
+  ensureTab(histFile());
+  S.tab = S.tab === 'history' ? (extViewKind(relOfActiveTab()) === 'mind' ? 'mind' : extViewKind(relOfActiveTab() === 'file' ? 'x' : 'md')) : 'history';
+  save(); renderNav(); renderTabs(); renderContent(); renderContext();
+}
+
 /* ============================================================
    绑定
    ============================================================ */
 function bind() {
-  $$('#modeChips .chip').forEach(c => c.onclick = () => { S.mode = c.dataset.mode; save(); renderModes(); });
-  $$('#chatModes .dchip').forEach(c => c.onclick = () => { S.chatMode = c.dataset.chat; save(); renderChatModes(); });
+  $$('#modeChips .chip').forEach(c => c.onclick = () => {
+    S.mode = c.dataset.mode; save();
+    renderComposerControls();          // 必须重建右组 —— 三种模式右上角内容不同（§13.1）
+    renderContext();
+    toast(`${c.textContent}模式：右上角换成这一套按钮（连续/临时/新建不变，历史也不重建）`);
+  });
+  $$('#ccLeft .cc[data-conv]').forEach(c => c.onclick = () => {
+    S.chatMode = c.dataset.conv; save(); renderComposerControls();
+    toast(c.dataset.conv === 'temporary' ? '临时对话 —— 这一段不写进任何会话'
+                                        : '连续对话 —— 接着这条会话往下聊');
+  });
+  $('#ccNew').onclick = () => toast('新建 —— 原型里等价于左栏「临时 ＋ → 新建」');
+  // 页头右组
+  ['#hcCall','#hcRole','#hcOptions','#hcVoice'].forEach(id => {
+    const el = $(id); if (!el) return;
+    el.onclick = () => {
+      if (id === '#hcVoice') { toast('音色面板：照搬当前软件（按音色选）'); return; }
+      el.classList.toggle('is-on');
+      toast(({ '#hcCall':'通话', '#hcRole':'角色', '#hcOptions':'选项' })[id]
+        + (el.classList.contains('is-on') ? ' · 开' : ' · 关'));
+    };
+  });
 
   // 段头折叠（§12.4：项目 / 临时规划 各一块，各有一个 ＋）
   $('#btnProjSect').onclick = () => { S.navOpen = !S.navOpen; save(); renderNav(); };
   $('#btnPlanSect').onclick = () => { S.planOpen = S.planOpen === false; save(); renderNav(); };
 
-  const openAddMenu = btn => {
-    const m = $('#menuAdd'), r = btn.getBoundingClientRect();
+  const openMenuAt = (id, btn) => {
+    const m = $(id), r = btn.getBoundingClientRect();
     m.hidden = !m.hidden;
-    m.style.left = Math.max(8, Math.min(r.left, innerWidth - 210)) + 'px';
+    m.style.left = Math.max(8, Math.min(r.left, innerWidth - 230)) + 'px';
     m.style.top = (r.bottom + 6) + 'px';
   };
-  $('#btnAddProject').onclick = e => { e.stopPropagation(); openAddMenu(e.currentTarget); };
-  $('#btnAddPlan').onclick = e => { e.stopPropagation(); openAddMenu(e.currentTarget); };
+  $('#btnAddProject').onclick = e => { e.stopPropagation(); openMenuAt('#menuAddProject', e.currentTarget); };
+  $('#btnAddPlan').onclick = e => { e.stopPropagation(); openMenuAt('#menuAddTemp', e.currentTarget); };
   $('#btnEmptyAdd').onclick = () => addMenuAction('newBlank');
-  $('#btnEmptyPlan').onclick = () => addMenuAction('newPlan');
+  $('#btnEmptyPlan').onclick = () => addMenuAction('newCard');
   $('#btnEmptyFolder').onclick = () => addMenuAction('useFolder');
-  $$('#menuAdd button').forEach(b => b.onclick = () => addMenuAction(b.dataset.act));
+  $$('#menuAddProject button, #menuAddTemp button').forEach(b => b.onclick = () => addMenuAction(b.dataset.act));
   $$('#menuProj button').forEach(b => b.onclick = () => projMenuAction(b.dataset.act));
+  // 标签页右键菜单
+  $$('#menuTabs button').forEach(b => b.onclick = () => tabMenuAction(b.dataset.act));
+  // 设置（默认对话位置）
+  $$('#menuSettings button').forEach(b => b.onclick = s => settingsAction(b.dataset.act, b));
   document.addEventListener('click', e => {
     if (!e.target.closest('.menu') && !e.target.closest('#btnAddProject') && !e.target.closest('#btnAddPlan')
-        && !e.target.closest('.proj-more')) closeMenus();
+        && !e.target.closest('.proj-more') && !e.target.closest('#btnSettings')
+        && !e.target.closest('#btnTabsCollapse')) closeMenus();
     if (!e.target.closest('.focus-row')) $('#focusList').hidden = true;
   });
 
@@ -1275,11 +1409,18 @@ function bind() {
     S.tab = kind === 'mind' ? 'mind' : kind === 'file' ? 'file' : 'md';
     save(); renderContent();
   };
-  $('#btnHistory').onclick = () => {
-    if (!histFile()) { toast('先打开一个文件'); return; }
-    ensureTab(histFile());
-    S.tab = S.tab === 'history' ? (extViewKind(relOfActiveTab()) === 'mind' ? 'mind' : 'md') : 'history';
-    save(); renderNav(); renderTabs(); renderContent(); renderContext();
+  $('#btnHistory').onclick = toggleHistoryView;
+  $('#btnHistoryHead').onclick = toggleHistoryView;   // 文件头常驻那颗（§13.6）
+  $('#btnTabsCollapse').onclick = e => { e.stopPropagation(); openTabsPopover(); };
+  $('#btnSettings').onclick = e => {
+    e.stopPropagation(); closeMenus();
+    const m = $('#menuSettings'), r = e.currentTarget.getBoundingClientRect();
+    m.hidden = !m.hidden;
+    m.style.left = Math.max(8, Math.min(r.left - 120, innerWidth - 220)) + 'px';
+    m.style.top = (r.bottom + 6) + 'px';
+    m.querySelector('[data-act="defLeft"]').classList.toggle('is-on', S.defaultLayout === 'left');
+    m.querySelector('[data-act="defCenter"]').classList.toggle('is-on', S.defaultLayout === 'center');
+    m.querySelector('[data-act="defRight"]').classList.toggle('is-on', S.defaultLayout === 'right');
   };
 
   $('#btnSend').onclick = sendChat;
@@ -1327,15 +1468,48 @@ function commitGit() {
 
 function renderModes() {
   $$('#modeChips .chip').forEach(c => c.classList.toggle('is-on', c.dataset.mode === S.mode));
-  const map = { imageText:'围绕当前项目', voice:'语音模式', video:'视频模式' };
-  $('#chatStatus').textContent = S.tempMode ? '临时对话（无项目）' : map[S.mode];
   $('#composerHint').textContent = S.mode === 'voice' ? '语音模式 · 回车发送文字'
     : S.mode === 'video' ? '视频模式 · 回车发送' : '回车发送 · Shift+回车换行';
 }
-function renderChatModes() {
-  $$('#chatModes .dchip').forEach(c => c.classList.toggle('is-on', c.dataset.chat === S.chatMode));
+
+/// ⭐ 输入框上方那一行（§13.1 完全照搬）：**左组恒定、右组随模式变**。
+/// 这就是他说的"图文右上角跟语音不一样、语音跟视频不一样" —— 三种模式各一套右组。
+function renderComposerControls() {
+  // 左组：连续 ｜ 临时 ｜ ＋新建（连续=绿，临时=琥珀；与当前软件同一套极简竖线）
+  $$('#ccLeft .cc[data-conv]').forEach(b => {
+    const on = (b.dataset.conv === 'temporary') === (S.chatMode === 'temporary');
+    b.classList.toggle('is-on', on);
+    b.classList.toggle('temp', on && b.dataset.conv === 'temporary');
+  });
+
+  // 右组：按模式给（屏幕只在临时对话下出现 —— 与 NotchHomeView 同一条规则）
+  const conv = S.chatMode;
+  const right = $('#ccRight');
+  const item = (label, on = false) =>
+    `<button class="cc${on ? ' is-on' : ''}" data-right="${label}">${label}</button><i class="vr"></i>`;
+  let html = '';
+  if (S.mode === 'imageText') {
+    if (conv === 'temporary') html += item('屏幕', true);
+    html += item('声音', true) + item('语速');
+  } else if (S.mode === 'voice') {
+    html += item('声音', true) + item('语速') + item('角色');
+  } else {                          // video
+    html += item('摄像', true) + item('屏幕', true) + item('语速') + item('角色');
+  }
+  right.innerHTML = html.replace(/<i class="vr"><\/i>$/, '');
+  $$('#ccRight .cc').forEach(b => b.onclick = () => {
+    b.classList.toggle('is-on');
+    toast(`${b.textContent}：${b.classList.contains('is-on') ? '开' : '关'}（原型只记状态）`);
+  });
+
+  // 页头：音色只在图文页画（其余页没有这颗）
+  $('#hcVoice').hidden = S.mode !== 'imageText';
+  $('#composerModeLabel').textContent =
+    `${S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频'} · ${conv === 'temporary' ? '临时对话' : '连续对话'}`;
   renderModes();
 }
+/// 旧名字保留：所有调用点（切模式 / 选卡 / 进项目）都走同一处
+function renderChatModes() { renderComposerControls(); }
 
 /* ── 启动：骨架先出、内容后到 ───────────────── */
 function boot() {
