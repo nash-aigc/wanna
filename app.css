@@ -9,8 +9,10 @@
 :root{
   --nav-w:256px;
   --chat-w:340px;
-  --bg:#181818;          /* MiMo 内容区 rgb(24,24,24) */
-  --nav-bg:#141414;      /* MiMo 侧栏 rgb(20,20,20) */
+  --bg:#181818;          /* MiMo 内容区 rgb(24,24,24) = --color-main-bg */
+  --nav-bg:#141414;      /* MiMo 侧栏 rgb(20,20,20) = --color-side（比内容区深一档） */
+  --chat-bg:#181818;     /* §31 对话区 = MiMo --color-main-bg。缺这条时回落 --nav-bg(#141414)，
+                            对话区跟项目区同色 —— 用户报的"对话区颜色不对"就是它 */
   --panel:#1C1C1E;
   --surface2:#111113;
   --line:#242426;
@@ -91,7 +93,7 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* ── 左侧项目栏（MiMo 复刻） ─────────────────── */
 .nav{flex:0 0 var(--nav-w);min-width:170px;max-width:38vw;display:flex;flex-direction:column;
-  background:var(--nav-bg);border-right:1px solid var(--line);position:relative}
+  background:var(--nav-bg);border-right:2px solid #2E2E2E;position:relative}   /* §31 大区线 2px（MiMo --color-line），比小区线 1px 粗一档 */
 /* §22.4 「项目」「默认」= 两张**小卡片**，整卡可点（点了就是展开/折叠），右侧 ＋ 另算 */
 .nav-head{height:36px;flex:0 0 36px;display:flex;align-items:center;justify-content:space-between;
   margin:6px 0 4px;padding:0 3px 0 6px;border-radius:9px;background:#1B1B1E;
@@ -123,8 +125,8 @@ code{font-family:var(--mono);font-size:11.5px}
 /* 项目行 */
 .proj{margin-bottom:6px}
 .proj-row{display:flex;align-items:center;gap:6px;height:var(--row);padding:0 6px 0 8px;border-radius:8px;cursor:pointer}
-.proj-row:hover{background:#1F1F22}
-.proj-row.is-on{background:#242428}
+.proj-row:hover{background:rgba(255,255,255,.06)}   /* §31 = MiMo --color-side-hover #ffffff0f */
+.proj-row.is-on{background:rgba(255,255,255,.10)}   /* §31 = MiMo --color-side-active #ffffff1a（中性灰，原来是 #242428 偏紫） */
 .proj-caret{width:11px;flex:0 0 11px;font-size:9px;color:var(--ink3);transition:transform .15s}
 .proj.closed .proj-caret{transform:rotate(-90deg)}
 .proj-ico{width:15px;flex:0 0 15px;height:12px;border-radius:3px;background:#6B7280;
@@ -161,7 +163,7 @@ code{font-family:var(--mono);font-size:11.5px}
 /* 最近 */
 .recent-item{display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;border-radius:7px;cursor:pointer;font-size:12.5px;color:var(--ink2)}
 .recent-item:hover{background:#1F1F22;color:var(--ink)}
-.recent-item.is-on{background:#242428;color:var(--ink)}
+.recent-item.is-on{background:rgba(255,255,255,.10);color:var(--ink)}   /* §31 同 MiMo 选中灰 */
 .recent-dot{width:7px;height:7px;border-radius:50%;background:#3D3D44;flex:0 0 7px}
 .recent-item.is-on .recent-dot{background:var(--ok)}
 
@@ -316,7 +318,7 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* ── 对话 ─────────────────────────────────────── */
 .chat{flex:0 0 var(--chat-w);min-width:250px;max-width:52vw;display:flex;flex-direction:row;
-  background:var(--chat-bg,var(--nav-bg));border-left:1px solid var(--line);position:relative}
+  background:var(--chat-bg,var(--nav-bg));border-left:2px solid #2E2E2E;position:relative}   /* §31 */
 /* §26 每个 pane 自己是一列（nav / 消息 / 输入框 竖着排），双屏时两个 pane 并排 */
 .chat-pane{display:flex;flex-direction:column;flex:1 1 0;min-width:0;position:relative}
 /* §26 分割线：一黑一浅，中间一条细线（照 Orca 的 7% 白 border） */
@@ -533,7 +535,7 @@ body[data-style="contrast"]{
 .main.left-layout .nav{order:3}
 .main.left-layout .split-v{order:4}
 .main.left-layout .workspace{order:5}
-.main.left-layout .chat{border-left:0;border-right:1px solid var(--line)}
+.main.left-layout .chat{border-left:0;border-right:2px solid #2E2E2E}   /* §31 对话在左时同规格 */
 
 /* 模式条的两个插槽：顶栏里 / 对话框里 */
 .modes-slot{display:flex;align-items:center;min-width:0}
@@ -589,8 +591,8 @@ body[data-style="contrast"]{
 .nav-scroll{padding-top:2px}
 .plan-row{display:flex;align-items:center;gap:8px;height:34px;padding:0 8px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--ink2)}
 .plan-row:hover{background:#1F1F22;color:var(--ink)}
-.plan-row.is-on{background:#242428;color:var(--ink)}
-.plan-dot{width:8px;height:8px;border-radius:3px;background:#7A5CFF;flex:0 0 8px}
+.plan-row.is-on{background:rgba(255,255,255,.10);color:var(--ink)}   /* §31 同 MiMo 选中灰 */
+.plan-dot{width:8px;height:8px;border-radius:3px;background:#83838C;flex:0 0 8px}   /* §31 #7A5CFF 紫 → --ink3 中性灰 */
 .plan-row .pdel{margin-left:auto;opacity:0;font-size:12px;color:var(--ink3);width:18px;height:18px;
   border-radius:5px;display:flex;align-items:center;justify-content:center}
 .plan-row:hover .pdel{opacity:1}
@@ -799,7 +801,7 @@ body[data-style="contrast"]{
 .main.no-workspace .split-h{display:none}
 /* §22.6 编辑区关着时，左栏**照样能拖宽** —— 所以 split-v 不跟着藏 */
 .main.no-workspace .split-v{display:block}
-.main.no-workspace .chat{flex:1 1 auto;max-width:none;border-left:1px solid var(--line)}
+.main.no-workspace .chat{flex:1 1 auto;max-width:none;border-left:2px solid #2E2E2E}   /* §31 */
 /* 模式条永远在对话窗里（跟着对话窗位置走） */
 #modesSlotTop{display:none}
 #modesSlotChat{display:flex}
@@ -1536,3 +1538,60 @@ body[data-style="contrast"]{
   border-radius:9px;background:#121214}
 .vexp-meta{border-top:1px solid var(--line);padding-top:7px}
 .vexp-meta code{font-size:10.5px;color:var(--ink3);word-break:break-all}
+
+/* ══ §31 监控页 —— 从 Docker 项目 Monitor 移植的三张表（费用 / 软件 / Debate）══
+   出处：/Users/mjm/Documents/SuperAgent/APP/Docker/Monitor/public/index.html + styles/base.css
+   （explore 报告的 文件:行号 见 需求/07 §31）；表格样式逐条照搬、scope 到 #monitorPane 防串。 */
+.nav-quick button.is-on{background:rgba(255,255,255,.10);color:var(--ink)}
+.monitor-pane{order:3;flex:1;min-width:0;overflow:auto;background:var(--bg);
+  padding:16px 22px 40px}
+.monitor-pane[hidden]{display:none!important}
+.mon-bar{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.mon-title{font-size:15px;font-weight:650;color:var(--ink)}
+.mon-snap{font-size:11px;color:var(--ink3)}
+.mon-sep{height:1px;background:var(--line);margin:16px 0}
+.monitor-nav .monitor-opt{font-size:12.5px}
+/* —— 通用 bal-table（base.css:67-135 + 内联 31-107 的 px 覆盖）—— */
+#monitorPane .bal-table{width:100%;max-width:100%;margin:0;border-collapse:collapse;
+  background:var(--panel);border:none;border-bottom:1px solid var(--line2);
+  font-family:var(--mono);font-size:16px;user-select:none}
+#monitorPane .bal-table th,#monitorPane .bal-table td{
+  padding:3px 6px;white-space:nowrap;height:26px;line-height:20px;vertical-align:middle;
+  border-bottom:1px solid var(--line2);color:#FFFFFF}     /* 行高统一 26/20（源码 208-214 用户钦定） */
+#monitorPane .bal-table th:not(:first-child),#monitorPane .bal-table td:not(:first-child){
+  border-left:1px solid var(--line2)}                     /* 列间竖线（base.css:87-90） */
+#monitorPane .bal-table thead th{font-weight:700;letter-spacing:.04em;text-align:center;
+  color:#4ade80;border-bottom:1px solid var(--line2)}     /* 表头绿（base.css:101） */
+#monitorPane .bal-table td{font-weight:600}
+#monitorPane .bal-table th{padding-left:10px;padding-right:10px}
+#monitorPane .bal-table tbody tr:last-child td{border-bottom:none}
+/* —— 费用表：火山 15天|138/137 两格（源码 49-77）—— */
+#monitorPane #bal-table td.td-volc-near{color:#fff;text-align:left;white-space:nowrap;font-weight:700}
+#monitorPane #bal-table td.td-volc-probe{text-align:right;white-space:nowrap;font-weight:700;
+  padding-left:10px}
+#monitorPane #bal-table td.td-volc-probe .volc-num{margin-left:6px}
+#monitorPane #bal-table td.td-volc-probe .volc-num.ok{color:#2ecc71}
+#monitorPane #bal-table td.td-volc-probe .volc-num.fail{color:#ff2d2d}
+/* —— 软件表（源码 340-392）—— */
+#monitorPane #sw-table .td-mg-sw{text-align:left;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+#monitorPane #sw-table .mg-count{display:inline-block;background:#4a4f57;color:#e8e8ea;
+  border-radius:4px;padding:0 5px;margin-left:5px;font-size:.8em;font-weight:700;vertical-align:1px}
+#monitorPane #sw-table .health-dot{display:inline-block;width:10px;height:10px;border-radius:50%;
+  margin-right:5px;vertical-align:-1px;background:#2ecc71}   /* 绿=运行 */
+#monitorPane #sw-table .health-dot.st-down{background:#e74c3c;animation:sw-blink 1s steps(1) infinite}
+#monitorPane #sw-table .app-name-link{color:#9fb6ff;text-decoration:underline;font-weight:700;
+  cursor:pointer}
+@keyframes sw-blink{50%{opacity:0}}
+/* —— Debate 表（源码 1118-1127）—— */
+#monitorPane #debate-table{table-layout:fixed}
+#monitorPane #debate-table col.debate-countdown{width:28%}
+#monitorPane #debate-table col.debate-amount{width:33%}
+#monitorPane #debate-table col.debate-name{width:39%}
+#monitorPane #debate-table th,#monitorPane #debate-table td{text-align:center;white-space:nowrap}
+#monitorPane #debate-table thead th{color:#4ade80}
+#monitorPane #debate-table thead th.debate-head{position:relative;height:26px}
+#monitorPane #debate-table thead .debate-title{display:block;text-align:center}
+#monitorPane #debate-table thead .debate-total{position:absolute;right:8px;bottom:2px;
+  color:#8b9096;font-weight:400;font-size:.75em}
+#monitorPane #debate-table td:last-child{text-align:right;padding-right:8px}

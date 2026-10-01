@@ -3898,6 +3898,7 @@ function bind() {
     else if (q === 'add') openMenuAt('#menuAddProject', b);
     else if (q === 'roles') toast('角色：进入角色设置（落 SwiftUI 打开 设置 → 角色）');
     else if (q === 'record') toast('录音：进入录音页（落 SwiftUI 打开 设置 → 录音）');
+    else if (q === 'monitor') setMonitorMode(!monitorOpen);   // §31 监控：再点一次退出
   });
   // 段头折叠（§22.4：整张**卡片**可点，不只是那行字）
   // 绑在 .nav-head 上，点卡片任意位置（含字、含留白）都算；＋ 自己 stopPropagation，不会串。
@@ -5824,6 +5825,148 @@ function bindRails() {
       if (typeof spineUpdateActive === 'function') { spineUpdateActive(); spinePanning(); }   // §30
     });
   }, { passive: true });
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   §31 监控 —— 从 Docker 项目 Monitor 完整移植三张表（费用 / 软件 / Debate）
+   出处（explore 报告，全部带 文件:行号）：
+     /Users/mjm/Documents/SuperAgent/APP/Docker/Monitor/public/index.html
+       三栏布局 :1092 · 费用表 :1188（SSR 由 server.mjs:1752-1784 注入）
+       软件表 :1200 + renderSw :2039-2088 · Debate :1211（静态 7 笔 :1221-1227）
+       倒计时：Debate :1854-1864 / 欧云VPS :1869+ / Infer :1887+，每 60s 刷
+       样式：styles/base.css:67-135（表头绿 #4ade80/列竖线）+ 内联 :31-107（26px 行高）
+   中间的 health-table（最近调用/中转健康）与 自动化/Agents 两块**按你的要求剔除**。
+   数据 = 删除容器前抓的运行时快照（费用 SSR 行、Debate 静态 7 笔、软件 4 app）——
+   容器删除后页面照常：倒计时/渲染是纯前端逻辑，数值来自快照（顶栏如实标注）。
+   布局按你的规矩：选项（全部/费用/软件/debate）在左栏，表格在右侧整页；
+   「全部」= 三表从上到下排列、中间分隔线。
+   ══════════════════════════════════════════════════════════════ */
+const MONITOR_BAL_TABLE = "<table class=\"bal-table\" id=\"bal-table\">\n        <colgroup><col class=\"fee-col\"><col class=\"fee-col\"></colgroup>\n        <thead>\n          <tr><th colspan=\"4\">费用</th></tr>\n        </thead>\n        <tbody><tr><td>2硒鼓</td><td>6000张A4</td></tr><tr id=\"tr-volc-probe\"><td class=\"td-volc-near\">15天</td><td class=\"td-volc-probe\"><span class=\"volc-num ok\">138</span><span class=\"volc-num ok\">137</span></td></tr><tr id=\"tr-vps\"><td class=\"td-time td-vps-days\" data-deadline=\"2026-09-22\">--</td><td class=\"td-body\">欧云VPS</td></tr><tr id=\"tr-mem0\"><td class=\"td-mem0-add\">5%写入</td><td class=\"td-mem0-retrieval\">14%检索</td></tr><tr id=\"tr-codex\"><td class=\"td-codex-remaining\">剩--</td><td class=\"td-body td-codex-reset\" data-reset-at=\"\">--GPT</td></tr><tr id=\"tr-infer\"><td class=\"td-time td-infer-days\" data-deadline=\"2026-09-08T21:38\">--</td><td class=\"td-body\">Infer</td></tr></tbody>\n      </table>";
+const MONITOR_DEBATE_TABLE = "<table class=\"bal-table\" id=\"debate-table\">\n        <colgroup>\n          <col class=\"debate-countdown\">\n          <col class=\"debate-amount\">\n          <col class=\"debate-name\">\n        </colgroup>\n        <thead>\n          <tr><th colspan=\"3\" class=\"debate-head\"><span class=\"debate-title\">Debt</span><span class=\"debate-total\">5676元</span></th></tr>\n        </thead>\n        <tbody>\n          <tr><td data-deadline=\"2026-10-03\">--</td><td>405元</td><td>贷款优选</td></tr>\n          <tr><td data-deadline=\"2026-10-10\">--</td><td>158元</td><td>花呗</td></tr>\n          <tr><td data-deadline=\"2026-10-10\">--</td><td>1826元</td><td>金条</td></tr>\n          <tr><td data-deadline=\"2026-10-10\">--</td><td>969元</td><td>月付</td></tr>\n          <tr><td data-deadline=\"2026-10-13\">--</td><td>1412元</td><td>放心借</td></tr>\n          <tr><td data-deadline=\"2026-10-16\">--</td><td>361元</td><td>借呗</td></tr>\n          <tr><td data-deadline=\"2026-10-28\">--</td><td>545元</td><td>白条</td></tr>\n        </tbody>\n      </table>";
+const MONITOR_SW_TABLE = "<table class=\"bal-table\" id=\"sw-table\">\n        <thead><tr><th>软件</th></tr></thead>\n        <tbody id=\"sw-tbody\"><tr><td>加载中…</td></tr></tbody>\n      </table>";
+const MONITOR_SW_DATA = {"updatedAt": "2026-09-23 19:51:55", "apps": [{"name": "Orca", "running": true, "startedAt": "23日18:56"}, {"name": "Things", "running": true, "startedAt": "22日23:51"}, {"name": "TG", "running": true, "startedAt": "22日23:51", "eagleToday": 0}, {"name": "一号录播", "running": true, "startedAt": "22日23:51"}], "live": []};
+
+let monitorOpen = false;
+let monitorSel = 'all';
+let monitorTimer = 0;
+const MONITOR_OPTS = [['all', '全部'], ['bal', '费用'], ['sw', '软件'], ['deb', 'debate']];
+const MONITOR_SW_ALLOW = ['Orca', 'Things', 'TG', '一号录播'];   // renderSw 白名单（源码 :2038）
+
+function renderMonitorNav() {
+  const el = $('#monitorNav'); if (!el) return;
+  el.innerHTML = `<div class="nav-head"><span class="sect" style="cursor:default">监控 <span class="caret">⌄</span></span></div>`
+    + MONITOR_OPTS.map(([v, l]) =>
+      `<div class="proj-row monitor-opt${monitorSel === v ? ' is-on' : ''}" data-mon="${v}">${l}</div>`).join('');
+  $$('#monitorNav [data-mon]').forEach(b => b.onclick = () => {
+    monitorSel = b.dataset.mon;
+    renderMonitorNav(); renderMonitorPane();
+  });
+}
+function monitorSectionsHTML() {
+  const parts = [];
+  if (monitorSel === 'all' || monitorSel === 'bal') parts.push(`<section class="mon-sec">${MONITOR_BAL_TABLE}</section>`);
+  if (monitorSel === 'all' || monitorSel === 'sw') parts.push(`<section class="mon-sec">${MONITOR_SW_TABLE}</section>`);
+  if (monitorSel === 'all' || monitorSel === 'deb') parts.push(`<section class="mon-sec">${MONITOR_DEBATE_TABLE}</section>`);
+  return parts.join('<div class="mon-sep"></div>');          // 全部视图：三表竖排 + 分隔线
+}
+function renderMonitorPane() {
+  const pane = $('#monitorPane'); if (!pane) return;
+  pane.innerHTML = `<div class="mon-bar"><span class="mon-title">监控</span>
+      <span class="mon-snap">数据快照 2026-10-01（原 Monitor 容器已按约定删除 —— 倒计时与渲染逻辑照原版实时跑，数值为快照）</span></div>`
+    + monitorSectionsHTML();
+  renderMonitorSw(MONITOR_SW_DATA);
+  monitorCountdowns();
+}
+/// renderSw 逐字移植（源码 index.html:2039-2088）：白名单 + 红绿点 + 计数徽章；
+/// 去掉两处容器依赖 —— openApp → toast（原版 /api/app/open 会真开软件）、renderLive → 无（health 表已剔）
+function renderMonitorSw(data) {
+  const swTbody = document.querySelector('#monitorPane #sw-tbody');
+  if (!swTbody) return;
+  const apps = ((data && data.apps) || []).filter(a => MONITOR_SW_ALLOW.includes(a.name));
+  const live = (data && data.live) || [];
+  swTbody.innerHTML = '';
+  apps.forEach(a => {
+    const tr = document.createElement('tr');
+    const tdN = document.createElement('td'); tdN.className = 'td-mg-sw';
+    const dot = document.createElement('span');
+    dot.className = 'health-dot' + (a.running ? '' : ' st-down');
+    tdN.appendChild(dot);
+    const link = document.createElement('a');
+    link.className = 'app-name-link';
+    link.textContent = a.name;
+    link.title = '原型不打开本机软件（原版走容器 /api/app/open，已随 monitor 删除）';
+    link.onclick = () => toast('原型不打开本机软件 —— 原版走 Monitor 容器的 /api/app/open');
+    tdN.appendChild(link);
+    if (a.eagleToday != null) {
+      const cnt = document.createElement('span');
+      cnt.className = 'mg-count';
+      cnt.textContent = a.eagleToday;
+      tdN.appendChild(cnt);
+    }
+    if (a.name === '一号录播' && live.length) {
+      const btn = document.createElement('span');
+      btn.className = 'live-count-btn';
+      btn.textContent = live.length;
+      btn.title = '正在直播的主播数（health 表已按要求剔除，仅显示数量）';
+      tdN.appendChild(btn);
+    }
+    tr.appendChild(tdN);
+    swTbody.appendChild(tr);
+  });
+  if (!apps.length) swTbody.innerHTML = '<tr><td>加载中…</td></tr>';
+}
+/// 三个倒计时 1:1 移植（源码 :1854-1864 Debate / :1869+ 欧云VPS / :1887+ Infer）——
+/// 每 60s 重算；data-deadline 是快照里的真实日期，所以删容器后照样跳数
+function monitorCountdowns() {
+  const root = document.querySelector('#monitorPane');
+  if (!root || root.hidden) return;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  root.querySelectorAll('#debate-table [data-deadline]').forEach(td => {
+    const end = new Date(td.dataset.deadline + 'T23:59:59');
+    const days = Math.ceil((end - today) / 86400000);
+    td.textContent = days > 0 ? days + '天' : (days === 0 ? '今天' : '已到期');
+  });
+  const vps = root.querySelector('#tr-vps .td-vps-days');
+  if (vps) {
+    const end = new Date(vps.dataset.deadline + 'T23:59:59');
+    const days = Math.ceil((end - today) / 86400000);
+    vps.textContent = days > 0 ? days + '天' : (days === 0 ? '今天' : '已到期' + (-days) + '天');
+  }
+  const inf = root.querySelector('#tr-infer .td-infer-days');
+  if (inf) {
+    const rem = new Date(inf.dataset.deadline) - new Date();
+    inf.textContent = rem <= 0 ? '已到期'
+      : (rem >= 86400000 ? '剩' + Math.ceil(rem / 86400000) + '天'
+        : '剩' + Math.max(1, Math.ceil(rem / 3600000)) + '时');
+  }
+}
+/// 监控模式开关 —— 左栏：搜索+项目/默认列表 ⇄ 监控选项；右栏：编辑区+对话+分隔+右 rail
+/// 全部换成监控页；nav-quick（设置/历史/添加/角色/录音）原样保留（你点名的"设置部分保留不变"）
+function setMonitorMode(on) {
+  monitorOpen = on;
+  document.querySelectorAll('#navQuick button[data-q="monitor"]')
+    .forEach(b => b.classList.toggle('is-on', on));
+  const sw = document.querySelector('.nav-search-wrap'), ns = $('#navScroll'), mn = $('#monitorNav');
+  if (sw) sw.hidden = on;
+  if (ns) ns.hidden = on;
+  if (mn) mn.hidden = !on;
+  ['.workspace', '.chat', '.split-v', '.split-h', '#railRight', '#panelSide', '#panelAutomation']
+    .forEach(sel => document.querySelectorAll(sel).forEach(el => {
+      if (on) { el.dataset.monHide = '1'; el.style.display = 'none'; }
+      else if (el.dataset.monHide) { delete el.dataset.monHide; el.style.display = ''; }
+    }));
+  const pane = $('#monitorPane');
+  if (pane) pane.hidden = !on;
+  clearInterval(monitorTimer); monitorTimer = 0;
+  if (on) {
+    renderMonitorNav();
+    renderMonitorPane();
+    monitorTimer = setInterval(monitorCountdowns, 60 * 1000);   // 源码同款 60s
+  } else {
+    // 退出后让侧面板按自己的状态重算显隐（renderSidePanel/renderAutomation 幂等）
+    if (typeof renderSidePanel === 'function') renderSidePanel();
+  }
 }
 
 })();

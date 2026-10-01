@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=33 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=33">
+<!-- ?v=34 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=34">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -81,6 +81,7 @@
         <button data-q="add">＋ 添加</button>
         <button data-q="roles">👤 角色</button>
         <button data-q="record">🎙 录音</button>
+        <button data-q="monitor">📊 监控</button>
       </div>
 
       <!-- 搜索框在**侧栏顶部**（按你给的图）；点它 → 输入框下面弹出**范围 + 内容类型**面板（§20.11） -->
@@ -128,6 +129,8 @@
         <div id="planList"></div>
       </div>
 
+          <!-- §31 监控选项（全部/费用/软件/debate）—— 监控模式下替换项目/默认列表 -->
+      <div class="monitor-nav" id="monitorNav" hidden></div>
     </aside>
 
     <div class="split split-v" id="vSplit" title="拖动：项目 ｜ 内容"></div>
@@ -472,7 +475,9 @@
       </div><!-- /chat-pane-2 -->
     </aside>
     <!-- §23.4 右侧 activity rail + 右侧边栏（资源管理器 / 智能体）—— 核心 -->
-    <div class="side-panel side-panel-right" id="panelSide" hidden>
+        <!-- §31 监控页：三表（费用/软件/Debate）—— 独立页面，不依赖项目/对话 -->
+    <section class="monitor-pane" id="monitorPane" hidden></section>
+<div class="side-panel side-panel-right" id="panelSide" hidden>
       <div class="sp-head">
         <div class="sp-tabs" id="sideTabs">
           <button data-side="explorer" class="is-on">资源管理器</button>
@@ -722,6 +727,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=33"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>
