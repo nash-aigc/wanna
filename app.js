@@ -110,6 +110,7 @@ let S = load() || {
   composerExpanded: false,         // §21.5 输入框展开态（点顶边手柄切换）
   sendPolicy: 'queue',             // §22.13 发送方式：queue=排队（默认）/ interrupt=打断
   dualScreen: false,               // §26 双屏 = 右侧一个**完全独立**的对话界面（默认临时）
+  finderOpen: false, finderSide: null, finderSideR: null, finderColsDefault: null,   // §34 访达（开关/左右收藏栏/默认列）
   chat2: [],                       // §26 右侧独立会话的消息（与 S.chat 互不相通）
   chat2Mode: 'temporary',          // §26 右侧默认就是「临时」
   speechRate2: 1,                  // §26 右侧独立语速
@@ -182,6 +183,10 @@ function load() {
     if (typeof r.composerExpanded !== 'boolean') r.composerExpanded = false;
     if (r.sendPolicy !== 'interrupt') r.sendPolicy = 'queue';
     if (typeof r.dualScreen !== 'boolean') r.dualScreen = false;
+    if (typeof r.finderOpen !== 'boolean') r.finderOpen = false;
+    if (r.finderSide && !Array.isArray(r.finderSide)) r.finderSide = null;
+    if (r.finderSideR && !Array.isArray(r.finderSideR)) r.finderSideR = null;
+    if (r.finderColsDefault && !Array.isArray(r.finderColsDefault)) r.finderColsDefault = null;
     if (!Array.isArray(r.chat2)) r.chat2 = [];
     if (r.chat2Mode !== 'continuous') r.chat2Mode = 'temporary';
     if (typeof r.speechRate2 !== 'number') r.speechRate2 = 1;
@@ -4240,19 +4245,38 @@ function bind() {
   });
 
   dragSplit($('#vSplit'), e => {
-    const r = $('#main').getBoundingClientRect();
-    const w = Math.max(170, Math.min(r.width * 0.42, e.clientX - r.left));
+    // §34 按下零跳变的唯一正确锚点 = **nav 自己的左缘**（不是 main.left）：
+    // main.left 只有在 nav 是第一个可见元素时才等于 nav.left —— 自动化面板开着、
+    // 或对话·左布局时都会把宽度多算进去 → 按下瞬间线向右跳（用户报的现象）。
+    // nav 在所有布局里都紧贴 vSplit 左侧，所以 宽 = 光标 − 半缝 − nav.left 恒成立。
+    const nav = $('#navPane'), split = $('#vSplit');
+    if (!nav || !split) return;
+    const n = nav.getBoundingClientRect();
+    const half = (split.offsetWidth || 16) / 2;
+    const w = Math.max(170, Math.min(innerWidth * 0.42, e.clientX - half - n.left));
     document.documentElement.style.setProperty('--nav-w', w + 'px');
   });
   dragSplit($('#hSplit'), e => {
-    const r = document.body.getBoundingClientRect();
-    const w = Math.max(250, Math.min(r.width * 0.5, r.right - e.clientX));
+    // §34 对话区可能在线的**任意一侧**（对话·右=右侧 / 对话·中·左=左侧），
+    // 必须先判方向再算宽。老代码用 body.right 当基准：右边还站着右 rail（~36px），
+    // 恒偏 36+8=44px → 按下瞬间线向左跳（用户报的现象）。
+    const chat = document.querySelector('.chat'), split = $('#hSplit');
+    if (!chat || !split) return;
+    const c = chat.getBoundingClientRect(), s = split.getBoundingClientRect();
+    const half = (split.offsetWidth || 16) / 2;
+    const chatOnLeft = c.right <= s.left + 1;
+    // 上限必须等于 CSS 的 max-width:52vw（§32 给 nav 对齐 42vw 的同一先例）：
+    // 曾经这里写 0.5，比 CSS 的 0.52 紧 8px —— 拖到 50vw 线就停住，且若当前已 >50vw
+    // 按下那一秒会被夹回去 = 又是一种「按下跳变」。
+    const w = Math.max(250, Math.min(innerWidth * 0.52,
+      chatOnLeft ? e.clientX - half - c.left : c.right - e.clientX - half));
     document.documentElement.style.setProperty('--chat-w', w + 'px');
   });
   // 源码 ｜ 预览 中间那条也能拖（§12.7：笔记这块之前调不了）
   dragSplit($('#mdGutter'), e => {
     const box = $('#mdSplit').getBoundingClientRect();
-    const w = Math.max(160, Math.min(box.width - 180, e.clientX - box.left));
+    const half = ($('#mdGutter')?.offsetWidth || 7) / 2;
+    const w = Math.max(160, Math.min(box.width - 180, e.clientX - box.left - half));
     document.documentElement.style.setProperty('--md-src-w', w + 'px');
   });
 
@@ -5961,6 +5985,7 @@ function monitorCountdowns() {
 /// 监控模式开关 —— 左栏：搜索+项目/默认列表 ⇄ 监控选项；右栏：编辑区+对话+分隔+右 rail
 /// 全部换成监控页；nav-quick（设置/历史/添加/角色/录音）原样保留（你点名的"设置部分保留不变"）
 function setMonitorMode(on) {
+  if (on && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);   // §34 两个独立页互斥
   monitorOpen = on;
   document.querySelectorAll('#navQuick button[data-q="monitor"]')
     .forEach(b => b.classList.toggle('is-on', on));
@@ -5985,5 +6010,464 @@ function setMonitorMode(on) {
     if (typeof renderSidePanel === 'function') renderSidePanel();
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   §34 访达 —— 独立文件浏览器（顶栏最左开关）
+   你的原话：关闭=现状；打开时「对话区域完整保留放最右侧」，左侧是完整访达：
+   视图（图标/列表/分栏）· 各种形式分组 · 窗口分屏（单/左右/上下/3/四宫格）·
+   窗口内容交换（⇄ 左→右）· 路径栏（点击跳转 / 点击输入 / ⌘L）·
+   左侧收藏栏（多分组、组名可改、条目上下移动+拖动、可加标签）·
+   中间列 名称/大小/修改日期/添加日期 + 表头右键选列（照 Finder 图：16 项含多媒体/其他/恢复默认）·
+   分栏视图中缝可拖宽。
+   虚拟 FS 数据为演示数据（样例项目 + 常见目录），不碰磁盘。
+   ══════════════════════════════════════════════════════════════ */
+
+/// 虚拟文件系统：path → 子项数组（{d:目录名,m,a} / {f:文件名,s,m,a,t}）
+const FP_FS = {
+  '/': [{ d: 'Applications', m: '2026/1/4', a: '2024/3/2' }, { d: 'Users', m: '2026/9/1', a: '2024/3/2' },
+        { d: 'System', m: '2026/8/18', a: '2024/3/2' }, { d: 'Library', m: '2026/9/28', a: '2024/3/2' }],
+  '/Users': [{ d: 'mjm', m: '2026/10/1', a: '2024/3/2' }],
+  '/Users/mjm': [{ d: 'Desktop', m: '2026/9/30', a: '2026/8/30' }, { d: 'Documents', m: '2026/9/28', a: '2026/8/30' },
+    { d: 'Downloads', m: '2026/9/27', a: '2026/8/30' }, { d: 'Movies', m: '2026/9/12', a: '2026/8/30' },
+    { d: 'Pictures', m: '2026/9/18', a: '2026/8/30' },
+    { f: '.zshrc', s: '4KB', m: '2026/8/12', a: '2026/8/12', t: 'txt' }],
+  '/Users/mjm/Desktop': [{ d: '【课件】', m: '2026/9/19', a: '2026/9/19' }, { d: 'AI【工具】', m: '2026/9/18', a: '2026/9/15' },
+    { d: 'Wanna 临时目录', m: '2026/9/23', a: '2026/9/23' },
+    { f: 'AI-Agent-功能脑图-2026.md', s: '128KB', m: '2026/9/26', a: '2026/9/20', t: 'md' },
+    { f: 'pdoom.mp3', s: '3.2MB', m: '2026/8/30', a: '2026/8/30', t: 'mp3' },
+    { f: '屏幕快照 2026-10-01.png', s: '1.8MB', m: '2026/10/1', a: '2026/10/1', t: 'png' },
+    { f: '出口四测试', s: '—', m: '2026/9/24', a: '2026/9/24' }],
+  '/Users/mjm/Documents': [{ d: 'SuperAgent', m: '2026/10/1', a: '2026/8/30' }, { d: 'WeChat Files', m: '2026/9/10', a: '2026/8/30' },
+    { f: '发票-9月.pdf', s: '212KB', m: '2026/9/30', a: '2026/9/30', t: 'pdf' }],
+  '/Users/mjm/Downloads': [{ f: 'install.dmg', s: '420MB', m: '2026/9/27', a: '2026/9/27', t: 'dmg' },
+    { f: '数据.csv', s: '86KB', m: '2026/9/26', a: '2026/9/26', t: 'csv' }],
+  '/Users/mjm/Movies': [{ f: '录屏 2026-09-24.mov', s: '1.2GB', m: '2026/9/24', a: '2026/9/24', t: 'mov' }],
+  '/Users/mjm/Pictures': [{ f: '屏幕快照.png', s: '980KB', m: '2026/9/18', a: '2026/9/18', t: 'png' }],
+  '/Users/mjm/Documents/SuperAgent': [
+    { d: 'Wanna', m: '2026/10/1', a: '2026/8/30' }, { d: 'Agent', m: '2026/10/1', a: '2026/8/30' },
+    { d: 'APP', m: '2026/9/29', a: '2026/8/30' }, { d: '架构说明', m: '2026/9/20', a: '2026/9/1' },
+    { d: '我的笔记项目', m: '2026/10/1', a: '2026/9/16' }],
+  '/Users/mjm/Documents/SuperAgent/我的笔记项目': [
+    { d: 'notes', m: '2026/9/30', a: '2026/9/16' }, { d: '网页', m: '2026/9/20', a: '2026/9/16' },
+    { d: '资料', m: '2026/9/24', a: '2026/9/16' },
+    { f: 'README.md', s: '7KB', m: '2026/9/22', a: '2026/9/16', t: 'md' },
+    { f: '脑图.mmd', s: '12KB', m: '2026/9/30', a: '2026/9/16', t: 'mmd' },
+    { f: '新文件.md', s: '2KB', m: '2026/10/1', a: '2026/10/1', t: 'md' },
+    { f: 'platform.xiaomimimo.com', s: '—', m: '2026/9/28', a: '2026/9/28', t: 'web' }],
+  '/Users/mjm/Documents/SuperAgent/我的笔记项目/notes': [
+    { f: '2026-09-30-会议.md', s: '9KB', m: '2026/9/30', a: '2026/9/30', t: 'md' },
+    { f: '灵感.md', s: '3KB', m: '2026/9/28', a: '2026/9/16', t: 'md' }],
+  '/Users/mjm/Documents/SuperAgent/我的笔记项目/网页': [
+    { f: '示例.html', s: '6KB', m: '2026/9/20', a: '2026/9/16', t: 'html' }],
+  '/Users/mjm/Documents/SuperAgent/我的笔记项目/资料': [
+    { f: '竞品对比.md', s: '5KB', m: '2026/9/24', a: '2026/9/16', t: 'md' },
+    { f: '样例.pdf', s: '1.1MB', m: '2026/9/18', a: '2026/9/16', t: 'pdf' }],
+  '/Users/mjm/Documents/SuperAgent/Wanna': [
+    { f: 'index.html', s: '96KB', m: '2026/10/1', a: '2026/9/16', t: 'html' },
+    { f: 'app.js', s: '312KB', m: '2026/10/1', a: '2026/9/16', t: 'js' },
+    { f: 'app.css', s: '88KB', m: '2026/10/1', a: '2026/9/16', t: 'css' }],
+};
+
+const FP_COL_DEFS = [['size', '大小'], ['mtime', '修改日期'], ['ctime', '创建日期'], ['atime', '上次打开日期'],
+  ['added', '添加日期'], ['kind', '种类'], ['editor', '上次修改者'], ['owner', '共享者'],
+  ['version', '版本'], ['comment', '注释'], ['tag', '标签']];
+const FP_COLS_DEFAULT = ['size', 'mtime', 'added'];       // 照 Finder 照片勾选（名称恒显）
+const FP_GROUP_OPTS = [['none', '不分组'], ['kind', '种类'], ['name', '名称首字母'], ['added', '添加日期'], ['mtime', '修改日期']];
+const FP_COL_LABEL = { name: '名称', size: '大小', mtime: '修改日期', ctime: '创建日期', atime: '上次打开日期',
+  added: '添加日期', kind: '种类', editor: '上次修改者', owner: '共享者', version: '版本', comment: '注释', tag: '标签' };
+const FP_DEFAULT_SIDE = [
+  { id: 'fav', name: '收藏', items: [
+    { name: '桌面', path: '/Users/mjm/Desktop' }, { name: '下载', path: '/Users/mjm/Downloads' },
+    { name: 'SuperAgent', path: '/Users/mjm/Documents/SuperAgent' }] },
+  { id: 'tag', name: '标签', items: [
+    { name: '红色', tag: '#FF5F57' }, { name: '蓝色', tag: '#54A2FF' }, { name: '绿色', tag: '#2CCB6E' }] },
+  { id: 'recent', name: '最近', items: [{ name: '我的笔记项目', path: '/Users/mjm/Documents/SuperAgent/我的笔记项目' }] },
+];
+/// 右收藏栏默认分组（照你照片右侧那列：Harness / Agents / APP / Data…，条目给演示路径）
+const FP_DEFAULT_SIDE_R = [
+  { id: 'r-harness', name: 'Harness', items: [{ name: 'Harness' }] },
+  { id: 'r-agents', name: 'Agents', items: [
+    { name: 'Agent', path: '/Users/mjm/Documents/SuperAgent/Agent' },
+    { name: 'Wanna', path: '/Users/mjm/Documents/SuperAgent/Wanna' },
+    { name: 'Skill' }] },
+  { id: 'r-app', name: 'APP', items: [
+    { name: 'APP', path: '/Users/mjm/Documents/SuperAgent/APP' }, { name: 'Docker' }, { name: 'Test' }] },
+  { id: 'r-data', name: 'Data', items: [{ name: 'Data' }, { name: 'Sync' }, { name: 'Wiki' }] },
+];
+
+let finderOpen = false;
+const FP = {
+  view: 'list', group: 'none',
+  cols: (Array.isArray(S.finderColsDefault) && S.finderColsDefault.length) ? [...S.finderColsDefault] : [...FP_COLS_DEFAULT],
+  layout: 'single', active: 0, split: '50%', colW: 220,
+  panes: [{ path: '/Users/mjm', sel: null }],
+  sides: { L: null, R: null },     // 懒加载自 S.finderSide / S.finderSideR（左右两栏各自独立）
+};
+const fpSideStoreKey = k => k === 'R' ? 'finderSideR' : 'finderSide';
+function fpSide(k) {
+  if (!FP.sides[k]) FP.sides[k] = Array.isArray(S[fpSideStoreKey(k)]) && S[fpSideStoreKey(k)].length
+    ? S[fpSideStoreKey(k)]
+    : JSON.parse(JSON.stringify(k === 'R' ? FP_DEFAULT_SIDE_R : FP_DEFAULT_SIDE));
+  return FP.sides[k];
+}
+function fpSaveSide(k) { S[fpSideStoreKey(k)] = FP.sides[k]; save(true); }
+function fpEntries(path) {
+  const arr = FP_FS[path] || [];
+  const dirs = arr.filter(x => x.d).map(x => ({ name: x.d, dir: true, s: '—', m: x.m || '—', a: x.a || '—', kind: '文件夹' }));
+  const files = arr.filter(x => x.f).map(x => ({ name: x.f, dir: false, s: x.s || '—', m: x.m || '—', a: x.a || '—',
+    kind: (x.f.includes('.') ? x.f.split('.').pop() : '') || '—', t: x.t }));
+  return [...dirs, ...files];
+}
+function fpJoin(base, name) { return base === '/' ? '/' + name : base + '/' + name; }
+function fpIco(entry) {
+  if (entry.dir) return `<span class="fp-ico fp-dir">▸</span>`;
+  const ext = (entry.name.includes('.') ? entry.name.split('.').pop() : '?').slice(0, 2).toUpperCase();
+  return `<span class="fp-ico" style="background:#8E8E93">${escapeHtml(ext)}</span>`;
+}
+function fpColValue(entry, key) {
+  if (key === 'name') return '';
+  if (key === 'size') return entry.s;
+  if (key === 'mtime') return entry.m;
+  if (key === 'added') return entry.a;
+  if (key === 'kind') return entry.kind;
+  return '—';                                       // 数据里没有的列如实显示 —
+}
+function fpGroupValue(entry, g) {
+  if (g === 'kind') return entry.dir ? '文件夹' : entry.kind;
+  if (g === 'name') { const c = entry.name[0] || '#'; return /^[A-Za-z]/.test(c) ? c.toUpperCase() : '#'; }
+  if (g === 'added') { const p = entry.a.split('/'); return p.length >= 2 ? p[0] + '/' + p[1] : entry.a; }
+  if (g === 'mtime') { const p = entry.m.split('/'); return p.length >= 2 ? p[0] + '/' + p[1] : entry.m; }
+  return '';
+}
+
+function setFinderOpen(on) {
+  if (on && monitorOpen) setMonitorMode(false);          // 两个独立页互斥
+  finderOpen = on;
+  S.finderOpen = on; save(true);
+  $('#finderToggle')?.classList.toggle('is-on', on);
+  document.body.classList.toggle('finder-on', on);
+  const pane = $('#finderPane');
+  if (pane) pane.hidden = !on;
+  if (on) renderFinder();
+}
+function renderFinder() {
+  if (!finderOpen) return;
+  // 工具栏状态
+  $$('#fpViews button').forEach(b => b.classList.toggle('is-on', b.dataset.view === FP.view));
+  $$('#fpLayouts button').forEach(b => b.classList.toggle('is-on', b.dataset.layout === FP.layout));
+  renderFinderPath(); renderFinderSide('L'); renderFinderSide('R'); renderFinderMain();
+}
+function renderFinderPath() {
+  const bar = $('#fpPath'); if (!bar) return;
+  const pane = FP.panes[FP.active] || FP.panes[0];
+  const path = pane.path;
+  const parts = path.split('/').filter(Boolean);
+  let cum = '';
+  const crumbs = ['<button class="fp-crumb" data-p="/"><span class="fc-ico">💬</span>Macintosh HD</button>']
+    .concat(parts.map(p => {
+      cum += '/' + p;
+      return `<span class="fp-crumb-sep">▸</span><button class="fp-crumb" data-p="${escapeHtml(cum)}">
+        <span class="fc-ico">📁</span>${escapeHtml(p)}</button>`;
+    }));
+  bar.innerHTML = crumbs.join('');
+  $$('#fpPath .fp-crumb').forEach(b => b.onclick = () => {
+    const p = b.dataset.p;
+    FP.panes[FP.active].path = p; FP.panes[FP.active].sel = null;
+    renderFinder();
+  });
+}
+function fpStartPathEdit() {
+  const bar = $('#fpPath'); if (!bar) return;
+  const pane = FP.panes[FP.active];
+  bar.innerHTML = `<input id="fpPathInput" spellcheck="false" value="${escapeHtml(pane.path)}">`;
+  const inp = $('#fpPathInput');
+  inp.focus(); inp.select();
+  inp.onkeydown = e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      let v = (inp.value || '').trim();
+      if (v.startsWith('~')) v = '/Users/mjm' + v.slice(1);
+      if (!v.startsWith('/')) v = '/' + v;
+      pane.path = v.replace(/\/+$/, '') || '/'; pane.sel = null;
+      // 先摘掉 blur 回调再重绘：innerHTML 换掉聚焦的 input 会同步触发 blur，
+      // blur 里再 renderFinder 就变成第二次 innerHTML 嵌在第一次里面 = NotFoundError
+      inp.onblur = null;
+      renderFinder(); toast(`已跳到 <code>${escapeHtml(pane.path)}</code>`);
+    } else if (e.key === 'Escape') { inp.onblur = null; renderFinder(); }
+  };
+  inp.onblur = () => renderFinder();
+}
+function renderFinderSide(k) {
+  const side = $(k === 'R' ? '#fpSideR' : '#fpSide'); if (!side) return;
+  const groups = fpSide(k);
+  const rerender = () => renderFinderSide(k);          // 重绘自己这一栏（左右互不影响）
+  const save = () => fpSaveSide(k);
+  let html = `<div class="fp-side-head"><span>收藏 / 分组</span>
+    <button class="fp-add-group" title="添加分组">＋</button></div>`;
+  groups.forEach((g, gi) => {
+    html += `<div class="fp-fgroup" data-g="${gi}">
+      <div class="fg-name"><b data-gi="${gi}" title="双击改名">${escapeHtml(g.name)}</b>
+        <span class="fg-acts">
+          <button data-ga="up" data-gi="${gi}" title="分组上移">▲</button>
+          <button data-ga="down" data-gi="${gi}" title="分组下移">▼</button>
+          <button data-ga="add" data-gi="${gi}" title="添加条目">＋</button>
+        </span></div>
+      ${g.items.map((it, ii) => `<div class="fp-fitem" data-g="${gi}" data-i="${ii}" draggable="true">
+        <span class="fi-dot" ${it.tag ? `style="background:${escapeHtml(it.tag)}"` : ''}></span>
+        <span class="fi-name">${escapeHtml(it.name)}</span>
+        <span class="fi-mv">
+          <button data-ia="up" data-g="${gi}" data-i="${ii}" title="上移">▲</button>
+          <button data-ia="down" data-g="${gi}" data-i="${ii}" title="下移">▼</button>
+        </span></div>`).join('')}
+    </div>`;
+  });
+  side.innerHTML = html;
+  side.querySelector('.fp-add-group').onclick = () => askModal({ title: '新建分组', text: '收藏栏里的一个分组（名字可随时双击改）',
+    value: '新分组', okText: '添加', onOk: v => {
+      if (!v.trim()) return;
+      fpSide(k).push({ id: 'g' + now(), name: v.trim(), items: [] });
+      save(); rerender(); toast('已添加分组 <b>' + escapeHtml(v.trim()) + '</b>');
+    } });
+  side.querySelectorAll('[data-ga]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const gi = +b.dataset.gi, gs = fpSide(k);
+    if (b.dataset.ga === 'up' && gi > 0) { [gs[gi - 1], gs[gi]] = [gs[gi], gs[gi - 1]]; save(); rerender(); }
+    else if (b.dataset.ga === 'down' && gi < gs.length - 1) { [gs[gi + 1], gs[gi]] = [gs[gi], gs[gi + 1]]; save(); rerender(); }
+    else if (b.dataset.ga === 'add') askModal({ title: `往「${gs[gi].name}」添加条目`,
+      text: '格式：名称 或 名称|绝对路径（标签分组可以只写名称）', value: '新条目', okText: '添加',
+      onOk: v => {
+        if (!v.trim()) return;
+        const [name, path] = v.split('|').map(x => x.trim());
+        gs[gi].items.push(path ? { name, path } : { name });
+        save(); rerender();
+      } });
+  });
+  side.querySelectorAll('.fg-name b').forEach(b => b.ondblclick = () => {
+    const gi = +b.dataset.gi, gs = fpSide(k);
+    b.innerHTML = `<input value="${escapeHtml(gs[gi].name)}">`;
+    const inp = b.querySelector('input'); inp.focus(); inp.select();
+    inp.onkeydown = e => { e.stopPropagation();
+      if (e.key === 'Enter') { gs[gi].name = inp.value.trim() || gs[gi].name; save(); inp.onblur = null; rerender(); }
+      else if (e.key === 'Escape') { inp.onblur = null; rerender(); } };
+    inp.onblur = () => { gs[gi].name = inp.value.trim() || gs[gi].name; save(); rerender(); };
+  });
+  side.querySelectorAll('[data-ia]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const g = fpSide(k)[+b.dataset.g], i = +b.dataset.i;
+    if (b.dataset.ia === 'up' && i > 0) { [g.items[i - 1], g.items[i]] = [g.items[i], g.items[i - 1]]; save(); rerender(); }
+    else if (b.dataset.ia === 'down' && i < g.items.length - 1) { [g.items[i + 1], g.items[i]] = [g.items[i], g.items[i + 1]]; save(); rerender(); }
+  });
+  // 条目点击 = 导航到活动窗格；拖动 = 组内/跨组重排（HTML5 DnD）
+  let dragRef = null;
+  side.querySelectorAll('.fp-fitem').forEach(el => {
+    el.onclick = () => {
+      const it = fpSide(k)[+el.dataset.g].items[+el.dataset.i];
+      side.querySelectorAll('.fp-fitem').forEach(x => x.classList.remove('on'));
+      el.classList.add('on');
+      if (it.path) { FP.panes[FP.active].path = it.path; FP.panes[FP.active].sel = null; renderFinder(); }
+    };
+    el.ondragstart = e => { dragRef = { g: +el.dataset.g, i: +el.dataset.i };
+      e.dataTransfer.effectAllowed = 'move'; };
+    el.ondragover = e => { e.preventDefault(); el.classList.add('drag-over'); };
+    el.ondragleave = () => el.classList.remove('drag-over');
+    el.ondrop = e => {
+      e.preventDefault(); el.classList.remove('drag-over');
+      if (!dragRef) return;
+      const toG = +el.dataset.g, toI = +el.dataset.i;
+      const it = fpSide(k)[dragRef.g].items.splice(dragRef.i, 1)[0];
+      fpSide(k)[toG].items.splice(toI, 0, it);
+      dragRef = null; save(); rerender();
+    };
+  });
+}
+function renderFinderMain() {
+  const main = $('#fpMain'); if (!main) return;
+  const n = FP.layout === 'single' ? 1 : FP.layout === 'three' ? 3 : FP.layout === 'quad' ? 4 : 2;
+  while (FP.panes.length < n) FP.panes.push({ path: FP.panes[FP.panes.length - 1].path, sel: null });
+  FP.panes.length = n;
+  if (FP.active >= FP.panes.length) FP.active = 0;
+  const cells = (from, to) => FP.panes.slice(from, to).map((p, k) => {
+    const i = from + k;
+    return `<div class="fp-cell${i === FP.active ? ' act' : ''}${(FP.view === 'columns' && FP.layout === 'single') ? ' fp-cell-cols' : ''}" data-pi="${i}">${fpCellHTML(p, i)}</div>`;
+  }).join('<div class="fp-gap" data-gap="1"></div>');
+  let inner = '';
+  if (FP.layout === 'single') inner = cells(0, 1);
+  else if (FP.layout === 'h2') inner = cells(0, 2);
+  else if (FP.layout === 'v2') inner = cells(0, 2);
+  else if (FP.layout === 'three') inner = cells(0, 1) + `<div class="fp-r2">${cells(1, 3)}</div>`;
+  else inner = `<div class="fp-r2">${cells(0, 2)}</div><div class="fp-r2">${cells(2, 4)}</div>`;
+  main.innerHTML = `<div class="fp-panes l-${FP.layout}" id="fpPanes" style="--fp-split:${FP.split};--fp-colw:${FP.colW}px">${inner}</div>`;
+  // 窗格点击 = 激活
+  $$('#fpPanes .fp-cell').forEach(c => c.addEventListener('mousedown', () => {
+    const i = +c.dataset.pi;
+    if (i !== FP.active) { FP.active = i; renderFinder(); }
+  }, true));
+  // 布局分屏中缝（左右/上下）
+  $$('#fpPanes .fp-gap').forEach(g => {
+    g.onmousedown = e => {
+      e.preventDefault(); g.classList.add('drag');
+      const box = $('#fpPanes').getBoundingClientRect();
+      const vertical = FP.layout === 'v2';
+      const move = ev => {
+        const pct = vertical
+          ? (ev.clientY - box.top) / box.height : (ev.clientX - box.left) / box.width;
+        FP.split = Math.round(Math.min(85, Math.max(15, pct * 100))) + '%';
+        $('#fpPanes').style.setProperty('--fp-split', FP.split);
+      };
+      const up = () => { g.classList.remove('drag');
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    };
+  });
+  // 列表里：目录点击钻取、文件点击选中、表头右键选列
+  $$('#fpPanes .fp-row').forEach(row => {
+    row.addEventListener('mouseup', e => {                    // mousedown 会先切活动窗格，click 才稳
+      if (row.dataset.kind === 'dir') {
+        const pi = +row.dataset.pi;
+        FP.panes[pi].path = fpJoin(FP.panes[pi].path, row.dataset.name);
+        FP.panes[pi].sel = null;
+        renderFinder();
+      } else {
+        const pi = +row.dataset.pi;
+        FP.panes[pi].sel = row.dataset.name;
+        renderFinderMain();
+      }
+    });
+  });
+  $$('#fpPanes th[data-col]').forEach(th => {
+    th.oncontextmenu = e => { e.preventDefault(); fpColumnMenu(e.clientX, e.clientY); };
+    th.onclick = e => { e.stopPropagation(); fpColumnMenu(e.clientX, e.clientY); };   // 照 Finder：点表头也能开列菜单
+  });
+  // 分栏视图中缝：拖宽左栏
+  $$('#fpPanes .fp-cols-gutter').forEach(g => {
+    g.onmousedown = e => {
+      e.preventDefault(); g.classList.add('drag');
+      const left0 = $('#fpPanes .fp-cols-left').getBoundingClientRect().left;
+      const move = ev => {
+        FP.colW = Math.round(Math.min(Math.max(120, ev.clientX - left0), g.parentElement.clientWidth - 160));
+        $('#fpPanes').style.setProperty('--fp-colw', FP.colW + 'px');
+      };
+      const up = () => { g.classList.remove('drag');
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    };
+  });
+}
+function fpCellHTML(pane, pi) {
+  const entries = fpEntries(pane.path);
+  if (FP.layout === 'single' && FP.view === 'columns') {
+    // 分栏视图：左 = 当前目录的子目录（点选），右 = 选中目录内容（Finder 经典钻取）
+    const subs = entries.filter(x => x.dir);
+    const selName = pane.sel && subs.some(x => x.name === pane.sel) ? pane.sel : (subs[0] ? subs[0].name : null);
+    const rightPath = selName ? fpJoin(pane.path, selName) : pane.path;
+    const right = fpEntries(rightPath);
+    const rowOf = (e2, basePath) => `<div class="fp-row fp-colrow${pane.sel === e2.name ? ' sel' : ''}"
+        data-kind="${e2.dir ? 'dir' : 'file'}" data-name="${escapeHtml(e2.name)}" data-pi="${pi}"
+        style="display:flex;gap:7px;align-items:center;padding:5px 10px;font-size:12.5px;cursor:pointer;
+        color:${e2.dir ? 'var(--ink)' : 'var(--ink2)'};${pane.sel === e2.name ? 'background:rgba(10,132,255,.14)' : ''}">
+        ${fpIco(e2)}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e2.name)}</span></div>`;
+    return `<div class="fp-cols">
+      <div class="fp-cols-left">${subs.length ? subs.map(x => rowOf(x, pane.path)).join('') : '<div class="fp-empty">没有子文件夹</div>'}</div>
+      <div class="fp-cols-gutter" title="拖动调宽"></div>
+      <div class="fp-cols-right">${right.length ? right.map(x => rowOf(x, rightPath)).join('') : '<div class="fp-empty">空文件夹</div>'}</div>
+    </div>`;
+  }
+  if (FP.layout === 'single' && FP.view === 'icon') {
+    return `<div class="fp-grid">${entries.map(e2 => `<div class="fp-gcell${pane.sel === e2.name ? ' sel' : ''}"
+      data-kind="${e2.dir ? 'dir' : 'file'}" data-name="${escapeHtml(e2.name)}" data-pi="${pi}">
+      <span class="gc-ico ${e2.dir ? 'fp-dir' : ''}" style="${e2.dir ? '' : 'background:#8E8E93'}">${e2.dir ? '▸' : escapeHtml((e2.name.split('.').pop() || '?').slice(0, 2).toUpperCase())}</span>
+      <span class="gc-name">${escapeHtml(e2.name)}</span></div>`).join('')}</div>`;
+  }
+  // 列表视图（单/多窗格通用；分组时插组头）
+  const cols = ['name', ...FP.cols];
+  const head = `<tr>${cols.map(c => `<th data-col="${c}" title="右键选择显示哪些列">${FP_COL_LABEL[c]}</th>`).join('')}</tr>`;
+  let body = '';
+  if (FP.group !== 'none') {
+    const map = new Map();
+    const dirs = entries.filter(x => x.dir), files = entries.filter(x => !x.dir);
+    [...dirs, ...files].forEach(e2 => {
+      const k = fpGroupValue(e2, FP.group) || '—';
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(e2);
+    });
+    [...map.entries()].forEach(([k, list]) => {
+      body += `<tr class="fp-gh"><td colspan="${cols.length}">${escapeHtml(k)}（${list.length}）</td></tr>`;
+      body += list.map(e2 => fpRowHTML(e2, cols, pane, pi)).join('');
+    });
+  } else {
+    body = entries.map(e2 => fpRowHTML(e2, cols, pane, pi)).join('');
+  }
+  return `<table class="fp-table"><thead>${head}</thead><tbody>${body || ''}</tbody></table>`
+    + (entries.length ? '' : '<div class="fp-empty">空文件夹</div>');
+}
+function fpRowHTML(e2, cols, pane, pi) {
+  const tds = cols.map(c => c === 'name'
+    ? `<td class="fp-c-name">${fpIco(e2)}<span>${escapeHtml(e2.name)}</span></td>`
+    : `<td class="fp-c-mono">${escapeHtml(String(fpColValue(e2, c)))}</td>`).join('');
+  return `<tr class="fp-row${pane.sel === e2.name ? ' sel' : ''}" data-kind="${e2.dir ? 'dir' : 'file'}"
+    data-name="${escapeHtml(e2.name)}" data-pi="${pi}">${tds}</tr>`;
+}
+/// 表头菜单 —— 条目/顺序照 Finder 照片（修改日期…标签 + 多媒体 › + 其他 › + 恢复/设置默认）
+function fpColumnMenu(x, y) {
+  const items = FP_COL_DEFS.map(([k, l]) => ({
+    label: (FP.cols.includes(k) ? '✓ ' : '  ') + l,
+    action: () => {
+      if (FP.cols.includes(k)) FP.cols = FP.cols.filter(c => c !== k);
+      else FP.cols.push(k);
+      renderFinderMain();
+    },
+  }));
+  items.push({ sep: true });
+  items.push({ label: '多媒体 ›', action: () => showMenu(
+    [{ label: '← 返回列设置', action: () => fpColumnMenu(x, y) }, { sep: true },
+     { label: '时长', action: () => toast('「时长」需要媒体文件的元数据（原型数据里没有，如实显示 —）') },
+     { label: '艺术家', action: () => toast('同上：媒体元数据列，原型显示 —') }], { getBoundingClientRect: () => ({ left: x, bottom: y }) }) });
+  items.push({ label: '其他 ›', action: () => showMenu(
+    [{ label: '← 返回列设置', action: () => fpColumnMenu(x, y) }, { sep: true },
+     { label: '所有者', action: () => fpToggleCol('owner') },
+     { label: '位置', action: () => toast('「位置」列原型数据没有，显示 —') },
+     { label: '注释', action: () => fpToggleCol('comment') }], { getBoundingClientRect: () => ({ left: x, bottom: y }) }) });
+  items.push({ sep: true });
+  items.push({ label: '恢复到默认', action: () => { FP.cols = [...FP_COLS_DEFAULT]; renderFinderMain(); toast('列已恢复默认'); } });
+  items.push({ label: '设置为默认', action: () => { S.finderColsDefault = [...FP.cols]; save(true); toast('当前列组合已存为默认'); } });
+  showMenu(items, null, { x, y });
+}
+function fpToggleCol(k) {
+  if (FP.cols.includes(k)) FP.cols = FP.cols.filter(c => c !== k); else FP.cols.push(k);
+  renderFinderMain();
+}
+
+/* —— 访达接线（脚本尾部，DOM 已就绪）—— */
+(function bindFinder() {
+  const t = $('#finderToggle');
+  if (t) t.onclick = () => setFinderOpen(!finderOpen);
+  // 视图 / 分组 / 分屏 / 交换
+  $$('#fpViews button').forEach(b => b.onclick = () => { FP.view = b.dataset.view; renderFinder(); });
+  $$('#fpLayouts button').forEach(b => b.onclick = () => { FP.layout = b.dataset.layout; renderFinder(); });
+  const gb = $('#fpGroupBtn');
+  if (gb) gb.onclick = e => {
+    // 必须拦住冒泡：bind() 里那条文档级「点外面就关菜单」会把刚开的菜单在同一击里关掉
+    e.stopPropagation();
+    showMenu(FP_GROUP_OPTS.map(([v, l]) => ({
+      label: (FP.group === v ? '✓ ' : '  ') + l,
+      action: () => { FP.group = v; renderFinder(); },
+    })), gb);
+  };
+  const sw = $('#fpSwap');
+  if (sw) sw.onclick = () => {
+    if (FP.panes.length < 2) { toast('先切到多窗口分屏（左右/上下/3/4）才有可交换的窗口'); return; }
+    [FP.panes[0], FP.panes[1]] = [FP.panes[1], FP.panes[0]];
+    renderFinder(); toast('已把左边窗口的内容移到右侧');
+  };
+  // 路径栏：双击进输入；⌘L / Ctrl+L 进输入
+  const bar = $('#fpPath');
+  if (bar) bar.ondblclick = e => { if (!e.target.closest('.fp-crumb')) fpStartPathEdit(); };
+  window.addEventListener('keydown', e => {
+    if (!finderOpen) return;
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) { e.preventDefault(); fpStartPathEdit(); }
+  });
+  // 启动恢复
+  if (S.finderOpen) setFinderOpen(true);
+})();
 
 })();

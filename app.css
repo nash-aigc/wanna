@@ -506,6 +506,12 @@ body[data-style="contrast"]{
    以前每条都带 animation，每次重绘 250 条一起重播 = 整屏闪一下，就是「仍然非常卡」的来源之一 */
 .msg{max-width:100%}
 .msg.is-new{animation:pop .2s ease-out}
+/* §34 左右模式（你的原话：AI 回复放左、人的回复放右）——
+   气泡尾角本来就是按这个方向切的（user BR=4 / ai BL=4），这里只补对齐与宽度；
+   系统消息（git/CI 行）跟 AI 同侧靠左、给宽一点 */
+.msgs > .msg{align-self:flex-start;max-width:88%}
+.msgs > .msg-user{align-self:flex-end;max-width:78%}
+.msgs > .msg-user .msg-who,.msgs > .msg-user .msg-meta{text-align:right}
 .msg-who{font-size:10.5px;color:var(--ink3);margin-bottom:4px;letter-spacing:.05em}
 .msg-user .bubble{background:rgba(10,132,255,.16);border:1px solid rgba(10,132,255,.32);
   border-radius:14px 14px 4px 14px;padding:8px 12px;white-space:pre-wrap;word-break:break-word}
@@ -1616,3 +1622,134 @@ body[data-style="contrast"]{
 #monitorPane #debate-table thead .debate-total{position:absolute;right:8px;bottom:2px;
   color:#8b9096;font-weight:400;font-size:.75em}
 #monitorPane #debate-table td:last-child{text-align:right;padding-right:8px}
+
+/* ══ §34 访达 —— 独立文件浏览器（顶栏最左开关；开=访达+完整对话在最右，关=现状）══ */
+.finder-toggle.is-on{background:rgba(10,132,255,.14);border-color:rgba(10,132,255,.55);color:#CFE4FF}
+body.finder-on .nav,body.finder-on .split-v,body.finder-on .split-h,body.finder-on .workspace,
+body.finder-on .side-panel-left,body.finder-on .side-panel-right,body.finder-on #railRight,
+body.finder-on .monitor-pane{display:none!important}
+.finder-pane{order:5;flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg);
+  border-right:2px solid #2E2E2E}      /* 访达｜对话 = 大区线同款（此处不可拖） */
+.finder-pane[hidden]{display:none!important}
+/* 工具栏：视图三档 + 分组 + 分屏五档 + 交换 */
+.fp-toolbar{display:flex;align-items:center;gap:8px;height:38px;flex:0 0 38px;
+  padding:0 10px;border-bottom:1px solid var(--line);background:var(--nav-bg)}
+.fp-seg{display:flex;gap:2px;padding:2px;border:1px solid var(--line2);border-radius:8px;background:#101012}
+.fp-seg button{min-width:26px;height:22px;padding:0 7px;border-radius:6px;font-size:11.5px;
+  color:var(--ink3);line-height:1}
+.fp-seg button:hover{background:#1F1F22;color:var(--ink)}
+.fp-seg button.is-on{background:rgba(10,132,255,.16);color:#CFE4FF;border:0}
+.fp-tool{height:26px;padding:0 9px;border-radius:7px;font-size:12px;color:var(--ink2);
+  border:1px solid var(--line2);background:#141416}
+.fp-tool:hover{background:#1F1F22;color:var(--ink)}
+.fp-div{width:1px;height:18px;background:var(--line2)}
+/* 路径栏（Finder 风格：段落可点跳转；双击/⌘L 进输入） */
+.fp-path{display:flex;align-items:center;gap:2px;height:34px;flex:0 0 34px;padding:0 10px;
+  border-bottom:1px solid var(--line);background:#111113;overflow:hidden;position:relative}
+.fp-crumb{display:flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:6px;
+  font-size:12px;color:var(--ink2);white-space:nowrap}
+.fp-crumb:hover{background:#1F1F22;color:var(--ink)}
+.fp-crumb .fc-ico{width:14px;height:14px;border-radius:3px;background:#3A3A40;font-size:9px;
+  display:inline-flex;align-items:center;justify-content:center;color:var(--ink2)}
+.fp-crumb-sep{color:var(--ink3);font-size:11px;opacity:.6}
+.fp-path input{flex:1;height:24px;background:#1A1A1C;border:1px solid rgba(10,132,255,.55);
+  border-radius:6px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:0 8px;outline:none}
+/* 主体：左收藏栏 + 右文件区 */
+.fp-body{flex:1;min-height:0;display:flex}
+.fp-side{flex:0 0 190px;min-width:0;display:flex;flex-direction:column;gap:6px;padding:8px;
+  border-right:1px solid var(--line);background:var(--nav-bg);overflow:auto}
+.fp-side-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;
+  color:var(--ink3);letter-spacing:.05em;padding:2px 4px}
+.fp-side-head button{color:var(--ink3);font-size:13px;width:18px;height:18px;border-radius:5px}
+.fp-side-head button:hover{background:#1F1F22;color:var(--ink)}
+.fp-fgroup{border:1px solid var(--line);border-radius:8px;background:#111113;overflow:hidden}
+.fp-fgroup .fg-name{display:flex;align-items:center;justify-content:space-between;height:24px;
+  padding:0 7px;font-size:11px;color:var(--ink3);background:#141417;cursor:default;user-select:none}
+.fp-fgroup .fg-name b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-fgroup .fg-name input{width:110px;height:18px;background:#1A1A1C;border:1px solid rgba(10,132,255,.55);
+  border-radius:4px;color:var(--ink);font-size:11px;padding:0 5px;outline:none}
+.fp-fgroup .fg-name .fg-acts{display:none;gap:2px}
+.fp-fgroup .fg-name:hover .fg-acts{display:flex}
+.fp-fgroup .fg-acts button{width:16px;height:16px;font-size:10px;line-height:1;padding:0}
+.fp-fitem{display:flex;align-items:center;gap:6px;height:24px;padding:0 7px;font-size:12px;
+  color:var(--ink2);cursor:pointer;user-select:none}
+.fp-fitem:hover{background:rgba(255,255,255,.05)}
+.fp-fitem.on{background:rgba(255,255,255,.10);color:var(--ink)}
+.fp-fitem .fi-dot{width:8px;height:8px;border-radius:50%;background:#3A3A40;flex:0 0 8px}
+.fp-fitem .fi-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-fitem .fi-mv{display:none;gap:1px}
+.fp-fitem:hover .fi-mv{display:flex}
+.fp-fitem .fi-mv button{width:15px;height:15px;font-size:9px;line-height:1;padding:0;color:var(--ink3);
+  border-radius:4px}
+.fp-fitem .fi-mv button:hover{background:#242428;color:var(--ink)}
+.fp-fitem.drag-over{box-shadow:inset 0 2px 0 rgba(10,132,255,.7)}
+/* §34 右收藏栏：与左栏同一套样式，只换边框方向（照片里左右两列都有分组栏） */
+.fp-side-r{border-right:0;border-left:1px solid var(--line)}
+/* 文件区（列表/图标/分栏 三种视图 + 窗格分屏） */
+.fp-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.fp-panes{flex:1;min-height:0;display:flex;position:relative}
+.fp-panes.l-single .fp-cell{flex:1 1 auto}
+.fp-panes.l-h2 .fp-cell:first-child{flex:0 0 var(--fp-split,50%)}
+.fp-panes.l-h2 .fp-cell:last-child{flex:1 1 auto}
+.fp-panes.l-v2{flex-direction:column}
+.fp-panes.l-v2 .fp-cell:first-child{flex:0 0 var(--fp-split,50%)}
+.fp-panes.l-v2 .fp-cell:last-child{flex:1 1 auto}
+.fp-panes.l-three,.fp-panes.l-quad{flex-direction:column}
+.fp-panes .fp-r2{display:flex;flex:1 1 auto;min-height:0;width:100%}
+.fp-panes.l-three .fp-cell:first-child{flex:1 1 auto;width:100%}
+.fp-panes.l-three .fp-r2 .fp-cell{flex:1 1 0;min-width:0}
+.fp-panes.l-quad .fp-r2{flex:1 1 0}
+.fp-panes.l-quad .fp-cell{flex:1 1 50%;min-width:0}
+.fp-cell{min-width:0;min-height:0;overflow:auto;position:relative;border-left:1px solid var(--line);
+  border-top:1px solid var(--line)}
+.fp-panes.l-v2 .fp-cell:first-child,.fp-panes.l-three .fp-cell:first-child{border-top:0}
+.fp-panes.l-single .fp-cell,.fp-panes.l-quad .fp-cell{border-left:0}
+.fp-panes.l-quad .fp-r2 .fp-cell{border-top:1px solid var(--line);border-left:1px solid var(--line)}
+.fp-cell.act{box-shadow:inset 0 0 0 1.5px rgba(10,132,255,.55)}
+.fp-gap{flex:0 0 16px;position:relative;cursor:col-resize;background:transparent}
+.fp-panes.l-v2 .fp-gap{flex:0 0 16px;cursor:row-resize;align-self:stretch}
+.fp-gap::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:46px;
+  transform:translate(-50%,-50%);border-radius:4px;background:#26262A;opacity:.75;
+  transition:opacity .12s,height .12s,background .12s}
+.fp-panes.l-v2 .fp-gap::after{width:46px;height:4px}
+.fp-gap:hover::after,.fp-gap.drag::after{opacity:1;background:var(--accent);
+  box-shadow:0 0 0 3px rgba(10,132,255,.18)}
+/* 列表视图 */
+.fp-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.fp-table th{position:sticky;top:0;z-index:2;text-align:left;font-weight:600;font-size:11px;
+  color:var(--ink3);padding:6px 10px;background:#141417;border-bottom:1px solid var(--line);
+  cursor:pointer;user-select:none;white-space:nowrap}
+.fp-table th:hover{color:var(--ink)}
+.fp-table td{padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.045);color:var(--ink2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
+.fp-table td.fp-c-name{display:flex;align-items:center;gap:7px;max-width:none}
+.fp-table tr:hover td{background:rgba(255,255,255,.04)}
+.fp-table tr.sel td{background:rgba(10,132,255,.14)}
+.fp-ico{width:16px;height:16px;border-radius:4px;flex:0 0 16px;display:inline-flex;
+  align-items:center;justify-content:center;font-size:8px;color:#0C0C0E;font-weight:700}
+.fp-dir{background:#E8B33A}                      /* 黄文件夹（照片同款） */
+.fp-c-mono{font-family:var(--mono);font-size:11px;color:var(--ink3)}
+.fp-gh td{background:#101012;color:var(--ink3);font-size:10.5px;letter-spacing:.05em;
+  cursor:default!important}
+/* 图标视图 */
+.fp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px;padding:12px}
+.fp-gcell{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 4px;
+  border-radius:9px;cursor:pointer}
+.fp-gcell:hover{background:rgba(255,255,255,.05)}
+.fp-gcell.sel{background:rgba(10,132,255,.14)}
+.fp-gcell .gc-ico{width:40px;height:40px;border-radius:9px;display:flex;align-items:center;
+  justify-content:center;font-size:11px;font-weight:800;color:#0C0C0E}
+.fp-gcell .gc-name{font-size:11px;color:var(--ink2);text-align:center;line-height:1.35;
+  word-break:break-all;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+/* 分栏视图（左列目录、右列内容、中缝可拖） */
+.fp-cols{display:flex;height:100%;min-height:0}
+.fp-cols-left{flex:0 0 var(--fp-colw,220px);overflow:auto;border-right:0}
+.fp-cols-gutter{flex:0 0 16px;position:relative;cursor:col-resize}
+.fp-cols-gutter::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:46px;
+  transform:translate(-50%,-50%);border-radius:4px;background:#26262A;opacity:.75;
+  transition:opacity .12s,height .12s,background .12s}
+.fp-cols-gutter:hover::after,.fp-cols-gutter.drag::after{opacity:1;background:var(--accent);
+  box-shadow:0 0 0 3px rgba(10,132,255,.18)}
+.fp-cols-right{flex:1;min-width:0;overflow:auto}
+.fp-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink3);
+  font-size:12px}

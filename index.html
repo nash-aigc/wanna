@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=35 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=35">
+<!-- ?v=36 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=36">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -23,6 +23,10 @@
 
   <!-- ── 导航栏：模式条不变（图文/语音/视频）+「项目」开关 ── -->
   <header class="topbar">
+    <!-- §34 访达：顶栏**最左**（编辑区开关左侧），默认关闭 -->
+    <button class="btn btn-ghost finder-toggle" id="finderToggle"
+            title="访达：独立文件浏览器（关=项目+编辑区｜开=访达+右侧完整对话）">访达</button>
+
     <!-- 最左：编辑区 开/关（滑块）—— 开=项目三栏，关=只剩 左栏+对话（§15.4 你拍板） -->
     <button class="editor-switch" id="editorSwitch" title="编辑区开 / 关">
       <span class="es-track"><span class="es-knob"></span></span>
@@ -464,6 +468,33 @@
     <!-- §23.4 右侧 activity rail + 右侧边栏（资源管理器 / 智能体）—— 核心 -->
         <!-- §31 监控页：三表（费用/软件/Debate）—— 独立页面，不依赖项目/对话 -->
     <section class="monitor-pane" id="monitorPane" hidden></section>
+    <!-- §34 访达面板：工具栏（视图/分组/分屏）+ 路径栏 + 左收藏栏 + 右文件区 -->
+    <section class="finder-pane" id="finderPane" hidden>
+      <div class="fp-toolbar">
+        <div class="fp-seg" id="fpViews">
+          <button data-view="icon" title="图标方式">▦</button>
+          <button data-view="list" title="列表方式">☰</button>
+          <button data-view="columns" title="分栏方式">◫</button>
+        </div>
+        <button class="fp-tool" id="fpGroupBtn" title="用各种形式分组">分组 ▾</button>
+        <i class="fp-div"></i>
+        <div class="fp-seg" id="fpLayouts" title="窗口分屏">
+          <button data-layout="single">单</button>
+          <button data-layout="h2" title="左右两个窗口">左右</button>
+          <button data-layout="v2" title="上下两个窗口">上下</button>
+          <button data-layout="three" title="三窗口：一上、下边再分两个">3</button>
+          <button data-layout="quad" title="四宫格">4</button>
+        </div>
+        <button class="fp-tool" id="fpSwap" title="把左边窗口的内容移到右侧（交换前两个窗格）">⇄ 交换</button>
+      </div>
+      <div class="fp-path" id="fpPath" title="点击段落跳转 · 双击或 ⌘L 输入路径"></div>
+      <div class="fp-body">
+        <div class="fp-side" id="fpSide"></div>
+        <div class="fp-main" id="fpMain"></div>
+        <!-- §34 右收藏栏：与左栏一模一样的分组/标签/拖动（你给的照片右侧那列 Harness/Agents/APP…） -->
+        <div class="fp-side fp-side-r" id="fpSideR"></div>
+      </div>
+    </section>
 <div class="side-panel side-panel-right" id="panelSide" hidden>
       <div class="sp-head">
         <div class="sp-tabs" id="sideTabs">
@@ -725,6 +756,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=35"></script>
+<script src="app.js?v=36"></script>
 </body>
 </html>
