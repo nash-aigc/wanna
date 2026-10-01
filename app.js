@@ -2684,6 +2684,7 @@ function renderChat2() {
     return;
   }
   msgs.forEach((m, i) => host.appendChild(mkMsg(m, i, m.role === 'ai' ? 'AI · 临时对话' : undefined)));
+  host.lastElementChild?.classList.add('is-new');   // §29.7 同上，只弹最后一条
   host.scrollTop = host.scrollHeight;
 }
 function sendChat2() {
@@ -2735,6 +2736,7 @@ function renderChat() {
   // §26 双屏不再是「一列消息分两栏」——改成**两个独立对话界面**（右边那个有自己的 #msgs2）
   host.classList.remove('dual');
   S.chat.forEach((m, i) => host.appendChild(mkMsg(m, i)));
+  host.lastElementChild?.classList.add('is-new');   // §29.7 pop 只给最后一条（全量重绘不再整屏闪）
   host.scrollTop = host.scrollHeight;
   renderHistRail();            // §24 画对话记录轨道
   rebuildHistOffsets();        // §24.12 缓存每个消息的位置，滚动时只读数字
@@ -2750,13 +2752,17 @@ function renderChat() {
      FILE = [pulse-a, pulse-b, pulse-c] 轮换，volume = 0.35
    ══════════════════════════════════════════════════════════════ */
 const HIST_SFX = ['sfx/pulse-a.wav', 'sfx/pulse-b.wav', 'sfx/pulse-c.wav'];
-let histSfxI = 0, histSfxAt = 0;
+let histSfxI = 0, histSfxAt = 0, histSfxEls = null;
 /// 一次短促的 pulse。**去抖 70ms**：快速划过一整列时不能每条都响（会糊成噪音）
 function histTick(vol = 0.35) {
   const now = Date.now();
   if (now - histSfxAt < 70) return;
   histSfxAt = now;
-  const a = new Audio(HIST_SFX[histSfxI++ % HIST_SFX.length]);   // 三文件轮换，照 sound.ts
+  // §29.7 对象池：以前每次发声都 `new Audio()`（划过一列 = 每秒十几次新建+解码+GC）——
+  // 三个元素复用，currentTime 归零重播，仍按 pulse-a/b/c 轮换（照 sound.ts）
+  if (!histSfxEls) histSfxEls = HIST_SFX.map(src => { const a = new Audio(src); a.preload = 'auto'; return a; });
+  const a = histSfxEls[histSfxI++ % histSfxEls.length];
+  try { a.currentTime = 0; } catch (_) { /* 首次未加载完，忽略 */ }
   a.volume = vol;
   a.play().catch(() => {});          // 由鼠标手势触发，浏览器允许
 }
@@ -2767,35 +2773,20 @@ function renderHistRail() {
   const msgs = S.chat || [];
   if (!msgs.length) { rail.hidden = true; rail.innerHTML = ''; return; }   // 空对话不画
   rail.hidden = false;
-  const last = msgs.length - 1;
-  rail.innerHTML = msgs.map((m, i) => {
-    const who = m.role === 'user' ? '你' : m.role === 'ai' ? 'AI' : '系统';
-    // 最后一条 = 最新消息，恒白（照 MiMo Desktop 图：底部那条白色短标记）
-    // 动画延迟封顶 500ms —— 200 条时 i*14 会拖到 2.8 秒，太慢
-    return `<div class="hr-line${i === last ? ' is-last' : ''}" data-i="${i}"
-      style="animation-delay:${Math.min(i * 14, 500)}ms" title="第 ${i + 1} 条 · ${who}"></div>`;
+  const n = msgs.length;
+  // §29.2 无论多少条：轨道固定高 290、周期 10 → 最多 29 根；超过就**均匀抽样**
+  // （取代 §24.10 的「压扁间距」—— 压扁就是你说的「太密」；抽样后密度恒定、永远 29 根）
+  const CAP = 29;
+  const idxs = n <= CAP
+    ? Array.from({ length: n }, (_, i) => i)
+    : Array.from({ length: CAP }, (_, k) => Math.round(k * (n - 1) / (CAP - 1)));
+  rail.innerHTML = idxs.map(mi => {
+    // 最后一根 = 最新消息，恒白（照参考图底部那条白色短标记）。
+    // 不写 title（原生 tooltip 会跟预览卡**双重弹出**，扫过时闪两套 UI）；
+    // 不写 animation-delay（railIn 动画已删，每次重绘整列飞入 = 无谓的卡）。
+    return `<div class="hr-line${mi === n - 1 ? ' is-last' : ''}" data-i="${mi}"></div>`;
   }).join('');
-  layoutRail(rail, msgs.length);          // §24.10 几百条时把间距压扁，否则溢出被裁
   bindRailTip();
-}
-
-/// §24.10 条目多到塞不进轨道时，**动态收缩间距与条高** ——
-/// 200 条 × 3px + 11px gap = 2800px，而轨道只有 ~578px，固定间距会让后面全部被 overflow 裁掉。
-/// 算法：先定条高（>140 条压到 2px），再把剩余高度平分给 gap，最低 1px。
-function layoutRail(rail, n) {
-  if (!rail || n < 1 || rail.hidden) return;
-  const avail = Math.max(60, rail.clientHeight - 40);      // 扣上下 padding
-  // 先按条目数定条高，再用**剩下的高度**均分给 gap —— gap 必须允许小数，
-  // 否则 201 条 × 2px + 200 × 1px（下限）= 602 > 538，最后 15 条会被 overflow 裁掉（实测过）
-  let barH = n > 140 ? 2 : 3;
-  let gap = (avail - n * barH) / Math.max(1, n - 1);
-  if (gap < 0.5) {                        // 条高 2 都塞不下 → 压到 1px 再算一次
-    barH = 1;
-    gap = (avail - n) / Math.max(1, n - 1);
-  }
-  gap = Math.max(0.4, gap);               // 视觉下限：再低就连成一片了
-  rail.style.setProperty('--hr-h', barH + 'px');
-  rail.style.gap = gap.toFixed(2) + 'px';
 }
 
 /// §24.10 造几十/几百条示例对话 —— 用户要「能滑动它、听到声音变化」才好判断轨道对不对。
@@ -2920,13 +2911,20 @@ function histCurIndex() {
 }
 
 /// 滚动时把高亮移到当前那条（白色那条，对应截图里最下面那条）
+/// §29：轨道是**抽样**的（最多 29 根），当前消息不一定恰好有对应刻度 —— 按 data-i 取最近的那根
 function syncHistCur() {
   const rail = $('#histRail');
   if (!rail || rail.hidden) return;
   const cur = histCurIndex();
+  if (cur < 0) return;
   const lines = $$('.hr-line', rail);
-  lines.forEach((el, i) => {
-    const on = i === cur;
+  let target = null, bestDistance = Infinity;
+  for (const el of lines) {
+    const distance = Math.abs(+el.dataset.i - cur);
+    if (distance < bestDistance) { bestDistance = distance; target = el; }
+  }
+  lines.forEach(el => {
+    const on = el === target;
     if (on && !el.classList.contains('is-cur')) {
       el.classList.add('is-cur', 'is-live');
       setTimeout(() => el.classList.remove('is-live'), 520);
@@ -2942,45 +2940,105 @@ function histGoto(i) {
   setTimeout(syncHistCur, 260);
 }
 
-/// hover 浮出的那一小条摘要（tooltip 放在 msgs-row 上 —— rail 有 overflow:hidden 会裁掉它）
-let hrTip = null;
+/// §29.3 预览卡的内容：标题（首行，24 字截断）+ 正文（其余行，含 git/CI 那些行）+ 工具 chips。
+/// 照两张参考图：图 1 是短消息（标题+两行+chips），图 2 是长消息（几十行正文+chips）——
+/// 卡片只有这几个部分，宽度随内容、高度到顶裁掉。
+function railTipHtml(m, index) {
+  const raw = String(m.html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(div|p|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  const ta = document.createElement('textarea');      // 解码 escapeHtml 留下的 &amp; &lt; 等实体
+  ta.innerHTML = raw;
+  const lines = (ta.value || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const first = lines[0] || '';
+  const title = first.length > 24 ? first.slice(0, 24) + '…' : first;
+  const body = lines.slice(1).join('\n');
+  const tools = [...String(m.html || '').matchAll(/<div class="tools">([\s\S]*?)<\/div>/g)]
+    .flatMap(mm => [...mm[1].matchAll(/<i>([^<]+)<\/i>/g)].map(x => x[1]));
+  return `<b class="hr-title">${escapeHtml(title)}</b>`
+    + (body ? `<span class="hr-body">${escapeHtml(body)}</span>` : '')
+    + (tools.length ? `<div class="hr-tools">${tools.map(t => `<i>${escapeHtml(t)}</i>`).join('')}</div>` : '');
+}
+
+/// hover 浮出的预览卡（tooltip 放在 msgs-row 上 —— rail 有 overflow:hidden 会裁掉它）
+let hrTip = null, hrTipCachedHeight = 0, railTickMids = [];
 function bindRailTip() {
   const row = $('#msgsRow'); if (!row) return;
   if (!hrTip) { hrTip = document.createElement('div'); hrTip.className = 'hr-tip'; row.appendChild(hrTip); }
   const rail = $('#histRail');
-  /// ★ 卡顿主因之一：同一个条目上鼠标会连发几十次 mousemove，
-  ///   每次都做 DOM 遍历 + 改样式。**同一条不重复处理**。
+  /// ★ 同一条上鼠标会连发几十次 mousemove：内容只在**换条**时重建，
+  ///   每次 move 只更新 top（跟随光标）。
   let lastScrubI = -2;
-  rail.onmousemove = e => {
-    const line = e.target.closest('.hr-line');
-    if (!line) {
-      if (lastScrubI !== -2) { lastScrubI = -2; clearScrub(); hrTip.classList.remove('on'); }
-      return;
+  /// 刻度位置缓存（rail 局部坐标）—— 刻度只有 2px 高、缝有 8px，
+  /// 鼠标多数时间落在缝里：**整条轨道都算 hover**，取最近的刻度，卡不闪没。
+  const cacheTickMids = () => {
+    railTickMids = [...rail.children].map(el => ({
+      i: +el.dataset.i, mid: el.offsetTop + el.offsetHeight / 2, el
+    }));
+  };
+  cacheTickMids();
+  const nearestTick = clientY => {
+    const railRect = rail.getBoundingClientRect();
+    const localY = clientY - railRect.top;
+    let best = null, distance = Infinity;
+    for (const t of railTickMids) {
+      const d = Math.abs(t.mid - localY);
+      if (d < distance) { distance = d; best = t; }
     }
-    const i = +line.dataset.i;
-    if (i === lastScrubI) return;                 // ★ 停在同一条上 = 什么都不做
-    lastScrubI = i;
-    const m = (S.chat || [])[i]; if (!m) return;
-    // ① **预览**（你的原话：滑过去只是预览，不自动切换）—— 只让它变长变亮 + 出摘要
-    $$('.hr-line.is-scrub', rail).forEach(x => x.classList.remove('is-scrub'));
-    line.classList.add('is-scrub');
-    // ② 伴随声音（轮换 pulse-a/b/c，音量 0.35；70ms 去抖）
-    histTick(0.35);
-    // ③ 摘要：只更新已有元素的文本，不重建
-    const who = m.role === 'user' ? '你' : m.role === 'ai' ? 'AI' : '系统';
-    const txt = String(m.html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-    hrTip.innerHTML = `<span class="hr-idx">${i + 1}</span><b>${who}</b>　${escapeHtml(txt.slice(0, 46))}${txt.length > 46 ? '…' : ''}`;
-    const lr = line.getBoundingClientRect(), rr = row.getBoundingClientRect();
-    hrTip.style.top = (lr.top - rr.top + lr.height / 2) + 'px';
-    hrTip.classList.add('on');
+    return best;
+  };
+  const placeAtCursor = clientY => {
+    const rowRect = row.getBoundingClientRect();
+    const half = hrTipCachedHeight || hrTip.offsetHeight || 40;
+    const min = half + 4, max = rowRect.height - half - 4;
+    // 夹在可视区内：贴着光标，但卡片不出 msgs-row 的上下沿；
+    // 卡比行还高时上下限会倒挂（min>max）—— 那就钉在顶上，绝不取到负向错值
+    const y = min <= max
+      ? Math.min(Math.max(clientY - rowRect.top, min), max)
+      : 4;
+    hrTip.style.top = y + 'px';
+  };
+  rail.onmousemove = e => {
+    const hit = nearestTick(e.clientY);          // 缝里也能命中最近那根
+    if (!hit) return;
+    const i = hit.i;
+    if (i !== lastScrubI) {
+      lastScrubI = i;
+      const m = (S.chat || [])[i]; if (!m) return;
+      // ① **预览**（滑过去只是预览，不自动切换）—— 那根变长变亮
+      $$('.hr-line.is-scrub', rail).forEach(x => x.classList.remove('is-scrub'));
+      hit.el.classList.add('is-scrub');
+      // ② 伴随声音（对象池轮换，音量 0.35；70ms 去抖）
+      histTick(0.35);
+      // ③ 富内容（宽度 = fit-content，换一条消息宽度就可能变）
+      hrTip.innerHTML = railTipHtml(m, i);
+      hrTip.classList.add('on');
+      // 长消息的卡不许比消息区还高（比行高就钳制倒挂、底部还会被裁）—— 超了就裁正文
+      const rowHeight = row.getBoundingClientRect().height;
+      let tipHeight = hrTip.offsetHeight;
+      if (tipHeight > rowHeight - 8) {
+        const bodyEl = hrTip.querySelector('.hr-body');
+        if (bodyEl) {
+          const chrome = tipHeight - bodyEl.offsetHeight;   // 标题+chips+内边距
+          bodyEl.style.maxHeight = Math.max(60, rowHeight - chrome - 8) + 'px';
+        } else {
+          hrTip.style.maxHeight = (rowHeight - 8) + 'px';
+        }
+        tipHeight = hrTip.offsetHeight;
+      }
+      hrTipCachedHeight = tipHeight;                        // 内容变了才重量一次
+    }
+    // ④ 跟随光标（你的原话：「跟随光标变化」）
+    placeAtCursor(e.clientY);
     // ★ **不调 histGoto** —— 滑过绝不滚动，卡顿与「不该切换」两件事一起解决
   };
   rail.onmouseleave = () => { lastScrubI = -2; hrTip.classList.remove('on'); clearScrub(); };
-  // ④ **点击才切换**（跳过去 + 更响一声）
+  // ⑤ **点击才切换**（跳过去 + 更响一声）—— 把点击位置映射到最近刻度，缝里点也有效
   rail.onclick = e => {
-    const line = e.target.closest('.hr-line'); if (!line) return;
+    const hit = nearestTick(e.clientY); if (!hit) return;
     histTick(0.75);
-    histGoto(+line.dataset.i);
+    histGoto(hit.i);
   };
 }
 function clearScrub() { $$('.hr-line.is-scrub').forEach(x => x.classList.remove('is-scrub')); }

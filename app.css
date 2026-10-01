@@ -337,25 +337,22 @@ code{font-family:var(--mono);font-size:11.5px}
 .msgs-row{flex:1;min-height:0;display:flex;position:relative}
 /* ══ §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 截图（无源码可搬）══
    声音照 reference/MiMo-Code 的 tui/util/sound.ts：pulse-a/b/c 三文件轮换、音量 0.35 */
-.hist-rail{flex:0 0 30px;width:30px;z-index:6;position:relative;overflow:hidden;
+.hist-rail{flex:0 0 28px;width:28px;height:290px;align-self:center;z-index:6;
+  position:relative;overflow:hidden;
   display:flex;flex-direction:column;align-items:flex-start;
-  gap:9px;padding:8px 0 8px 4px;cursor:ns-resize;user-select:none;
-  /* 用户 2026-10-01 第三轮：「宽度太大、太密、上下间距又太大」→ 36→30、padding 20→8、gap 11→9 */
-  justify-content:flex-start;
+  gap:8px;padding:0 0 0 4px;cursor:ns-resize;user-select:none;
+  /* §29.1/29.2 照参考图（2× 截图 ÷2 实测）：横线 9×2、周期 10、轨道**固定高 290** ——
+     29 根 × 2 + 28 × 8 = 282 正好放得下；JS 侧超过 29 条**均匀抽样**，密度恒定不再压扁。
+     你上一轮看到的线上版是 20×3、全高撑满 + 250 条压扁 = 「宽度太大、太密」 */
   justify-content:safe center;
   background:transparent;border-right:0}.hist-rail[hidden]{display:none!important}
-.hr-line{flex:0 0 auto;width:20px;height:var(--hr-h,3px);border-radius:2px;background:#3F3F46;
+.hr-line{flex:0 0 auto;width:9px;height:2px;border-radius:1.5px;background:#4B4B52;
   transform-origin:left center;
-  /* ★ width 必须在 transition 里 —— 「像音符一样变长」全靠它，只动 transform 是横着拉伸不是变长 */
-  transition:width .19s cubic-bezier(.28,1.12,.4,1),background .16s ease,box-shadow .16s ease;
-  animation:railIn .18s ease-out both}
-/* hover = **预览**（不切换）：那一条**变长变亮**，像音符 */
-.hr-line.is-scrub{background:#FFFFFF;width:26px;box-shadow:0 0 9px rgba(255,255,255,.55)}
-.hr-line.is-cur{background:#FFFFFF;width:26px;box-shadow:0 0 7px rgba(255,255,255,.45)}
-/* 图里「最新那条」恒为白色短条（在最下面），与「当前位置」那条更长的白条并存 */
+  transition:width .17s cubic-bezier(.28,1.12,.4,1),background .15s ease,box-shadow .15s ease}
+/* hover/当前位置：参考图里白色那根 = 38px 图像 ÷2 = **19px**（线上版 26px，你说「还是太大」） */
+.hr-line.is-scrub{background:#FFFFFF;width:19px;box-shadow:0 0 9px rgba(255,255,255,.6)}
+.hr-line.is-cur{background:#FFFFFF;width:19px;box-shadow:0 0 7px rgba(255,255,255,.45)}
 .hr-line.is-last{background:#FFFFFF}
-.hr-line.is-cur.is-live{animation:curPulse .5s ease-out}
-@keyframes railIn{from{opacity:0;transform:translateX(-9px)}to{opacity:1;transform:none}}
 @keyframes curPulse{0%{box-shadow:0 0 0 rgba(255,255,255,0)}
   40%{box-shadow:0 0 13px rgba(255,255,255,.85)}100%{box-shadow:0 0 7px rgba(255,255,255,.45)}}
 /* §24.10 示例数据里的 GitHub 推送 / 提交 / 工具标签（照 MiMo Desktop 里看到的样子） */
@@ -448,19 +445,27 @@ body[data-style="contrast"]{
   pointer-events:none;z-index:9;opacity:0;transition:top .07s linear}
 .drop-line-h.on{opacity:1}
 
-/* hover 时浮出的摘要 */
-.hr-tip{position:absolute;left:36px;z-index:9;pointer-events:none;
-  max-width:230px;padding:5px 9px;border-radius:7px;background:#18181C;
-  border:1px solid var(--line2);box-shadow:0 8px 22px rgba(0,0,0,.55);
-  font-size:11.5px;line-height:1.5;color:var(--ink2);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  opacity:0;transform:translateY(-50%) translateX(-5px);
-  transition:opacity .14s ease,transform .14s ease}
+/* §29.4/29.5 hover 浮出的预览卡：跟随光标 Y、**宽度随内容**（参考图两条消息分别 300 / 337 逻辑宽） */
+.hr-tip{position:absolute;left:34px;z-index:9;pointer-events:none;
+  width:fit-content;min-width:240px;max-width:min(400px,45vw);
+  padding:13px 16px;border-radius:12px;background:#161619;
+  border:1px solid rgba(255,255,255,.10);box-shadow:0 16px 44px rgba(0,0,0,.62);
+  opacity:0;transform:translateY(-50%) translateX(-6px);
+  transition:opacity .13s ease,transform .13s ease}
 .hr-tip.on{opacity:1;transform:translateY(-50%) translateX(0)}
-.hr-tip b{color:var(--ink);font-weight:600}
-.hr-tip .hr-idx{font-family:var(--mono);color:#8FC6FF;margin-right:5px}
+/* 标题（首行加粗截断）、正文灰色多行（含 git 历史那些行）、工具标签单独一行 —— 照两张参考图 */
+.hr-tip .hr-title{display:block;font-size:13.5px;font-weight:650;color:var(--ink);
+  line-height:1.55;margin-bottom:7px;word-break:break-word}
+.hr-tip .hr-body{display:block;font-size:13px;color:var(--ink2);line-height:1.72;
+  white-space:pre-wrap;word-break:break-word;max-height:min(52vh,520px);overflow:hidden}
+.hr-tip .hr-tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px}
+.hr-tip .hr-tools i{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--ink2);
+  background:#232327;border:1px solid rgba(255,255,255,.10);border-radius:7px;padding:3px 9px}
 
-.msg{max-width:100%;animation:pop .2s ease-out}
+/* §29.7 pop 只给**新到的那一条**（.is-new 由 renderChat 打）——
+   以前每条都带 animation，每次重绘 250 条一起重播 = 整屏闪一下，就是「仍然非常卡」的来源之一 */
+.msg{max-width:100%}
+.msg.is-new{animation:pop .2s ease-out}
 .msg-who{font-size:10.5px;color:var(--ink3);margin-bottom:4px;letter-spacing:.05em}
 .msg-user .bubble{background:rgba(10,132,255,.16);border:1px solid rgba(10,132,255,.32);
   border-radius:14px 14px 4px 14px;padding:8px 12px;white-space:pre-wrap;word-break:break-word}
