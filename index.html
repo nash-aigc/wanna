@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=26 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=26">
+<!-- ?v=28 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=28">
 </head>
 <body>
 <div class="app">
@@ -322,6 +322,8 @@
 
     <!-- ════ 右：对话窗口 = 当前软件那一套**原样搬过来**（§13.1 完全相同） ════ -->
     <aside class="chat" id="chatPane">
+      <!-- §26.1 主会话整个包进一层：.chat 变横向，双屏时并排两个独立 pane -->
+      <div class="chat-pane" id="chatMain">
       <div class="skel skel-chat" id="skelChat" aria-hidden="true">
         <i class="sk" style="width:56%"></i><i class="sk" style="width:84%"></i><i class="sk" style="width:40%"></i>
       </div>
@@ -392,8 +394,50 @@
               <button class="btn btn-primary" id="btnSend">发送</button>
             </span>
           </div>
+        </div><!-- /composer -->
+      </div><!-- /chat-foot -->
+      </div><!-- /chat-pane#chatMain -->
+
+      <!-- §26.2 双屏右边：**完全独立**的第二个对话界面，默认「临时」，中间一条分割线 -->
+      <div class="chat-div" id="chatDiv" hidden></div>
+      <div class="chat-pane chat-pane-2" id="chatSecond" hidden>
+        <div class="chat-nav">
+          <div class="modes-slot" id="modesSlotChat2">
+            <div class="modes" role="tablist" aria-label="右侧会话类型">
+              <button class="chip" data-conv2="continuous">连续</button>
+              <button class="chip is-on temp" data-conv2="temporary">临时</button>
+            </div>
+          </div>
+          <div class="chat-nav-right">
+            <span class="hchip" id="voiceLock2" title="主会话在发声时，这里保持静音" hidden>🔇</span>
+            <button class="hchip" id="hcOptions2">选项 ⌄</button>
+          </div>
         </div>
-      </div>
+        <div class="msgs msgs-2" id="msgs2"></div>
+        <div class="chat-foot">
+          <div class="chat-ctx">
+            <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject2">临时对话（无项目）</code></span>
+          </div>
+          <!-- §26.3 右侧输入框：与主会话同样式，但**状态完全独立**（默认临时） -->
+          <div class="composer composer-2" id="composer2">
+            <textarea id="chatInput2" placeholder="输入问题，回车发送（这里是独立的临时会话）"></textarea>
+            <div class="composer-bar">
+              <span class="composer-mode" id="composerModeLabel2">临时会话</span>
+              <span class="composer-controls">
+                <span class="cc-left" id="ccLeft2">
+                  <button class="cc is-on temp" data-conv2="temporary">临时</button><i class="vr"></i>
+                  <button class="cc" data-conv2="continuous">连续</button><i class="vr"></i>
+                  <button class="cc cc-new" id="ccNew2">＋ 新建</button>
+                </span>
+                <span class="cc-right">
+                  <button class="cc" data-rate2="1">语速</button><i class="vr"></i>
+                  <button class="btn btn-primary" id="btnSend2">发送</button>
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div><!-- /chat-pane-2 -->
     </aside>
     <!-- §23.4 右侧 activity rail + 右侧边栏（资源管理器 / 智能体）—— 核心 -->
     <div class="side-panel side-panel-right" id="panelSide" hidden>
@@ -645,6 +689,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=26"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>

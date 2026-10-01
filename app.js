@@ -109,7 +109,11 @@ let S = load() || {
   speechRate: 1,                   // §20.5 语速档（0.75 / 1 / 1.25 / 1.5 / 2）
   composerExpanded: false,         // §21.5 输入框展开态（点顶边手柄切换）
   sendPolicy: 'queue',             // §22.13 发送方式：queue=排队（默认）/ interrupt=打断
-  dualScreen: false,               // §23.2 会话窗口：单屏（默认）/ 双屏（连续 ｜ 临时 并排）
+  dualScreen: false,               // §26 双屏 = 右侧一个**完全独立**的对话界面（默认临时）
+  chat2: [],                       // §26 右侧独立会话的消息（与 S.chat 互不相通）
+  chat2Mode: 'temporary',          // §26 右侧默认就是「临时」
+  speechRate2: 1,                  // §26 右侧独立语速
+  soundOn: true,                   // §26 「声音」开关的真实状态（语音模式下回答会朗读）
   // §22.11 快捷指令：一个按钮替换一行动作（字段照用户那张「添加快捷命令」图）
   quickCommands: [{ id: 'qc_gt', label: 'GT推送', op: 'terminal',
                     cmd: 'git push origin main', append: true, scope: 'global', project: '' }],
@@ -174,6 +178,10 @@ function load() {
     if (typeof r.composerExpanded !== 'boolean') r.composerExpanded = false;
     if (r.sendPolicy !== 'interrupt') r.sendPolicy = 'queue';
     if (typeof r.dualScreen !== 'boolean') r.dualScreen = false;
+    if (!Array.isArray(r.chat2)) r.chat2 = [];
+    if (r.chat2Mode !== 'continuous') r.chat2Mode = 'temporary';
+    if (typeof r.speechRate2 !== 'number') r.speechRate2 = 1;
+    if (typeof r.soundOn !== 'boolean') r.soundOn = true;
     if (r.sidePanel !== 'explorer' && r.sidePanel !== 'agents') r.sidePanel = null;
     if (typeof r.paletteShortcut !== 'string' || !r.paletteShortcut) r.paletteShortcut = 'meta+j';
     if (r.sideView !== 'contents') r.sideView = 'names';
@@ -2564,6 +2572,8 @@ function addMsg(role, html, meta) {
   void title;
   if (S.recent.length > 30) S.recent.pop();
   save(); renderChat(); renderNav();
+  // §26 主会话发声：**只在语音模式**且「声音」开着时朗读 —— 这样才有「主会话在发声 → 右侧静音」
+  if (role === 'ai' && S.mode === 'voice' && S.soundOn !== false) speakText(html, 'main');
 }
 /// §23.2 单屏 / 双屏：双屏把「连续会话」和「临时会话」左右并排，**一条消息都没改、功能不变**
 function renderScreenToggle() {
@@ -2574,63 +2584,132 @@ function renderScreenToggle() {
     ? '双屏中 —— 左=连续会话、右=临时会话，同时显示。点一下收回单屏'
     : '单屏（默认，只有一个会话窗口）。点一下切成双屏';
 }
+/// §26 双屏 = 中间一条分割线 + 右侧一个**完全独立**的对话界面（默认临时）
+function applyDualScreen() {
+  const on = !!S.dualScreen;
+  const div = $('#chatDiv'), sec = $('#chatSecond');
+  if (div) div.hidden = !on;
+  if (sec) sec.hidden = !on;
+  if (on) renderChat2();
+}
 function toggleDualScreen() {
-  S.dualScreen = !S.dualScreen; save(true);
-  renderScreenToggle(); renderChat();
-  toast(S.dualScreen ? '已切到<b>双屏</b> —— 连续 与 临时 左右并排（功能不变）'
+  S.dualScreen = !S.dualScreen;
+  if (S.dualScreen) {
+    if (!Array.isArray(S.chat2)) S.chat2 = [];
+    S.chat2Mode = 'temporary';                 // ★ 你的原话：右边**默认选择临时**
+  }
+  save(true);
+  renderScreenToggle(); applyDualScreen(); renderChat();
+  toast(S.dualScreen ? '已切到<b>双屏</b> —— 右侧是**完全独立**的会话（默认临时），中间一条分割线'
                      : '已收回<b>单屏</b> —— 只有一个会话窗口');
 }
 /// 会话右键「临时聊天分屏显示」用：直接开双屏并把当前流切到临时
-function renderDualScreen() { renderScreenToggle(); renderChat(); }
+function renderDualScreen() { renderScreenToggle(); applyDualScreen(); renderChat(); }
 
+/* ══════════════════════════════════════════════════════════════
+   §26 右侧独立会话 —— 渲染 / 发送 / **语音互斥**
+   互斥规则（你的原话）：主会话在语音状态、通话、或正在发声 → 右侧不发声；
+   只有主会话三者皆空闲，才允许右侧播放。
+   ══════════════════════════════════════════════════════════════ */
+let voiceOwner = null;                 // 'main' | 'second' —— 谁在发声
+function mainIsVoicing() {
+  return replyBusy || voiceOwner === 'main';     // 主会话「在忙」或「正在朗读」
+}
+function updateVoiceLock() {
+  const lock = $('#voiceLock2');
+  if (lock) lock.hidden = !(S.dualScreen && mainIsVoicing());
+}
+/// 发声。**主会话永远优先**：右侧想发声时若主会话在语音/忙，直接拒绝并亮 🔇
+function speakText(text, who) {
+  const clean = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (!clean) return false;
+  if (who === 'second' && mainIsVoicing()) {
+    updateVoiceLock();
+    return false;                                  // ★ 被主会话占着 —— 静音
+  }
+  try {
+    if (!('speechSynthesis' in window)) return false;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = 'zh-CN';
+    u.rate = who === 'second' ? (S.speechRate2 || 1) : (S.speechRate || 1);
+    voiceOwner = who;
+    u.onend = u.onerror = () => { if (voiceOwner === who) { voiceOwner = null; updateVoiceLock(); } };
+    window.speechSynthesis.speak(u);
+    updateVoiceLock();
+    return true;
+  } catch (e) { voiceOwner = null; return false; }
+}
+
+function renderChat2() {
+  const host = $('#msgs2');
+  if (!host) return;
+  if (!S.dualScreen) return;                      // 单屏不渲染，省一次 DOM
+  host.innerHTML = '';
+  const msgs = S.chat2 || [];
+  if (!msgs.length) {
+    host.innerHTML = `<div class="msg msg-sys"><div class="bubble">
+      右侧是**完全独立**的会话，默认<b>临时</b> —— 内容、输入框、语速都与左边互不相通。<br>
+      中间那条细线是两个会话唯一的分界。</div></div>`;
+    return;
+  }
+  msgs.forEach((m, i) => host.appendChild(mkMsg(m, i, m.role === 'ai' ? 'AI · 临时对话' : undefined)));
+  host.scrollTop = host.scrollHeight;
+}
+function sendChat2() {
+  const ta = $('#chatInput2');
+  const text = (ta.value || '').trim();
+  if (!text) return;
+  ta.value = ''; ta.focus();
+  S.chat2 = S.chat2 || [];
+  S.chat2.push({ role: 'user', html: escapeHtml(text), meta: '', ts: now(),
+                 temp: S.chat2Mode !== 'continuous' });
+  save(true); renderChat2();
+  const wasVoicing = mainIsVoicing();             // 记下发送那一刻主会话在不在发声
+  setTimeout(() => {
+    S.chat2.push({ role: 'ai',
+      html: `（右侧独立会话 · ${S.chat2Mode === 'continuous' ? '连续' : '临时'}）收到：<b>${escapeHtml(text.slice(0, 40))}</b><br>`
+        + `<span style="opacity:.7">${wasVoicing ? '主会话当时在发声 → 这次右侧不播（互斥）' : '主会话空闲 → 右侧可以发声'}</span>`,
+      meta: '', ts: now(), temp: S.chat2Mode !== 'continuous' });
+    save(true); renderChat2();
+    speakText(`收到，${text.slice(0, 30)}`, 'second');   // ★ 会话发声前先过互斥
+    updateVoiceLock();
+  }, 620);
+}
+
+/// §26.4 消息元素 —— **提到模块级**，主会话与右侧独立会话两个 pane 都要用它
+function mkMsg(m, i, who) {
+  const el = document.createElement('div');
+  el.className = `msg msg-${m.role}` + (m.temp ? ' msg-temp' : '');
+  el.dataset.i = i;                          // §24 轨道与消息靠这个索引对齐，不能靠 $$(...)[i]
+  const w = who || (m.role === 'user' ? '你' : m.role === 'ai' ? (m.temp ? 'AI · 临时对话' : 'AI') : '系统');
+  el.innerHTML = `<div class="msg-who">${w}</div><div class="bubble">${m.html}</div>`
+    + (m.meta ? `<div class="msg-meta">${m.meta}</div>` : '');
+  return el;
+}
 function renderChat() {
   const host = $('#msgs'); host.innerHTML = '';
   renderScreenToggle();
-  const mk = (m, i) => {
-    const el = document.createElement('div');
-    el.className = `msg msg-${m.role}` + (m.temp ? ' msg-temp' : '');
-    el.dataset.i = i;                       // §24 双屏两列 append 后 DOM 顺序 ≠ S.chat 顺序，
-                                            // 轨道与消息靠这个索引对齐，不能靠 $$(...)[i]
-    const who = m.role === 'user' ? '你' : m.role === 'ai' ? (m.temp ? 'AI · 临时对话' : 'AI') : '系统';
-    el.innerHTML = `<div class="msg-who">${who}</div><div class="bubble">${m.html}</div>`
-      + (m.meta ? `<div class="msg-meta">${m.meta}</div>` : '');
-    return el;
-  };
   const emptyHtml = `<div class="msg msg-sys"><div class="bubble">
       ${proj()
         ? '围绕项目提问，或直接让它改脑图 —— 每次改动都会自动备份历史。'
         : '这是<b>临时对话</b>：没有项目文件，直接和 AI 聊。想要围绕项目，点左边 ＋ 添加文件夹。'}
       </div></div>`;
   if (!S.chat.length) {
-    if (S.dualScreen) {
-      host.classList.add('dual');
-      const l = document.createElement('div'); l.className = 'msg-col';
-      l.innerHTML = `<div class="msg-col-head">连续会话</div>` + emptyHtml;
-      const r = document.createElement('div'); r.className = 'msg-col';
-      r.innerHTML = `<div class="msg-col-head is-temp">临时会话</div>`;
-      host.append(l, r);
-    } else {
-      host.classList.remove('dual');
-      host.innerHTML = emptyHtml;
-    }
+    host.innerHTML = emptyHtml;
     renderHistRail();          // §24 空对话 → 轨道自己隐藏
+    rebuildHistOffsets();
+    renderChat2();             // §26 右侧也跟着刷
     return;
   }
-  if (S.dualScreen) {
-    host.classList.add('dual');
-    const l = document.createElement('div'); l.className = 'msg-col';
-    l.innerHTML = `<div class="msg-col-head">连续会话</div>`;
-    const r = document.createElement('div'); r.className = 'msg-col';
-    r.innerHTML = `<div class="msg-col-head is-temp">临时会话</div>`;
-    S.chat.forEach((m, i) => (m.temp ? r : l).appendChild(mk(m, i)));
-    host.append(l, r);
-  } else {
-    host.classList.remove('dual');
-    S.chat.forEach((m, i) => host.appendChild(mk(m, i)));
-  }
+  // §26 双屏不再是「一列消息分两栏」——改成**两个独立对话界面**（右边那个有自己的 #msgs2）
+  host.classList.remove('dual');
+  S.chat.forEach((m, i) => host.appendChild(mkMsg(m, i)));
   host.scrollTop = host.scrollHeight;
   renderHistRail();            // §24 画对话记录轨道
+  rebuildHistOffsets();        // §24.12 缓存每个消息的位置，滚动时只读数字
   requestAnimationFrame(syncHistCur);
+  renderChat2();               // §26
 }
 /* ══════════════════════════════════════════════════════════════
    §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 的截图
@@ -2690,7 +2769,7 @@ function layoutRail(rail, n) {
 
 /// §24.10 造几十/几百条示例对话 —— 用户要「能滑动它、听到声音变化」才好判断轨道对不对。
 /// 内容照在 MiMo Desktop 里真实看到的那几类：GitHub 推送 / CI / 文件提交 / 工具调用 / 普通问答。
-function seedDemoChat(n = 200) {
+function seedDemoChat(n = 200, silent = false) {
   const REPO = 'github.com/nash-aigc/wanna';
   const FILES = ['app.js', 'app.css', 'index.html', '需求/07-项目工作区（左80%工作区+右对话）.md',
                  '需求/90-实现映射.md', 'Wanna/CompanionManager.swift', '开发经验/10-踩过的坑.md',
@@ -2732,6 +2811,7 @@ function seedDemoChat(n = 200) {
   S.chat = (S.chat || []).concat(out);
   save();
   renderChat();
+  if (silent) return;
   toast(`已生成 <b>${n}</b> 条示例对话 —— 现在共 ${S.chat.length} 条，
     滑左侧轨道试试（每划过一条响一声，pulse-a/b/c 轮换）`);
 }
@@ -2789,19 +2869,23 @@ function clearDemoChat() {
 
 /// 当前可视的那一条 —— 用**视口距离**判断，单屏 / 双屏都对
 /// （双屏两列的 offsetTop 会重复，所以不能靠 offsetTop 排序）
+/// §24.12 消息相对 #msgs 顶部的位置缓存 —— **滚动高亮只读这里的数字**。
+/// 上一版每次滚动都对 80 个 msg 调 getBoundingClientRect（每帧几十次布局查询），
+/// 这是「非常卡顿」的主因之一。重建只在 renderChat 之后。
+let histOffsets = [];
+function rebuildHistOffsets() {
+  histOffsets = $$('#msgs .msg')
+    .map(m => ({ i: +m.dataset.i, top: m.offsetTop }))     // offsetParent = #msgs（position:relative）
+    .sort((a, b) => a.top - b.top);                        // 双屏两列时 DOM 顺序 ≠ 视觉顺序，按 top 排
+}
 function histCurIndex() {
-  const msgs = $$('#msgs .msg');
-  if (!msgs.length) return -1;
-  const host = $('#msgs'); if (!host) return -1;
-  const vr = host.getBoundingClientRect();
-  let best = -1, bestD = Infinity;
-  msgs.forEach(m => {
-    const r = m.getBoundingClientRect();
-    if (r.bottom < vr.top + 4) return;                 // 整条滚出上方
-    const d = Math.abs(r.top - (vr.top + 8));
-    if (d < bestD) { bestD = d; best = +m.dataset.i; }  // 返回 **S.chat 索引**，不是 DOM 序号
-  });
-  return best;
+  if (!histOffsets.length) return -1;
+  const st = $('#msgs') ? $('#msgs').scrollTop : 0;
+  let best = histOffsets[0].i;
+  for (const o of histOffsets) {                            // 已按 top 升序 → 第一个越过视口顶的就是它
+    if (o.top <= st + 8) best = o.i; else break;
+  }
+  return best;                                              // 返回 S.chat 索引
 }
 
 /// 滚动时把高亮移到当前那条（白色那条，对应截图里最下面那条）
@@ -2833,27 +2917,35 @@ function bindRailTip() {
   const row = $('#msgsRow'); if (!row) return;
   if (!hrTip) { hrTip = document.createElement('div'); hrTip.className = 'hr-tip'; row.appendChild(hrTip); }
   const rail = $('#histRail');
+  /// ★ 卡顿主因之一：同一个条目上鼠标会连发几十次 mousemove，
+  ///   每次都做 DOM 遍历 + 改样式。**同一条不重复处理**。
+  let lastScrubI = -2;
   rail.onmousemove = e => {
     const line = e.target.closest('.hr-line');
-    if (!line) { hrTip.classList.remove('on'); clearScrub(); return; }
+    if (!line) {
+      if (lastScrubI !== -2) { lastScrubI = -2; clearScrub(); hrTip.classList.remove('on'); }
+      return;
+    }
     const i = +line.dataset.i;
+    if (i === lastScrubI) return;                 // ★ 停在同一条上 = 什么都不做
+    lastScrubI = i;
     const m = (S.chat || [])[i]; if (!m) return;
-    // ① 滑过 = 回放到那条
-    $$('.hr-line', rail).forEach(x => x.classList.remove('is-scrub'));
+    // ① **预览**（你的原话：滑过去只是预览，不自动切换）—— 只让它变长变亮 + 出摘要
+    $$('.hr-line.is-scrub', rail).forEach(x => x.classList.remove('is-scrub'));
     line.classList.add('is-scrub');
-    histGoto(i);
-    // ② 伴随声音（轮换 pulse-a/b/c，音量 0.35）
+    // ② 伴随声音（轮换 pulse-a/b/c，音量 0.35；70ms 去抖）
     histTick(0.35);
-    // ③ tooltip
+    // ③ 摘要：只更新已有元素的文本，不重建
     const who = m.role === 'user' ? '你' : m.role === 'ai' ? 'AI' : '系统';
     const txt = String(m.html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
     hrTip.innerHTML = `<span class="hr-idx">${i + 1}</span><b>${who}</b>　${escapeHtml(txt.slice(0, 46))}${txt.length > 46 ? '…' : ''}`;
     const lr = line.getBoundingClientRect(), rr = row.getBoundingClientRect();
     hrTip.style.top = (lr.top - rr.top + lr.height / 2) + 'px';
     hrTip.classList.add('on');
+    // ★ **不调 histGoto** —— 滑过绝不滚动，卡顿与「不该切换」两件事一起解决
   };
-  rail.onmouseleave = () => { hrTip.classList.remove('on'); clearScrub(); };
-  // ④ 点击 = 跳过去 + 更响一声（照 logo.tsx 释放时提高音量的思路）
+  rail.onmouseleave = () => { lastScrubI = -2; hrTip.classList.remove('on'); clearScrub(); };
+  // ④ **点击才切换**（跳过去 + 更响一声）
   rail.onclick = e => {
     const line = e.target.closest('.hr-line'); if (!line) return;
     histTick(0.75);
@@ -4075,21 +4167,25 @@ function renderModes() {
 /// §20.5：语速的档位与它的展开菜单（原项目有，之前只复现了按钮位置）
 const SPEECH_RATES = [0.75, 1, 1.25, 1.5, 2];
 const rateLabelOf = v => `${v}×`;
-function openRateMenu(anchor) {
+/// §26 key='speechRate2' 时改的是**右侧独立会话**的语速（两个会话各管各的）
+function openRateMenu(anchor, key = 'speechRate') {
   const m = $('#menuRate');
   const wasOpen = !m.hidden;              // 关掉别人的菜单会顺手关掉自己 —— 先记再关，否则永远关不上
   closeMenus();
   closeGitPanel();
   if (wasOpen) return;
-  m.innerHTML = `<div class="menu-title">语速</div>`
-    + SPEECH_RATES.map(v => `<button data-rate="${v}"${S.speechRate === v ? ' class="is-on"' : ''}>`
-        + `${S.speechRate === v ? '✓ ' : ''}${rateLabelOf(v)}</button>`).join('');
+  const cur = S[key] || 1;
+  const isSecond = key === 'speechRate2';
+  m.innerHTML = `<div class="menu-title">语速${isSecond ? ' · 右侧独立会话' : ''}</div>`
+    + SPEECH_RATES.map(v => `<button data-rate="${v}"${cur === v ? ' class="is-on"' : ''}>`
+        + `${cur === v ? '✓ ' : ''}${rateLabelOf(v)}</button>`).join('');
   $$('button', m).forEach(b => b.onclick = () => {
-    S.speechRate = parseFloat(b.dataset.rate);
+    S[key] = parseFloat(b.dataset.rate);
     save(true);
     closeMenus();
-    renderComposerControls();
-    toast(`语速已设为 <b>${rateLabelOf(S.speechRate)}</b>`);
+    if (!isSecond) renderComposerControls();
+    else { const rb = $('#chatSecond [data-rate2]'); if (rb) rb.textContent = S[key] === 1 ? '语速' : `语速 ${rateLabelOf(S[key])}`; }
+    toast(`语速已设为 <b>${rateLabelOf(S[key])}</b>${isSecond ? '（右侧独立）' : ''}`);
   });
   const r = anchor.getBoundingClientRect();
   // §22.2：**弹在按钮上方**（下方会被按钮自己挡住）
@@ -4145,6 +4241,10 @@ function renderChatModes() { renderComposerControls(); }
 
 /* ── 启动：骨架先出、内容后到 ───────────────── */
 function boot() {
+  // §24.11.4 首屏必须自带数据 —— 用户：「你说你提供了，但是我没有看到任何的数据」。
+  // 只有 1 条（出厂那条系统消息）时自动造 80 条；⚙ 里仍可手动加 200 / 清空。
+  if ((S.chat || []).length <= 1) { try { seedDemoChat(50, true); } catch (e) {} }   // 80→50：「太密」
+  try { applyDualScreen(); } catch (e) {}   // §26 刷新后恢复双屏状态
   const t0 = performance.now();
   const app = $('.app');
   app.classList.add('is-booting');
@@ -5249,9 +5349,42 @@ function bindRails() {
     };
   }
 
-  // §24 滚动 → 高亮跟着走（绑一次；renderChat 每次重建消息，监听挂在容器上不受影响）
+  // §26 右侧独立会话的控件（与左边完全分开，只共享 S.dualScreen 这一个开关）
+  const ta2 = $('#chatInput2');
+  if (ta2) ta2.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat2(); }
+  });
+  $('#btnSend2') && ($('#btnSend2').onclick = () => sendChat2());
+  $$('#chatSecond [data-conv2]').forEach(b2 => b2.onclick = () => {
+    S.chat2Mode = b2.dataset.conv2; save(true);
+    $$('#chatSecond [data-conv2]').forEach(x => {
+      const on = x.dataset.conv2 === S.chat2Mode;
+      x.classList.toggle('is-on', on);
+      x.classList.toggle('temp', on && x.dataset.conv2 === 'temporary');
+    });
+    const lbl = $('#composerModeLabel2');
+    if (lbl) lbl.textContent = S.chat2Mode === 'continuous' ? '连续会话' : '临时会话';
+    renderChat2();
+    toast(`右侧已切到<b>${S.chat2Mode === 'continuous' ? '连续' : '临时'}</b>（只影响这一侧）`);
+  });
+  $('#ccNew2') && ($('#ccNew2').onclick = () => {
+    S.chat2 = []; save(true); renderChat2();
+    toast('右侧已新建 —— 独立会话，与左边无关');
+  });
+  $$('#chatSecond [data-rate2]').forEach(b3 =>
+    b3.onclick = e => { e.stopPropagation(); openRateMenu(b3, 'speechRate2'); });
+  $('#hcOptions2') && ($('#hcOptions2').onclick = () =>
+    toast('右侧选项：语速在这一行；发声受「主会话优先」互斥约束（见 🔇）'));
+
+  // §24 滚动 → 高亮跟着走。★ rAF 节流：滚动事件一秒几十次，
+  // 不节流的话每次都要遍历所有条目改 class，滑动时必卡。
+  let histScrollRaf = 0;
   $('#msgs')?.addEventListener('scroll', () => {
-    if (typeof syncHistCur === 'function') syncHistCur();
+    if (histScrollRaf) return;
+    histScrollRaf = requestAnimationFrame(() => {
+      histScrollRaf = 0;
+      if (typeof syncHistCur === 'function') syncHistCur();
+    });
   }, { passive: true });
 }
 
