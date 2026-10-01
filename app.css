@@ -172,7 +172,8 @@ code{font-family:var(--mono);font-size:11.5px}
 /* §21.1 标签**等宽** —— 只有等宽，× 才会在每个格子的同一相对位置，
    连着点几个才是一条直线。放不下时**一起**缩到 min-width 然后整条横向滚动，
    宁可滚动也不许出现"有的宽有的窄"。 */
-.tabs{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;flex:1;min-width:0;align-items:center}
+.tabs{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;flex:1;min-width:0;align-items:center;
+  position:relative}   /* §25 落点线的定位祖先 */
 .tab{display:flex;align-items:center;gap:7px;height:27px;padding:0 6px 0 9px;border-radius:7px;
   font-size:12px;color:var(--ink3);flex:1 1 0;min-width:96px;background:transparent;border:1px solid transparent}
 .tab:hover{background:#1F1F22;color:var(--ink2)}
@@ -328,22 +329,20 @@ code{font-family:var(--mono);font-size:11.5px}
 .msgs-row{flex:1;min-height:0;display:flex;position:relative}
 /* ══ §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 截图（无源码可搬）══
    声音照 reference/MiMo-Code 的 tui/util/sound.ts：pulse-a/b/c 三文件轮换、音量 0.35 */
-.hist-rail{flex:0 0 48px;width:48px;z-index:6;position:relative;overflow:hidden;
+.hist-rail{flex:0 0 36px;width:36px;z-index:6;position:relative;overflow:hidden;
   display:flex;flex-direction:column;align-items:flex-start;
-  gap:11px;padding:20px 0 20px 7px;cursor:ns-resize;user-select:none;
-  /* 用户要的「中间位置」= 轨道整体垂直居中；safe = 内容多到溢出时退回顶部，
-     否则 justify-content:center 在溢出会把两端都顶出可视区 */
+  gap:11px;padding:20px 0 20px 4px;cursor:ns-resize;user-select:none;
+  /* 用户 2026-10-01：「不是独立区域、宽度没那么大、没有阴影区分、跟对话背景完全融合」
+     → **不给任何背景、不给边框**（透明），宽度 48 → 36（白条仍比灰条长一倍） */
   justify-content:flex-start;
   justify-content:safe center;
-  background:linear-gradient(90deg,rgba(10,10,12,.45),rgba(10,10,12,0) 82%);
-  border-right:1px solid rgba(255,255,255,.05)}
-.hist-rail[hidden]{display:none!important}
-.hr-line{flex:0 0 auto;width:20px;height:3px;border-radius:2px;background:#3F3F46;
+  background:transparent;border-right:0}.hist-rail[hidden]{display:none!important}
+.hr-line{flex:0 0 auto;width:20px;height:var(--hr-h,3px);border-radius:2px;background:#3F3F46;
   transform-origin:left center;
   transition:background .16s ease,transform .16s cubic-bezier(.3,1.4,.5,1),box-shadow .16s;
   animation:railIn .18s ease-out both}
 .hr-line:hover{background:#D4D4D8;transform:scaleX(1.18)}
-.hr-line.is-cur{background:#FFFFFF;width:40px;box-shadow:0 0 7px rgba(255,255,255,.45)}
+.hr-line.is-cur{background:#FFFFFF;width:34px;box-shadow:0 0 7px rgba(255,255,255,.45)}
 /* 图里「最新那条」恒为白色短条（在最下面），与「当前位置」那条更长的白条并存 */
 .hr-line.is-last{background:#FFFFFF}
 .hr-line.is-cur.is-live{animation:curPulse .5s ease-out}
@@ -353,6 +352,24 @@ code{font-family:var(--mono);font-size:11.5px}
 @keyframes railIn{from{opacity:0;transform:translateX(-9px)}to{opacity:1;transform:none}}
 @keyframes curPulse{0%{box-shadow:0 0 0 rgba(255,255,255,0)}
   40%{box-shadow:0 0 13px rgba(255,255,255,.85)}100%{box-shadow:0 0 7px rgba(255,255,255,.45)}}
+/* §24.10 示例数据里的 GitHub 推送 / 提交 / 工具标签（照 MiMo Desktop 里看到的样子） */
+.msg .gh{font-family:var(--mono);font-size:12px;color:var(--ink2);line-height:1.7}
+.msg .gh b{color:var(--ink);font-weight:600}
+.msg .gh .sha{background:#1F1F22;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:#8FC6FF}
+.msg .gh .ok{color:var(--ok)} .msg .gh .dim{color:var(--ink3)}
+.msg .tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:7px}
+.msg .tools i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--ink2);
+  background:#1F1F22;border:1px solid var(--line2);border-radius:6px;padding:2px 8px}
+/* §25 拖动落点指示线：横向条里是竖线、纵向列里是横线，跟随鼠标 */
+.drop-line{position:absolute;top:3px;bottom:3px;width:2px;border-radius:2px;
+  background:var(--accent);box-shadow:0 0 7px rgba(10,132,255,.85);
+  pointer-events:none;z-index:9;opacity:0;transition:left .07s linear}
+.drop-line.on{opacity:1}
+.drop-line-h{position:absolute;left:4px;right:4px;height:2px;border-radius:2px;
+  background:var(--accent);box-shadow:0 0 7px rgba(10,132,255,.85);
+  pointer-events:none;z-index:9;opacity:0;transition:top .07s linear}
+.drop-line-h.on{opacity:1}
+
 /* hover 时浮出的摘要 */
 .hr-tip{position:absolute;left:36px;z-index:9;pointer-events:none;
   max-width:230px;padding:5px 9px;border-radius:7px;background:#18181C;
@@ -913,6 +930,7 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* §21.3 垂直形态（照用户给的第 ④ 张图）：出现在 tabbar 正下方 */
 .tabs-vertical{flex:0 1 auto;min-height:0;max-height:46%;display:flex;flex-direction:column;gap:7px;
+  position:relative;   /* §25 落点线的定位祖先 */
   padding:8px 8px 7px;background:var(--nav-bg);border-bottom:1px solid var(--line)}
 .tv-search{height:28px;flex:0 0 28px;border-radius:8px;border:1px solid var(--line);background:#0F0F11;
   padding:0 10px;font-size:12.5px;color:var(--ink);outline:none}

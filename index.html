@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=24 破缓存：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=24">
+<!-- ?v=26 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=26">
 </head>
 <body>
 <div class="app">
@@ -572,6 +572,11 @@
     <div class="menu-title">快捷键</div>
     <button data-act="paletteShortcut">全局搜索（命令面板）：<span id="paletteKbd">⌘J</span></button>
     <div class="menu-sep"></div>
+    <!-- §24.10 示例数据：用户要「几十、几百条」才好评判轨道的滑动与声音 -->
+    <div class="menu-title">示例数据（测轨道）</div>
+    <button data-act="seedChat">生成 200 条示例对话</button>
+    <button data-act="clearChat">清空对话</button>
+    <div class="menu-sep"></div>
     <button data-act="resetHist">清空当前文件历史</button>
   </div>
   <!-- 全部标签（折叠显示） -->
@@ -640,6 +645,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=24"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

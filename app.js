@@ -1754,10 +1754,12 @@ function renderTabs() {
     el.ondblclick = e => { e.stopPropagation(); renameTabLabel(t); };
     // §22.7.1 按住左右拖动换位
     el.draggable = true;
+    el.dataset.ti = i;                     // §25 落点线要按 **S.tabs 索引**落，不是 DOM 序号
     el.ondragstart = e => { e.dataTransfer.setData('text/plain', String(i)); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); };
     el.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
-    el.ondrop = e => { e.preventDefault(); const from = +e.dataTransfer.getData('text/plain'); moveTabTo(from, i); };
-    el.ondragend = () => el.classList.remove('dragging');
+    // §25 标签上**不再自己 drop** —— 落点线和落点必须同一套算法，统一交给容器
+    // （标签若也 drop，事件冒泡到容器会执行两次，标签被移两次）
+    el.ondragend = () => { el.classList.remove('dragging'); hideDropLine(); };
     el.onclick = e => {
       if (e.target.classList.contains('tx')) { closeTab(i); return; }
       S.activeTab = i; S.currentFile = fluidTab(t) ? null : t.f;
@@ -1903,10 +1905,10 @@ function tvItemRow(t, isChild) {
   el.ondblclick = e => { e.stopPropagation(); renameTabLabel(t); };
   el.oncontextmenu = e => { e.preventDefault(); openTabMenu(i, e); };
   el.draggable = true;
+  el.dataset.ti = i;                       // §25 同上：落点按 S.tabs 索引
   el.ondragstart = e => { e.dataTransfer.setData('text/plain', String(i)); el.classList.add('dragging'); };
   el.ondragover = e => { e.preventDefault(); };
-  el.ondrop = e => { e.preventDefault(); moveTabTo(+e.dataTransfer.getData('text/plain'), i); };
-  el.ondragend = () => el.classList.remove('dragging');
+  el.ondragend = () => { el.classList.remove('dragging'); hideDropLine(); };
   return el;
 }
 function tvGroupRow(grp, members) {
@@ -2659,10 +2661,130 @@ function renderHistRail() {
   rail.innerHTML = msgs.map((m, i) => {
     const who = m.role === 'user' ? '你' : m.role === 'ai' ? 'AI' : '系统';
     // 最后一条 = 最新消息，恒白（照 MiMo Desktop 图：底部那条白色短标记）
+    // 动画延迟封顶 500ms —— 200 条时 i*14 会拖到 2.8 秒，太慢
     return `<div class="hr-line${i === last ? ' is-last' : ''}" data-i="${i}"
-      style="animation-delay:${i * 14}ms" title="第 ${i + 1} 条 · ${who}"></div>`;
+      style="animation-delay:${Math.min(i * 14, 500)}ms" title="第 ${i + 1} 条 · ${who}"></div>`;
   }).join('');
+  layoutRail(rail, msgs.length);          // §24.10 几百条时把间距压扁，否则溢出被裁
   bindRailTip();
+}
+
+/// §24.10 条目多到塞不进轨道时，**动态收缩间距与条高** ——
+/// 200 条 × 3px + 11px gap = 2800px，而轨道只有 ~578px，固定间距会让后面全部被 overflow 裁掉。
+/// 算法：先定条高（>140 条压到 2px），再把剩余高度平分给 gap，最低 1px。
+function layoutRail(rail, n) {
+  if (!rail || n < 1 || rail.hidden) return;
+  const avail = Math.max(60, rail.clientHeight - 40);      // 扣上下 padding
+  // 先按条目数定条高，再用**剩下的高度**均分给 gap —— gap 必须允许小数，
+  // 否则 201 条 × 2px + 200 × 1px（下限）= 602 > 538，最后 15 条会被 overflow 裁掉（实测过）
+  let barH = n > 140 ? 2 : 3;
+  let gap = (avail - n * barH) / Math.max(1, n - 1);
+  if (gap < 0.5) {                        // 条高 2 都塞不下 → 压到 1px 再算一次
+    barH = 1;
+    gap = (avail - n) / Math.max(1, n - 1);
+  }
+  gap = Math.max(0.4, gap);               // 视觉下限：再低就连成一片了
+  rail.style.setProperty('--hr-h', barH + 'px');
+  rail.style.gap = gap.toFixed(2) + 'px';
+}
+
+/// §24.10 造几十/几百条示例对话 —— 用户要「能滑动它、听到声音变化」才好判断轨道对不对。
+/// 内容照在 MiMo Desktop 里真实看到的那几类：GitHub 推送 / CI / 文件提交 / 工具调用 / 普通问答。
+function seedDemoChat(n = 200) {
+  const REPO = 'github.com/nash-aigc/wanna';
+  const FILES = ['app.js', 'app.css', 'index.html', '需求/07-项目工作区（左80%工作区+右对话）.md',
+                 '需求/90-实现映射.md', 'Wanna/CompanionManager.swift', '开发经验/10-踩过的坑.md',
+                 '设计框架/00-目录地图.md'];
+  const SHAs = ['b6dd24b', '204e1ac', '1fc6dcb', 'cab98f6', 'a3650b6', '8f6cb00', 'bc19478', '009aa49'];
+  const Q = ['这段代码为什么要这样写？', '把宽度再收窄一点', '这个 bug 的根因是什么',
+             '加一个按钮，点一下能回放', '声音怎么跟原项目保持一致', '这条判据算通过吗',
+             '把 200 条数据造出来给我滑', '左侧那个轨道为什么不融合进背景', '换个思路再试一次'];
+  const A = ['按判据量了一遍，数字在上面的表里。', '已经改完并推送，等你验收。',
+             '根因是缓存：规则在磁盘上、浏览器拿的是旧文件。', '照源码里的写法改的，没有自己发明。',
+             '实测上下留白 246 / 246，居中成立。', '这条 ✅ 已验，另外两条只有代码依据。',
+             '零副作用：.msgs 内边距仍是 12px。', '先加一个能测的入口，再看数字说话。'];
+  const TOOLS = [['bash'], ['bash', 'read'], ['bash', 'write', 'edit'], ['read'], ['edit', 'read'], ['actor']];
+  const mk = (role, html, meta) => ({ role, html, meta: meta || '', ts: now(), temp: false });
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const k = i % 10;
+    if (k === 0) {   // GitHub 推送
+      out.push(mk('sys', `<div class="gh">🔀 <b>${REPO}</b> pushed ${1 + (i % 5)} commits to
+        <span class="sha">main</span><br><span class="dim">${SHAs[i % SHAs.length]}</span>
+        · ${escapeHtml(FILES[i % FILES.length])} <span class="ok">+${20 + (i % 90)}</span> -${i % 40}`));
+    } else if (k === 1) {   // CI
+      out.push(mk('sys', `<div class="gh">✅ CI <span class="ok">passed</span> on
+        <span class="sha">main</span> <span class="dim">(${1 + (i % 9)}m ${i % 60}s) · build #${300 + i}</span></div>`));
+    } else if (k === 2) {   // 文件提交 + 处理状态（MiMo 里那类）
+      out.push(mk('sys', `<div class="gh">📦 <b>${escapeHtml(FILES[i % FILES.length])}</b>
+        <span class="ok">+${10 + (i % 300)}</span> -${i % 120}
+        <span class="dim">· 已处理 ${1 + (i % 30)}m ${i % 60}s</span></div>`));
+    } else if (k === 3) {   // 工具调用行（带 bash/read/edit 标签）
+      const tl = TOOLS[i % TOOLS.length];
+      out.push(mk('ai', `已按判据跑完这一轮回归，第 ${i + 1} 条给个可核对的数字：命中 ${7 + (i % 20)} 条、
+        报错 0。<div class="tools">${tl.map(t => `<i>${t}</i>`).join('')}</div>`));
+    } else if (k % 2 === 0) {
+      out.push(mk('user', `${escapeHtml(Q[i % Q.length])}（第 ${i + 1} 轮）`));
+    } else {
+      out.push(mk('ai', `${escapeHtml(A[i % A.length])} 这是第 ${i + 1} 条。`));
+    }
+  }
+  S.chat = (S.chat || []).concat(out);
+  save();
+  renderChat();
+  toast(`已生成 <b>${n}</b> 条示例对话 —— 现在共 ${S.chat.length} 条，
+    滑左侧轨道试试（每划过一条响一声，pulse-a/b/c 轮换）`);
+}
+
+/// §25 拖动落点指示线 —— 用户：「拖动过程中应该有一条竖线光标跟随拖动位置显示，
+/// 让用户知道落点在哪里，松手后就是鼠标的落点」。横向条画竖线、纵向列画横线。
+function ensureDropLine(container, horizontal) {
+  let line = container.querySelector(horizontal ? '.drop-line' : '.drop-line-h');
+  if (!line) {
+    line = document.createElement('div');
+    line.className = horizontal ? 'drop-line' : 'drop-line-h';
+    container.appendChild(line);            // 绝对定位，不进 flex 布局
+  }
+  return line;
+}
+/// 算落点：返回 **S.tabs 索引**（与 moveTabTo 的 to 同一语义）
+function tabDropIndex(container, e, horizontal) {
+  const items = [...container.querySelectorAll(horizontal ? '.tab' : '.tv-item')];
+  let idx = items.length;
+  for (let k = 0; k < items.length; k++) {
+    const r = items[k].getBoundingClientRect();
+    const mid = horizontal ? r.left + r.width / 2 : r.top + r.height / 2;
+    const v = horizontal ? e.clientX : e.clientY;
+    if (v < mid) { idx = +items[k].dataset.ti; break; }   // 鼠标在它左/上半 → 插它前面
+  }
+  return idx;
+}
+function showDropLineAt(container, e, horizontal) {
+  const idx = tabDropIndex(container, e, horizontal);
+  const items = [...container.querySelectorAll(horizontal ? '.tab' : '.tv-item')];
+  const line = ensureDropLine(container, horizontal);
+  if (!items.length) { line.classList.remove('on'); return idx; }
+  // 找「idx 这个标签」在哪一项后面画线
+  let anchor = items.find(x => +x.dataset.ti === idx);
+  const cr = container.getBoundingClientRect();
+  if (horizontal) {
+    if (anchor) { const r = anchor.getBoundingClientRect(); line.style.left = Math.max(0, r.left - cr.left - 2) + 'px'; }
+    else { const r = items[items.length - 1].getBoundingClientRect(); line.style.left = Math.max(0, r.right - cr.left) + 'px'; }
+  } else {
+    if (anchor) { const r = anchor.getBoundingClientRect(); line.style.top = Math.max(0, r.top - cr.top - 3) + 'px'; }
+    else { const r = items[items.length - 1].getBoundingClientRect(); line.style.top = Math.max(0, r.bottom - cr.top) + 'px'; }
+  }
+  line.classList.add('on');
+  return idx;
+}
+function hideDropLine() { $$('.drop-line, .drop-line-h').forEach(x => x.classList.remove('on')); }
+
+/// 清空对话（示例数据用完就清，避免 300 条把真实对话淹掉）
+function clearDemoChat() {
+  S.chat = [];
+  save(true);
+  renderChat();
+  toast('已清空对话');
 }
 
 /// 当前可视的那一条 —— 用**视口距离**判断，单屏 / 双屏都对
@@ -3344,6 +3466,11 @@ function settingsAction(act, btn) {
   else if (act === 'policyQueue') { setSendPolicy('queue'); return; }
   else if (act === 'policyInterrupt') { setSendPolicy('interrupt'); return; }
   else if (act === 'paletteShortcut') { armPaletteShortcut(); return; }
+  // §24.10 示例数据
+  else if (act === 'seedChat') { seedDemoChat(200); return; }
+  else if (act === 'clearChat') { confirmModal({ title: '清空全部对话？',
+      text: '示例数据和已有对话都会清掉（原型数据，刷新也回不来）。', okText: '清空',
+      onOk: clearDemoChat }); return; }
   else if (act === 'resetHist') {
     const rel = histFile(); if (!rel) return;
     confirmModal({ title: '清空这个文件的全部历史？', text: rel, okText: '清空', onOk: () => {
@@ -5094,6 +5221,33 @@ function bindRails() {
   });
   refreshPaletteShortcutLabel();
   renderSidePanel();
+
+  // §25 落点线绑在**容器**上 —— 标签之间的空隙不触发标签的 dragover，
+  // 只有容器能覆盖「鼠标移到哪、线就到哪」。drop 也在这里，保证线与落点同一套算法。
+  const tabsBox = $('#tabs');
+  if (tabsBox) {
+    tabsBox.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; showDropLineAt(tabsBox, e, true); };
+    tabsBox.ondragleave = e => { if (!tabsBox.contains(e.relatedTarget)) hideDropLine(); };
+    tabsBox.ondrop = e => {
+      e.preventDefault();
+      const from = e.dataTransfer.getData('text/plain');
+      hideDropLine();
+      if (from === '') return;
+      moveTabTo(+from, tabDropIndex(tabsBox, e, true));
+    };
+  }
+  const tvBox = $('#tabsVertical');
+  if (tvBox) {
+    tvBox.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; showDropLineAt(tvBox, e, false); };
+    tvBox.ondragleave = e => { if (!tvBox.contains(e.relatedTarget)) hideDropLine(); };
+    tvBox.ondrop = e => {
+      e.preventDefault();
+      const from = e.dataTransfer.getData('text/plain');
+      hideDropLine();
+      if (from === '') return;
+      moveTabTo(+from, tabDropIndex(tvBox, e, false));
+    };
+  }
 
   // §24 滚动 → 高亮跟着走（绑一次；renderChat 每次重建消息，监听挂在容器上不受影响）
   $('#msgs')?.addEventListener('scroll', () => {
