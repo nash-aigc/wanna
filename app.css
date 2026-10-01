@@ -509,8 +509,9 @@ body[data-style="contrast"]{
 /* §34 左右模式（你的原话：AI 回复放左、人的回复放右）——
    气泡尾角本来就是按这个方向切的（user BR=4 / ai BL=4），这里只补对齐与宽度；
    系统消息（git/CI 行）跟 AI 同侧靠左、给宽一点 */
-.msgs > .msg{align-self:flex-start;max-width:88%}
-.msgs > .msg-user{align-self:flex-end;max-width:78%}
+/* §35.13 加宽但不满占：ai ≤92%、user ≤86%，对侧始终留 ≥8% 空白用于区分左右 */
+.msgs > .msg{align-self:flex-start;max-width:92%}
+.msgs > .msg-user{align-self:flex-end;max-width:86%}
 .msgs > .msg-user .msg-who,.msgs > .msg-user .msg-meta{text-align:right}
 .msg-who{font-size:10.5px;color:var(--ink3);margin-bottom:4px;letter-spacing:.05em}
 .msg-user .bubble{background:rgba(10,132,255,.16);border:1px solid rgba(10,132,255,.32);
@@ -1644,15 +1645,16 @@ body.finder-on .monitor-pane{display:none!important}
 .fp-tool:hover{background:#1F1F22;color:var(--ink)}
 .fp-div{width:1px;height:18px;background:var(--line2)}
 /* 路径栏（Finder 风格：段落可点跳转；双击/⌘L 进输入） */
-.fp-path{display:flex;align-items:center;gap:2px;height:34px;flex:0 0 34px;padding:0 10px;
-  border-bottom:1px solid var(--line);background:#111113;overflow:hidden;position:relative}
-.fp-crumb{display:flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:6px;
+/* §35.6 路径行改为**每个窗格自带**（QSpace 图7）：贴在 cell 顶上，窄版面包屑 */
+.fp-crumb{display:flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:6px;
   font-size:12px;color:var(--ink2);white-space:nowrap}
 .fp-crumb:hover{background:#1F1F22;color:var(--ink)}
 .fp-crumb .fc-ico{width:14px;height:14px;border-radius:3px;background:#3A3A40;font-size:9px;
   display:inline-flex;align-items:center;justify-content:center;color:var(--ink2)}
 .fp-crumb-sep{color:var(--ink3);font-size:11px;opacity:.6}
-.fp-path input{flex:1;height:24px;background:#1A1A1C;border:1px solid rgba(10,132,255,.55);
+.fp-cellpath{display:flex;align-items:center;gap:2px;height:30px;flex:0 0 30px;padding:0 8px;
+  border-bottom:1px solid var(--line);background:#111113;overflow:hidden;position:sticky;top:0;z-index:3}
+.fp-cellpath input{flex:1;height:22px;background:#1A1A1C;border:1px solid rgba(10,132,255,.55);
   border-radius:6px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:0 8px;outline:none}
 /* 主体：左收藏栏 + 右文件区 */
 .fp-body{flex:1;min-height:0;display:flex}
@@ -1700,8 +1702,10 @@ body.finder-on .monitor-pane{display:none!important}
 .fp-panes.l-three .fp-r2 .fp-cell{flex:1 1 0;min-width:0}
 .fp-panes.l-quad .fp-r2{flex:1 1 0}
 .fp-panes.l-quad .fp-cell{flex:1 1 50%;min-width:0}
-.fp-cell{min-width:0;min-height:0;overflow:auto;position:relative;border-left:1px solid var(--line);
-  border-top:1px solid var(--line)}
+/* §35.6 cell = 自带路径行（固定）+ 主体（滚动）；overflow 从 cell 挪到 body，路径行才不会被滚走 */
+.fp-cell{min-width:0;min-height:0;overflow:hidden;position:relative;display:flex;flex-direction:column;
+  border-left:1px solid var(--line);border-top:1px solid var(--line)}
+.fp-cellbody{flex:1;min-height:0;overflow:auto}
 .fp-panes.l-v2 .fp-cell:first-child,.fp-panes.l-three .fp-cell:first-child{border-top:0}
 .fp-panes.l-single .fp-cell,.fp-panes.l-quad .fp-cell{border-left:0}
 .fp-panes.l-quad .fp-r2 .fp-cell{border-top:1px solid var(--line);border-left:1px solid var(--line)}
@@ -1727,7 +1731,7 @@ body.finder-on .monitor-pane{display:none!important}
 .fp-table tr.sel td{background:rgba(10,132,255,.14)}
 .fp-ico{width:16px;height:16px;border-radius:4px;flex:0 0 16px;display:inline-flex;
   align-items:center;justify-content:center;font-size:8px;color:#0C0C0E;font-weight:700}
-.fp-dir{background:#E8B33A}                      /* 黄文件夹（照片同款） */
+.fp-dir{background:#4A9FE8}                      /* §35.5 QSpace 蓝（图7），取代 Finder 黄 */
 .fp-c-mono{font-family:var(--mono);font-size:11px;color:var(--ink3)}
 .fp-gh td{background:#101012;color:var(--ink3);font-size:10.5px;letter-spacing:.05em;
   cursor:default!important}
@@ -1753,3 +1757,86 @@ body.finder-on .monitor-pane{display:none!important}
 .fp-cols-right{flex:1;min-width:0;overflow:auto}
 .fp-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink3);
   font-size:12px}
+
+/* ══ §35 第二十四批 —— QSpacePro 化访达 · 顶栏正中提交恢复 · 录音按钮 · 圆环 · 编辑区全屏 ══ */
+
+/* —— 35.7 顶栏正中：路径条里的提交/恢复（高度贴合 30px 的 ctx 条） —— */
+.ctx .ctx-sep{flex:0 0 1px;height:16px;background:var(--line2)}
+.ctx-git{height:22px;padding:0 9px;border-radius:6px;font-size:12px;background:#1A1A1C}
+.ctx-git:hover{background:#242428;color:var(--ink);border-color:rgba(10,132,255,.5)}
+.ctx code#ctxProjectPath{max-width:26vw}
+
+/* —— 35.8 通话在模式条里：像 chip 但绿字（不是 .chip，避免被模式点击绑走） —— */
+.call-chip{height:26px;padding:0 10px;border-radius:8px;font-size:12.5px;color:var(--ok);
+  border:1px solid rgba(74,222,128,.35);background:rgba(74,222,128,.07);display:inline-flex;
+  align-items:center;gap:5px;cursor:pointer}
+.call-chip:hover{background:rgba(74,222,128,.16);border-color:rgba(74,222,128,.6)}
+.modes .vr{flex:0 0 1px;height:16px;background:var(--line2);margin:0 4px;align-self:center}
+
+/* —— 35.14/15 录音按钮 + 录音态（动画条照你给的蓝底圆点图：中间亮、两端渐隐） —— */
+.rec-btn{min-width:34px;padding:0 9px;color:var(--ink3);font-size:13px;line-height:1}
+.rec-btn:hover{color:#FF6B6B;border-color:rgba(255,107,107,.5);background:rgba(255,107,107,.08)}
+.rec-btn.rec-on{color:#fff;background:#E5484D;border-color:#E5484D;
+  animation:recPulse 1.1s ease-in-out infinite}
+@keyframes recPulse{0%,100%{box-shadow:0 0 0 0 rgba(229,72,77,.55)}50%{box-shadow:0 0 0 5px rgba(229,72,77,0)}}
+.rec-strip{display:inline-flex;align-items:center;gap:8px;height:22px;padding:0 8px;border-radius:7px;
+  background:linear-gradient(90deg,rgba(10,132,255,.05),rgba(10,132,255,.22),rgba(10,132,255,.05));
+  border:1px solid rgba(10,132,255,.3)}
+.rec-strip[hidden]{display:none}
+.rec-timer{font-family:var(--mono);font-size:11px;color:#9CC5FF;min-width:30px;text-align:right;
+  font-variant-numeric:tabular-nums}
+.rec-wave{display:inline-flex;align-items:center;gap:2.5px;height:16px}
+.rec-wave i{display:block;width:3.5px;height:4px;border-radius:3px;background:#EAF2FF;
+  transform-origin:center;transition:transform .07s linear,opacity .07s linear;opacity:.45}
+.rec-wave.live i{opacity:.95;box-shadow:0 0 5px rgba(120,180,255,.7)}
+
+/* —— 35.12 上下文环：无数字，色 白→黄（JS 按占用插值），title 看数值 —— */
+.ct-ctx .ctx-ring{width:16px;height:16px}
+.ctx-ring .ctx-bg{fill:none;stroke:#2A2A2E;stroke-width:2.2}
+.ctx-ring .ctx-fg{fill:none;stroke:#EDEDF0;stroke-width:2.2;stroke-linecap:round;
+  stroke-dasharray:45.24;transform:rotate(-90deg);transform-origin:9px 9px;transition:stroke-dashoffset .3s}
+
+/* —— 35.18 编辑区全屏（非系统全屏）：导航栏以下全给编辑区，顶栏保留 —— */
+body.editor-full .nav,body.editor-full .split-v,body.editor-full .split-h,
+body.editor-full .chat,body.editor-full .side-panel-left,body.editor-full .side-panel-right,
+body.editor-full .rail,body.editor-full .monitor-pane,body.editor-full .finder-pane{
+  display:none!important}
+body.editor-full .workspace{flex:1 1 auto!important;max-width:none!important;min-width:0!important}
+body.editor-full .main.no-workspace .chat{display:none!important}
+
+/* —— 35.5 QSpace 观感：字号 13、行高 ≥32、日期完整不截断（列不够宽横滚） —— */
+.fp-table{min-width:max-content}
+.fp-table th{font-size:11.5px;padding:7px 12px}
+.fp-table td{padding:7px 12px;font-size:13px;line-height:17px}
+.fp-table td .fp-c-mono,.fp-table .fp-c-mono{white-space:nowrap;overflow:visible;text-overflow:clip}
+.fp-table td.fp-c-name{font-size:13px}
+.fp-table th[data-col]{cursor:pointer}
+.fp-table th::after{content:"";display:inline-block;width:0;height:0;margin-left:5px;
+  border-left:3.5px solid transparent;border-right:3.5px solid transparent;vertical-align:middle;opacity:0}
+.fp-table th.sort-asc::after{border-bottom:5px solid var(--ink2);opacity:1}
+.fp-table th.sort-desc::after{border-top:5px solid var(--ink2);opacity:1}
+/* 深路径时**右端（末段）必须可见** —— 整行右对齐，左端被裁 */
+.fp-cellpath{justify-content:flex-end;flex-wrap:nowrap}
+.fp-cellbody .fp-table{overflow:visible;min-width:100%}
+/* 滚动条只在真超宽时出现（日期列完整优先） */
+.fp-cellbody{scrollbar-width:thin}
+
+/* —— 35.1 分组栏：组头按住可拖（光标 + 拖动反馈），左右栏同一套 —— */
+.fp-fgroup .fg-name{cursor:grab}
+.fp-fgroup .fg-name:active{cursor:grabbing}
+.fp-fgroup.drag-over-top{box-shadow:inset 0 2px 0 rgba(10,132,255,.75)}
+.fp-fgroup.drag-over-bot{box-shadow:inset 0 -2px 0 rgba(10,132,255,.75)}
+
+/* —— 35.2 选中态更明显（单击=选中是 QSpace 的核心交互） —— */
+.fp-table tr.sel td{background:rgba(10,132,255,.28);color:var(--ink)}
+.fp-table tr.sel td.fp-c-name span{color:#fff}
+.fp-gcell.sel{background:rgba(10,132,255,.3)}
+
+/* —— §35.8 模式条加了通话后总宽超 chat(340)：压缩 chips/通话/右组，并让槽可收缩 ——
+   实测旧宽 3×62+通话+右组 ≈ 400 > 340 → 角色/选项被挤出视野；新宽 ≈ 310 ✓ */
+#modesSlotChat{gap:3px}
+#modesSlotChat .chip{flex:0 0 50px;padding:0 6px;font-size:12px}
+.call-chip{padding:0 6px;font-size:11.5px;gap:3px}
+.chat-nav .modes-slot{flex:0 1 auto;min-width:0;overflow:hidden}
+.chat-nav-right{flex:0 0 auto}
+.chat-nav .hchip{padding:0 6px;font-size:12px}

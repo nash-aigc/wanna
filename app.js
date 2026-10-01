@@ -65,6 +65,137 @@ function sampleProject() {
   };
 }
 
+/// §35.19 station（图片生成项目，docker 项目）—— 树生成自真实磁盘 /Users/mjm/Documents/SuperAgent/APP/Docker/station
+function stationProjectSeed() {
+  return {
+    id: 'station', name: 'station', path: '/Users/mjm/Documents/SuperAgent/APP/Docker/station',
+    files: {
+      "docker-compose.local.yml": "# Station 本地模式数据库\n# 本地模式的数据存放在本机 Docker 的 Postgres 中，开箱即用、无需额外配置。\n# 启动：docker compose -f docker-compose.local.yml up -d\n# 端口 5433 避免与常见本地 Postgres(5432) 冲突；数据持久化在 station-local-db 卷中。\nservices:\n  db:\n    image: postgres:16-alpine\n    container_name: station-local-db\n    restart: unless-stopped\n    environment:\n      POSTGRES_USER: station\n      POSTGRES_PASSWORD: station\n      POSTGRES_DB: station\n    ports:\n      - \"5433:5432\"\n    volumes:\n      - station-local-db:/var/lib/postgresql/data\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U station -d station\"]\n      interval: 5s\n      timeout: 3s\n      retries: 20\n\nvolumes:\n  station-local-db:\n"
+,
+      "index.html": "<!doctype html>\n<html lang=\"zh-CN\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Station</title>\n  </head>\n  <body class=\"bg-graphite-950\">\n    <div id=\"root\"></div>\n    <script type=\"module\" src=\"/src/main.tsx\"></script>\n  </body>\n</html>\n"
+,
+      "package.json": "{\n  \"name\": \"station\",\n  \"private\": true,\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite --config vite.config.ts\",\n    \"dev:web\": \"vite --config vite.config.ts --host 0.0.0.0 --port 1420\",\n    \"build\": \"tsc -b && vite build --config vite.config.ts\",\n    \"build:web\": \"tsc -b && vite build --config vite.config.ts\",\n    \"preview\": \"vite preview --config vite.config.ts --host 0.0.0.0 --port 4173\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.3.1\",\n    \"react-dom\": \"^18.3.1\",\n    \"react-router-dom\": \"^6.30.1\",\n    \"recharts\": \"^2.15.3\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"^22.15.32\",\n    \"@types/react\": \"^18.3.12\",\n    \"@types/react-dom\": \"^18.3.1\",\n    \"@vitejs/plugin-react\": \"^4.3.4\",\n    \"autoprefixer\": \"^10.4.20\",\n    \"lucide-react\": \"^0.511.0\",\n    \"postcss\": \"^8.5.3\",\n    \"react-icons\": \"^5.5.0\",\n    \"tailwind-merge\": \"^2.5.5\",\n    \"tailwindcss\": \"3.4.17\",\n    \"tailwindcss-animate\": \"^1.0.7\",\n    \"typescript\": \"^5.8.3\",\n    \"vite\": \"^5.4.19\"\n  }\n}\n"
+,
+      "README.md": "## Station\n\n`Station` 是一个 **面向 Web 部署、纯文件持久化** 的媒体工作台。\n\n### 当前实现\n\n- `Node.js/Fastify` 提供后端接口\n- `React + Vite + Tailwind` 作为前端界面\n- 不使用任何数据库，所有元数据、历史、任务和配置都落到文件系统\n- 图片生成通过 Web 接口链路处理\n\n### 开发命令\n\n```bash\nnpm install\nnpm run dev:web\n```\n\n### 构建命令\n\n```bash\nnpm run build\n```\n\n### 标准部署（唯一推荐）\n\n- 唯一检查清单：`DEPLOY_CHECKLIST.md`\n- 唯一部署脚本：`scripts/deploy_release.sh`\n- 这套脚本已经做过一次真实闭环验证，并会在 PM2 重启后自动等待 `/health` 成功，再判定部署完成\n\n先执行：\n\n```bash\ngit add .\ngit commit -m \"这次修改说明\"\ngit push origin main\n```\n\n再执行：\n\n```bash\nbash scripts/deploy_release.sh\n```\n\n这套方法的核心是：\n\n- 本地代码先 push 到 GitHub\n- 服务器直接从 GitHub 私有仓库拉指定 commit\n- 服务器生成新 release\n- 切换 `/var/www/station/current`\n- 保留 `/var/www/station/shared/server.env`\n- 保留 `/var/www/station/shared/data`\n- 保留 `/var/www/station/shared/logs`\n"
+    },
+    tree: [
+      { name:"dist", type:'dir', open:false, children:[
+        { name:"assets", type:'dir', open:false, children:[] },
+        { name:"hot-play-cards", type:'dir', open:false, children:[] },
+        { name:"hot-play-bg-monitor.jpg", type:'file' },
+        { name:"hot-play-bg.jpg", type:'file' },
+        { name:"hot-play-hero.png", type:'file' },
+        { name:"index.html", type:'file' }
+      ] },
+      { name:"docs", type:'dir', open:false, children:[
+        { name:"architecture.md", type:'file' },
+        { name:"enterprise-storage.md", type:'file' },
+        { name:"file-persistence.md", type:'file' },
+        { name:"performance-budget.md", type:'file' },
+        { name:"runtime-checklist.md", type:'file' }
+      ] },
+      { name:"public", type:'dir', open:false, children:[
+        { name:"hot-play-cards", type:'dir', open:false, children:[] },
+        { name:"hot-play-bg-monitor.jpg", type:'file' },
+        { name:"hot-play-bg.jpg", type:'file' },
+        { name:"hot-play-hero.png", type:'file' }
+      ] },
+      { name:"scripts", type:'dir', open:false, children:[
+        { name:"check_tos.sh", type:'file' },
+        { name:"configure_tosutil.sh", type:'file' },
+        { name:"deploy_release.sh", type:'file' },
+        { name:"install_tosutil.sh", type:'file' },
+        { name:"python_requirements.txt", type:'file' },
+        { name:"station_provider_runner.py", type:'file' },
+        { name:"volc_tos_project_storage.py", type:'file' },
+        { name:"volc_tos_upload.py", type:'file' }
+      ] },
+      { name:"server", type:'dir', open:false, children:[
+        { name:"data", type:'dir', open:false, children:[] },
+        { name:"data-local", type:'dir', open:false, children:[] },
+        { name:"sql", type:'dir', open:false, children:[] },
+        { name:"src", type:'dir', open:false, children:[] },
+        { name:".env", type:'file' },
+        { name:"package-lock.json", type:'file' },
+        { name:"package.json", type:'file' },
+        { name:"tsconfig.json", type:'file' }
+      ] },
+      { name:"src", type:'dir', open:false, children:[
+        { name:"boot", type:'dir', open:false, children:[] },
+        { name:"bridge", type:'dir', open:false, children:[] },
+        { name:"features", type:'dir', open:false, children:[] },
+        { name:"lib", type:'dir', open:false, children:[] },
+        { name:"shared", type:'dir', open:false, children:[] },
+        { name:"styles", type:'dir', open:false, children:[] },
+        { name:"main.tsx", type:'file' },
+        { name:"vite-env.d.ts", type:'file' }
+      ] },
+      { name:"test-inputs", type:'dir', open:false, children:[
+        { name:"测试.jpeg", type:'file' }
+      ] },
+      { name:"test-results", type:'dir', open:false, children:[
+        { name:"dev-image-jobs", type:'dir', open:false, children:[] }
+      ] },
+      { name:".gitignore", type:'file' },
+      { name:".mcp.json", type:'file' },
+      { name:"a-preview-manual-import-final.yml", type:'file' },
+      { name:"after-wait.yml", type:'file' },
+      { name:"AGENTS.md", type:'file' },
+      { name:"antmoo-homepage.html", type:'file' },
+      { name:"b-preview-restored-final.yml", type:'file' },
+      { name:"blackpage.yaml", type:'file' },
+      { name:"CLAUDE.md", type:'file' },
+      { name:"DEPLOY_CHECKLIST.md", type:'file' },
+      { name:"docker-compose.local.yml", type:'file' },
+      { name:"index.html", type:'file' },
+      { name:"optimizer-after-fix.yml", type:'file' },
+      { name:"optimizer-area-expanded-final.yml", type:'file' },
+      { name:"optimizer-layout-after-scrollbar-fix.yml", type:'file' },
+      { name:"optimizer-layout-filled-after-fix.yml", type:'file' },
+      { name:"optimizer-layout-final-after-fix.yml", type:'file' },
+      { name:"optimizer-ui-after-api.yml", type:'file' },
+      { name:"package-lock.json", type:'file' },
+      { name:"package.json", type:'file' },
+      { name:"page-check.png", type:'file' },
+      { name:"postcss.config.cjs", type:'file' },
+      { name:"prompt-cloud-tags-final.yml", type:'file' },
+      { name:"README.md", type:'file' },
+      { name:"station-after-add.yml", type:'file' },
+      { name:"station-after-complete.yml", type:'file' },
+      { name:"station-after-fix-click-2s.yml", type:'file' },
+      { name:"station-after-fix-reload.yml", type:'file' },
+      { name:"station-after-generate-2s.yml", type:'file' },
+      { name:"station-after-prompt.yml", type:'file' },
+      { name:"station-after-refresh-fix.png", type:'file' },
+      { name:"station-after-refresh-fix.yml", type:'file' },
+      { name:"station-after-remove-refresh-fix.png", type:'file' },
+      { name:"station-after-wait.yml", type:'file' },
+      { name:"station-audio-after-click.yml", type:'file' },
+      { name:"station-audio-before.yml", type:'file' },
+      { name:"station-audio-clone.yml", type:'file' },
+      { name:"station-audio-system.yml", type:'file' },
+      { name:"station-batch-after-click.yml", type:'file' },
+      { name:"station-batch-test-before.yml", type:'file' },
+      { name:"station-before.yaml", type:'file' },
+      { name:"station-fullscreen-check.yaml", type:'file' },
+      { name:"station-keyboard-focused-right.yml", type:'file' },
+      { name:"station-keyboard-right.yml", type:'file' },
+      { name:"tailwind.config.d.ts", type:'file' },
+      { name:"tailwind.config.js", type:'file' },
+      { name:"tailwind.config.ts", type:'file' },
+      { name:"tsconfig.app.json", type:'file' },
+      { name:"tsconfig.app.tsbuildinfo", type:'file' },
+      { name:"tsconfig.json", type:'file' },
+      { name:"tsconfig.node.json", type:'file' },
+      { name:"tsconfig.node.tsbuildinfo", type:'file' },
+      { name:"users-flat-ui-verified.png", type:'file' },
+      { name:"vite.config.d.ts", type:'file' },
+      { name:"vite.config.js", type:'file' },
+      { name:"vite.config.ts", type:'file' }
+    ]
+  };
+}
+
 /* 最小可渲染 PDF（浏览器会重建 xref） */
 function samplePDF() {
   const body = 'BT /F1 26 Tf 72 700 Td (Wanna sample PDF) Tj ET';
@@ -86,7 +217,7 @@ function samplePDF() {
 
 /* ── 状态 ───────────────────────────────────── */
 let S = load() || {
-  projects: [sampleProject(), defaultProjectSeed()],   // §20.9：末尾那个是「默认」项目文件夹
+  projects: [sampleProject(), stationProjectSeed(), defaultProjectSeed()],   // §35.19 station（图片生成·docker 项目）入导航   // §20.9：末尾那个是「默认」项目文件夹
   activeProject: 'p1',
   tempMode: false,                 // 默认卡片（不加项目 = 临时对话）是否选中
   projectMode: true,              // **项目模式**（需求 §12.0）：进来就是项目模式，点「项目」退回对话模式
@@ -161,6 +292,8 @@ function load() {
     if (!r || !Array.isArray(r.projects)) return null;
     // §20.9：老存档里没有「默认」这个项目文件夹 —— 补一个（放末尾，免得抢走 S.projects[0] 的兜底）
     if (!r.projects.some(p => p && p.isDefault)) r.projects.push(defaultProjectSeed());
+    // §35.19 station 入库：seed 只在全新状态生效，老存盘靠这条迁移补（放第 2 位）
+    if (!r.projects.some(p => p && p.id === 'station')) r.projects.splice(1, 0, stationProjectSeed());
     if (!Array.isArray(r.focusFiles)) r.focusFiles = [];
     // 老数据是字符串 rel → 迁成 {p,f}（跨项目多选要分清是哪个项目）
     if (r.focusFiles.some(x => typeof x === 'string')) {
@@ -1206,11 +1339,13 @@ function openProjMenu(p, anchor) {
 /// 这次 18 项的标签菜单就因为 `innerHeight - 420` 把最后两项顶到了屏幕外。
 /// §22.2：**先往上弹**（菜单底边贴按钮顶边），上方放不下才翻下去。
 /// 输入框那几个下拉都在屏幕底部，往下弹会把按钮整个盖住。
-function placeMenuAbove(m, x, yBottom) {
+function placeMenuAbove(m, x, yBottom, flipAt) {
+  // yBottom = 贴靠的那条边（要"菜单在按钮上方"就传按钮**顶边** r.top）；
+  // flipAt = 上方放不下时**翻下去的起点**（传 r.bottom → 翻下后也不盖按钮）
   m.hidden = false;
   const w = m.offsetWidth, h = m.offsetHeight;
   let top = yBottom - 6 - h;
-  if (top < 6) top = Math.min(yBottom + 6, innerHeight - h - 6);
+  if (top < 6) top = Math.min((flipAt !== undefined ? flipAt : yBottom) + 6, innerHeight - h - 6);
   m.style.left = Math.max(6, Math.min(x, innerWidth - w - 8)) + 'px';
   m.style.top = Math.max(6, top) + 'px';
 }
@@ -2625,12 +2760,18 @@ function updateComposerTools() {
   // 上下文占用：消息总字符 / 8000（原型用的估算上限，够看出变化即可）
   const chars = (S.chat || []).reduce((n, m) => n + String(m.html || '').length, 0);
   const pct = Math.max(0, Math.min(99, Math.round(chars / 8000 * 100)));
+  // §35.12 百分比数字已删 —— 只有环；颜色 白(低占用)→黄(高占用) 按占用插值，数值看 title
   const arc = $('#ctxArc');
   if (arc) {
     arc.style.strokeDashoffset = String(45.24 * (1 - pct / 100));
-    arc.style.stroke = pct > 80 ? 'var(--warn)' : 'var(--accent)';   // 快满了变琥珀
+    const t = Math.max(0, Math.min(1, pct / 100));
+    const mix = (a, b) => Math.round(a + (b - a) * t);
+    arc.style.stroke = pct > 80
+      ? 'var(--warn)'
+      : `rgb(${mix(237, 255)},${mix(237, 214)},${mix(240, 10)})`;   // #EDEDF0 白 → #FFD60A 黄
+    const wrap = $('#ctCtx');
+    if (wrap) wrap.title = `上下文占用 ${pct}%`;
   }
-  const pl2 = $('#ctxPct'); if (pl2) pl2.textContent = pct + '%';
 }
 
 function toggleDualScreen() {
@@ -3396,6 +3537,16 @@ function toggleFullscreen() {
   toast(on ? '已进入全屏 —— 右上角按钮 / ESC / ⌘⇧F 都能退出' : '已退出全屏');
 }
 
+/// §35.18 编辑区全屏 = **不是系统全屏**：导航栏以下全给编辑区 ——
+/// 隐藏 项目栏 / 两根分隔线 / 会话区 / 右 rail / 侧板（顶栏保留），workspace 撑满；
+/// 再点一次恢复三段。CSS 规则在 body.editor-full。
+function toggleEditorFull() {
+  const on = !document.body.classList.contains('editor-full');
+  document.body.classList.toggle('editor-full', on);
+  toast(on ? '编辑区全屏 —— 左右栏和会话区已藏起，⛶ 再点一次退出'
+           : '已退出编辑区全屏 —— 三段布局回来了');
+}
+
 /* ── 分割线拖拽 ─────────────────────────────── */
 function dragSplit(el, apply) {
   el.addEventListener('mousedown', e => {
@@ -3435,10 +3586,12 @@ function showMenu(items, anchor, xy) {
     menuDyn.appendChild(b);
   });
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
-  const left = xy ? xy.x : (r ? r.left : 100);
-  const top = xy ? xy.y : (r ? r.bottom + 4 : 100);
-  menuDyn.hidden = false;
-  placeMenu(menuDyn, left, top);
+  if (xy) { menuDyn.hidden = false; placeMenu(menuDyn, xy.x, xy.y); }
+  else if (r) {
+    // §35.11 带按钮锚点一律**贴按钮上方**（底边=按钮顶边）；上方放不下 placeMenuAbove 自动翻下 ——
+    // 权限/审批/左右两列的＋原来都从下方弹、把按钮整个盖住（你点名的"覆盖按钮不对"）
+    placeMenuAbove(menuDyn, r.left, r.top, r.bottom);
+  } else { menuDyn.hidden = false; placeMenu(menuDyn, 100, 100); }
 }
 /// 标签条最左的 ☰：**纵向列出全部标签**（横向看不全时用，§13.4）
 function openTabsPopover() {
@@ -3879,8 +4032,7 @@ function bind() {
     $('#btnGitHist').onclick = e => {
       e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget);
     };
-    // 文件头那颗「恢复」= 同一个提交恢复面板（§18.2：文件位置上必须有恢复入口）
-    $('#btnRestoreFile').onclick = e => { e.stopPropagation(); closeMenus(); openGitPanel(e.currentTarget, true); };
+    // §35.9 文件头那颗「恢复」已删（与顶栏历史重复；历史面板里有「恢复到提交…」）
   } catch (e) { console.error('[bind] 提交/恢复 绑定失败', e); }
 
 
@@ -3935,9 +4087,8 @@ function bind() {
     closeGitPanel();
     if (wasOpen) return;                     // 同一颗再点 = 关掉（否则永远关不上）
     const r = btn.getBoundingClientRect();
-    m.hidden = false;
-    m.style.left = Math.max(8, Math.min(r.left, innerWidth - 230)) + 'px';
-    m.style.top = (r.bottom + 6) + 'px';
+    // §35.11 静态菜单同样贴按钮上方（左栏两个＋在屏幕中上，上方放不下自动翻下）
+    placeMenuAbove(m, r.left, r.top, r.bottom);
   };
   $('#btnAddProject').onclick = e => { e.stopPropagation(); openMenuAt('#menuAddProject', e.currentTarget); };
   $('#btnAddPlan').onclick = e => { e.stopPropagation(); openConvAddMenu({ kind: 'default' }, e.currentTarget); };
@@ -4112,7 +4263,7 @@ function bind() {
   $('#btnFinder').onclick = () => toast(`在访达中显示 <b>${escapeHtml($('#fullPathLabel').textContent)}</b>（原型不落地）`);
 
   $('#btnFs').onclick = toggleFullscreen;
-  $('#btnFs2').onclick = toggleFullscreen;
+  $('#btnFs2').onclick = toggleEditorFull;   // §35.18 编辑区全屏（非系统全屏）
   $('#btnFsExit').onclick = toggleFullscreen;
   $('#btnLayout').onclick = cycleLayout;
   // ⭐ 编辑区开关（一个按钮带滑块，点一下开、点一下关）—— 放顶栏最左
@@ -4130,7 +4281,7 @@ function bind() {
   };
   $('#btnCallFixed').onclick = () => {
     const m = S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频';
-    toast(`通话 = 当前<b>${m}</b>模式的通话（位置固定在刘海右侧，不随模式条移动）`);
+    toast(`通话 = 当前<b>${m}</b>模式的通话（§35.8：在模式条「视频」右侧，带分隔线）`);
   };
 
   // md 工具栏
@@ -4219,7 +4370,147 @@ function bind() {
     m.querySelector('[data-act="policyInterrupt"]').classList.toggle('is-on', S.sendPolicy === 'interrupt');
   };
 
-  $('#btnSend').onclick = sendChat;
+/* ══════════════════════════════════════════════════════════════
+   §35.14–16 录音按钮（原右下角发送位）
+   点击=开始：圆点动画（真实麦克风音量驱动——说话起伏、不说话静止）
+             + 录音计时 + 流式实时转写进输入框（SpeechRecognition；
+             环境不可用 → 降级演示流式并说明）
+   再点=停止保留转写；Esc=取消清空（恢复到按下时的内容）
+   ══════════════════════════════════════════════════════════════ */
+const recState = {
+  on: false, gen: 0, t0: 0, timer: null, raf: null,
+  stream: null, actx: null, analyser: null,
+  sr: null, srRestart: false, base: '', typedTimer: null, fallbackShown: false,
+};
+function recFormat(ms) {
+  const s = Math.floor(ms / 1000);
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+function recWaveDots() {
+  const wave = $('#recWave'); if (!wave) return;
+  wave.innerHTML = Array.from({ length: 32 }, () => '<i></i>').join('');
+}
+function startRecording() {
+  const ta = $('#chatInput'), btn = $('#btnRec'), strip = $('#recStrip');
+  if (!ta || !btn || recState.on) return;
+  recState.on = true; recState.gen++;
+  const gen = recState.gen;
+  recState.base = ta.value;
+  recState.t0 = now();
+  btn.classList.add('rec-on'); btn.textContent = '⏹'; btn.title = '停止并保留转写（Esc 取消）';
+  strip.hidden = false;
+  recWaveDots();
+  $('#recWave').classList.remove('live');
+  $('#recTimer').textContent = '00:00';
+  recState.timer = setInterval(() => {
+    if (!recState.on || recState.gen !== gen) return;
+    const el = $('#recTimer'); if (el) el.textContent = recFormat(now() - recState.t0);
+  }, 250);
+
+  // ① 真实音量驱动动画：说话起伏、不说话回落静止
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    if (recState.gen !== gen) { stream.getTracks().forEach(t => t.stop()); return; }
+    recState.stream = stream;
+    const actx = new (window.AudioContext || window.webkitAudioContext)();
+    recState.actx = actx;
+    const src = actx.createMediaStreamSource(stream);
+    const analyser = actx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser);
+    recState.analyser = analyser;
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    const dots = () => $$('#recWave i');
+    let slow = 0;
+    const loop = () => {
+      if (!recState.on || recState.gen !== gen) return;
+      analyser.getByteTimeDomainData(buf);
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128) / 128);
+      const live = peak > 0.04;
+      slow = live ? Math.min(1, slow + 0.35) : Math.max(0, slow - 0.12);   // 平滑：停口后动画渐停
+      $('#recWave')?.classList.toggle('live', slow > 0.12);
+      const ds = dots();
+      for (let i = 0; i < ds.length; i++) {
+        const center = 1 - Math.abs(i - ds.length / 2) / (ds.length / 2);  // 中间亮两端渐隐（图6）
+        const jitter = 0.55 + 0.45 * Math.abs(Math.sin((i * 1.7) + now() / 90));
+        const sc = 1 + slow * jitter * center * 2.6;
+        ds[i].style.transform = `scaleY(${sc.toFixed(2)})`;
+      }
+      recState.raf = requestAnimationFrame(loop);
+    };
+    loop();
+  }).catch(() => { /* 无麦克风权限：动画保持静止，计时与转写照走 */ });
+
+  // ② 流式转写：能用真识别就真，不行降级演示流式
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SR) {
+    try {
+      const sr = new SR();
+      recState.sr = sr; recState.srRestart = true;
+      sr.lang = 'zh-CN'; sr.continuous = true; sr.interimResults = true;
+      sr.onresult = e => {
+        if (recState.gen !== gen) return;
+        let heard = '';
+        for (let i = 0; i < e.results.length; i++) heard += e.results[i][0].transcript;
+        ta.value = recState.base + heard;
+      };
+      sr.onerror = ev => {
+        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+          recState.srRestart = false; recFallbackTranscribe(gen, ta);
+        }
+        // network / no-speech → 等 onend 再重启，连不上再降级
+      };
+      sr.onend = () => {
+        if (recState.gen !== gen || !recState.on) return;
+        if (recState.srRestart) { try { sr.start(); return; } catch (e) { /* fallthrough */ } }
+        recFallbackTranscribe(gen, ta);
+      };
+      sr.start();
+      return;
+    } catch (e) { /* 掉到降级 */ }
+  }
+  recFallbackTranscribe(gen, ta);
+}
+/// 降级：浏览器识别不可用 → 把一句演示文本**逐字流式**吐进输入框（并说明是演示）
+function recFallbackTranscribe(gen, ta) {
+  if (recState.typedTimer || recState.gen !== gen) return;
+  if (!recState.fallbackShown) {
+    recState.fallbackShown = true;
+    toast('当前浏览器实时语音识别不可用 —— 转写按<b>演示流式</b>吐字（动画与计时仍是真实麦克风驱动）');
+  }
+  const text = '（演示转写）这是一段实时显示在输入框里的文字，停止录音后会保留，Esc 会取消。';
+  let i = 0;
+  recState.typedTimer = setInterval(() => {
+    if (recState.gen !== gen || !recState.on || i >= text.length) {
+      clearInterval(recState.typedTimer); recState.typedTimer = null; return;
+    }
+    ta.value = recState.base + text.slice(0, ++i);
+  }, 90);
+}
+function stopRecording(cancel) {
+  if (!recState.on) return;
+  recState.on = false; recState.gen++;
+  clearInterval(recState.timer); recState.timer = null;
+  clearInterval(recState.typedTimer); recState.typedTimer = null;
+  if (recState.raf) cancelAnimationFrame(recState.raf);
+  recState.raf = null;
+  recState.srRestart = false;
+  try { recState.sr && recState.sr.stop(); } catch (e) { /* 已停 */ }
+  recState.sr = null;
+  if (recState.stream) { recState.stream.getTracks().forEach(t => t.stop()); recState.stream = null; }
+  if (recState.actx) { try { recState.actx.close(); } catch (e) { /* 已关 */ } recState.actx = null; }
+  recState.analyser = null;
+  const ta = $('#chatInput');
+  if (cancel && ta) ta.value = recState.base;              // Esc 取消：恢复按下时的内容
+  const btn = $('#btnRec');
+  if (btn) { btn.classList.remove('rec-on'); btn.textContent = '⏺'; btn.title = '录音（Esc 取消）'; }
+  const strip = $('#recStrip'); if (strip) strip.hidden = true;
+  if (!cancel && ta && ta.value !== recState.base) toast('已停止录音 —— 转写留在输入框里，回车即发送');
+}
+/* §35.14 绑定：原右下角发送位（元素 HTML 已换成 #btnRec） */
+$('#btnRec').onclick = () => (recState.on ? stopRecording(false) : startRecording());
+
+
   // §22.13 排队 ⇄ 打断 + 队列徽标
   $$('#qRow .q-opt').forEach(b => b.onclick = e => { e.stopPropagation(); setSendPolicy(b.dataset.policy); });
   // §23.2 单屏 ⇄ 双屏（在 连续/临时 左边）
@@ -4283,6 +4574,7 @@ function bind() {
   document.addEventListener('keydown', e => {
     const meta = e.metaKey || e.ctrlKey;
     if (e.key === 'Escape') {
+      if (recState.on) { stopRecording(true); return; }   // §35.16 录音中 Esc=取消（清转写）
       if (previewEditSession) { leavePreviewEditSession(true); return; }
       if ($('.app').classList.contains('fs')) { toggleFullscreen(); return; }
     }
@@ -6100,6 +6392,8 @@ const FP = {
   view: 'list', group: 'none',
   cols: (Array.isArray(S.finderColsDefault) && S.finderColsDefault.length) ? [...S.finderColsDefault] : [...FP_COLS_DEFAULT],
   layout: 'single', active: 0, split: '50%', colW: 220,
+  sortKey: null, sortDir: 'asc',            // §35.4 列头点击排序（null=原序：目录前+原顺序）
+  lastClick: null,                          // §35.2 自维护双击检测 {pi,name,t}（单击重绘后 dblclick 事件会断）
   panes: [{ path: '/Users/mjm', sel: null }],
   sides: { L: null, R: null },     // 懒加载自 S.finderSide / S.finderSideR（左右两栏各自独立）
 };
@@ -6155,32 +6449,36 @@ function renderFinder() {
   // 工具栏状态
   $$('#fpViews button').forEach(b => b.classList.toggle('is-on', b.dataset.view === FP.view));
   $$('#fpLayouts button').forEach(b => b.classList.toggle('is-on', b.dataset.layout === FP.layout));
-  renderFinderPath(); renderFinderSide('L'); renderFinderSide('R'); renderFinderMain();
+  // §35.6 全局路径行已删 —— 路径长在每个窗格顶上（fpPathRowHTML）
+  renderFinderSide('L'); renderFinderSide('R'); renderFinderMain();
 }
-function renderFinderPath() {
-  const bar = $('#fpPath'); if (!bar) return;
-  const pane = FP.panes[FP.active] || FP.panes[0];
-  const path = pane.path;
-  const parts = path.split('/').filter(Boolean);
+/// §35.6 每个窗格自带一行路径（QSpace 图7 的每窗格导航行）：点击跳该层、双击/⌘L 输入
+function fpPathRowHTML(pane, pi) {
+  const parts = pane.path.split('/').filter(Boolean);
   let cum = '';
-  const crumbs = ['<button class="fp-crumb" data-p="/"><span class="fc-ico">💬</span>Macintosh HD</button>']
+  const crumbs = [`<button class="fp-crumb" data-p="/" data-pi="${pi}" title="/">Macintosh HD</button>`]
     .concat(parts.map(p => {
       cum += '/' + p;
-      return `<span class="fp-crumb-sep">▸</span><button class="fp-crumb" data-p="${escapeHtml(cum)}">
-        <span class="fc-ico">📁</span>${escapeHtml(p)}</button>`;
+      return `<span class="fp-crumb-sep">▸</span><button class="fp-crumb" data-p="${escapeHtml(cum)}" data-pi="${pi}">${escapeHtml(p)}</button>`;
     }));
-  bar.innerHTML = crumbs.join('');
-  $$('#fpPath .fp-crumb').forEach(b => b.onclick = () => {
-    const p = b.dataset.p;
-    FP.panes[FP.active].path = p; FP.panes[FP.active].sel = null;
+  return `<div class="fp-cellpath" data-pi="${pi}" title="点击段落跳转 · 双击空白或 ⌘L 输入路径">${crumbs.join('')}</div>`;
+}
+function fpBindPathRow(root) {
+  root.querySelectorAll('.fp-cellpath .fp-crumb').forEach(b => b.onclick = () => {
+    const pi = +b.dataset.pi;
+    FP.panes[pi].path = b.dataset.p; FP.panes[pi].sel = null;
     renderFinder();
   });
+  root.querySelectorAll('.fp-cellpath').forEach(row => {
+    row.ondblclick = e => { if (!e.target.closest('.fp-crumb')) fpStartPathEdit(+row.dataset.pi); };
+  });
 }
-function fpStartPathEdit() {
-  const bar = $('#fpPath'); if (!bar) return;
-  const pane = FP.panes[FP.active];
+function fpStartPathEdit(pi) {
+  const cell = document.querySelector(`#fpPanes .fp-cell[data-pi="${pi}"]`); if (!cell) return;
+  const bar = cell.querySelector('.fp-cellpath'); if (!bar) return;
+  const pane = FP.panes[pi]; if (!pane) return;
   bar.innerHTML = `<input id="fpPathInput" spellcheck="false" value="${escapeHtml(pane.path)}">`;
-  const inp = $('#fpPathInput');
+  const inp = bar.querySelector('#fpPathInput');
   inp.focus(); inp.select();
   inp.onkeydown = e => {
     e.stopPropagation();
@@ -6192,7 +6490,7 @@ function fpStartPathEdit() {
       // 先摘掉 blur 回调再重绘：innerHTML 换掉聚焦的 input 会同步触发 blur，
       // blur 里再 renderFinder 就变成第二次 innerHTML 嵌在第一次里面 = NotFoundError
       inp.onblur = null;
-      renderFinder(); toast(`已跳到 <code>${escapeHtml(pane.path)}</code>`);
+      renderFinder(); toast(`窗格 ${pi + 1} 已跳到 <code>${escapeHtml(pane.path)}</code>`);
     } else if (e.key === 'Escape') { inp.onblur = null; renderFinder(); }
   };
   inp.onblur = () => renderFinder();
@@ -6222,6 +6520,31 @@ function renderFinderSide(k) {
     </div>`;
   });
   side.innerHTML = html;
+  /* §35.1 组头按住上下拖 = 整组换位（HTML5 DnD；▲▼ 按钮仍在，两条路都留） */
+  side.querySelectorAll('.fp-fgroup').forEach(gEl => {
+    const gi = +gEl.dataset.g;
+    const handle = gEl.querySelector('.fg-name');
+    if (handle) {
+      handle.draggable = true;
+      handle.ondragstart = e => {
+        dragRef = { kind: 'group', g: gi };
+        e.dataTransfer.effectAllowed = 'move';
+        e.stopPropagation();
+      };
+    }
+    gEl.ondragover = e => { e.preventDefault(); e.stopPropagation(); gEl.classList.add('drag-over-top'); };
+    gEl.ondragleave = () => gEl.classList.remove('drag-over-top');
+    gEl.ondrop = e => {
+      e.preventDefault(); e.stopPropagation();
+      gEl.classList.remove('drag-over-top');
+      if (!dragRef || dragRef.kind !== 'group' || dragRef.g === gi) { dragRef = null; return; }
+      const gs = fpSide(k);
+      const moved = gs.splice(dragRef.g, 1)[0];
+      gs.splice(gi, 0, moved);
+      dragRef = null; save(); rerender();
+      toast(`分组「${escapeHtml(moved.name)}」已移动`);
+    };
+  });
   side.querySelector('.fp-add-group').onclick = () => askModal({ title: '新建分组', text: '收藏栏里的一个分组（名字可随时双击改）',
     value: '新分组', okText: '添加', onOk: v => {
       if (!v.trim()) return;
@@ -6266,13 +6589,27 @@ function renderFinderSide(k) {
       el.classList.add('on');
       if (it.path) { FP.panes[FP.active].path = it.path; FP.panes[FP.active].sel = null; renderFinder(); }
     };
-    el.ondragstart = e => { dragRef = { g: +el.dataset.g, i: +el.dataset.i };
+    el.ondragstart = e => { dragRef = { kind: 'item', g: +el.dataset.g, i: +el.dataset.i };
       e.dataTransfer.effectAllowed = 'move'; };
-    el.ondragover = e => { e.preventDefault(); el.classList.add('drag-over'); };
+    el.ondragover = e => { e.preventDefault(); e.stopPropagation(); el.classList.add('drag-over'); };
     el.ondragleave = () => el.classList.remove('drag-over');
     el.ondrop = e => {
       e.preventDefault(); el.classList.remove('drag-over');
       if (!dragRef) return;
+      if (dragRef.kind === 'group') {
+        // §35.1 拖**组**落到组内条目上 = 落到该组（落点常在条目上，拒收等于拖动失效）
+        const toG = +el.dataset.g;
+        if (dragRef.g !== toG) {
+          const gs = fpSide(k);
+          const moved = gs.splice(dragRef.g, 1)[0];
+          gs.splice(toG, 0, moved);
+          dragRef = null; save(); rerender();
+          toast(`分组「${escapeHtml(moved.name)}」已移动`);
+          return;
+        }
+        dragRef = null; return;
+      }
+      if (dragRef.kind !== 'item') { dragRef = null; return; }
       const toG = +el.dataset.g, toI = +el.dataset.i;
       const it = fpSide(k)[dragRef.g].items.splice(dragRef.i, 1)[0];
       fpSide(k)[toG].items.splice(toI, 0, it);
@@ -6297,10 +6634,14 @@ function renderFinderMain() {
   else if (FP.layout === 'three') inner = cells(0, 1) + `<div class="fp-r2">${cells(1, 3)}</div>`;
   else inner = `<div class="fp-r2">${cells(0, 2)}</div><div class="fp-r2">${cells(2, 4)}</div>`;
   main.innerHTML = `<div class="fp-panes l-${FP.layout}" id="fpPanes" style="--fp-split:${FP.split};--fp-colw:${FP.colW}px">${inner}</div>`;
-  // 窗格点击 = 激活
+  fpBindPathRow(main);                       // §35.6 各窗格路径行：点击跳层、双击进输入
+  // 窗格点击 = 激活。**只切 class 不重绘** —— 重建 DOM 会把紧接着的 dblclick 断在两个节点上
   $$('#fpPanes .fp-cell').forEach(c => c.addEventListener('mousedown', () => {
     const i = +c.dataset.pi;
-    if (i !== FP.active) { FP.active = i; renderFinder(); }
+    if (i !== FP.active) {
+      FP.active = i;
+      $$('#fpPanes .fp-cell').forEach(x => x.classList.toggle('act', +x.dataset.pi === i));
+    }
   }, true));
   // 布局分屏中缝（左右/上下）
   $$('#fpPanes .fp-gap').forEach(g => {
@@ -6319,24 +6660,65 @@ function renderFinderMain() {
       document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     };
   });
-  // 列表里：目录点击钻取、文件点击选中、表头右键选列
-  $$('#fpPanes .fp-row').forEach(row => {
-    row.addEventListener('mouseup', e => {                    // mousedown 会先切活动窗格，click 才稳
-      if (row.dataset.kind === 'dir') {
-        const pi = +row.dataset.pi;
-        FP.panes[pi].path = fpJoin(FP.panes[pi].path, row.dataset.name);
-        FP.panes[pi].sel = null;
-        renderFinder();
-      } else {
-        const pi = +row.dataset.pi;
-        FP.panes[pi].sel = row.dataset.name;
-        renderFinderMain();
+  /* §35.2 QSpace 核心交互：**单击=选中、双击=进入/打开**（原来单击目录直接钻取——错） */
+  $$('#fpPanes .fp-row, #fpPanes .fp-gcell, #fpPanes .fp-colrow').forEach(row => {
+    row.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const pi = +row.dataset.pi, name = row.dataset.name;
+      const t = Date.now();
+      const last = FP.lastClick;
+      const isDouble = last && last.pi === pi && last.name === name && t - last.t < 400;
+      FP.lastClick = isDouble ? null : { pi, name, t };
+      if (isDouble) {                       // §35.2 双击=进入目录 / 打开文件（自检测，不靠 dblclick 事件——单击重绘不断链）
+        if (row.dataset.kind === 'dir') {
+          FP.panes[pi].path = fpJoin(FP.panes[pi].path, name);
+          FP.panes[pi].sel = null;
+          renderFinder();
+        } else {
+          toast(`打开文件（演示）：<b>${escapeHtml(name)}</b> —— 真机上双击用系统默认应用打开`);
+        }
+        return;
       }
+      FP.panes[pi].sel = name;              // 单击=选中（分栏视图同时联动右列 → 统一重绘）
+      FP.active = pi;
+      renderFinderMain();
+    });
+    row.addEventListener('contextmenu', ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const pi = +row.dataset.pi;
+      FP.active = pi; FP.panes[pi].sel = row.dataset.name;
+      renderFinderMain();
+      fpRowMenu(ev.clientX, ev.clientY, pi, row.dataset.name, row.dataset.kind);
     });
   });
+  // 空白区：单击清选中、右键=新建那套（QSpace 空白右键）
+  $$('#fpPanes .fp-cell').forEach(cell => {
+    const body = cell.querySelector('.fp-cellbody') || cell;
+    body.addEventListener('click', ev => {
+      if (ev.target.closest('.fp-row,.fp-gcell,.fp-colrow,.fp-cellpath')) return;
+      const pi = +cell.dataset.pi;
+      FP.panes[pi].sel = null; FP.active = pi;
+      renderFinderMain();
+    });
+    body.addEventListener('contextmenu', ev => {
+      if (ev.target.closest('.fp-row,.fp-gcell,.fp-colrow,.fp-cellpath')) return;
+      ev.preventDefault(); ev.stopPropagation();
+      FP.active = +cell.dataset.pi;
+      fpBlankMenu(ev.clientX, ev.clientY, +cell.dataset.pi);
+    });
+  });
+  /* §35.4 列头：点击=排序（升降序箭头）、右键=选列菜单（QSpace/Finder 惯例；
+     取代 34.19 的「点击也开列菜单」） */
   $$('#fpPanes th[data-col]').forEach(th => {
-    th.oncontextmenu = e => { e.preventDefault(); fpColumnMenu(e.clientX, e.clientY); };
-    th.onclick = e => { e.stopPropagation(); fpColumnMenu(e.clientX, e.clientY); };   // 照 Finder：点表头也能开列菜单
+    th.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); fpColumnMenu(e.clientX, e.clientY); };
+    th.onclick = e => {
+      e.stopPropagation();
+      const key = th.dataset.col;
+      if (FP.sortKey === key) FP.sortDir = FP.sortDir === 'asc' ? 'desc' : 'asc';
+      else { FP.sortKey = key; FP.sortDir = 'asc'; }
+      renderFinderMain();
+      toast(`按<b>${FP_COL_LABEL[key] || key}</b> ${FP.sortDir === 'asc' ? '升序' : '降序'}排列`);
+    };
   });
   // 分栏视图中缝：拖宽左栏
   $$('#fpPanes .fp-cols-gutter').forEach(g => {
@@ -6353,34 +6735,68 @@ function renderFinderMain() {
     };
   });
 }
+/// §35.4 排序：目录恒在前（Finder 惯例），目录内按当前列升/降序
+function fpSorted(arr) {
+  const k = FP.sortKey, desc = FP.sortDir === 'desc';
+  const dirs = arr.filter(x => x.dir), files = arr.filter(x => !x.dir);
+  if (!k) return [...dirs, ...files];
+  const sizeNum = v => {
+    const m = /^([\d.]+)\s*(KB|MB|GB|B)?$/i.exec(String(v).trim());
+    if (String(v).includes('字节')) return parseFloat(v) || 0;
+    if (!m) return -1;
+    const n = parseFloat(m[1]); const u = (m[2] || 'B').toUpperCase();
+    return n * (u === 'GB' ? 1073741824 : u === 'MB' ? 1048576 : u === 'KB' ? 1024 : 1);
+  };
+  const dateNum = v => {
+    const s = String(v).trim();
+    if (s === '昨天') return 99999999; if (s === '前天') return 99999998;
+    const m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s);
+    return m ? (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]) : -1;
+  };
+  const val = e => k === 'name' ? e.name.toLowerCase()
+    : k === 'size' ? sizeNum(e.s)
+    : (k === 'mtime' || k === 'added') ? dateNum(k === 'mtime' ? e.m : e.a)
+    : String(fpColValue(e, k) || '').toLowerCase();
+  const cmp = (a, b) => {
+    const va = val(a), vb = val(b);
+    const r = typeof va === 'number' && typeof vb === 'number'
+      ? va - vb : String(va).localeCompare(String(vb), 'zh-Hans');
+    return desc ? -r : r;
+  };
+  return [...dirs.sort(cmp), ...files.sort(cmp)];
+}
 function fpCellHTML(pane, pi) {
-  const entries = fpEntries(pane.path);
+  const entries = fpSorted(fpEntries(pane.path));
+  const wrap = inner => fpPathRowHTML(pane, pi) + `<div class="fp-cellbody">${inner}</div>`;
   if (FP.layout === 'single' && FP.view === 'columns') {
     // 分栏视图：左 = 当前目录的子目录（点选），右 = 选中目录内容（Finder 经典钻取）
     const subs = entries.filter(x => x.dir);
     const selName = pane.sel && subs.some(x => x.name === pane.sel) ? pane.sel : (subs[0] ? subs[0].name : null);
     const rightPath = selName ? fpJoin(pane.path, selName) : pane.path;
-    const right = fpEntries(rightPath);
+    const right = fpSorted(fpEntries(rightPath));
     const rowOf = (e2, basePath) => `<div class="fp-row fp-colrow${pane.sel === e2.name ? ' sel' : ''}"
         data-kind="${e2.dir ? 'dir' : 'file'}" data-name="${escapeHtml(e2.name)}" data-pi="${pi}"
-        style="display:flex;gap:7px;align-items:center;padding:5px 10px;font-size:12.5px;cursor:pointer;
-        color:${e2.dir ? 'var(--ink)' : 'var(--ink2)'};${pane.sel === e2.name ? 'background:rgba(10,132,255,.14)' : ''}">
+        style="display:flex;gap:7px;align-items:center;padding:6px 10px;font-size:13px;cursor:pointer;
+        color:${e2.dir ? 'var(--ink)' : 'var(--ink2)'};${pane.sel === e2.name ? 'background:rgba(10,132,255,.28)' : ''}">
         ${fpIco(e2)}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e2.name)}</span></div>`;
-    return `<div class="fp-cols">
+    return wrap(`<div class="fp-cols">
       <div class="fp-cols-left">${subs.length ? subs.map(x => rowOf(x, pane.path)).join('') : '<div class="fp-empty">没有子文件夹</div>'}</div>
       <div class="fp-cols-gutter" title="拖动调宽"></div>
       <div class="fp-cols-right">${right.length ? right.map(x => rowOf(x, rightPath)).join('') : '<div class="fp-empty">空文件夹</div>'}</div>
-    </div>`;
+    </div>`);
   }
   if (FP.layout === 'single' && FP.view === 'icon') {
-    return `<div class="fp-grid">${entries.map(e2 => `<div class="fp-gcell${pane.sel === e2.name ? ' sel' : ''}"
+    return wrap(`<div class="fp-grid">${entries.map(e2 => `<div class="fp-gcell${pane.sel === e2.name ? ' sel' : ''}"
       data-kind="${e2.dir ? 'dir' : 'file'}" data-name="${escapeHtml(e2.name)}" data-pi="${pi}">
       <span class="gc-ico ${e2.dir ? 'fp-dir' : ''}" style="${e2.dir ? '' : 'background:#8E8E93'}">${e2.dir ? '▸' : escapeHtml((e2.name.split('.').pop() || '?').slice(0, 2).toUpperCase())}</span>
-      <span class="gc-name">${escapeHtml(e2.name)}</span></div>`).join('')}</div>`;
+      <span class="gc-name">${escapeHtml(e2.name)}</span></div>`).join('')}</div>`);
   }
   // 列表视图（单/多窗格通用；分组时插组头）
   const cols = ['name', ...FP.cols];
-  const head = `<tr>${cols.map(c => `<th data-col="${c}" title="右键选择显示哪些列">${FP_COL_LABEL[c]}</th>`).join('')}</tr>`;
+  const head = `<tr>${cols.map(c => {
+    const sk = c === FP.sortKey ? (FP.sortDir === 'asc' ? ' sort-asc' : ' sort-desc') : '';
+    return `<th data-col="${c}" class="${sk}" title="点击按此列排序 · 右键选择显示哪些列">${FP_COL_LABEL[c]}</th>`;
+  }).join('')}</tr>`;
   let body = '';
   if (FP.group !== 'none') {
     const map = new Map();
@@ -6397,8 +6813,8 @@ function fpCellHTML(pane, pi) {
   } else {
     body = entries.map(e2 => fpRowHTML(e2, cols, pane, pi)).join('');
   }
-  return `<table class="fp-table"><thead>${head}</thead><tbody>${body || ''}</tbody></table>`
-    + (entries.length ? '' : '<div class="fp-empty">空文件夹</div>');
+  return wrap(`<table class="fp-table"><thead>${head}</thead><tbody>${body || ''}</tbody></table>`
+    + (entries.length ? '' : '<div class="fp-empty">空文件夹</div>'));
 }
 function fpRowHTML(e2, cols, pane, pi) {
   const tds = cols.map(c => c === 'name'
@@ -6421,12 +6837,12 @@ function fpColumnMenu(x, y) {
   items.push({ label: '多媒体 ›', action: () => showMenu(
     [{ label: '← 返回列设置', action: () => fpColumnMenu(x, y) }, { sep: true },
      { label: '时长', action: () => toast('「时长」需要媒体文件的元数据（原型数据里没有，如实显示 —）') },
-     { label: '艺术家', action: () => toast('同上：媒体元数据列，原型显示 —') }], { getBoundingClientRect: () => ({ left: x, bottom: y }) }) });
+     { label: '艺术家', action: () => toast('同上：媒体元数据列，原型显示 —') }], null, { x: x + 170, y: y }) });
   items.push({ label: '其他 ›', action: () => showMenu(
     [{ label: '← 返回列设置', action: () => fpColumnMenu(x, y) }, { sep: true },
      { label: '所有者', action: () => fpToggleCol('owner') },
      { label: '位置', action: () => toast('「位置」列原型数据没有，显示 —') },
-     { label: '注释', action: () => fpToggleCol('comment') }], { getBoundingClientRect: () => ({ left: x, bottom: y }) }) });
+     { label: '注释', action: () => fpToggleCol('comment') }], null, { x: x + 170, y: y }) });
   items.push({ sep: true });
   items.push({ label: '恢复到默认', action: () => { FP.cols = [...FP_COLS_DEFAULT]; renderFinderMain(); toast('列已恢复默认'); } });
   items.push({ label: '设置为默认', action: () => { S.finderColsDefault = [...FP.cols]; save(true); toast('当前列组合已存为默认'); } });
@@ -6435,6 +6851,82 @@ function fpColumnMenu(x, y) {
 function fpToggleCol(k) {
   if (FP.cols.includes(k)) FP.cols = FP.cols.filter(c => c !== k); else FP.cols.push(k);
   renderFinderMain();
+}
+/* ══ §35.3 右键菜单三套 —— 文案 1:1 取自 QSpace Pro 的 Localizable.strings（本机实读）。
+   动作 = 原型演示（toast/剪贴板/排序真生效）；真执行（压缩/重命名落盘）属 Swift 侧。══ */
+function fpCopy(text, say) {
+  try { navigator.clipboard.writeText(text); toast(say); } catch (e) { toast('复制失败（浏览器限制）'); }
+}
+function fpTagsSub(x, y, name) {
+  const colors = [['红', '#FF5F57'], ['橙', '#F7A23B'], ['黄', '#FFD60A'], ['绿', '#2CCB6E'], ['蓝', '#54A2FF'], ['紫', '#BF5AF2']];
+  showMenu([{ title: `给「${name}」添加标签` }].concat(
+    colors.map(([n, c]) => ({ label: `${n}`, action: () => toast(`标签「${n}」已标上（演示）：${escapeHtml(name)}`) })),
+    [{ sep: true }, { label: '移除标签', action: () => toast('已移除标签（演示）') }]),
+    null, { x, y });
+}
+function fpOpenWithSub(x, y, name) {
+  showMenu([{ title: '打开方式' },
+    { label: '默认应用', action: () => toast(`用系统默认应用打开（演示）：<b>${escapeHtml(name)}</b>`) },
+    { label: '文本编辑', action: () => toast(`用「文本编辑」打开（演示）：${escapeHtml(name)}`) },
+    { label: 'Visual Studio Code', action: () => toast(`用 VS Code 打开（演示）：${escapeHtml(name)}`) },
+    { label: '选择其他应用…', action: () => toast('打开方式选择器（落 SwiftUI 用 NSWorkspace）') }],
+    null, { x, y });
+}
+function fpRowMenu(x, y, pi, name, kind) {
+  const path = fpJoin(FP.panes[pi].path, name);
+  const isZip = /\.(zip|tar|gz|tgz|rar|7z)$/i.test(name);
+  const items = [
+    { label: '打开', action: () => {
+        if (kind === 'dir') { FP.panes[pi].path = path; FP.panes[pi].sel = null; renderFinder(); }
+        else toast(`打开文件（演示）：<b>${escapeHtml(name)}</b>`);
+      } },
+    { label: '打开方式 ›', action: () => fpOpenWithSub(x, y, name) },
+    { label: '快速查看', action: () => toast(`快速查看（演示）：${escapeHtml(name)}`) },
+    { sep: true },
+    { label: '拷贝', action: () => toast(`已拷贝「${escapeHtml(name)}」（演示）`) },
+    { label: '复制', action: () => toast(`已复制「${escapeHtml(name)}」到本目录（演示）`) },
+    { label: '拷贝路径', action: () => fpCopy(path, `已拷贝路径：<code>${escapeHtml(path)}</code>`) },
+    { label: '拷贝文件名', action: () => fpCopy(name, `已拷贝文件名：${escapeHtml(name)}`) },
+    { sep: true },
+    { label: '重命名', action: () => askModal({ title: '重命名', text: name, value: name, okText: '重命名',
+        onOk: v => { if (v && v.trim()) toast(`已重命名为「${escapeHtml(v.trim())}」（演示，真执行落 Swift）`); } }) },
+    { label: '批量重命名', action: () => toast('批量重命名（QSpace JHSBatchRenameLite 同款；落 Swift 实现）') },
+    { sep: true },
+    { label: `压缩“${name}”`, action: () => toast(`已压缩为 ${escapeHtml(name)}.zip（演示）`) },
+  ];
+  if (isZip) items.push({ label: '解压', action: () => toast(`解压「${escapeHtml(name)}」（演示）`) });
+  items.push({ label: '移到废纸篓', danger: true, action: () => toast(`已移到废纸篓（演示）：${escapeHtml(name)}`) });
+  items.push({ sep: true });
+  items.push({ label: '显示简介', action: () => toast(`简介（演示）：${escapeHtml(name)}`) });
+  items.push({ label: '添加标签 ›', action: () => fpTagsSub(x, y, name) });
+  showMenu(items, null, { x, y });
+}
+function fpBlankMenu(x, y, pi) {
+  const path = FP.panes[pi].path;
+  const newFile = ext => () => toast(`新建文件 untitled.${ext}（演示）—— 将落在 <code>${escapeHtml(path)}</code>`);
+  showMenu([
+    { label: '新建文件夹', action: () => askModal({ title: '新建文件夹', text: `位置：${path}`, value: '未命名文件夹',
+        okText: '创建', onOk: v => { if (v && v.trim()) toast(`已新建文件夹「${escapeHtml(v.trim())}」（演示）`); } }) },
+    { label: '新建文件 ›', action: () => showMenu([
+      { label: '纯文本 .txt', action: newFile('txt') },
+      { label: 'Markdown .md', action: newFile('md') },
+      { label: 'Shell 脚本 .sh', action: newFile('sh') },
+      { label: '网页 .html', action: newFile('html') },
+      { label: 'Python .py', action: newFile('py') },
+    ], null, { x, y }) },
+    { sep: true },
+    { label: '粘贴', action: () => toast('粘贴（演示）') },
+    { sep: true },
+    { label: '排序方式 ›', action: () => showMenu(
+      [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['added', '添加日期']].map(([k, l]) => ({
+        label: (FP.sortKey === k ? '✓ ' : '　') + l,
+        action: () => { FP.sortKey = k; FP.sortDir = 'asc'; renderFinderMain(); toast(`已按<b>${l}</b>排序`); },
+      })).concat([{ sep: true }, { label: '↑ 升序 / ↓ 降序（再点表头切换）', action: () => {} }]),
+      null, { x, y }) },
+    { label: '刷新', action: () => { renderFinder(); toast('已刷新'); } },
+    { sep: true },
+    { label: '显示简介', action: () => toast(`当前文件夹简介（演示）：<code>${escapeHtml(path)}</code>`) },
+  ], null, { x, y });
 }
 
 /* —— 访达接线（脚本尾部，DOM 已就绪）—— */
@@ -6459,12 +6951,12 @@ function fpToggleCol(k) {
     [FP.panes[0], FP.panes[1]] = [FP.panes[1], FP.panes[0]];
     renderFinder(); toast('已把左边窗口的内容移到右侧');
   };
-  // 路径栏：双击进输入；⌘L / Ctrl+L 进输入
-  const bar = $('#fpPath');
-  if (bar) bar.ondblclick = e => { if (!e.target.closest('.fp-crumb')) fpStartPathEdit(); };
+  // §35.6 路径在每个窗格顶上（双击窗格路径行空白进输入）；⌘L / Ctrl+L 作用于**活动窗格**
   window.addEventListener('keydown', e => {
     if (!finderOpen) return;
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) { e.preventDefault(); fpStartPathEdit(); }
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
+      e.preventDefault(); fpStartPathEdit(FP.active);
+    }
   });
   // 启动恢复
   if (S.finderOpen) setFinderOpen(true);

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=36 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=36">
+<!-- ?v=37 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=37">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -47,23 +47,23 @@
       <span class="ctx-item ctx-project" title="项目绝对路径">
         <i class="ico ico-folder"></i><code id="ctxProjectPath">对话模式（无项目）</code>
       </span>
+      <!-- §35.7 提交/恢复挪到顶栏正中（路径右侧成一组；从右上搬来）——
+           提交=对当前文件夹存一版，恢复=提交记录面板（另一套代码逻辑） -->
+      <i class="ctx-sep" aria-hidden="true"></i>
+      <button class="btn btn-ghost ctx-git" id="btnCommitGit" title="存一版并打开提交记录">提交</button>
+      <button class="btn btn-ghost ctx-git" id="btnGitHist" title="提交记录与恢复">恢复</button>
     </div>
 
-    <!-- 通话：**固定在刘海右侧**（位置永远不动，不跟随模式条） -->
-    <button class="btn btn-ghost call-fixed" id="btnCallFixed"
-            title="通话 = 当前模式的通话">📞 通话</button>
-    <!-- 对话位置：紧挨着对话按钮（你要求放它右边） -->
-    <button class="btn btn-ghost" id="btnLayout" title="对话位置：右 ⇄ 中 ⇄ 左">对话·右</button>
+    <!-- §35.8 通话从顶栏挪走 → 聊天模式条「视频」右侧（见 #modeChips） -->
 
     <div class="topbar-right">
+      <!-- 对话位置：右 ⇄ 中 ⇄ 左（§35 挪进右段最前，通话离开顶栏后原位空出） -->
+      <button class="btn btn-ghost" id="btnLayout" title="对话位置：右 ⇄ 中 ⇄ 左">对话·右</button>
       <!-- §32 单屏/双屏从输入框挪到顶栏（路径行靠右） -->
       <button class="btn btn-ghost" id="ccScreen" data-screen="single"
               title="会话窗口：单屏 / 双屏（连续 与 临时 并排）">单屏</button>
       <button class="btn btn-ghost" id="btnFs" title="全屏（⌘⇧F / F11）">⛶</button>
       <button class="btn btn-ghost" id="btnSettings" title="设置">⚙</button>
-      <!-- 提交 与 恢复 是一个逻辑，挨在一起 -->
-      <button class="btn btn-ghost" id="btnCommitGit" title="存一版并打开提交记录">提交</button>
-      <button class="btn btn-ghost" id="btnGitHist" title="提交记录与恢复">恢复</button>
     </div>
   </header>
 
@@ -181,9 +181,9 @@
         <div class="facts">
           <button class="fbtn hist-btn" id="btnHistoryHead" title="这个文件的修改历史与恢复">历史 <span id="histCountHead">0</span></button>
           <button class="fbtn" id="btnEdit">编辑</button>
-          <button class="fbtn" id="btnRestoreFile" title="提交记录 · 恢复到某一版">恢复</button>
+          <!-- §35.9 这颗「恢复」删除：与顶栏「🕘 历史」重复（历史面板里本来就能恢复） -->
           <button class="fbtn" id="btnFinder">在访达中显示</button>
-          <button class="fbtn icon" id="btnFs2" title="全屏（⌘⇧F）">⛶</button>
+          <button class="fbtn icon" id="btnFs2" title="编辑区全屏（隐藏左栏/右栏/会话区，不是系统全屏）">⛶</button>
         </div>
       </div>
 
@@ -353,6 +353,9 @@
             <button class="chip is-on" data-mode="imageText">图文</button>
             <button class="chip" data-mode="voice">语音</button>
             <button class="chip" data-mode="video">视频</button>
+            <!-- §35.8 通话挪到「视频」右侧，中间一条分隔线（原顶栏那颗，id 不变） -->
+            <i class="vr" aria-hidden="true"></i>
+            <button class="call-chip" id="btnCallFixed" title="通话 = 当前模式的通话">📞 通话</button>
           </div>
         </div>
         <div class="chat-nav-right">
@@ -413,11 +416,17 @@
                   <circle class="ctx-bg" cx="9" cy="9" r="7.2"></circle>
                   <circle class="ctx-fg" id="ctxArc" cx="9" cy="9" r="7.2"></circle>
                 </svg>
-                <span id="ctxPct">0%</span>
+                <!-- §35.12 百分比数字删除 —— 只留环（白→黄），数值看 title -->
+              </span>
+              <!-- §35.15 录音态：紧贴模型左侧的空隙出「圆点动画 + 计时」（说话才动） -->
+              <span class="rec-strip" id="recStrip" hidden>
+                <span class="rec-timer" id="recTimer">00:00</span>
+                <span class="rec-wave" id="recWave" aria-hidden="true"></span>
               </span>
               <button class="ct" id="ctModel" title="切换模型"><span id="ctModelName">qwen3-vl-plus</span> <span class="ct-caret">⌄</span></button>
               <button class="q-badge" id="qBadge" hidden title="排队中的消息（点开可单条取消）">0</button>
-              <button class="btn btn-primary" id="btnSend">发送</button>
+              <!-- §35.14 发送按钮删除 → 原位是录音按钮（回车仍发送） -->
+              <button class="btn rec-btn" id="btnRec" title="录音（Esc 取消）" aria-label="开始录音">⏺</button>
             </span>
           </div>
         </div><!-- /composer -->
@@ -487,7 +496,7 @@
         </div>
         <button class="fp-tool" id="fpSwap" title="把左边窗口的内容移到右侧（交换前两个窗格）">⇄ 交换</button>
       </div>
-      <div class="fp-path" id="fpPath" title="点击段落跳转 · 双击或 ⌘L 输入路径"></div>
+      <!-- §35.6 全局路径行删除 —— 每个窗格自带一行路径（QSpace 图7：各窗格自己的导航行），JS 渲染在 .fp-cell 顶部 -->
       <div class="fp-body">
         <div class="fp-side" id="fpSide"></div>
         <div class="fp-main" id="fpMain"></div>
@@ -756,6 +765,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=36"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>
