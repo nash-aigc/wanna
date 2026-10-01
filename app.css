@@ -1840,3 +1840,38 @@ body.editor-full .main.no-workspace .chat{display:none!important}
 .chat-nav .modes-slot{flex:0 1 auto;min-width:0;overflow:hidden}
 .chat-nav-right{flex:0 0 auto}
 .chat-nav .hchip{padding:0 6px;font-size:12px}
+
+/* ══ §36 访达交互补全 —— 组折叠/右键 · 树形▸ · 斑马纹 · 拖放高亮 · 不分组区 ══ */
+
+/* 组头：caret + 仍是抓手；折叠态隐藏条目 */
+.fg-caret{display:inline-block;width:12px;font-size:10px;color:var(--ink3);flex:0 0 12px;
+  transition:transform .12s}
+.fp-fgroup.is-collapsed .fg-caret{transform:rotate(0)}
+.fp-fgroup .fg-name b{flex:1;min-width:0}
+/* 不分组区：虚线底区别于普通分组 */
+.fp-ungrouped{border-style:dashed;border-color:#34343A}
+.fp-ungrouped .fg-name{background:transparent;color:var(--ink3)}
+
+/* 树形 twisty（▸ 旋转 90°） */
+.fp-twisty{width:16px;height:16px;padding:0;border:0;background:transparent;color:var(--ink3);
+  font-size:10px;line-height:1;cursor:pointer;border-radius:4px;flex:0 0 16px;
+  display:inline-flex;align-items:center;justify-content:center;transition:transform .12s}
+.fp-twisty:hover{background:#242428;color:var(--ink)}
+.fp-twisty.open{transform:rotate(0deg);color:var(--ink2)}
+.fp-twisty-sp{display:inline-block;width:16px;flex:0 0 16px}
+.fp-c-name{gap:4px!important}
+
+/* 斑马纹（§36.9 一深一浅交叉；hover/选中优先级补层） */
+.fp-table tr.fp-row.alt td{background:rgba(255,255,255,.045)}
+.fp-table tr.fp-row.alt:hover td{background:rgba(255,255,255,.07)}
+.fp-table tr.fp-row.alt.sel td{background:rgba(10,132,255,.28)}
+
+/* 拖放反馈 */
+.fp-row.drag-over-row td,.fp-gcell.drag-over-row,.fp-colrow.drag-over-row{
+  box-shadow:inset 0 0 0 1.5px rgba(10,132,255,.75);background:rgba(10,132,255,.10)!important}
+.fp-fgroup.drag-over-top{outline:1.5px dashed rgba(10,132,255,.7);outline-offset:-2px}
+.fp-fitem.drag-over{box-shadow:inset 0 0 0 1.5px rgba(10,132,255,.7)}
+
+/* 行可拖光标 */
+.fp-table tr[draggable="true"],.fp-gcell,.fp-colrow{cursor:grab}
+.fp-table tr[draggable="true"]:active,.fp-gcell:active,.fp-colrow:active{cursor:grabbing}

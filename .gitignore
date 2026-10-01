@@ -89,7 +89,10 @@ untitled.md
 # ⚠️ 这条规则**只挡新移入的文件，对已跟踪的 reference/pi（1967 文件）无效**，
 #    那 1967 个是 AGENTS §0.9 要的官方文档副本，**故意留在版本控制里**。
 #    核对方法：git ls-files reference | wc -l   ← 现在应恰好 1967，不是 1967+975MB
-reference/
+reference/*
+# §36.13/36.14：**我们自己写的**拆解报告要入库（第三方源码仍全挡；
+# 目录用 * 而不是目录名，否则被排除目录下的文件无法再白名单回来）
+!reference/*-DISSECT.md
 # 旧路径，保留以防有人按老文档再 clone 到那里；新 clone 一律进 reference/
 Clone_From/
 
