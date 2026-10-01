@@ -9,10 +9,14 @@
 :root{
   --nav-w:256px;
   --chat-w:340px;
-  --bg:#181818;          /* MiMo 内容区 rgb(24,24,24) = --color-main-bg */
-  --nav-bg:#141414;      /* MiMo 侧栏 rgb(20,20,20) = --color-side（比内容区深一档） */
-  --chat-bg:#181818;     /* §31 对话区 = MiMo --color-main-bg。缺这条时回落 --nav-bg(#141414)，
-                            对话区跟项目区同色 —— 用户报的"对话区颜色不对"就是它 */
+  /* §33 配色按**你截图的像素观感**定稿（你两次点名"侧边栏必须是深的"）：
+     截图实测 侧栏 #101010 / 内容 #131313 / 对话 #131313。
+     与 asar 源变量（--color-side #141414 / --color-main-bg #181818）的差异 = 截图色彩曲线
+     （白字在截图里仍是 255、暗部被压深）——两套值的对照表写在 需求/07 §33，
+     要切回源变量值就是把下面三个 hex 改回去。 */
+  --bg:#131313;          /* 内容/编辑区（截图实测 rgb(19,19,19)） */
+  --nav-bg:#101010;      /* 项目区侧栏（截图实测 rgb(16,16,16)）——必须比内容区深 */
+  --chat-bg:#131313;     /* 对话区（截图实测 rgb(19,19,19)），与内容区同层 */
   --panel:#1C1C1E;
   --surface2:#111113;
   --line:#242426;
@@ -74,6 +78,13 @@ code{font-family:var(--mono);font-size:11.5px}
 .fchip .x:hover{background:rgba(245,184,81,.35);color:#1A1204}
 .fchip-empty{font-size:11.5px;color:var(--ink3)}
 .topbar-right{display:flex;align-items:center;gap:6px}
+/* §32 快捷排（原左栏顶部整排）上顶栏：紧凑、不拉伸、靠左 */
+.topbar .nav-quick{flex:0 1 auto;min-width:0;padding:0;gap:1px;flex-wrap:nowrap;align-items:center}
+.topbar .nav-quick button{flex:0 0 auto;height:24px}
+/* §32 路径居中；空间不够就省略号（你的原话：中间就是这些路径，没必要完整显示） */
+.topbar .ctx{justify-content:center}
+.topbar .ctx code{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  display:inline-block;vertical-align:bottom}
 .btn{height:27px;padding:0 11px;border-radius:8px;font-size:12.5px;display:inline-flex;
   align-items:center;gap:6px;border:1px solid var(--line2);color:var(--ink2);background:#1A1A1C}
 .btn:hover{border-color:#3C3C42;color:var(--ink)}
@@ -86,14 +97,20 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* ── 主体 ─────────────────────────────────────── */
 .main{flex:1;display:flex;min-height:0}
-.split{flex:0 0 6px;cursor:col-resize;position:relative;background:transparent}
-.split::after{content:"";position:absolute;left:2px;right:2px;top:50%;transform:translateY(-50%);
-  height:34px;border-radius:4px;background:#26262A;opacity:.55;transition:opacity .12s,height .12s}
-.split:hover::after,.split.drag::after{opacity:1;height:56px;background:var(--accent);box-shadow:0 0 0 3px rgba(10,132,255,.18)}
+/* §32 分隔线重做（你的原话：细线要在线的「中间/里面」而不是左侧；命中范围加大；
+   抓住就自动定位到光标下再 1:1 跟手）—— 线画在 split 自己身上，两个大区分隔线共用同一套规则 */
+.split{flex:0 0 16px;cursor:col-resize;position:relative;background:transparent}
+.split::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;
+  transform:translateX(-50%);background:#2E2E2E;transition:background .12s}
+.split::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:46px;
+  transform:translate(-50%,-50%);border-radius:4px;background:#26262A;opacity:.75;
+  transition:opacity .12s,height .12s,background .12s}
+.split:hover::after,.split.drag::after{opacity:1;height:70px;background:var(--accent);box-shadow:0 0 0 3px rgba(10,132,255,.18)}
+.split:hover::before,.split.drag::before{background:#3A3A40}
 
 /* ── 左侧项目栏（MiMo 复刻） ─────────────────── */
-.nav{flex:0 0 var(--nav-w);min-width:170px;max-width:38vw;display:flex;flex-direction:column;
-  background:var(--nav-bg);border-right:2px solid #2E2E2E;position:relative}   /* §31 大区线 2px（MiMo --color-line），比小区线 1px 粗一档 */
+.nav{flex:0 0 var(--nav-w);min-width:170px;max-width:42vw;display:flex;flex-direction:column;   /* §32 与 JS 的 0.42 上限对齐（38vw 会把线憋出固定偏差） */
+  background:var(--nav-bg);position:relative}   /* §32 分隔线画在 .split 里（与编辑|对话完全同款），nav 不再自带 border */
 /* §22.4 「项目」「默认」= 两张**小卡片**，整卡可点（点了就是展开/折叠），右侧 ＋ 另算 */
 .nav-head{height:36px;flex:0 0 36px;display:flex;align-items:center;justify-content:space-between;
   margin:6px 0 4px;padding:0 3px 0 6px;border-radius:9px;background:#1B1B1E;
@@ -318,7 +335,7 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* ── 对话 ─────────────────────────────────────── */
 .chat{flex:0 0 var(--chat-w);min-width:250px;max-width:52vw;display:flex;flex-direction:row;
-  background:var(--chat-bg,var(--nav-bg));border-left:2px solid #2E2E2E;position:relative}   /* §31 */
+  background:var(--chat-bg,var(--nav-bg));position:relative}   /* §32 同上 */
 /* §26 每个 pane 自己是一列（nav / 消息 / 输入框 竖着排），双屏时两个 pane 并排 */
 .chat-pane{display:flex;flex-direction:column;flex:1 1 0;min-width:0;position:relative}
 /* §26 分割线：一黑一浅，中间一条细线（照 Orca 的 7% 白 border） */
@@ -398,6 +415,9 @@ code{font-family:var(--mono);font-size:11.5px}
 .msg .tools i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--ink2);
   background:#1F1F22;border:1px solid var(--line2);border-radius:6px;padding:2px 8px}
 /* ══ §28 风格选择条 + 三套配色（只换变量，不改布局）══ */
+/* §32 风格条是 fixed 的 30px 条 —— 不给内容让位就把顶栏上沿盖住（⚙/快捷排全被它拦）：
+   风格条可见时整个应用下移 30px，收起成圆点时自动归位 */
+body:has(#styleBar:not([hidden])){padding-top:30px}
 .style-bar{position:fixed;top:0;left:0;right:0;z-index:220;height:30px;
   display:flex;align-items:center;gap:6px;padding:0 12px;
   background:rgba(10,10,12,.92);border-bottom:1px solid var(--line);
@@ -535,7 +555,7 @@ body[data-style="contrast"]{
 .main.left-layout .nav{order:3}
 .main.left-layout .split-v{order:4}
 .main.left-layout .workspace{order:5}
-.main.left-layout .chat{border-left:0;border-right:2px solid #2E2E2E}   /* §31 对话在左时同规格 */
+.main.left-layout .chat{border-left:0}   /* §32 线统一交给 .split */
 
 /* 模式条的两个插槽：顶栏里 / 对话框里 */
 .modes-slot{display:flex;align-items:center;min-width:0}
@@ -657,9 +677,7 @@ body[data-style="contrast"]{
 .md-preview{flex:1;min-width:0}
 
 /* ── 分割线手柄加宽（用户：内容 ｜ 对话 调不了） ── */
-.split{flex-basis:11px}
-.split::after{left:3.5px;right:3.5px;height:46px;opacity:.75}
-.split:hover::after,.split.drag::after{height:70px;opacity:1}
+.split{flex-basis:16px}
 
 /* ── 本软件风格的模态（替换系统 prompt / confirm） ── */
 .modal-back{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.55);
@@ -752,6 +770,9 @@ body[data-style="contrast"]{
   box-shadow:0 0 0 3px rgba(10,132,255,.18)}
 .composer.is-expanded .composer-grip::after{transform:rotate(180deg)}
 .composer-bar{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:6px}
+/* §32 单行左组：＋ · 权限 · 语音输入（靠左）；右组靠右（space-between 两块即左右） */
+.cb-left{display:flex;align-items:center;gap:2px;min-width:0}
+.composer-controls{display:flex;align-items:center;gap:4px;flex-wrap:nowrap;min-width:0;justify-content:flex-end}
 .composer-mode{flex:0 1 auto;min-width:0;font-size:11px;color:var(--ink3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* §21.5.1 原来那行「连续/临时/＋新建 + 右组」整体挪到这里 —— 框内最后一行的**右侧** */
@@ -801,7 +822,7 @@ body[data-style="contrast"]{
 .main.no-workspace .split-h{display:none}
 /* §22.6 编辑区关着时，左栏**照样能拖宽** —— 所以 split-v 不跟着藏 */
 .main.no-workspace .split-v{display:block}
-.main.no-workspace .chat{flex:1 1 auto;max-width:none;border-left:2px solid #2E2E2E}   /* §31 */
+.main.no-workspace .chat{flex:1 1 auto;max-width:none}   /* §32 */
 /* 模式条永远在对话窗里（跟着对话窗位置走） */
 #modesSlotTop{display:none}
 #modesSlotChat{display:flex}

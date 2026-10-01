@@ -1246,6 +1246,9 @@ function projMenuAction(act) {
           save(true); renderNav(); toast('已新建项目内对话（带会话 ID）');
         }});
       break;
+    // §32 你拍板「菜单里加两项」：折叠/展开 = 项目区整块的开合（与段头点击同一状态）
+    case 'foldProj': S.navOpen = false; save(true); renderNav(); toast('项目区已折叠'); break;
+    case 'unfoldProj': S.navOpen = true; save(true); renderNav(); toast('项目区已展开'); break;
     case 'copyName':
       navigator.clipboard?.writeText(p.name); toast(`已复制工作区名 <b>${escapeHtml(p.name)}</b>`); break;
     case 'sleep':
@@ -3223,6 +3226,9 @@ let replyBusy = false, replyTimer = null;
 function renderSendPolicy() {
   const pol = S.sendPolicy || 'queue';
   $$('#qRow .q-opt').forEach(b => b.classList.toggle('is-on', b.dataset.policy === pol));
+  // §32 发送方式的唯一入口在设置菜单 —— 打开时高亮当前项
+  $('#menuSettings [data-act="policyQueue"]')?.classList.toggle('is-on', pol === 'queue');
+  $('#menuSettings [data-act="policyInterrupt"]')?.classList.toggle('is-on', pol === 'interrupt');
   const q = S.sendQueue || [];
   const badge = $('#qBadge');
   if (badge) { badge.hidden = q.length === 0; badge.textContent = String(q.length); }
@@ -3389,6 +3395,7 @@ function toggleFullscreen() {
 function dragSplit(el, apply) {
   el.addEventListener('mousedown', e => {
     e.preventDefault(); el.classList.add('drag');
+    apply(e);                              // §32 按住那一秒先把线定位到光标下（消除抓取点→线的固定偏差），之后 1:1
     const move = ev => apply(ev);
     const up = () => { el.classList.remove('drag');
       document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
@@ -3822,6 +3829,10 @@ function settingsAction(act, btn) {
   else if (act === 'policyQueue') { setSendPolicy('queue'); return; }
   else if (act === 'policyInterrupt') { setSendPolicy('interrupt'); return; }
   else if (act === 'paletteShortcut') { armPaletteShortcut(); return; }
+  // §32 对话模式（原输入框 连续/临时 显示已删，控件收进设置）
+  else if (act === 'convContinuous') { S.chatMode = 'continuous'; save(true); renderComposerControls(); toast('对话模式：<b>连续</b>'); return; }
+  else if (act === 'convTemporary') { S.chatMode = 'temporary'; save(true); renderComposerControls(); toast('对话模式：<b>临时</b>'); return; }
+  else if (act === 'monitor') { setMonitorMode(!monitorOpen); return; }
   // §24.10 示例数据
   else if (act === 'seedChat') { seedDemoChat(200); return; }
   else if (act === 'clearChat') { confirmModal({ title: '清空全部对话？',
@@ -4188,6 +4199,11 @@ function bind() {
     if (wasOpen) return;
     const r = e.currentTarget.getBoundingClientRect();
     m.hidden = false;
+    // §32 打开即标当前项：对话模式两颗 + 发送方式两颗（renderSendPolicy 会刷菜单里的高亮）
+    $$('#menuSettings [data-act="convContinuous"],#menuSettings [data-act="convTemporary"]')
+      .forEach(b => b.classList.toggle('is-on',
+        (b.dataset.act === 'convTemporary') === (S.chatMode === 'temporary')));
+    renderSendPolicy();
     m.style.left = Math.max(8, Math.min(r.left - 120, innerWidth - 220)) + 'px';
     m.style.top = (r.bottom + 6) + 'px';
     m.querySelector('[data-act="defLeft"]').classList.toggle('is-on', S.defaultLayout === 'left');
@@ -4494,7 +4510,8 @@ function renderComposerControls() {
   });
 
   // §21.5.2 这一行左边 = **当前模式**（连续/临时那两颗按钮就在同一行右侧，再写一遍是重复）
-  $('#composerModeLabel').textContent =
+  const modeLabel = $('#composerModeLabel');   // §32 模式显示已从输入框删除（进设置菜单），留守卫防空引用
+  if (modeLabel) modeLabel.textContent =
     S.mode === 'imageText' ? '图文' : S.mode === 'voice' ? '语音' : '视频';
   // 选项面板开着时，切模式要跟着换内容（音色/模型那一层是按模式给的）
   const op = $('#optPanel');

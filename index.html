@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=34 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=34">
+<!-- ?v=35 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=35">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -29,6 +29,16 @@
       <span class="es-label">编辑区</span>
     </button>
 
+    <!-- §32 左栏功能钮整排上顶栏（你的原话：设置/历史/添加/角色/录音显示在导航栏上面、编辑区开关右侧靠左） -->
+    <div class="nav-quick topbar-quick" id="navQuick">
+      <button data-q="settings">⚙ 设置</button>
+      <button data-q="history">🕘 历史</button>
+      <button data-q="add">＋ 添加</button>
+      <button data-q="roles">👤 角色</button>
+      <button data-q="record">🎙 录音</button>
+      <button data-q="monitor">📊 监控</button>
+    </div>
+
     <div class="ctx" id="ctxStrip">
       <span class="ctx-item ctx-project" title="项目绝对路径">
         <i class="ico ico-folder"></i><code id="ctxProjectPath">对话模式（无项目）</code>
@@ -42,6 +52,9 @@
     <button class="btn btn-ghost" id="btnLayout" title="对话位置：右 ⇄ 中 ⇄ 左">对话·右</button>
 
     <div class="topbar-right">
+      <!-- §32 单屏/双屏从输入框挪到顶栏（路径行靠右） -->
+      <button class="btn btn-ghost" id="ccScreen" data-screen="single"
+              title="会话窗口：单屏 / 双屏（连续 与 临时 并排）">单屏</button>
       <button class="btn btn-ghost" id="btnFs" title="全屏（⌘⇧F / F11）">⛶</button>
       <button class="btn btn-ghost" id="btnSettings" title="设置">⚙</button>
       <!-- 提交 与 恢复 是一个逻辑，挨在一起 -->
@@ -72,16 +85,6 @@
       <div class="skel" id="skelNav" aria-hidden="true">
         <i class="sk" style="width:56%"></i><i class="sk" style="width:78%"></i>
         <i class="sk" style="width:64%"></i><i class="sk" style="width:70%"></i>
-      </div>
-
-      <!-- 左栏顶部：旧项目的快捷入口（设置 / 历史 / 添加 / 角色 / 录音） -->
-      <div class="nav-quick" id="navQuick">
-        <button data-q="settings">⚙ 设置</button>
-        <button data-q="history">🕘 历史</button>
-        <button data-q="add">＋ 添加</button>
-        <button data-q="roles">👤 角色</button>
-        <button data-q="record">🎙 录音</button>
-        <button data-q="monitor">📊 监控</button>
       </div>
 
       <!-- 搜索框在**侧栏顶部**（按你给的图）；点它 → 输入框下面弹出**范围 + 内容类型**面板（§20.11） -->
@@ -376,13 +379,6 @@
           <div class="focus-list" id="focusList" hidden></div>
         </div>
 
-        <!-- §22.13 多条消息：排队（默认）⇄ 打断 —— 放在「选中的文件」与「项目路径」之间 -->
-        <div class="q-row" id="qRow">
-          <span class="q-label">发送方式</span>
-          <button class="q-opt is-on" data-policy="queue">排队</button>
-          <button class="q-opt" data-policy="interrupt">打断</button>
-        </div>
-
         <!-- ② 中间：项目 / 对话卡路径（§21.5：输入框上面只剩「选中的文件」+「项目路径」） -->
         <div class="chat-ctx">
           <span class="cctx"><i class="ico ico-folder"></i><code id="chatCtxProject">对话模式（无项目）</code></span>
@@ -395,39 +391,30 @@
           <div class="composer-grip" id="composerGrip" role="button" tabindex="0"
                title="展开 / 收起输入框"></div>
           <textarea id="chatInput" placeholder="输入问题，回车发送…"></textarea>
+          <!-- §32 合成一行：左＝＋ · 权限 · 语音输入（你点名靠左）；右＝新建 · 模式右组 · 上下文 · 模型 · 徽标 · 发送（靠右）。
+               连续/临时模式显示删掉（模式进设置菜单）、单屏双屏已上顶栏、发送方式已在设置菜单。 -->
           <div class="composer-bar">
-            <span class="composer-mode" id="composerModeLabel">图文 · 连续对话</span>
+            <span class="cb-left">
+              <button class="ct" id="ctMore" title="更多（新建文件 / 终端 / 浏览器…）">＋</button>
+              <button class="ct ct-perm" id="ctPerm" title="审批权限">
+                <span class="ct-ico">⊙</span><span id="ctPermLabel">完全访问</span> <span class="ct-caret">⌄</span>
+              </button>
+              <button class="ct ct-mic" id="ctMic" title="语音输入">🎤</button>
+            </span>
             <span class="composer-controls">
-              <button class="cc cc-screen" id="ccScreen" data-screen="single"
-                      title="会话窗口：单屏 / 双屏（连续 与 临时 并排）">单屏</button><i class="vr"></i>
-              <span class="cc-left" id="ccLeft">
-                <button class="cc is-on" data-conv="continuous">连续</button><i class="vr"></i>
-                <button class="cc" data-conv="temporary">临时</button><i class="vr"></i>
-                <button class="cc cc-new" id="ccNew">＋ 新建</button>
+              <button class="cc cc-new" id="ccNew">＋ 新建</button><i class="vr"></i>
+              <span class="cc-right" id="ccRight"><!-- 按模式渲染：摄像/屏幕/语速… --></span>
+              <span class="ct-ctx" id="ctCtx" title="上下文占用">
+                <svg class="ctx-ring" viewBox="0 0 18 18" aria-hidden="true">
+                  <circle class="ctx-bg" cx="9" cy="9" r="7.2"></circle>
+                  <circle class="ctx-fg" id="ctxArc" cx="9" cy="9" r="7.2"></circle>
+                </svg>
+                <span id="ctxPct">0%</span>
               </span>
-              <span class="cc-right" id="ccRight"><!-- 按模式渲染 --></span>
+              <button class="ct" id="ctModel" title="切换模型"><span id="ctModelName">qwen3-vl-plus</span> <span class="ct-caret">⌄</span></button>
               <button class="q-badge" id="qBadge" hidden title="排队中的消息（点开可单条取消）">0</button>
               <button class="btn btn-primary" id="btnSend">发送</button>
             </span>
-          </div>
-
-          <!-- §27 输入框工具行（照 Xiaomi MiMo 输入框：左 ＋ 权限 ｜ 右 上下文环 · 模型 · 麦克风）
-               放在 composer-bar **下面**单独一行 —— 塞进同一行会把 §21.5 那排挤爆 -->
-          <div class="composer-tools" id="composerTools">
-            <button class="ct" id="ctMore" title="更多（新建文件 / 终端 / 浏览器…）">＋</button>
-            <button class="ct ct-perm" id="ctPerm" title="审批权限">
-              <span class="ct-ico">⊙</span><span id="ctPermLabel">完全访问</span> <span class="ct-caret">⌄</span>
-            </button>
-            <span class="ct-spacer"></span>
-            <span class="ct-ctx" id="ctCtx" title="上下文占用">
-              <svg class="ctx-ring" viewBox="0 0 18 18" aria-hidden="true">
-                <circle class="ctx-bg" cx="9" cy="9" r="7.2"></circle>
-                <circle class="ctx-fg" id="ctxArc" cx="9" cy="9" r="7.2"></circle>
-              </svg>
-              <span id="ctxPct">0%</span>
-            </span>
-            <button class="ct" id="ctModel" title="切换模型"><span id="ctModelName">qwen3-vl-plus</span> <span class="ct-caret">⌄</span></button>
-            <button class="ct ct-mic" id="ctMic" title="语音输入">🎤</button>
           </div>
         </div><!-- /composer -->
       </div><!-- /chat-foot -->
@@ -646,9 +633,16 @@
     <button data-act="defCenter">对话在中</button>
     <button data-act="defRight">对话在右</button>
     <div class="menu-sep"></div>
-    <div class="menu-title">发送方式（§22.13）</div>
+    <div class="menu-title">发送方式（§22.13 · 从输入框移入）</div>
     <button data-act="policyQueue">排队 —— 上一条答完再发</button>
     <button data-act="policyInterrupt">打断 —— 直接顶掉上一条</button>
+    <div class="menu-sep"></div>
+    <!-- §32 对话模式（原输入框的 连续/临时 显示已删，控件收进设置） -->
+    <div class="menu-title">对话模式</div>
+    <button data-act="convContinuous">连续对话</button>
+    <button data-act="convTemporary">临时对话</button>
+    <div class="menu-sep"></div>
+    <button data-act="monitor">📊 监控页（开 / 关）</button>
     <div class="menu-sep"></div>
     <!-- §23.6.5 原型没有整页设置，「快捷键」这一组就是 快捷键 页的等价物 -->
     <div class="menu-title">快捷键</div>
@@ -672,6 +666,10 @@
     <button data-act="moveGroup">移动到分组 ›</button>
     <button data-act="newGroupFromProject">来自项目的新组</button>
     <button data-act="removeFromGroup">移出分组</button>
+    <div class="menu-sep"></div>
+    <!-- §32 你拍板「菜单里加两项」 -->
+    <button data-act="foldProj">折叠项目</button>
+    <button data-act="unfoldProj">展开项目</button>
     <div class="menu-sep"></div>
     <button data-act="copyPath">Copy Path</button>
     <button data-act="copyName">Copy 工作区名</button>
@@ -727,6 +725,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=34"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>
