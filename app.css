@@ -181,6 +181,8 @@ code{font-family:var(--mono);font-size:11.5px}
 .tab .tname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tab .tx{width:15px;height:15px;flex:0 0 15px;border-radius:4px;font-size:11px;display:flex;align-items:center;justify-content:center;color:var(--ink3)}
 .tab .tx:hover{background:#2E2E32;color:var(--ink)}
+/* §30：垂直显示方式下 .tabs 隐藏，＋与快捷指令会跟着跑到左边 —— margin-left:auto 把它们钉在最右 */
+.tabbar #btnNewTab{margin-left:auto}
 .tab-add{width:24px;height:24px;border-radius:6px;color:var(--ink3)}
 .tab-add:hover{background:#242428;color:var(--ink)}
 
@@ -335,26 +337,56 @@ code{font-family:var(--mono);font-size:11.5px}
   position:relative}   /* 让 msg.offsetTop 相对它 —— 滚动高亮改读缓存，不再每帧 getBoundingClientRect */
 /* §24 对话区一行：左轨道 + 右消息。轨道自己占宽，**不碰 .msgs 的内边距**（零副作用） */
 .msgs-row{flex:1;min-height:0;display:flex;position:relative}
-/* ══ §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 截图（无源码可搬）══
-   声音照 reference/MiMo-Code 的 tui/util/sound.ts：pulse-a/b/c 三文件轮换、音量 0.35 */
-.hist-rail{flex:0 0 28px;width:28px;height:290px;align-self:center;z-index:6;
-  position:relative;overflow:hidden;
-  display:flex;flex-direction:column;align-items:flex-start;
-  gap:8px;padding:0 0 0 4px;cursor:ns-resize;user-select:none;
-  /* §29.1/29.2 照参考图（2× 截图 ÷2 实测）：横线 9×2、周期 10、轨道**固定高 290** ——
-     29 根 × 2 + 28 × 8 = 282 正好放得下；JS 侧超过 29 条**均匀抽样**，密度恒定不再压扁。
-     你上一轮看到的线上版是 20×3、全高撑满 + 250 条压扁 = 「宽度太大、太密」 */
-  justify-content:safe center;
-  background:transparent;border-right:0}.hist-rail[hidden]{display:none!important}
-.hr-line{flex:0 0 auto;width:9px;height:2px;border-radius:1.5px;background:#4B4B52;
-  transform-origin:left center;
-  transition:width .17s cubic-bezier(.28,1.12,.4,1),background .15s ease,box-shadow .15s ease}
-/* hover/当前位置：参考图里白色那根 = 38px 图像 ÷2 = **19px**（线上版 26px，你说「还是太大」） */
-.hr-line.is-scrub{background:#FFFFFF;width:19px;box-shadow:0 0 9px rgba(255,255,255,.6)}
-.hr-line.is-cur{background:#FFFFFF;width:19px;box-shadow:0 0 7px rgba(255,255,255,.45)}
-.hr-line.is-last{background:#FFFFFF}
-@keyframes curPulse{0%{box-shadow:0 0 0 rgba(255,255,255,0)}
-  40%{box-shadow:0 0 13px rgba(255,255,255,.85)}100%{box-shadow:0 0 7px rgba(255,255,255,.45)}}
+/* ══ §30 对话记录轨道 —— **1:1 照搬 Xiaomi MiMo Desktop 的 SessionSpine** ══
+   出处（本机 app.asar 解包）：
+     /out/renderer/assets/SessionSpine-AmYLx0IV.js   （组件 + 音效模块 K + 事件逻辑）
+     /out/renderer/assets/index-BPeiqRdG.css         （.spine* / .spine-preview 全套样式）
+     /out/renderer/assets/index-bo_Ccbdb.js          （工具→图标映射 Eme + 16 个 SVG）
+   ⚠️ asar 的 json offset 是**相对数据区**的：绝对位置 = 506192(header) + offset，
+      不加这个偏移会错位 506KB 读到别的文件（本轮踩过，别再犯）。
+   几何逐条来自那份 CSS：列宽 48、padding 0 20 0 12、刻度容器 gap 6 + 刻度高 4（= 周期 10）、
+   线 9×2 圆角 999、hover 波浪 9→24（JS 弹簧驱动，CSS 里只有 background/height 的 transition）、
+   预览卡固定宽 300 / 圆角 20 / .5px 边（参考图 1 实测 299.5，与 source 一致）。 */
+.hist-rail{flex:0 0 48px;width:48px;align-self:stretch;z-index:6;
+  position:relative;overflow:hidden;pointer-events:auto;cursor:pointer;user-select:none;
+  display:flex;flex-direction:column;justify-content:safe center;
+  padding:0 20px 0 12px;background:transparent;border-right:0}
+.hist-rail[hidden]{display:none!important}
+.spine-ticks{display:flex;flex-direction:column;gap:6px;width:100%}
+.hist-rail.panning{justify-content:flex-start}
+.hist-rail.panning .spine-ticks{will-change:transform}
+.spine-tick{width:100%;height:4px;flex:none;position:relative}
+.spine-tick i{position:absolute;top:50%;left:0;transform:translateY(-50%);
+  width:9px;height:2px;border-radius:999px;background:#777;
+  transition:background .12s ease,height .12s ease}
+.spine-tick.active i{background:#fff}
+.spine-tick.clicked i{height:4px}
+/* 轨道内容高过可视区时上下 64px 渐隐（颜色必须跟对话区底色走，否则会显出一条色带 ——
+   source 用 --color-main-bg，我们的等价物是 --chat-bg） */
+.spine-fade{pointer-events:none;z-index:2;opacity:0;height:64px;position:absolute;left:0;right:0;
+  transition:opacity .12s linear}
+.spine-fade.top{background:linear-gradient(180deg,var(--chat-bg) 30%,transparent);top:0}
+.spine-fade.bot{background:linear-gradient(0deg,var(--chat-bg) 30%,transparent);bottom:0}
+/* 预览卡（source .spine-preview，position:fixed 挂在 body 上，left/top 由 JS 算） */
+.spine-preview{position:fixed;left:0;top:0;z-index:160;width:300px;box-sizing:border-box;
+  pointer-events:none;opacity:0;background:#181818;border:.5px solid #2e2e2e;
+  box-shadow:0 1px 3px rgba(0,0,0,.4);border-radius:20px;padding:12px 14px;
+  transition:opacity .16s,transform .22s cubic-bezier(.2,.8,.2,1);
+  transform:translateY(6px) scale(.97);transform-origin:0 0}
+.spine-preview.show{opacity:1;pointer-events:auto;cursor:pointer;transform:none}
+/* :before 那 16px 是 source 的 hover 延展区（指针从轨道滑进卡片不丢 hover） */
+.spine-preview.show::before{content:"";position:absolute;top:0;bottom:0;left:-16px;width:16px}
+.spine-preview .sp-q{font-size:13px;font-weight:600;color:#fff;line-height:1.5;
+  margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spine-preview .sp-a{font-size:12px;color:#b8b8b8;line-height:1.55;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;
+  white-space:pre-wrap;word-break:break-word}
+.spine-preview .sp-tools{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.spine-preview .sp-badge{display:inline-flex;align-items:center;gap:4px;max-width:148px;
+  overflow:hidden;padding:2px 7px;border-radius:6px;background:#2e2e2e;color:#f4f4f5;
+  font-family:var(--mono);font-size:11.5px;line-height:1.4}
+.spine-preview .sp-badge svg{width:11px;height:11px;flex:none;color:#b8b8b8}
+.spine-preview .sp-badge span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* §24.10 示例数据里的 GitHub 推送 / 提交 / 工具标签（照 MiMo Desktop 里看到的样子） */
 .msg .gh{font-family:var(--mono);font-size:12px;color:var(--ink2);line-height:1.7}
 .msg .gh b{color:var(--ink);font-weight:600}
@@ -445,22 +477,8 @@ body[data-style="contrast"]{
   pointer-events:none;z-index:9;opacity:0;transition:top .07s linear}
 .drop-line-h.on{opacity:1}
 
-/* §29.4/29.5 hover 浮出的预览卡：跟随光标 Y、**宽度随内容**（参考图两条消息分别 300 / 337 逻辑宽） */
-.hr-tip{position:absolute;left:34px;z-index:9;pointer-events:none;
-  width:fit-content;min-width:240px;max-width:min(400px,45vw);
-  padding:13px 16px;border-radius:12px;background:#161619;
-  border:1px solid rgba(255,255,255,.10);box-shadow:0 16px 44px rgba(0,0,0,.62);
-  opacity:0;transform:translateY(-50%) translateX(-6px);
-  transition:opacity .13s ease,transform .13s ease}
-.hr-tip.on{opacity:1;transform:translateY(-50%) translateX(0)}
-/* 标题（首行加粗截断）、正文灰色多行（含 git 历史那些行）、工具标签单独一行 —— 照两张参考图 */
-.hr-tip .hr-title{display:block;font-size:13.5px;font-weight:650;color:var(--ink);
-  line-height:1.55;margin-bottom:7px;word-break:break-word}
-.hr-tip .hr-body{display:block;font-size:13px;color:var(--ink2);line-height:1.72;
-  white-space:pre-wrap;word-break:break-word;max-height:min(52vh,520px);overflow:hidden}
-.hr-tip .hr-tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px}
-.hr-tip .hr-tools i{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--ink2);
-  background:#232327;border:1px solid rgba(255,255,255,.10);border-radius:7px;padding:3px 9px}
+/* 旧 .hr-tip 单行摘要已删 —— 预览卡换成了上面的 .spine-preview（§30 照搬 source） */
+
 
 /* §29.7 pop 只给**新到的那一条**（.is-new 由 renderChat 打）——
    以前每条都带 animation，每次重绘 250 条一起重播 = 整屏闪一下，就是「仍然非常卡」的来源之一 */
@@ -711,12 +729,19 @@ body[data-style="contrast"]{
   max-height:260px;overflow:auto;animation:pop .14s ease-out}
 .focus-list[hidden]{display:none}
 
-/* 输入框（§21.5）：文字直接顶到上沿；**顶边那条手柄**负责展开/收起，样式照 .split */
-.composer{background:var(--bg);border:1px solid var(--line2);border-radius:12px;
-  padding:11px 8px 7px;position:relative}
-.composer:focus-within{border-color:rgba(10,132,255,.6)}
-/* §21.5.7 手柄 = 图⑤那个拖动钮的横版：居中一枚小胶囊，常态半透明灰、
-   hover 变 accent 色 + 变长 + 光晕；展开后转 180°（同一个 transition 出动画） */
+/* 输入框 —— §30 整体照搬 Xiaomi MiMo（app.asar → index-BPeiqRdG.css 的 .composer 段）：
+   .5px #2e2e2e 边 + #1f1f1f 面 + 0 1px 3px #0006 阴影 + 20px 圆角 + 8px 内边距；
+   文字 14px/1.5、有字时 font-weight:500（:not(:placeholder-shown)）、placeholder #a0a0a0。
+   功能性的东西（手柄展开、composer-bar、§27 工具行）保持原样 —— 只换皮。 */
+.composer{background:#1f1f1f;border:.5px solid #2e2e2e;border-radius:20px;
+  box-shadow:0 1px 3px rgba(0,0,0,.4);padding:8px;position:relative}
+.composer textarea{width:100%;border:0;outline:0;background:transparent;resize:none;
+  font-size:14px;line-height:1.5;color:#f4f4f5;padding:5px 5px 8px;
+  min-height:44px;max-height:200px;transition:min-height .2s ease}
+.composer textarea::placeholder{color:#a0a0a0}
+.composer textarea:not(:placeholder-shown){font-weight:500}
+.composer.is-expanded textarea{min-height:150px}
+/* §21.5.7 手柄（功能保留，MiMo 没有这个部件但展开收起是 §21.5 判据） */
 .composer-grip{position:absolute;top:-7px;left:0;right:0;height:14px;z-index:2;
   display:flex;justify-content:center;align-items:center;cursor:pointer;outline:none}
 .composer-grip::after{content:"";width:46px;height:5px;border-radius:3px;background:#26262A;
@@ -724,9 +749,6 @@ body[data-style="contrast"]{
 .composer-grip:hover::after{opacity:1;width:84px;background:var(--accent);
   box-shadow:0 0 0 3px rgba(10,132,255,.18)}
 .composer.is-expanded .composer-grip::after{transform:rotate(180deg)}
-.composer textarea{width:100%;border:0;outline:0;background:transparent;resize:none;
-  font-size:13px;line-height:1.6;min-height:54px;max-height:240px;transition:min-height .2s ease}
-.composer.is-expanded textarea{min-height:150px}
 .composer-bar{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:6px}
 .composer-mode{flex:0 1 auto;min-width:0;font-size:11px;color:var(--ink3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1414,32 +1436,29 @@ body[data-style="contrast"]{
   background:#121215}
 
 /* §23 布局：三个位置都要显式给 order，否则 center/left 布局里 rail 会跳到最左 */
-.main .rail-left{order:0}
-.main .rail-panel-left{order:1}
+.main .side-panel-left{order:7}
 .main .nav{order:2}
 .main .split-v{order:3}
 .main .workspace{order:4}
 .main .split-h{order:5}
 .main .chat{order:6}
-.main .rail-panel-right{order:7}
+.main .side-panel-right{order:7}
 .main .rail-right{order:8}
-.main.center-layout .rail-left{order:0}
-.main.center-layout .rail-panel-left{order:1}
+.main.center-layout .side-panel-left{order:7}
 .main.center-layout .nav{order:2}
 .main.center-layout .split-v{order:3}
 .main.center-layout .chat{order:4}
 .main.center-layout .split-h{order:5}
 .main.center-layout .workspace{order:6}
-.main.center-layout .rail-panel-right{order:7}
+.main.center-layout .side-panel-right{order:7}
 .main.center-layout .rail-right{order:8}
-.main.left-layout .rail-left{order:0}
-.main.left-layout .rail-panel-left{order:1}
+.main.left-layout .side-panel-left{order:7}
 .main.left-layout .chat{order:2}
 .main.left-layout .split-h{order:3}
 .main.left-layout .nav{order:4}
 .main.left-layout .split-v{order:5}
 .main.left-layout .workspace{order:6}
-.main.left-layout .rail-panel-right{order:7}
+.main.left-layout .side-panel-right{order:7}
 .main.left-layout .rail-right{order:8}
 /* §23.5 自动化弹窗 */
 .auto-modal{width:560px;max-width:94vw;padding:18px 20px 12px;max-height:88vh;overflow:auto}
@@ -1459,3 +1478,61 @@ body[data-style="contrast"]{
   color:var(--ink3);border:1px solid var(--line2)}
 .sp-row .st.on{color:#4ADE80;border-color:rgba(74,222,128,.4)}
 .sp-row .st.off{opacity:.5}
+
+/* ══ §30 会话历史 —— 结构照 Orca（AiVaultPanelHeader / SessionRowTrailingActions /
+   AiVaultSessionActionMenuItems / AiVaultSessionDetails，出处见 app.js 同节注释）══ */
+.vault-head{display:flex;align-items:flex-start;gap:6px;padding:8px 8px 6px}
+.vh-txt{flex:1;min-width:0}
+.vh-t{font-size:13px;font-weight:650;color:var(--ink);line-height:1.3}
+.vh-s{font-size:10.5px;color:var(--ink3);margin-top:1px}
+.vh-ctrls{display:flex;gap:4px;flex:none}
+.vault-scope{padding:0 8px 6px;margin:0}
+.vault-countbar{display:flex;align-items:center;justify-content:space-between;
+  height:28px;padding:0 9px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  background:#141416;margin-bottom:6px}
+.vc-num{font-size:11px;color:var(--ink2);font-weight:600}
+.vc-sort{appearance:none;background:transparent;border:0;color:var(--ink3);font-size:11px;
+  cursor:pointer;padding:2px 6px;border-radius:6px}
+.vc-sort:hover{background:#1F1F22;color:var(--ink)}
+/* 行：hover 才浮现右侧五颗（SessionRowTrailingActions 的 max-width 裁剪法） */
+.vrow .bd{position:relative}
+.vrow .t1{padding-right:104px}
+.vrow-acts{position:absolute;top:0;right:0;display:flex;gap:1px;align-items:center;
+  max-width:0;overflow:hidden;opacity:0;
+  transition:max-width .16s ease,opacity .12s ease}
+.vrow:hover .vrow-acts,.vrow.is-on .vrow-acts{max-width:120px;opacity:1}
+.va{appearance:none;border:0;background:transparent;color:var(--ink3);width:20px;height:18px;
+  border-radius:5px;font-size:11.5px;line-height:1;display:flex;align-items:center;
+  justify-content:center;cursor:pointer;flex:none;padding:0}
+.va:hover{background:#242428;color:var(--ink)}
+.va:disabled{opacity:.35;cursor:default}
+.va:disabled:hover{background:transparent;color:var(--ink3)}
+/* 展开态：按钮条 → 首次提示 → 最近轮次 → 元信息（AiVaultSessionDetails.tsx:71-241） */
+.sp-vexp{margin:2px 0 8px 23px;padding:8px 9px;border:1px solid var(--line);border-radius:10px;
+  background:#141416;display:flex;flex-direction:column;gap:8px}
+.vexp-btns{display:flex;flex-wrap:wrap;gap:6px}
+.vxb{appearance:none;height:26px;padding:0 10px;border-radius:8px;border:1px solid var(--line2);
+  background:#1A1A1C;color:var(--ink2);font-size:11.5px;cursor:pointer;display:inline-flex;
+  align-items:center;gap:5px;transition:background .12s,color .12s,border-color .12s}
+.vxb:hover{background:#242428;color:var(--ink)}
+.vxb.primary{background:#ECECEC;border-color:#ECECEC;color:#0D0D0D;font-weight:600}
+.vxb.primary:hover{background:#fff;color:#0D0D0D}
+.vxb.ghost{background:transparent;border-color:transparent;color:var(--ink3)}
+.vxb.ghost:hover{background:#1F1F22;color:var(--ink2)}
+.vxb:disabled{opacity:.4;cursor:default}
+.vxb:disabled:hover{background:#1A1A1C;color:var(--ink2)}
+.vxb.primary:disabled{background:#1A1A1C;border-color:var(--line2);color:var(--ink3)}
+.vexp-sec{display:flex;flex-direction:column;gap:5px}
+.ves-h{font-size:10.5px;color:var(--ink3);letter-spacing:.04em}
+.vcard{border:1px solid var(--line);border-radius:9px;background:#1A1A1C;padding:7px 9px}
+.vcard.is-user{background:#1E1E22}
+.vc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.vc-role{font-size:10px;color:var(--ink3);letter-spacing:.06em}
+.vc-copy{appearance:none;border:0;background:transparent;color:var(--ink3);font-size:10.5px;
+  cursor:pointer;padding:2px 5px;border-radius:5px}
+.vc-copy:hover{background:#242428;color:var(--ink)}
+.vc-body{font-size:11.5px;color:var(--ink2);line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.vnotice{font-size:11px;color:var(--ink3);padding:8px 10px;border:1px dashed var(--line2);
+  border-radius:9px;background:#121214}
+.vexp-meta{border-top:1px solid var(--line);padding-top:7px}
+.vexp-meta code{font-size:10.5px;color:var(--ink3);word-break:break-all}

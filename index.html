@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=31 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=31">
+<!-- ?v=33 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=33">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -52,10 +52,8 @@
 
   <main class="main" id="main">
 
-    <!-- §23.5 左侧 activity rail —— 自动化在**项目栏的左边** -->
-    <div class="rail rail-left" id="railLeft">
-      <button class="rail-btn" data-open="automation" title="自动化（⌘⌥A）">⚡</button>
-    </div>
+    <!-- §30：左侧 activity rail 已删 —— 自动化的按钮并进**最右侧** rail（你的原话：
+         「整个页面最左侧有一个叫自动化的按钮…把它们全都放在最右侧」），面板跟着开在右侧 -->
     <div class="side-panel side-panel-left" id="panelAutomation" hidden>
       <div class="sp-head">
         <span class="sp-title">自动化</span>
@@ -358,7 +356,12 @@
 
       <!-- §24 对话区一行 = 轨道 ｜ 消息。轨道**独立占 30px**，所以不改 .msgs 的内边距 -->
       <div class="msgs-row" id="msgsRow">
-        <div class="hist-rail" id="histRail" hidden aria-label="对话记录轨道"></div>
+        <!-- §30 结构照 source（SessionSpine-AmYLx0IV.js 的 JSX）：rail > ticks + 上下渐隐 -->
+        <div class="hist-rail" id="histRail" hidden aria-label="对话记录轨道">
+          <div class="spine-ticks" id="spineTicks"></div>
+          <div class="spine-fade top" id="spineFadeTop"></div>
+          <div class="spine-fade bot" id="spineFadeBot"></div>
+        </div>
         <div class="msgs" id="msgs"></div>
       </div>
 
@@ -489,6 +492,7 @@
     <div class="rail rail-right" id="railRight">
       <button class="rail-btn" data-open="explorer" title="资源管理器">🗂</button>
       <button class="rail-btn" data-open="agents" title="智能体 · 会话历史">🤖</button>
+      <button class="rail-btn" data-open="automation" title="自动化（⌘⌥A）">⚡</button>
     </div>
   </main>
 
@@ -718,6 +722,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=31"></script>
+<script src="app.js?v=33"></script>
 </body>
 </html>

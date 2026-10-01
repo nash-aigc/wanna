@@ -139,6 +139,7 @@ let S = load() || {
   automationFilter: {},
   vaultScope: 'workspace', vaultHost: 'local', vaultAgents: [], vaultGroup: 'project',
   vaultHideEmpty: false, vaultLimit: 100, vaultQuery: '', vaultOpen: {}, vaultGroupsCollapsed: {},
+  vaultSort: 'updated', vaultDeleted: [],
   // §22.14 浏览器页 —— 形状照 reference/Orca …/shared/browser-workspace-types.ts:174-180
   browserProfiles: [{ id: 'default', label: 'Default', engine: 'Safari', scope: 'default' },
                     { id: 'google',  label: 'Google',  engine: 'Chrome',  scope: 'isolated' }],
@@ -198,6 +199,8 @@ function load() {
     if (!r.automationFilter || typeof r.automationFilter !== 'object') r.automationFilter = {};
     if (!Array.isArray(r.vaultAgents)) r.vaultAgents = [];
     if (!r.vaultOpen || typeof r.vaultOpen !== 'object') r.vaultOpen = {};
+    if (r.vaultSort !== 'created' && r.vaultSort !== 'updated') r.vaultSort = 'updated';
+    if (!Array.isArray(r.vaultDeleted)) r.vaultDeleted = [];
     if (!r.vaultGroupsCollapsed || typeof r.vaultGroupsCollapsed !== 'object') r.vaultGroupsCollapsed = {};
     if (!Array.isArray(r.quickCommands)) r.quickCommands = [{ id: 'qc_gt', label: 'GT推送', op: 'terminal',
       cmd: 'git push origin main', append: true, scope: 'global', project: '' }];
@@ -2728,8 +2731,8 @@ function renderChat() {
       </div></div>`;
   if (!S.chat.length) {
     host.innerHTML = emptyHtml;
-    renderHistRail();          // §24 空对话 → 轨道自己隐藏
     rebuildHistOffsets();
+    renderHistRail();          // §30 空对话 → 轨道自己隐藏
     renderChat2();             // §26 右侧也跟着刷
     return;
   }
@@ -2738,57 +2741,367 @@ function renderChat() {
   S.chat.forEach((m, i) => host.appendChild(mkMsg(m, i)));
   host.lastElementChild?.classList.add('is-new');   // §29.7 pop 只给最后一条（全量重绘不再整屏闪）
   host.scrollTop = host.scrollHeight;
-  renderHistRail();            // §24 画对话记录轨道
-  rebuildHistOffsets();        // §24.12 缓存每个消息的位置，滚动时只读数字
-  requestAnimationFrame(syncHistCur);
+  rebuildHistOffsets();        // §24.12 缓存每个消息的位置（spine 的可见区/平移都读它）
+  renderHistRail();            // §30 画轨道（render 内部做一次 .active + 平移）
+  requestAnimationFrame(() => { spineUpdateActive(); spinePanning(); });
   renderChat2();               // §26
   if (typeof updateComposerTools === 'function') updateComposerTools();   // §27 上下文 % 跟着消息变
 }
 /* ══════════════════════════════════════════════════════════════
-   §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 的截图
-   （那个功能在 Desktop 里，开源的 reference/MiMo-Code CLI **没有**，
-    所以**没有源码可照搬**，界面按截图做；标注清楚，不假装照搬）
-   声音照抄 reference/MiMo-Code 的 tui/util/sound.ts：
-     FILE = [pulse-a, pulse-b, pulse-c] 轮换，volume = 0.35
+   §30 对话记录轨道 —— **1:1 照搬 Xiaomi MiMo Desktop 的 SessionSpine**
+   出处（本机 /Applications/Xiaomi MiMo.app/Contents/Resources/app.asar 解包）：
+     /out/renderer/assets/SessionSpine-AmYLx0IV.js  —— 组件 Qe、分组 Be、音效模块 K、
+         速度闸门 He/je、波浪宽度 B()、预览卡 JSX、点击平滑滚动 ne、可见区 De、平移 Ge
+     /out/renderer/assets/index-BPeiqRdG.css        —— .spine* / .spine-preview 全套样式
+     /out/renderer/assets/index-bo_Ccbdb.js         —— 工具→图标（Eme/_me/$D）+ 16 个 SVG
+   ⚠️ asar 的 json offset 相对**数据区**：绝对 = 506192(header) + offset（不加会错位 506KB）。
+   逐项对照（全部来自 source，没有自己发明的）：
+     · 一根刻度 = 一个「用户回合组」（Be：user 开新组；q=用户原话；a=首句 ≤140（ce）；tools 收集）
+     · 刻度几何：容器 h4 + gap6（周期 10）、线 9×2 圆角999；active 白、clicked h4
+     · 波浪：目标宽 = 9 + exp(-v²/0.8)[v≤3] × 15，弹簧 lerp 0.3/帧，闲置回弹后清空
+     · 声音：五声阶 [C4 D4 E4 G4 A4] ×3.6 八度按位置取音（K 的 c），三角波 f / 泛音拨弦 i，
+       彩蛋 5%（_=.05）+ 3 分钟冷却（W=180s）随机旋律 H，hover 推进音符（X）
+     · 发声闸门：进轨 ≥100ms（_e）+ 指针速度 <600px/s（Pe）+ 80ms 采样窗（Ie）
+     · 预览卡：fixed 300 宽、q 单行省略、a 3 行 line-clamp、tools ≤6 带图标（source JSX 原样）
+     · 点击：ease-out-expo 平滑滚动、时长 min(900, 340+|Δ|×.28)、刻度 .clicked 亮 200ms
+     · 显示门：组数 ≥3（Fe）
+   （§24/§26′/§29 的轨道实现被本节整体取代 —— 抽样、压扁、wav 轮换、单行 hr-tip 全部作废。）
    ══════════════════════════════════════════════════════════════ */
-const HIST_SFX = ['sfx/pulse-a.wav', 'sfx/pulse-b.wav', 'sfx/pulse-c.wav'];
-let histSfxI = 0, histSfxAt = 0, histSfxEls = null;
-/// 一次短促的 pulse。**去抖 70ms**：快速划过一整列时不能每条都响（会糊成噪音）
-function histTick(vol = 0.35) {
-  const now = Date.now();
-  if (now - histSfxAt < 70) return;
-  histSfxAt = now;
-  // §29.7 对象池：以前每次发声都 `new Audio()`（划过一列 = 每秒十几次新建+解码+GC）——
-  // 三个元素复用，currentTime 归零重播，仍按 pulse-a/b/c 轮换（照 sound.ts）
-  if (!histSfxEls) histSfxEls = HIST_SFX.map(src => { const a = new Audio(src); a.preload = 'auto'; return a; });
-  const a = histSfxEls[histSfxI++ % histSfxEls.length];
-  try { a.currentTime = 0; } catch (_) { /* 首次未加载完，忽略 */ }
-  a.volume = vol;
-  a.play().catch(() => {});          // 由鼠标手势触发，浏览器允许
+
+/// source 常量：Ie=80 速度采样窗、_e=100 进轨延迟、Pe=600 px/s 速度上限、
+/// Ye=10 近邻半径、Z=9 基础宽、Ve=24 波峰宽、Fe=3 最小组数
+const SPINE_SPEED_WIN_MS = 80, SPINE_ENTRY_MS = 100, SPINE_MAX_SPEED = 600;
+const SPINE_NEAREST_PX = 10, SPINE_WAVE_BASE = 9, SPINE_WAVE_PEAK = 24, SPINE_MIN_GROUPS = 3;
+
+/// source He/le：指针进入轨道后的速度采样（决定这一下响不响 —— 快速甩过去不响，就是「卡点」的门）
+let spineSpeedState = { entryAt: null, samples: [] };
+function spineSpeedSample(x, y, t) {
+  if (spineSpeedState.entryAt == null) spineSpeedState.entryAt = t;
+  spineSpeedState.samples.push({ x, y, t });
+  while (spineSpeedState.samples.length && t - spineSpeedState.samples[0].t > SPINE_SPEED_WIN_MS)
+    spineSpeedState.samples.shift();
+}
+function spineSpeedReset() { spineSpeedState.entryAt = null; spineSpeedState.samples.length = 0; }
+function spineSpeedOK(t) {
+  const st = spineSpeedState;
+  if (st.entryAt == null || t - st.entryAt < SPINE_ENTRY_MS) return false;
+  if (st.samples.length < 2) return true;
+  const a = st.samples[0], b = st.samples[st.samples.length - 1], dt = b.t - a.t;
+  if (dt <= 0) return true;
+  return Math.hypot(b.x - a.x, b.y - a.y) / dt * 1000 < SPINE_MAX_SPEED;
+}
+/// source fe()：localStorage 'mimo.spineSound' !== '0' 才响（沿用同一个 key，照搬）
+function spineSoundEnabled() { try { return localStorage.getItem('mimo.spineSound') !== '0'; } catch (e) { return true; } }
+
+/// source K —— 音效模块**逐字照搬**（五声阶 / 三角波 / 泛音拨弦 / 旋律彩蛋），只改名 SpineSound
+const SpineSound = (()=>{let e=null;const t=[261.63,293.66,329.63,392,440],c=(d,m)=>{const R=Math.round(d/Math.max(1,m-1)*(t.length*3.6));return t[R%t.length]*Math.pow(2,Math.floor(R/t.length)-1)},l=()=>(e||(e=new AudioContext),e.state==="suspended"&&e.resume(),e),f=(d,m)=>{const R=l(),h=R.currentTime,x=R.createGain(),B=R.createOscillator();B.type="triangle",B.frequency.value=d,x.gain.setValueAtTime(1e-4,h),x.gain.exponentialRampToValueAtTime(m?.3:.13,h+.008),x.gain.exponentialRampToValueAtTime(1e-4,h+(m?.9:.42)),B.connect(x).connect(R.destination),B.start(h),B.stop(h+(m?.95:.46))},i=(d,m,R=1.1)=>{if(!d.length)return;const h=l(),x=h.currentTime,B=Math.min(2.6,Math.max(.4,.25+R)),D=h.createGain();D.gain.setValueAtTime(1e-4,x),D.gain.exponentialRampToValueAtTime((m?.3:.13)/Math.sqrt(d.length),x+.006),D.gain.exponentialRampToValueAtTime(1e-4,x+B);const q=h.createBiquadFilter();q.type="lowpass",q.frequency.setValueAtTime(4200,x),q.frequency.exponentialRampToValueAtTime(1400,x+B*.85),D.connect(q).connect(h.destination);const J=[[1,1,"triangle"],[2,.42,"sine"],[3,.22,"sine"],[4,.12,"sine"],[6,.06,"sine"]],ee=x+B+.05;d.forEach(te=>J.forEach(([ne,re,Q],se)=>{const P=h.createOscillator(),M=h.createGain();P.type=Q,P.frequency.value=te*ne,se===0&&(P.detune.value=1.5),M.gain.value=re,P.connect(M).connect(D),P.start(x),P.stop(ee)}))},u={C:0,"C#":1,Db:1,D:2,"D#":3,Eb:3,E:4,F:5,"F#":6,Gb:6,G:7,"G#":8,Ab:8,A:9,"A#":10,Bb:10,B:11},A=d=>{const m=d.match(/^([A-G][#b]?)(\d)$/),R=(parseInt(m[2],10)+1)*12+u[m[1]];return 440*Math.pow(2,(R-69)/12)},C=(d,m)=>m.map(R=>{const h=R.match(/\{(\d+)(?:\/(\d+))?\}$/);return{freqs:Array.from(R.matchAll(/\(([A-G][#b]?\d)\)/g),x=>A(x[1])),ring:parseInt(h[1],10)/(h[2]?parseInt(h[2],10):1)*(60/d)}}),p=["2(B4){1/4}","1(A4){1/4}","♯7(G#4){1/4}","1(A4){1/4}","3(C5){1/2}","休{1/2}","4(D5){1/4}","3(C5){1/4}","2(B4){1/4}","3(C5){1/4}","5(E5){1/2}","休{1/2}","6(F5){1/4}","5(E5){1/4}","♯4(D#5){1/4}","5(E5){1/4}","2(B5){1/4}","1(A5){1/4}","♯7(G#5){1/4}","1(A5){1/4}","2(B5){1/4}","1(A5){1/4}","♯7(G#5){1/4}","1(A5){1/4}","3(C6){1}"],O=["1(A5){1/2}","3(C6){1/2}","2(B5){1/2}","1(A5){1/2}","7(G5){1/2}","1(A5){1/2}","2(B5){1/2}","1(A5){1/2}","7(G5){1/2}","1(A5){1/2}","2(B5){1/2}","1(A5){1/2}","7(G5){1/2}","♯6(F#5){1/2}","5(E5){1}"],H=[C(76,["5(E5){1/2}","♯4(D#5){1/2}","5(E5){1/2}","♯4(D#5){1/2}","5(E5){1/2}","2(B4){1/2}","4(D5){1/2}","3(C5){1/2}","1(A4){3/2}","休{1/2}","3(C4){1/2}","5(E4){1/2}","1(A4){1/2}","2(B4){1}","休{1/2}","5(E4){1/2}","♯7(G#4){1/2}","2(B4){1/2}","3(C5){1}","休{1/2}","5(E4){1/2}","5(E5){1/2}","♯4(D#5){1/2}","5(E5){1/2}","♯4(D#5){1/2}","5(E5){1/2}","2(B4){1/2}","4(D5){1/2}","3(C5){1/2}","1(A4){3/2}","休{1/2}","3(C4){1/2}","5(E4){1/2}","1(A4){1/2}","2(B4){1}","休{1/2}","5(E4){1/2}","3(C5){1/2}","2(B4){1/2}","1(A4){2}"]),C(150,["5(C#4){3/2}","1(F#4){1/2}","3(A4){3/2}","1(F#4){1/2}","♭1(F4){3/2}","1(F#4){1/4}","2(G#4){1/4}","1(F#4){2}","6(D4){3/2}","7(E4){1/4}","1(F#4){1/4}","5(C#4){2}","4(B3){1/4}","3(A3){1/4}","3(A3){1/4}","2(G#3){1/4}","2(G#3){3/4}","5(C#4){1/4}","1(F#3){2}","5(C#5){3/2}","1(F#5){1/4}","3(A5){1/4}","5(C#6){3/2}","3(A5){1/2}","[2(G#5) + ♭1(F5) + 6(D5)]{3/2}","3(A5){1/4}","4(B5){1/4}","[3(A5) + 1(F#5) + 5(C#5)]{2}","6(D5){1/4}","7(E5){1/4}","1(F#5){1/4}","6(D5){1/4}","5(C#5){1/4}","6(D5){1/4}","7(E5){1/4}","5(C#5){1/4}","4(B4){1/4}","5(C#5){1/4}","6(D5){1/4}","4(B4){1/4}","3(A4){1/4}","4(B4){1/4}","5(C#5){1/4}","3(A4){1/4}","4(B4){1/4}","3(A4){1/4}","3(A4){1/4}","2(G#4){1/4}","2(G#4){3/4}","5(C#5){1/4}","1(F#4){2}","休{1}","5(C#5){3/2}","1(F#5){1/2}","3(A5){3/2}","1(F#5){1/2}","♭1(F5){3/2}","1(F#5){1/4}","2(G#5){1/4}","1(F#5){2}","6(D5){3/2}","7(E5){1/4}","1(F#5){1/4}","5(C#5){2}","4(B4){1/4}","3(A4){1/4}","3(A4){1/4}","2(G#4){1/4}","2(G#4){3/4}","5(C#5){1/4}","1(F#4){2}","5(C#5){3/4}","1(F#5){1/4}","3(A5){1/4}","5(C#6){1/4}","1(F#6){1/4}","3(A6){1/4}"]),C(120,[...p,...O,...p,...O,...p]),C(72,["5(Bb4){1/2}","3(G5){2}","2(F5){1/2}","3(G5){1/2}","2(F5){3/2}","1(Eb5){1}","5(Bb4){1/2}","3(G5){1}","6(C5){1/12}","♯6(C#5){1/12}","6(C5){1/12}","♯5(B4){1/12}","6(C5){1/6}","6(C6){1}","3(G5){1/2}","5(Bb5){3/2}","4(Ab5){1}","3(G5){1/2}","2(F5){3/2}","3(G5){1}","7(D5){1/2}","1(Eb5){3/2}","6(C5){3/2}","5(Bb4){1/2}","7(D6){1/2}","6(C6){1/2}","5(Bb5){1/4}","4(Ab5){1/4}","3(G5){1/4}","4(Ab5){1/4}","6(C5){1/4}","7(D5){1/4}","1(Eb5){3/2}","休{1}"]),C(72,["1(G5){1/4}","1(G5){1/4}","2(A5){1/4}","2(A5){1/4}","3(Bb5){1/4}","3(Bb5){1/4}","2(A5){1/4}","2(A5){1/4}","1(G5){1/4}","1(G5){1/4}","5(D5){1/4}","5(D5){1/4}","3(Bb4){1/4}","3(Bb4){1/4}","1(G4){1/4}","1(G4){1/4}","7(F5){1/4}","7(F5){1/4}","6(Eb5){1/4}","6(Eb5){1/4}","5(D5){1/4}","6(Eb5){1/4}","7(F5){1/4}","6(Eb5){1/2}","休{1/2}","休{1/2}","休{1/4}","6(Eb5){1/4}","6(Eb5){1/4}","7(F5){1/4}","7(F5){1/4}","1(G5){1/4}","1(G5){1/4}","2(A5){1/4}","2(A5){1/4}","7(F5){1/4}","7(F5){1/4}","4(C5){1/4}","4(C5){1/4}","6(Eb5){1/4}","6(Eb5){1/4}","5(D5){1/4}","5(D5){1/4}","4(C5){1/4}","4(C5){1/4}","6(Eb5){1/4}","5(D5){1/2}","5(D6){1/8}","5(D7){7/8}","5(D5){1/2}","1(G4){1/4}","3(Bb4){1/4}","5(D5){1/4}","4(C5){1/4}","5(D5){1/2}","1(G4){1/4}","3(Bb4){1/4}","5(D5){1/4}","4(C5){1/4}","5(D5){1/2}","1(G4){1/4}","3(Bb4){1/4}","6(Eb5){1/4}","5(D5){1/4}","6(Eb5){1/2}","1(G4){1/4}","3(Bb4){1/4}","6(Eb5){1/4}","5(D5){1/4}","6(Eb5){1/2}","6(Eb5){1/4}","5(D5){1/4}","6(Eb5){1/4}","♯6(E5){1/4}","7(F5){1/2}","7(F5){1/4}","1(G5){1/4}","7(F5){1/4}","1(G5){1/4}","5(D5){1/2}","休{1/2}","休{1/2}"])],Y=["G4","G4","A4","G4","C5","B4","G4","G4","A4","G4","D5","C5","G4","G4","G5","E5","C5","B4","A4","F5","F5","E5","C5","D5","C5"].map(A);let I=0;const j=()=>!1,G=d=>{i([Y[I]],d),I=(I+1)%Y.length},_=.05,z=1,W=180*1e3;let w=null,F=0,$=0,k=!1,L=0;const X=d=>{if(!w)return;const m=w[F];i(m.freqs,d,m.ring),F+=1,F>=w.length&&(F=0,$+=1,$>=z&&(w=null,L=Date.now()))};return{hover:(d,m)=>{if(j()){G(!1);return}if(w){X(!1);return}if(!k&&(k=!0,Date.now()-L>=W&&Math.random()<_)){w=H[Math.floor(Math.random()*H.length)],F=0,$=0,X(!1);return}f(c(d,m),!1)},hit:(d,m)=>{if(j()){i([Y[I]],!0);return}if(w){i(w[F].freqs,!0,w[F].ring);return}f(c(d,m),!0)},endEngagement:()=>{k=!1},resetEgg:()=>{w&&(L=Date.now()),w=null,F=0,$=0,I=0,k=!1}}})();
+
+/// source Ee/_me/Eme —— 工具名 → 图标名（known 表 + 启发式兜底）
+const SPINE_KNOWN_TOOLS = {
+  read: 'tool-read', edit: 'tool-edit', write: 'tool-write', bash: 'tool-bash', exec_command: 'tool-bash',
+  grep: 'tool-search', glob: 'tool-search', codesearch: 'tool-search', list: 'tool-list',
+  webfetch: 'tool-websearch', websearch: 'tool-websearch', skill: 'quill-pen-ai', skill_search: 'quill-pen-ai',
+  todowrite: 'tool-todo', actor: 'tool-actor', contacts: 'tool-actor', memory: 'tool-memory',
+  invalid: 'tool-invalid', pdf_locate: 'tool-search', tts_speech: 'tool-fallback',
+  asr_transcribe: 'tool-fallback', image_gen: 'tool-fallback', image_edit: 'tool-fallback',
+};
+function spineToolIconName(name) {
+  const t = String(name || '').toLowerCase();
+  if (SPINE_KNOWN_TOOLS[t]) return SPINE_KNOWN_TOOLS[t];
+  if (t.includes('terminal')) return 'tool-bash';
+  if (/browser|page|inspect/.test(t)) return 'tool-browser';
+  if (/search|grep/.test(t)) return 'tool-search';
+  if (t.includes('fetch')) return 'tool-websearch';
+  if (t.includes('read')) return 'tool-read';
+  if (/edit|write/.test(t)) return 'tool-edit';
+  return 'tool-fallback';
+}
+/// source index-bo_Ccbdb.js 里 Be() 包着的 16 个 SVG（stroke/fill 已换成 currentColor）
+const SPINE_TOOL_SVGS = {"tool-read": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M8.40033 7.1999H15.6003M8.40033 10.7999H15.6003M8.40033 14.3999H12.0003M6.60004 2.3999H17.4003C18.7258 2.3999 19.8003 3.47445 19.8003 4.79995L19.8 19.2C19.8 20.5254 18.7254 21.5999 17.4 21.5999L6.59994 21.5998C5.27446 21.5998 4.19994 20.5253 4.19995 19.1998L4.20004 4.79989C4.20005 3.47441 5.27457 2.3999 6.60004 2.3999Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-edit": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M11.9999 22.1999H21.5999M14.9999 4.7999L19.1999 8.3999M4.1999 15.5999L16.0313 3.35533C17.3052 2.08143 19.3706 2.08143 20.6445 3.35533C21.9184 4.62923 21.9184 6.69463 20.6445 7.96853L8.3999 19.7999L2.3999 21.5999L4.1999 15.5999Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-write": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M11.0984 3.80369H5.4119C3.52756 3.80369 2 5.3312 2 7.21548V18.5882C2 20.4725 3.52756 22 5.4119 22H16.7849C18.6692 22 20.1968 20.4725 20.1968 18.5882L20.1968 12.9018M7.68649 16.3136L11.8244 15.4799C12.044 15.4356 12.2457 15.3274 12.4041 15.1689L21.6671 5.90116C22.1112 5.45682 22.1109 4.73657 21.6664 4.2926L19.7042 2.33264C19.2599 1.88886 18.54 1.88916 18.0961 2.33332L8.8321 11.6021C8.674 11.7602 8.56605 11.9615 8.52175 12.1807L7.68649 16.3136Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-bash": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M7.1999 11.3999L10.1999 14.3999L7.1999 17.3999M2.9999 7.7999H20.9999M4.7999 21.5999C3.47442 21.5999 2.3999 20.5254 2.3999 19.1999V4.7999C2.3999 3.47442 3.47442 2.3999 4.7999 2.3999H19.1999C20.5254 2.3999 21.5999 3.47442 21.5999 4.7999V19.1999C21.5999 20.5254 20.5254 21.5999 19.1999 21.5999H4.7999Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-search": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M16.927 17.0401L20.4001 20.4001M19.2801 11.4401C19.2801 15.77 15.77 19.2801 11.4401 19.2801C7.11019 19.2801 3.6001 15.77 3.6001 11.4401C3.6001 7.11019 7.11019 3.6001 11.4401 3.6001C15.77 3.6001 19.2801 7.11019 19.2801 11.4401Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/> </svg>", "tool-list": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M8.7201 6H21.6001M8.7201 12.48H21.6001M8.7201 18.96H21.6001M3.6001 6V6.0128M3.6001 12.48V12.4928M3.6001 18.96V18.9728\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-webfetch": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M4 15.2044L4 18.8925C4 19.4514 4.21071 19.9875 4.58579 20.3827C4.96086 20.778 5.46957 21 6 21H18C18.5304 21 19.0391 20.778 19.4142 20.3827C19.7893 19.9875 20 19.4514 20 18.8925V15.2044M12.0011 3V14.9425M7.42969 10.3793L12.0011 14.9425L16.5725 10.3793\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-websearch": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M20.4375 13C20.9898 13 21.4375 12.5523 21.4375 12C21.4375 11.4477 20.9898 11 20.4375 11V12V13ZM21 12H20C20 16.4183 16.4183 20 12 20V21V22C17.5228 22 22 17.5228 22 12H21ZM12 21V20C7.58172 20 4 16.4183 4 12H3H2C2 17.5228 6.47715 22 12 22V21ZM3 12H4C4 7.58172 7.58172 4 12 4V3V2C6.47715 2 2 6.47715 2 12H3ZM12 3V4C16.4183 4 20 7.58172 20 12H21H22C22 6.47715 17.5228 2 12 2V3ZM12 21V20C11.7872 20 11.5057 19.9056 11.1624 19.5738C10.8143 19.2373 10.4552 18.7021 10.1319 17.9631C9.48665 16.4882 9.0625 14.3807 9.0625 12H8.0625H7.0625C7.0625 14.5898 7.51979 16.9823 8.29961 18.7648C8.68887 19.6545 9.1782 20.4373 9.77228 21.0117C10.3712 21.5907 11.1255 22 12 22V21ZM8.0625 12H9.0625C9.0625 9.61928 9.48665 7.51177 10.1319 6.03686C10.4552 5.29792 10.8143 4.76272 11.1624 4.42621C11.5057 4.09436 11.7872 4 12 4V3V2C11.1255 2 10.3712 2.40931 9.77228 2.98832C9.1782 3.56266 8.68887 4.34548 8.29961 5.23522C7.51979 7.01767 7.0625 9.41015 7.0625 12H8.0625ZM12 21V22C12.8745 22 13.6288 21.5907 14.2277 21.0117C14.8218 20.4373 15.3111 19.6545 15.7004 18.7648C16.4802 16.9823 16.9375 14.5898 16.9375 12H15.9375H14.9375C14.9375 14.3807 14.5133 16.4882 13.8681 17.9631C13.5448 18.7021 13.1857 19.2373 12.8376 19.5738C12.4943 19.9056 12.2128 20 12 20V21ZM15.9375 12H16.9375C16.9375 9.41015 16.4802 7.01767 15.7004 5.23522C15.3111 4.34548 14.8218 3.56266 14.2277 2.98832C13.6288 2.40931 12.8745 2 12 2V3V4C12.2128 4 12.4943 4.09436 12.8376 4.42621C13.1857 4.76272 13.5448 5.29792 13.8681 6.03686C14.5133 7.51177 14.9375 9.61928 14.9375 12H15.9375ZM3 12L3 13L20.4375 13V12V11L3 11L3 12Z\" fill=\"currentColor\"/> </svg>", "tool-todo": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M6.50008 6C7.32851 6 8.00008 6.67157 8.00008 7.5C8.00008 8.32843 7.32851 9 6.50008 9C5.67165 9 5.00008 8.32843 5.00008 7.5C5.00008 6.67157 5.67165 6 6.50008 6ZM5.00008 4C3.89551 4 3.00008 4.89543 3.00008 6V9C3.00008 10.1046 3.89551 11 5.00008 11H8.0001C9.10467 11 10.0001 10.1046 10.0001 9V6C10.0001 4.89543 9.10467 4 8.0001 4H5.00008ZM13.0001 5C13.0001 4.44772 13.4478 4 14.0001 4H20.0001C20.5524 4 21.0001 4.44772 21.0001 5C21.0001 5.55228 20.5524 6 20.0001 6H14.0001C13.4478 6 13.0001 5.55228 13.0001 5ZM13.0001 12C13.0001 11.4477 13.4478 11 14.0001 11H20.0001C20.5524 11 21.0001 11.4477 21.0001 12C21.0001 12.5523 20.5524 13 20.0001 13H14.0001C13.4478 13 13.0001 12.5523 13.0001 12ZM13.0001 19C13.0001 18.4477 13.4478 18 14.0001 18H20.0001C20.5524 18 21.0001 18.4477 21.0001 19C21.0001 19.5523 20.5524 20 20.0001 20H14.0001C13.4478 20 13.0001 19.5523 13.0001 19ZM10.0001 16.9142C10.3906 16.5237 10.3906 15.8905 10.0001 15.5C9.60955 15.1095 8.97639 15.1095 8.58587 15.5L6.70719 17.3787C6.31666 17.7692 5.6835 17.7692 5.29297 17.3787L4.91428 17C4.52376 16.6095 3.8906 16.6095 3.50008 17C3.10955 17.3905 3.10955 18.0237 3.50008 18.4142L5.29297 20.2071C5.6835 20.5976 6.31666 20.5976 6.70718 20.2071L10.0001 16.9142Z\" fill=\"currentColor\"/> </svg>", "tool-actor": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <rect x=\"2.5\" y=\"2.5\" width=\"19\" height=\"19\" rx=\"5.75\" stroke=\"currentColor\" stroke-width=\"2.5\"/> <path d=\"M9.25 9.75V14.25M14.75 9.75V14.25\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\"/> </svg>", "tool-memory": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M12 16.8028V6.4006M12 16.8028C12.0005 17.2402 12.0906 17.673 12.2648 18.0743C12.4391 18.4756 12.6937 18.8368 13.013 19.1358C13.3323 19.4348 13.7095 19.6652 14.1213 19.8127C14.5331 19.9601 14.9708 20.0216 15.4073 19.9933C15.8438 19.965 16.2698 19.8474 16.6591 19.648C17.0484 19.4485 17.3927 19.1713 17.6707 18.8335C17.9487 18.4958 18.1545 18.1046 18.2754 17.6842C18.3963 17.2637 18.4298 16.8229 18.3737 16.3891M12 16.8028C11.9995 17.2402 11.9094 17.673 11.7352 18.0743C11.5609 18.4756 11.3063 18.8368 10.987 19.1358C10.6677 19.4348 10.2905 19.6652 9.87867 19.8127C9.46687 19.9601 9.02921 20.0216 8.59272 19.9933C8.15623 19.965 7.73019 19.8474 7.34089 19.648C6.9516 19.4485 6.60732 19.1713 6.32933 18.8335C6.05133 18.4958 5.84552 18.1046 5.7246 17.6842C5.60368 17.2637 5.57022 16.8229 5.62629 16.3891M12 6.4006C12 6.03239 12.0847 5.6691 12.2475 5.33885C12.4103 5.00861 12.6469 4.72025 12.9389 4.49608C13.231 4.27192 13.5707 4.11797 13.9318 4.04613C14.2929 3.97429 14.6656 3.98649 15.0212 4.0818C15.3768 4.1771 15.7057 4.35295 15.9825 4.59573C16.2593 4.83852 16.4765 5.14174 16.6174 5.48193C16.7583 5.82212 16.819 6.19016 16.7949 6.55759C16.7708 6.92502 16.6626 7.28198 16.4785 7.60085M12 6.4006C12 6.03239 11.9153 5.6691 11.7525 5.33885C11.5897 5.00861 11.3531 4.72025 11.0611 4.49608C10.769 4.27192 10.4293 4.11797 10.0682 4.04613C9.70713 3.97429 9.33438 3.98649 8.97877 4.0818C8.62317 4.1771 8.29426 4.35295 8.01747 4.59573C7.74069 4.83852 7.52346 5.14174 7.38258 5.48193C7.24171 5.82212 7.18097 6.19016 7.20506 6.55759C7.22915 6.92502 7.33743 7.28198 7.52152 7.60085M14.4 12.8019C13.7079 12.5996 13.0999 12.1783 12.6672 11.6013C12.2345 11.0243 12.0004 10.3225 12 9.60126C11.9996 10.3225 11.7655 11.0243 11.3328 11.6013C10.9001 12.1783 10.2921 12.5996 9.59996 12.8019M16.7977 6.50062C17.2679 6.62156 17.7045 6.84793 18.0743 7.16261C18.4441 7.47728 18.7375 7.87201 18.9322 8.31688C19.127 8.76175 19.2179 9.24511 19.1982 9.73034C19.1785 10.2156 19.0487 10.69 18.8185 11.1176M16.8001 16.8028C17.5045 16.8027 18.1892 16.5702 18.7481 16.1413C19.3069 15.7124 19.7086 15.111 19.891 14.4305C20.0733 13.75 20.026 13.0283 19.7564 12.3773C19.4869 11.7264 19.0101 11.1826 18.4001 10.8303M7.19992 16.8028C6.4955 16.8027 5.81078 16.5702 5.25193 16.1413C4.69309 15.7124 4.29136 15.111 4.10904 14.4305C3.92672 13.75 3.97401 13.0283 4.24356 12.3773C4.51311 11.7264 4.98986 11.1826 5.59989 10.8303M7.20232 6.50062C6.73207 6.62156 6.2955 6.84793 5.92568 7.16261C5.55586 7.47728 5.26247 7.87201 5.06775 8.31688C4.87303 8.76175 4.78208 9.24511 4.80179 9.73034C4.82149 10.2156 4.95133 10.69 5.18148 11.1176\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-fallback": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M14.428 6.87242C14.2632 7.04062 14.1708 7.26675 14.1708 7.50227C14.1708 7.7378 14.2632 7.96393 14.428 8.13213L15.8677 9.57179C16.0359 9.73666 16.2621 9.829 16.4976 9.829C16.7331 9.829 16.9593 9.73666 17.1275 9.57179L19.9223 6.77794C20.2102 6.48821 20.6988 6.57999 20.8068 6.9741C21.0787 7.96285 21.0633 9.00859 20.7625 9.98893C20.4617 10.9693 19.8879 11.8437 19.1083 12.5098C18.3287 13.176 17.3755 13.6063 16.3602 13.7505C15.3449 13.8947 14.3095 13.7467 13.3753 13.3239L6.25774 20.4413C5.89977 20.7991 5.41431 21.0001 4.90816 21C4.402 20.9999 3.9166 20.7988 3.55875 20.4408C3.20091 20.0829 2.99992 19.5974 3 19.0913C3.00008 18.5851 3.20124 18.0997 3.5592 17.7419L10.6767 10.6245C10.2539 9.69031 10.106 8.65498 10.2502 7.63972C10.3943 6.62445 10.8247 5.67125 11.4908 4.89164C12.157 4.11202 13.0314 3.53826 14.0118 3.23747C14.9922 2.93668 16.0379 2.92132 17.0267 3.19318C17.4208 3.30115 17.5126 3.78884 17.2238 4.07857L14.428 6.87242Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-invalid": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M12 12.9V8.41447M12 16.2248V16.2642M17.6699 20H6.33007C4.7811 20 3.47392 18.9763 3.06265 17.5757C2.88709 16.9778 3.10281 16.3551 3.43276 15.8249L9.10269 5.60102C10.4311 3.46632 13.5689 3.46633 14.8973 5.60103L20.5672 15.8249C20.8972 16.3551 21.1129 16.9778 20.9373 17.5757C20.5261 18.9763 19.2189 20 17.6699 20Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/> </svg>", "tool-skill": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M14.8234 2.3999L16.6537 7.34611L21.5999 9.17637L16.6537 11.0066L14.8234 15.9528L12.9932 11.0066L8.04696 9.17637L12.9932 7.34611L14.8234 2.3999Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\"/> <path d=\"M6.35284 13.694L7.95167 16.0481L10.3058 17.647L7.95167 19.2458L6.35284 21.5999L4.75402 19.2458L2.3999 17.647L4.75402 16.0481L6.35284 13.694Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\"/> </svg>", "tool-browser": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M4.5 9.5H19.5M6 20C4.89543 20 4 19.1046 4 18V6C4 4.89543 4.89543 4 6 4H18C19.1046 4 20 4.89543 20 6V18C20 19.1046 19.1046 20 18 20H6Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/> <circle cx=\"7\" cy=\"7\" r=\"1\" fill=\"currentColor\"/> <circle cx=\"10\" cy=\"7\" r=\"1\" fill=\"currentColor\"/> <circle cx=\"13\" cy=\"7\" r=\"1\" fill=\"currentColor\"/> </svg>", "quill-pen-ai": "<svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"> <path d=\"M3.14227 4.75207L2.97788 5.12919C2.85758 5.40528 2.47571 5.40528 2.35541 5.12919L2.19104 4.75207C1.89804 4.07965 1.3703 3.54427 0.71178 3.25139L0.205365 3.02615C-0.0684548 2.90435 -0.0684548 2.50587 0.205365 2.38408L0.683467 2.17143C1.35892 1.87101 1.89611 1.31582 2.18408 0.620552L2.35288 0.213023C2.47052 -0.0710075 2.86278 -0.0710075 2.98042 0.213023L3.14921 0.620552C3.43718 1.31582 3.97439 1.87101 4.64987 2.17143L5.12792 2.38408C5.40181 2.50587 5.40181 2.90435 5.12792 3.02615L4.62152 3.25139C3.96301 3.54427 3.43525 4.07965 3.14227 4.75207ZM4.22281 10.5436C4.34021 10.1553 4.47147 9.7708 4.62608 9.35513C5.99656 5.67091 8.2798 3.38781 12.0086 2.80986C11.6667 3.57225 11.3434 4.10201 11.0572 4.38825C10.8347 4.61069 10.6123 4.83329 10.3899 5.05605L9.44807 5.99919L10.4186 6.969C9.66507 8.35893 8.1768 9.46527 6.50129 9.67467C5.62363 9.7844 4.8623 10.0792 4.22281 10.5436ZM12 6.66439L11.3333 5.99819C11.5554 5.77581 11.7775 5.55359 12.0018 5.32927C12.6679 4.66202 13.3339 3.32928 14 1.33105C4.20737 1.33105 2.72569 10.2813 2.04241 14.4088C2.02793 14.4962 2.01383 14.5815 2 14.6644H3.33216C3.77614 12.4423 4.88764 11.2201 6.66667 10.9977C9.33333 10.6644 11.3333 8.6644 12 6.66439Z\" fill=\"currentColor\" fill-opacity=\"0.7\"/> </svg>"};
+function spineSvgFor(name) {
+  return SPINE_TOOL_SVGS[spineToolIconName(name)] || SPINE_TOOL_SVGS['tool-fallback'] || '';
 }
 
+/// source ce：首句（中英文句读切分）≤140 字
+function spineFirstSentence(text) {
+  const t = String(text || '').trim();
+  const first = t.split(/(?<=[。！？])|(?<=[.!?])(?=\s|$)/)[0] || t;
+  return first.slice(0, 140);
+}
+/// 消息 html → 纯文本（保留换行；顺手收掉源码换行留下的「换行+缩进」，source 是 ReactMarkdown 渲染，我们纯文本）
+function spinePlainText(html) {
+  const raw = String(html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(div|p|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  const ta = document.createElement('textarea'); ta.innerHTML = raw;
+  return ta.value.replace(/\n[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+/// source Be：user 开新组；非 user 挂进当前组 —— a=首段非空文本的首句、tools 去重收集
+let spineGroups = [];
+function buildSpineGroups(msgs) {
+  const groups = [];
+  msgs.forEach((m, i) => {
+    if (m.role === 'user') { groups.push({ start: i, q: spinePlainText(m.html), a: '', tools: [] }); return; }
+    let g = groups[groups.length - 1];
+    if (!g) { g = { start: i, q: '', a: '', tools: [] }; groups.push(g); }
+    const html = String(m.html || '');
+    for (const mm of html.matchAll(/<div class="tools">([\s\S]*?)<\/div>/g))
+      for (const t of mm[1].matchAll(/<i>([^<]+)<\/i>/g))
+        if (!g.tools.includes(t[1])) g.tools.push(t[1]);
+    if (!g.a) { const txt = spinePlainText(m.html); if (txt) g.a = spineFirstSentence(txt); }
+  });
+  return groups;
+}
+
+/// source B()/D()：波浪宽度 —— 目标 = 9 + exp(-v²/0.8)×15（±3 根衰减），弹簧 lerp 0.3
+let waveRAF = 0, waveWidths = [], waveHover = -1;
+function spineWaveFrame() {
+  const lines = $$('#spineTicks .spine-tick i');
+  let animating = false;
+  lines.forEach((el, gi) => {
+    const v = waveHover < 0 ? 99 : Math.abs(gi - waveHover);
+    const b = v <= 3 ? Math.exp(-(v * v) / 0.8) : 0;
+    const target = SPINE_WAVE_BASE + b * (SPINE_WAVE_PEAK - SPINE_WAVE_BASE);
+    const cur = waveWidths[gi] ?? SPINE_WAVE_BASE;
+    const next = cur + (target - cur) * 0.3;
+    waveWidths[gi] = next;
+    el.style.width = next.toFixed(2) + 'px';
+    if (Math.abs(target - next) > 0.15) animating = true;
+  });
+  if (!animating && waveHover < 0) {           // 回到基线 → 清空内联宽，交给 CSS 的 9px
+    lines.forEach(el => { el.style.width = ''; });
+    waveWidths = []; waveRAF = 0; return;
+  }
+  waveRAF = animating ? requestAnimationFrame(spineWaveFrame) : 0;
+}
+function spineWaveStart() { if (!waveRAF) waveRAF = requestAnimationFrame(spineWaveFrame); }
+function spineResetWidths() {
+  waveHover = -1; waveWidths = [];
+  if (waveRAF) { cancelAnimationFrame(waveRAF); waveRAF = 0; }
+  $$('#spineTicks .spine-tick i').forEach(el => { el.style.width = ''; });
+}
+
+/// source ve/Ge/ie：刻度总高 / 平移量 / 渐隐透明度（轨道内容高过可视区时才平移）
+function spineTicksHeight(n) { return n <= 0 ? 0 : n * 4 + (n - 1) * 6; }
+function spinePanOffset(total, railH, scrollTop, maxScroll) {
+  const overflow = total - railH;
+  if (overflow <= 0 || maxScroll <= 0) return 0;
+  const u = Math.min(1, Math.max(0, scrollTop / maxScroll));
+  const fade = Math.min(64, railH / 3), c = railH - 2 * fade;
+  if (c <= 0) return u * overflow;
+  return Math.min(1, Math.max(0, (u * railH - fade) / c)) * overflow;
+}
+function spineFadeOpacity(dist) { return Math.min(1, Math.max(0, dist) / 64); }
+function spinePanning() {
+  const rail = $('#histRail'), ticksEl = $('#spineTicks'), msgs = $('#msgs');
+  if (!rail || rail.hidden || !ticksEl) return;
+  const n = spineGroups.length, total = spineTicksHeight(n), railH = rail.clientHeight;
+  const pan = total > railH;
+  rail.classList.toggle('panning', pan);
+  let b = 0;
+  if (pan && msgs) {
+    const max = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+    b = spinePanOffset(total, railH, msgs.scrollTop, max);
+  }
+  ticksEl.style.transform = b > 0 ? `translateY(${-b}px)` : '';
+  const ft = $('#spineFadeTop'), fb = $('#spineFadeBot');
+  if (ft) ft.style.opacity = String(pan ? spineFadeOpacity(b) : 0);
+  if (fb) fb.style.opacity = String(pan ? spineFadeOpacity(total - railH - b) : 0);
+}
+
+/// source De + .active：可见范围里的组亮成白（滚动时更新）
+function spineUpdateActive() {
+  const rail = $('#histRail'), msgs = $('#msgs');
+  if (!rail || rail.hidden || !msgs || !spineGroups.length) return;
+  const st = msgs.scrollTop, sb = st + msgs.clientHeight;
+  const ticks = $$('.spine-tick', rail);
+  let first = -1, last = -1;
+  spineGroups.forEach((g, gi) => {
+    const top = histOffsetFor(g.start); if (top == null) return;
+    const next = gi + 1 < spineGroups.length ? histOffsetFor(spineGroups[gi + 1].start) : Infinity;
+    const nextTop = next == null ? Infinity : next;
+    if (top < sb && nextTop > st) { if (first < 0) first = gi; last = gi; }
+  });
+  ticks.forEach((el, gi) => el.classList.toggle('active', first >= 0 && gi >= first && gi <= last));
+}
+function histOffsetFor(msgIndex) {
+  const hit = histOffsetMap.get(msgIndex);
+  if (hit != null) return hit;
+  const o = histOffsets.find(x => x.i === msgIndex);   // 双屏/时序兜底
+  return o ? o.top : null;
+}
+
+/// source q：最近刻度（近邻半径 10px —— 缝里也算命中）
+function spineNearestTick(clientY) {
+  const rail = $('#histRail'); if (!rail || rail.hidden) return -1;
+  const ticks = $$('.spine-tick', rail);
+  let best = -1, dist = Infinity;
+  ticks.forEach((el, gi) => {
+    const r = el.getBoundingClientRect();
+    const d = Math.abs((r.top + r.height / 2) - clientY);
+    if (d < dist) { dist = d; best = gi; }
+  });
+  return dist <= SPINE_NEAREST_PX ? best : -1;
+}
+
+/// source ne + qe：点击后的平滑滚动（ease-out-expo，时长 min(900, 340+|Δ|×.28)）
+let spineScrollRAF = 0;
+function spineEaseOutExpo(p) { return p === 1 ? 1 : 1 - Math.pow(2, -10 * p); }
+function spineSmoothToMsg(msgIndex) {
+  const msgs = $('#msgs');
+  const el = document.querySelector(`#msgs .msg[data-i="${msgIndex}"]`);
+  if (!msgs || !el) return;
+  const max = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+  const rowTop = el.getBoundingClientRect().top - msgs.getBoundingClientRect().top;
+  const target = Math.max(0, Math.min(max, msgs.scrollTop + rowTop - 14));
+  const from = msgs.scrollTop, delta = target - from;
+  if (Math.abs(delta) < 1) return;
+  const dur = Math.min(900, 340 + Math.abs(delta) * 0.28);
+  const t0 = performance.now();
+  cancelAnimationFrame(spineScrollRAF);
+  const step = t => {
+    const p = Math.min(1, (t - t0) / dur);
+    msgs.scrollTop = from + delta * spineEaseOutExpo(p);
+    if (p < 1) spineScrollRAF = requestAnimationFrame(step);
+  };
+  spineScrollRAF = requestAnimationFrame(step);
+}
+
+/// source xe：预览卡 top（贴光标、夹在窗口与轨道底之间、下限 12）
+function spinePreviewTop(mouseY, cardH, railBottom, winH) {
+  const upper = Math.min(winH - cardH - 12, railBottom - cardH);
+  return Math.max(12, Math.min(upper, mouseY - cardH / 2));
+}
+
+/// 预览卡（source spine-preview JSX：q 单行 + a 3 行 + tools ≤6 带图标）
+let spinePreviewGI = -1;
+function spinePreviewHTML(g) {
+  const tools = g.tools.slice(0, 6)
+    .map(t => `<span class="sp-badge">${spineSvgFor(t)}<span>${escapeHtml(t)}</span></span>`).join('');
+  return `<div class="sp-q">${escapeHtml(g.q || '—')}</div>`
+    + (g.a ? `<div class="sp-a">${escapeHtml(g.a)}</div>` : '')
+    + (tools ? `<div class="sp-tools">${tools}</div>` : '');
+}
+function ensureSpinePreview() {
+  let el = document.querySelector('.spine-preview');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'spine-preview';
+    document.body.appendChild(el);
+    el.addEventListener('click', () => {                 // source P：点卡 = 点那根刻度
+      if (spinePreviewGI >= 0) { spineActivateGroup(spinePreviewGI); spineHidePreview(true); }
+    });
+  }
+  return el;
+}
+function spineHidePreview() {
+  const el = document.querySelector('.spine-preview');
+  if (el) el.classList.remove('show');
+  spinePreviewGI = -1;
+}
+function spineShowPreview(gi, mouseY) {
+  const g = spineGroups[gi]; if (!g) return;
+  const el = ensureSpinePreview();
+  el.innerHTML = spinePreviewHTML(g);
+  spinePreviewGI = gi;
+  el.classList.add('show');
+  spinePositionPreview(mouseY);
+}
+function spinePositionPreview(mouseY) {
+  const rail = $('#histRail'), el = ensureSpinePreview();
+  if (!rail || rail.hidden) return;
+  const rr = rail.getBoundingClientRect();
+  el.style.left = (rr.right + 14) + 'px';                 // source x()：轨道右缘 +14
+  el.style.top = spinePreviewTop(mouseY, el.offsetHeight || 140, rr.bottom, window.innerHeight) + 'px';
+}
+
+/// source Q：点刻度 —— .clicked 亮 200ms + hit 声 + 平滑滚到该组
+function spineActivateGroup(gi) {
+  const g = spineGroups[gi]; if (!g) return;
+  if (spineSoundEnabled()) SpineSound.hit(gi, spineGroups.length);
+  const el = $$('#spineTicks .spine-tick')[gi];
+  if (el) { el.classList.add('clicked'); setTimeout(() => el.classList.remove('clicked'), 200); }
+  spineSmoothToMsg(g.start);
+}
+
+/// source J/ee/te + 窗口级清除：一次移动 = 一次处理（rAF 节流），换组才响/才重建卡
+function spineHandleMove(x, y) {
+  const now = performance.now();
+  spineSpeedSample(x, y, now);
+  const gi = spineNearestTick(y);
+  if (gi < 0) {
+    if (waveHover >= 0 || spinePreviewGI >= 0) {
+      waveHover = -1; spineHidePreview(); spineSpeedReset(); SpineSound.endEngagement(); spineWaveStart();
+    }
+    return;
+  }
+  if (gi !== waveHover) {
+    waveHover = gi;
+    if (spineSoundEnabled() && spineSpeedOK(now)) SpineSound.hover(gi, spineGroups.length);
+    spineShowPreview(gi, y);
+  } else {
+    spinePositionPreview(y);
+  }
+  spineWaveStart();
+}
+function spineClearHover() {
+  if (waveHover < 0 && spinePreviewGI < 0) return;
+  waveHover = -1; spineHidePreview(); spineSpeedReset(); SpineSound.endEngagement(); spineWaveStart();
+}
+let spineMoveRAF = 0, spineMoveXY = [0, 0], spinePointerInRail = false;
+function bindSpineRail() {
+  const rail = $('#histRail'); if (!rail || rail._spineBound) return;
+  rail._spineBound = true;
+  const preview = ensureSpinePreview();
+  rail.addEventListener('pointermove', e => {
+    spinePointerInRail = true;
+    spineMoveXY = [e.clientX, e.clientY];
+    if (!spineMoveRAF) spineMoveRAF = requestAnimationFrame(() => {
+      spineMoveRAF = 0;
+      if (spinePointerInRail) spineHandleMove(spineMoveXY[0], spineMoveXY[1]);
+    });
+  });
+  rail.addEventListener('pointerleave', e => {
+    // source te：指针滑进预览卡不算离开（卡在轨道右边 14px，中间有缝）
+    if (preview.contains(e.relatedTarget)) return;
+    spinePointerInRail = false;
+    spineClearHover();
+  });
+  rail.addEventListener('click', e => {
+    const gi = waveHover >= 0 ? waveHover : spineNearestTick(e.clientY);
+    if (gi >= 0) spineActivateGroup(gi);
+  });
+  window.addEventListener('pointermove', e => {           // source 窗口级 r：出了轨道+卡 → 清
+    if (waveHover < 0) return;
+    const t = e.target;
+    if (rail.contains(t) || preview.contains(t)) return;
+    spinePointerInRail = false;
+    spineClearHover();
+  }, { passive: true });
+  window.addEventListener('blur', () => { spinePointerInRail = false; spineClearHover(); });
+}
+
+/// 渲染：每根刻度 = 一个组（source JSX 的 spine-tick 结构），组数 <3 整条不显示（Fe）
 function renderHistRail() {
-  const rail = $('#histRail');
-  if (!rail) return;
+  const rail = $('#histRail'); if (!rail) return;
   const msgs = S.chat || [];
-  if (!msgs.length) { rail.hidden = true; rail.innerHTML = ''; return; }   // 空对话不画
+  const ticksEl = $('#spineTicks');
+  if (!msgs.length) {
+    rail.hidden = true; if (ticksEl) ticksEl.innerHTML = '';
+    spineGroups = []; spineHidePreview(); spineResetWidths(); return;
+  }
+  spineGroups = buildSpineGroups(msgs);
+  if (spineGroups.length < SPINE_MIN_GROUPS) { rail.hidden = true; spineHidePreview(); return; }
   rail.hidden = false;
-  const n = msgs.length;
-  // §29.2 无论多少条：轨道固定高 290、周期 10 → 最多 29 根；超过就**均匀抽样**
-  // （取代 §24.10 的「压扁间距」—— 压扁就是你说的「太密」；抽样后密度恒定、永远 29 根）
-  const CAP = 29;
-  const idxs = n <= CAP
-    ? Array.from({ length: n }, (_, i) => i)
-    : Array.from({ length: CAP }, (_, k) => Math.round(k * (n - 1) / (CAP - 1)));
-  rail.innerHTML = idxs.map(mi => {
-    // 最后一根 = 最新消息，恒白（照参考图底部那条白色短标记）。
-    // 不写 title（原生 tooltip 会跟预览卡**双重弹出**，扫过时闪两套 UI）；
-    // 不写 animation-delay（railIn 动画已删，每次重绘整列飞入 = 无谓的卡）。
-    return `<div class="hr-line${mi === n - 1 ? ' is-last' : ''}" data-i="${mi}"></div>`;
-  }).join('');
-  bindRailTip();
+  ticksEl.innerHTML = spineGroups
+    .map((g, gi) => `<div class="spine-tick" data-gi="${gi}"><i></i></div>`).join('');
+  spineResetWidths();
+  spineHidePreview();
+  bindSpineRail();
+  spineUpdateActive();
+  spinePanning();
 }
-
 /// §24.10 造几十/几百条示例对话 —— 用户要「能滑动它、听到声音变化」才好判断轨道对不对。
 /// 内容照在 MiMo Desktop 里真实看到的那几类：GitHub 推送 / CI / 文件提交 / 工具调用 / 普通问答。
 function seedDemoChat(n = 200, silent = false) {
@@ -2894,154 +3207,16 @@ function clearDemoChat() {
 /// §24.12 消息相对 #msgs 顶部的位置缓存 —— **滚动高亮只读这里的数字**。
 /// 上一版每次滚动都对 80 个 msg 调 getBoundingClientRect（每帧几十次布局查询），
 /// 这是「非常卡顿」的主因之一。重建只在 renderChat 之后。
-let histOffsets = [];
+let histOffsets = [], histOffsetMap = new Map();
 function rebuildHistOffsets() {
   histOffsets = $$('#msgs .msg')
     .map(m => ({ i: +m.dataset.i, top: m.offsetTop }))     // offsetParent = #msgs（position:relative）
     .sort((a, b) => a.top - b.top);                        // 双屏两列时 DOM 顺序 ≠ 视觉顺序，按 top 排
+  histOffsetMap = new Map(histOffsets.map(o => [o.i, o.top]));  // §30 spine 可见区/点击滚动读这份
 }
-function histCurIndex() {
-  if (!histOffsets.length) return -1;
-  const st = $('#msgs') ? $('#msgs').scrollTop : 0;
-  let best = histOffsets[0].i;
-  for (const o of histOffsets) {                            // 已按 top 升序 → 第一个越过视口顶的就是它
-    if (o.top <= st + 8) best = o.i; else break;
-  }
-  return best;                                              // 返回 S.chat 索引
-}
-
-/// 滚动时把高亮移到当前那条（白色那条，对应截图里最下面那条）
-/// §29：轨道是**抽样**的（最多 29 根），当前消息不一定恰好有对应刻度 —— 按 data-i 取最近的那根
-function syncHistCur() {
-  const rail = $('#histRail');
-  if (!rail || rail.hidden) return;
-  const cur = histCurIndex();
-  if (cur < 0) return;
-  const lines = $$('.hr-line', rail);
-  let target = null, bestDistance = Infinity;
-  for (const el of lines) {
-    const distance = Math.abs(+el.dataset.i - cur);
-    if (distance < bestDistance) { bestDistance = distance; target = el; }
-  }
-  lines.forEach(el => {
-    const on = el === target;
-    if (on && !el.classList.contains('is-cur')) {
-      el.classList.add('is-cur', 'is-live');
-      setTimeout(() => el.classList.remove('is-live'), 520);
-    } else if (!on) el.classList.remove('is-cur', 'is-live');
-  });
-}
-
-/// 跳到第 i 条 —— 「滑动回放修改过程」就是靠它把对话区滚过去
-function histGoto(i) {
-  const el = document.querySelector(`#msgs .msg[data-i="${i}"]`);
-  if (!el) return;
-  $('#msgs').scrollTo({ top: Math.max(0, el.offsetTop - 10), behavior: 'smooth' });
-  setTimeout(syncHistCur, 260);
-}
-
-/// §29.3 预览卡的内容：标题（首行，24 字截断）+ 正文（其余行，含 git/CI 那些行）+ 工具 chips。
-/// 照两张参考图：图 1 是短消息（标题+两行+chips），图 2 是长消息（几十行正文+chips）——
-/// 卡片只有这几个部分，宽度随内容、高度到顶裁掉。
-function railTipHtml(m, index) {
-  const raw = String(m.html || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(div|p|li|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, '');
-  const ta = document.createElement('textarea');      // 解码 escapeHtml 留下的 &amp; &lt; 等实体
-  ta.innerHTML = raw;
-  const lines = (ta.value || '').split('\n').map(l => l.trim()).filter(Boolean);
-  const first = lines[0] || '';
-  const title = first.length > 24 ? first.slice(0, 24) + '…' : first;
-  const body = lines.slice(1).join('\n');
-  const tools = [...String(m.html || '').matchAll(/<div class="tools">([\s\S]*?)<\/div>/g)]
-    .flatMap(mm => [...mm[1].matchAll(/<i>([^<]+)<\/i>/g)].map(x => x[1]));
-  return `<b class="hr-title">${escapeHtml(title)}</b>`
-    + (body ? `<span class="hr-body">${escapeHtml(body)}</span>` : '')
-    + (tools.length ? `<div class="hr-tools">${tools.map(t => `<i>${escapeHtml(t)}</i>`).join('')}</div>` : '');
-}
-
-/// hover 浮出的预览卡（tooltip 放在 msgs-row 上 —— rail 有 overflow:hidden 会裁掉它）
-let hrTip = null, hrTipCachedHeight = 0, railTickMids = [];
-function bindRailTip() {
-  const row = $('#msgsRow'); if (!row) return;
-  if (!hrTip) { hrTip = document.createElement('div'); hrTip.className = 'hr-tip'; row.appendChild(hrTip); }
-  const rail = $('#histRail');
-  /// ★ 同一条上鼠标会连发几十次 mousemove：内容只在**换条**时重建，
-  ///   每次 move 只更新 top（跟随光标）。
-  let lastScrubI = -2;
-  /// 刻度位置缓存（rail 局部坐标）—— 刻度只有 2px 高、缝有 8px，
-  /// 鼠标多数时间落在缝里：**整条轨道都算 hover**，取最近的刻度，卡不闪没。
-  const cacheTickMids = () => {
-    railTickMids = [...rail.children].map(el => ({
-      i: +el.dataset.i, mid: el.offsetTop + el.offsetHeight / 2, el
-    }));
-  };
-  cacheTickMids();
-  const nearestTick = clientY => {
-    const railRect = rail.getBoundingClientRect();
-    const localY = clientY - railRect.top;
-    let best = null, distance = Infinity;
-    for (const t of railTickMids) {
-      const d = Math.abs(t.mid - localY);
-      if (d < distance) { distance = d; best = t; }
-    }
-    return best;
-  };
-  const placeAtCursor = clientY => {
-    const rowRect = row.getBoundingClientRect();
-    const half = hrTipCachedHeight || hrTip.offsetHeight || 40;
-    const min = half + 4, max = rowRect.height - half - 4;
-    // 夹在可视区内：贴着光标，但卡片不出 msgs-row 的上下沿；
-    // 卡比行还高时上下限会倒挂（min>max）—— 那就钉在顶上，绝不取到负向错值
-    const y = min <= max
-      ? Math.min(Math.max(clientY - rowRect.top, min), max)
-      : 4;
-    hrTip.style.top = y + 'px';
-  };
-  rail.onmousemove = e => {
-    const hit = nearestTick(e.clientY);          // 缝里也能命中最近那根
-    if (!hit) return;
-    const i = hit.i;
-    if (i !== lastScrubI) {
-      lastScrubI = i;
-      const m = (S.chat || [])[i]; if (!m) return;
-      // ① **预览**（滑过去只是预览，不自动切换）—— 那根变长变亮
-      $$('.hr-line.is-scrub', rail).forEach(x => x.classList.remove('is-scrub'));
-      hit.el.classList.add('is-scrub');
-      // ② 伴随声音（对象池轮换，音量 0.35；70ms 去抖）
-      histTick(0.35);
-      // ③ 富内容（宽度 = fit-content，换一条消息宽度就可能变）
-      hrTip.innerHTML = railTipHtml(m, i);
-      hrTip.classList.add('on');
-      // 长消息的卡不许比消息区还高（比行高就钳制倒挂、底部还会被裁）—— 超了就裁正文
-      const rowHeight = row.getBoundingClientRect().height;
-      let tipHeight = hrTip.offsetHeight;
-      if (tipHeight > rowHeight - 8) {
-        const bodyEl = hrTip.querySelector('.hr-body');
-        if (bodyEl) {
-          const chrome = tipHeight - bodyEl.offsetHeight;   // 标题+chips+内边距
-          bodyEl.style.maxHeight = Math.max(60, rowHeight - chrome - 8) + 'px';
-        } else {
-          hrTip.style.maxHeight = (rowHeight - 8) + 'px';
-        }
-        tipHeight = hrTip.offsetHeight;
-      }
-      hrTipCachedHeight = tipHeight;                        // 内容变了才重量一次
-    }
-    // ④ 跟随光标（你的原话：「跟随光标变化」）
-    placeAtCursor(e.clientY);
-    // ★ **不调 histGoto** —— 滑过绝不滚动，卡顿与「不该切换」两件事一起解决
-  };
-  rail.onmouseleave = () => { lastScrubI = -2; hrTip.classList.remove('on'); clearScrub(); };
-  // ⑤ **点击才切换**（跳过去 + 更响一声）—— 把点击位置映射到最近刻度，缝里点也有效
-  rail.onclick = e => {
-    const hit = nearestTick(e.clientY); if (!hit) return;
-    histTick(0.75);
-    histGoto(hit.i);
-  };
-}
-function clearScrub() { $$('.hr-line.is-scrub').forEach(x => x.classList.remove('is-scrub')); }
+/// 旧的 histCurIndex / syncHistCur / histGoto / railTipHtml / bindRailTip / clearScrub
+/// 已随 §30 整体删除 —— 轨道现在是 source 的 SessionSpine：可见区高亮（.active）、
+/// ease-out-expo 点击滚动、.spine-preview 卡，全部在上面那一节。
 
 /// §22.13 —— replyBusy 模拟"上一条还没答完"（原型没有真模型，用一个定时器当生成窗口）
 let replyBusy = false, replyTimer = null;
@@ -4729,11 +4904,13 @@ function buildVaultSessions() {
     projectLabel: o.projectLabel, projectKey: o.cwd, kind: o.kind, ref: o.ref }); };
   realProjects().forEach(p => (p.chats || []).forEach(c => push({
     id: 'vs_' + c.id, sid: c.sid || c.id, title: c.title, cwd: p.path, ts: c.ts || now(),
-    msgs: c.msgs || 0, projectLabel: p.name, kind: 'project', ref: { p: p.id, id: c.id } })));
+    msgs: c.msgs || 0, sub: c.sub || 0, model: c.model, preview: c.preview || '',   // §30：预览/子智能体/模型原来漏传
+    projectLabel: p.name, kind: 'project', ref: { p: p.id, id: c.id } })));
   (S.plans || []).filter(x => !x.isGroup).forEach(pl => push({
     id: 'vs_' + pl.id, sid: pl.sid || pl.id, title: pl.title, cwd: defaultFolderPath(),
     ts: pl.ts || now(), msgs: 0, projectLabel: '默认', kind: 'default', ref: { id: pl.id } }));
-  return out;
+  const deleted = S.vaultDeleted || [];                    // §30 ⋯菜单的删除：真删（从列表里除名）
+  return out.filter(x => !deleted.includes(x.id));
 }
 function vaultFilterState() {
   return { query: (S.vaultQuery || '').trim(), agents: S.vaultAgents || [], scope: S.vaultScope || 'workspace',
@@ -4751,7 +4928,8 @@ function vaultFilteredGroups() {
   if (f.query) { const q = f.query.toLowerCase();
     list = list.filter(x => (x.title || '').toLowerCase().includes(q)
       || (x.agent || '').includes(q) || (x.projectLabel || '').toLowerCase().includes(q)); }
-  list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  if (S.vaultSort === 'created') list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  else list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));   // 默认：最后更新（源码 Last updated）
   list = list.slice(0, f.limit);
   const keyOf = x => f.group === 'agent' ? x.agent : (f.group === 'folder' ? (x.cwd || '') : (x.projectLabel || ''));
   const map = new Map();
@@ -4767,9 +4945,9 @@ function renderSidePanel() {
   panel.hidden = which !== 'explorer' && which !== 'agents';
   $$('#railRight .rail-btn').forEach(b => b.classList.toggle('is-on',
     (b.dataset.open === 'explorer' && which === 'explorer') || (b.dataset.open === 'agents' && which === 'agents')));
-  $('#railLeft')?.classList.toggle('has-open', !!S.automationOpen);
-  $('#railLeft .rail-btn')?.classList.toggle('is-on', !!S.automationOpen);
   $('#panelAutomation').hidden = !S.automationOpen;
+  // §30 自动化按钮已并入最右侧 rail
+  $('#railRight .rail-btn[data-open="automation"]')?.classList.toggle('is-on', !!S.automationOpen);
   // 面板开着就要有内容 —— 只在「点开」那条路上调过 renderAutomation 的话，刷新一回来就是空列表
   if (S.automationOpen) renderAutomation();
   if (panel.hidden) return;
@@ -4977,16 +5155,52 @@ function renameFileNode(project, rel) {
 }
 
 /* ── 23.4.B 智能体会话历史（Agents / Ai Vault） ── */
+/// §30 会话历史 —— 结构 1:1 照 Orca（reference/Orca/src/renderer/src/components/right-sidebar/）：
+///   标题+副标题     AiVaultPanelHeader.tsx:81-97（智能体会话历史 / 索引历史记录）
+///   工作区分段+搜索 AiVaultPanelHeader.tsx:141-189 · 主机/过滤菜单 AiVaultPanelControls.tsx:154-365
+///   计数+排序条     AiVaultSessionListBar.tsx:22-87（X 次（共 Y 次）+ 最后更新/创建）
+///   行内 hover 按钮  SessionRowTrailingActions.tsx:30-40/95-282（⌖ ▶ ⊕ ∨ ⋯，hover 才浮现）
+///   ⋯/右键菜单      AiVaultSessionActionMenuItems.tsx:59-194（5+3+2+1 分组、删除红色）
+///   展开态          AiVaultSessionDetails.tsx:71-241（按钮条 → 首次提示 → 最近轮次）
+///   恢复门          ai-vault-session-resume.ts:236-245（messageCount>0 才能恢复）
+/// 行内小图用字形（⌖▶⊕∨⋯），菜单/展开结构与条目顺序逐条对齐源码。
+function vaultRelTime(ts) {
+  const d = Date.now() - Number(ts || 0);
+  if (d < 60e3) return '刚刚';
+  if (d < 3600e3) return Math.floor(d / 60e3) + ' 分钟前';
+  if (d < 86400e3) return Math.floor(d / 3600e3) + ' 小时前';
+  if (d < 7 * 86400e3) return Math.floor(d / 86400e3) + ' 天前';
+  return new Date(ts).toLocaleDateString();
+}
+
 function renderSideVault() {
   const sub = $('#sideSub'), body = $('#sideBody');
+  if (!sub || !body) return;
   const f = vaultFilterState();
+  const all = buildVaultSessions();
+  const groups = vaultFilteredGroups();
+  const shown = groups.reduce((n, g) => n + g.sessions.length, 0);
+  const sortLabel = (S.vaultSort === 'created') ? '创建' : '最后更新';
+  // 标题区（照 AiVaultPanelHeader：主/副标题在左，主机+过滤在右），然后分段 → 搜索 → 计数条
   sub.innerHTML = `
+    <div class="vault-head">
+      <div class="vh-txt">
+        <div class="vh-t">智能体会话历史</div>
+        <div class="vh-s">索引历史记录</div>
+      </div>
+      <div class="vh-ctrls">
+        <button class="sp-chip" data-vmenu="host" title="执行主机">🖥 ${escapeHtml(S.vaultHost || 'local')}</button>
+        <button class="sp-chip" data-vmenu="filter" title="过滤：智能体 / 分组 / 隐藏空会话 / 条数">⚙ 过滤</button>
+      </div>
+    </div>
+    <div class="sp-filters vault-scope">
+      ${VAULT_SCOPES.map(([v, l]) => `<button class="sp-chip ${f.scope === v ? 'is-on' : ''}" data-vscope="${v}">${l}</button>`).join('')}
+    </div>
     <input class="sp-input" style="margin:0 0 6px" id="vaultQuery"
       placeholder="搜索会话…" spellcheck="false" value="${escapeHtml(f.query)}">
-    <div class="sp-filters" style="padding:0">
-      ${VAULT_SCOPES.map(([v, l]) => `<button class="sp-chip ${f.scope === v ? 'is-on' : ''}" data-vscope="${v}">${l}</button>`).join('')}
-      <button class="sp-chip" data-vmenu="host" title="执行主机">🖥 ${escapeHtml(S.vaultHost || 'local')}</button>
-      <button class="sp-chip" data-vmenu="filter" title="过滤：智能体 / 分组 / 隐藏空会话">⚙ 过滤</button>
+    <div class="vault-countbar">
+      <span class="vc-num">${shown} 次（共 ${all.length} 次）</span>
+      <button class="vc-sort" data-vmenu="sort" title="排序">${sortLabel} ▾</button>
     </div>`;
   const q = $('#vaultQuery');
   q.oninput = () => { S.vaultQuery = q.value; save(true); renderSideVault();
@@ -4997,8 +5211,13 @@ function renderSideVault() {
     if (b.dataset.vmenu === 'host') {
       showMenu(VAULT_HOSTS.map(([v, l]) => ({ label: (S.vaultHost || 'local') === v ? `✓ ${l}` : l,
         action: () => { S.vaultHost = v; save(true); renderSideVault(); toast('执行主机：' + l); } })), b);
+    } else if (b.dataset.vmenu === 'sort') {
+      showMenu([
+        { label: (S.vaultSort !== 'created' ? '✓ ' : '  ') + '最后更新', action: () => { S.vaultSort = 'updated'; save(true); renderSideVault(); } },
+        { label: (S.vaultSort === 'created' ? '✓ ' : '  ') + '创建', action: () => { S.vaultSort = 'created'; save(true); renderSideVault(); } },
+      ], b);
     } else {
-      const present = [...new Set(buildVaultSessions().map(x => x.agent))];
+      const present = [...new Set(all.map(x => x.agent))];
       showMenu(
         [{ title: '选择智能体（多选）' }]
           .concat(present.map(a => ({ label: (f.agents.includes(a) ? '✓ ' : '  ') + a,
@@ -5008,7 +5227,7 @@ function renderSideVault() {
           .concat(VAULT_GROUPS.map(([v, l]) => ({ label: (f.group === v ? '✓ ' : '  ') + l,
             action: () => { S.vaultGroup = v; save(true); renderSideVault(); } })))
           .concat([{ sep: true },
-            { label: (f.hideEmpty ? '✓ ' : '  ') + '隐藏空会话', action: () => { S.vaultHideEmpty = !f.hideEmpty;
+            { label: (f.hideEmpty ? '✓ ' : '  ') + '隐藏空会话', action: () => { S.vaultHideEmpty = !S.vaultHideEmpty;
                 save(true); renderSideVault(); } },
             { label: '恢复默认过滤', action: () => { S.vaultAgents = []; S.vaultScope = 'workspace';
                 S.vaultGroup = 'project'; S.vaultHideEmpty = false; S.vaultLimit = 100;
@@ -5017,10 +5236,8 @@ function renderSideVault() {
     }
   });
 
-  const groups = vaultFilteredGroups();
   if (!groups.length) { body.innerHTML = `<div class="sp-empty">没有匹配的会话<br><span style="opacity:.7">刷新可强制重扫</span></div>`; return; }
   body.innerHTML = '';
-  let shown = 0;
   groups.forEach(g => {
     const collapsed = !!(S.vaultGroupsCollapsed || {})[g.key];
     const head = document.createElement('div');
@@ -5031,51 +5248,131 @@ function renderSideVault() {
       S.vaultGroupsCollapsed[g.key] = !collapsed; save(true); renderSideVault(); };
     body.appendChild(head);
     if (collapsed) return;
-    g.sessions.forEach(x => { body.appendChild(vaultRow(x)); shown++; });
+    g.sessions.forEach(x => body.appendChild(vaultRow(x)));
   });
-  const sum = document.createElement('div');
-  sum.className = 'sp-sum';
-  sum.textContent = `${shown} sessions · group by ${f.group}${f.agents.length ? ' · agents: ' + f.agents.join(',') : ''}`;
-  body.appendChild(sum);
 }
+
+/// 行 —— 照 AiVaultSessionRow.tsx:30-249：标题行右侧 hover 浮现 5 颗按钮（TrailingActions），
+/// 右键 = ⋯ 同一份菜单（AiVaultSessionRow.tsx:248-269 ContextMenu），点行 = 展开（:144-153）
 function vaultRow(x) {
   const open = !!(S.vaultOpen || {})[x.id];
+  const canResume = x.messageCount > 0;          // isAiVaultSessionResumableContent 的子集门
   const wrap = document.createElement('div');
+  wrap.className = 'vrow-wrap';
   const row = document.createElement('div');
-  row.className = 'sp-row' + (open ? ' is-on' : '');
-  // §23.4.13 字段照 ai-vault-session-row-display.tsx SessionMetadata：
-  // title ｜ agent + N msgs + N subagents + model ｜ worktree 徽章 + 最近一轮 preview ｜ 时间
+  row.className = 'sp-row vrow' + (open ? ' is-on' : '');
   const worktree = String(x.cwd || '').split('/').filter(Boolean).pop() || '—';
   row.innerHTML = `<span class="ic">${escapeHtml(x.agent.slice(0, 2))}</span>
-    <span class="bd"><span class="t1">${escapeHtml(x.title || x.sessionId)}</span>
-      <span class="t2">${escapeHtml(x.agent)} · ${x.messageCount} msgs · ${x.subagentCount} subagents · ${escapeHtml(x.model || '-')}</span>
+    <span class="bd"><span class="t1">${escapeHtml(x.title || x.sessionId)}
+      <span class="vrow-acts">
+        <button class="va" data-a="locate" title="跳转到原始窗格">⌖</button>
+        <button class="va" data-a="resume" title="在工作树中恢复" ${canResume ? '' : 'disabled'}>▶</button>
+        <button class="va" data-a="cont" title="在新会话中继续">⊕</button>
+        <button class="va va-chev" data-a="toggle" title="展开 / 收起" aria-expanded="${open}">${open ? '∧' : '∨'}</button>
+        <button class="va" data-a="more" title="更多">⋯</button>
+      </span></span>
+      <span class="t2">${escapeHtml(x.agent)} · ${x.messageCount} 条消息 · ${x.subagentCount ? x.subagentCount + ' 个子智能体 · ' : ''}${vaultRelTime(x.updatedAt)} · ${escapeHtml(x.model || '-')}</span>
       <span class="t3"><b class="vtree" title="${escapeHtml(x.cwd || '')}">${escapeHtml(worktree)}</b>${
-        x.preview ? `<span class="vpv">${escapeHtml(x.preview)}</span>` : ''}</span></span>
-    <span class="rt">${new Date(x.updatedAt).toLocaleDateString()}</span>`;
-  row.onclick = () => { S.vaultOpen = S.vaultOpen || {}; S.vaultOpen[x.id] = !open;
-    save(true); renderSideVault(); };
+        x.preview ? `<span class="vpv">${escapeHtml(x.preview)}</span>` : ''}</span></span>`;
+  row.oncontextmenu = e => { e.preventDefault(); vaultRowMenu(x, null, { x: e.clientX, y: e.clientY }); };
+  row.onclick = e => {
+    if (e.target.closest('.va')) return;        // 按钮自己处理，别冒泡成展开
+    S.vaultOpen = S.vaultOpen || {}; S.vaultOpen[x.id] = !open;
+    save(true); renderSideVault();
+  };
+  $$('.va', row).forEach(btn => btn.onclick = e => {
+    e.stopPropagation();
+    const a = btn.dataset.a;
+    if (a === 'locate') vaultLocate(x);
+    else if (a === 'resume') canResume ? vaultResume(x) : toast('这条会话还没有消息，不能恢复');
+    else if (a === 'cont') vaultContinueNew(x);
+    else if (a === 'toggle') { S.vaultOpen = S.vaultOpen || {}; S.vaultOpen[x.id] = !open; save(true); renderSideVault(); }
+    else if (a === 'more') vaultRowMenu(x, btn);
+  });
   wrap.appendChild(row);
-  if (open) {
-    const canResume = x.messageCount > 0;
-    const kv = document.createElement('div');
-    kv.className = 'sp-kv';
-    kv.innerHTML = `<div><b>agent</b> <code>${escapeHtml(x.agent)}</code>　<b>model</b> <code>${escapeHtml(x.model || '-')}</code></div>
-      <div><b>host</b> <code>${escapeHtml(x.executionHostId)}</code>　<b>cwd</b> <code>${escapeHtml(x.cwd || '-')}</code></div>
-      <div><b>branch</b> <code>${x.branch || '-'}</code>　<b>msgs</b> <code>${x.messageCount}</code></div>
-      <div><b>resume</b> <code>${escapeHtml(x.resumeCommand)}</code></div>
-      <div class="sp-acts" style="margin-top:6px">
-        <button class="sp-act ok" data-a="resume" ${canResume ? '' : 'disabled'}>恢复</button>
-        <button class="sp-act" data-a="locate">定位</button>
-        <button class="sp-act" data-a="copy">复制 resume</button>
-      </div>`;
-    kv.querySelector('[data-a="resume"]').onclick = e => { e.stopPropagation(); vaultResume(x); };
-    kv.querySelector('[data-a="locate"]').onclick = e => { e.stopPropagation(); vaultLocate(x); };
-    kv.querySelector('[data-a="copy"]').onclick = e => { e.stopPropagation();
-      navigator.clipboard?.writeText(x.resumeCommand); toast('已复制 resume 命令'); };
-    wrap.appendChild(kv);
-  }
+  if (open) wrap.appendChild(vaultExpand(x, canResume));
   return wrap;
 }
+
+/// 展开态 —— 照 AiVaultSessionDetails.tsx:71-241 的四段：按钮条 → 首次提示 → 最近轮次 → 元信息
+function vaultExpand(x, canResume) {
+  const ex = document.createElement('div');
+  ex.className = 'sp-vexp';
+  const firstPrompt = x.preview
+    ? `<div class="vcard"><div class="vc-top"><span class="vc-role">你</span>
+         <button class="vc-copy" data-a="copyPreview">⧉ 复制</button></div>
+         <div class="vc-body">${escapeHtml(x.preview)}</div></div>`
+    : `<div class="vnotice">这条会话没有缓存的首次提示</div>`;
+  const turns = (x.previewMessages && x.previewMessages.length)
+    ? x.previewMessages.slice(-3).map(m =>
+        `<div class="vcard${m.role === 'user' ? ' is-user' : ''}"><div class="vc-top">
+           <span class="vc-role">${m.role === 'user' ? '你' : '智能体'}</span></div>
+           <div class="vc-body">${escapeHtml(m.text || '')}</div></div>`).join('')
+    : `<div class="vnotice">没有缓存的轮次正文 —— 真机上由会话日志提供（源码 SessionUnsavedConversationNotice 的同款空态）</div>`;
+  ex.innerHTML = `
+    <div class="vexp-btns">
+      <button class="vxb primary" data-a="resume" ${canResume ? '' : 'disabled'}>▶ 在工作树中恢复</button>
+      <button class="vxb" data-a="resume2" ${canResume ? '' : 'disabled'}>💬 在新聊天中继续</button>
+      <button class="vxb" data-a="cont">⊕ 在新会话中继续…</button>
+      <button class="vxb ghost" data-a="log">📄 查看日志</button>
+    </div>
+    <div class="vexp-sec"><div class="ves-h">💬 首次提示</div>${firstPrompt}</div>
+    <div class="vexp-sec"><div class="ves-h">🗨 最近轮次</div>${turns}</div>
+    <div class="vexp-meta"><code>${escapeHtml(x.resumeCommand)}</code></div>`;
+  $$('.vxb, .vc-copy', ex).forEach(btn => btn.onclick = e => {
+    e.stopPropagation();
+    const a = btn.dataset.a;
+    if (a === 'resume' || a === 'resume2') canResume ? vaultResume(x) : toast('这条会话还没有消息，不能恢复');
+    else if (a === 'cont') vaultContinueNew(x);
+    else if (a === 'log') toast('原型没有会话日志 —— 真机上这一项打开该会话的日志文件');
+    else if (a === 'copyPreview') { navigator.clipboard?.writeText(x.preview || ''); toast('已复制首次提示'); }
+  });
+  ex.onclick = e => e.stopPropagation();        // 点展开区不折叠
+  return ex;
+}
+
+/// ⋯ / 右键菜单 —— 条目、顺序、分隔线照 AiVaultSessionActionMenuItems.tsx:59-194（11 项 3 条线）
+function vaultRowMenu(x, anchor, xy) {
+  const canResume = x.messageCount > 0;
+  const noLog = '原型没有会话日志 —— 真机上这一项读该会话的日志文件';
+  const gate = ok => ok ? undefined : () => toast('这条会话还没有消息，不能恢复');
+  showMenu([
+    { label: '跳转到原始窗格', action: () => vaultLocate(x) },
+    { label: '在工作树中恢复', action: gate(canResume) || (() => vaultResume(x)) },
+    { label: '在新聊天中继续', action: gate(canResume) || (() => vaultResume(x)) },
+    { label: '在新会话中继续…', action: () => vaultContinueNew(x) },
+    { label: '复制恢复命令', action: () => { navigator.clipboard?.writeText(x.resumeCommand); toast('已复制恢复命令'); } },
+    { sep: true },
+    { label: '打开日志', action: () => toast(noLog) },
+    { label: '显示日志', action: () => toast(noLog) },
+    { label: '打开工作目录', action: () => toast(`工作目录：<code>${escapeHtml(x.cwd || '-')}</code>（原型不开访达）`) },
+    { sep: true },
+    { label: '复制会话 ID', action: () => { navigator.clipboard?.writeText(x.sessionId); toast('已复制会话 ID'); } },
+    { label: '复制日志路径', action: () => toast(noLog) },
+    { sep: true },
+    { label: '删除', danger: true, action: () => {
+        S.vaultDeleted = [...(S.vaultDeleted || []), x.id];
+        S.vaultOpen = S.vaultOpen || {}; delete S.vaultOpen[x.id];
+        save(true); renderSideVault(); toast('已删除这条会话记录');
+      } },
+  ], anchor, xy);
+}
+
+/// 在新会话中继续 —— 克隆一条新记录再进去，**原会话不动**（Continue in New Session 语义）
+function vaultContinueNew(x) {
+  if (x.kind === 'project') {
+    const p = projectById(x.ref.p);
+    if (!p) { toast('这条会话的项目已经不在了'); return; }
+    const c = { id: 'c' + now(), sid: newSid(), title: (x.title || '对话') + '（续）', ts: now(), msgs: 0 };
+    p.chats.push(c); save(true); renderNav(); selectProjChat(c, p);
+    toast('已在<b>新会话</b>中继续，原会话保持原样');
+  } else {
+    const c = { id: 'c' + now(), sid: newSid(), title: (x.title || '对话') + '（续）', ts: now(), msgs: 0 };
+    S.plans.push(c); save(true); renderNav(); selectTempCard(c.id);
+    toast('已在<b>新会话</b>中继续，原会话保持原样');
+  }
+}
+
 /// 恢复（照 ai-vault-session-launch-actions.ts:86 handleResume 的语义：没内容就不给点）
 function vaultResume(x) {
   if (x.kind === 'project') {
@@ -5089,6 +5386,7 @@ function vaultResume(x) {
     toast(`已恢复会话 <b>${escapeHtml(x.title)}</b>`);
   }
 }
+
 /// 定位（照 ai-vault-original-pane-actions.ts:72 jumpToOriginalPane：先定位内容、再切工作区）
 function vaultLocate(x) {
   if (x.kind === 'project') {
@@ -5523,7 +5821,7 @@ function bindRails() {
     if (histScrollRaf) return;
     histScrollRaf = requestAnimationFrame(() => {
       histScrollRaf = 0;
-      if (typeof syncHistCur === 'function') syncHistCur();
+      if (typeof spineUpdateActive === 'function') { spineUpdateActive(); spinePanning(); }   // §30
     });
   }, { passive: true });
 }
