@@ -114,6 +114,9 @@ let S = load() || {
   chat2Mode: 'temporary',          // §26 右侧默认就是「临时」
   speechRate2: 1,                  // §26 右侧独立语速
   soundOn: true,                   // §26 「声音」开关的真实状态（语音模式下回答会朗读）
+  permission: 'full',              // §27 审批权限：default / approve / full（照 MiMo 三档）
+  protoModel: 'qwen3-vl-plus',     // §27 输入框里切的模型（显示名照当前软件用的那套）
+  uiStyle: '',                     // §28 界面风格：''=当前 / 'orca' / 'contrast'（只换 CSS 变量）
   // §22.11 快捷指令：一个按钮替换一行动作（字段照用户那张「添加快捷命令」图）
   quickCommands: [{ id: 'qc_gt', label: 'GT推送', op: 'terminal',
                     cmd: 'git push origin main', append: true, scope: 'global', project: '' }],
@@ -182,6 +185,9 @@ function load() {
     if (r.chat2Mode !== 'continuous') r.chat2Mode = 'temporary';
     if (typeof r.speechRate2 !== 'number') r.speechRate2 = 1;
     if (typeof r.soundOn !== 'boolean') r.soundOn = true;
+    if (r.permission !== 'default' && r.permission !== 'approve') r.permission = 'full';
+    if (typeof r.protoModel !== 'string' || !r.protoModel) r.protoModel = 'qwen3-vl-plus';
+    if (r.uiStyle !== 'orca' && r.uiStyle !== 'contrast') r.uiStyle = '';
     if (r.sidePanel !== 'explorer' && r.sidePanel !== 'agents') r.sidePanel = null;
     if (typeof r.paletteShortcut !== 'string' || !r.paletteShortcut) r.paletteShortcut = 'meta+j';
     if (r.sideView !== 'contents') r.sideView = 'names';
@@ -2592,6 +2598,30 @@ function applyDualScreen() {
   if (sec) sec.hidden = !on;
   if (on) renderChat2();
 }
+/// ══ §28 风格切换：只给 body 挂 data-style，全靠 CSS 变量覆盖（布局/功能一个字不动）══
+function applyUiStyle() {
+  const v = S.uiStyle || '';
+  if (v) document.body.dataset.style = v; else document.body.removeAttribute('data-style');
+  $$('#styleBar .sb[data-style]').forEach(b => b.classList.toggle('on', (b.dataset.style || '') === v));
+}
+
+/// ══ §27 输入框工具行 —— **模块级**（renderChat 末尾要调 updateComposerTools 刷上下文 %）══
+  const PERM = { default: '默认权限', approve: '帮我审批', full: '完全访问' };
+const MODELS = ['qwen3-vl-plus', 'qwen3-vl-max', 'deepseek-v4-flash', 'glm-5.3-flash'];
+function updateComposerTools() {
+  const pl = $('#ctPermLabel'); if (pl) pl.textContent = PERM[S.permission] || '完全访问';
+  const mn = $('#ctModelName'); if (mn) mn.textContent = S.protoModel;
+  // 上下文占用：消息总字符 / 8000（原型用的估算上限，够看出变化即可）
+  const chars = (S.chat || []).reduce((n, m) => n + String(m.html || '').length, 0);
+  const pct = Math.max(0, Math.min(99, Math.round(chars / 8000 * 100)));
+  const arc = $('#ctxArc');
+  if (arc) {
+    arc.style.strokeDashoffset = String(45.24 * (1 - pct / 100));
+    arc.style.stroke = pct > 80 ? 'var(--warn)' : 'var(--accent)';   // 快满了变琥珀
+  }
+  const pl2 = $('#ctxPct'); if (pl2) pl2.textContent = pct + '%';
+}
+
 function toggleDualScreen() {
   S.dualScreen = !S.dualScreen;
   if (S.dualScreen) {
@@ -2710,6 +2740,7 @@ function renderChat() {
   rebuildHistOffsets();        // §24.12 缓存每个消息的位置，滚动时只读数字
   requestAnimationFrame(syncHistCur);
   renderChat2();               // §26
+  if (typeof updateComposerTools === 'function') updateComposerTools();   // §27 上下文 % 跟着消息变
 }
 /* ══════════════════════════════════════════════════════════════
    §24 对话记录轨道 —— 界面照 Xiaomi MiMo Desktop 的截图
@@ -4245,6 +4276,7 @@ function boot() {
   // 只有 1 条（出厂那条系统消息）时自动造 80 条；⚙ 里仍可手动加 200 / 清空。
   if ((S.chat || []).length <= 1) { try { seedDemoChat(50, true); } catch (e) {} }   // 80→50：「太密」
   try { applyDualScreen(); } catch (e) {}   // §26 刷新后恢复双屏状态
+  try { applyUiStyle(); } catch (e) {}       // §28 刷新后恢复风格
   const t0 = performance.now();
   const app = $('.app');
   app.classList.add('is-booting');
@@ -5348,6 +5380,56 @@ function bindRails() {
       moveTabTo(+from, tabDropIndex(tvBox, e, false));
     };
   }
+
+
+  // ══ §28 风格条 ══
+  $$('#styleBar .sb[data-style]').forEach(b => b.onclick = () => {
+    S.uiStyle = b.dataset.style || ''; save(true); applyUiStyle();
+    toast(`界面风格：<b>${b.textContent}</b>（只换颜色，功能与位置完全不变）`);
+  });
+  $('#styleHide') && ($('#styleHide').onclick = () => {
+    $('#styleBar').hidden = true; $('#styleDot').hidden = false;
+  });
+  $('#styleDot') && ($('#styleDot').onclick = () => {
+    $('#styleBar').hidden = false; $('#styleDot').hidden = true;
+  });
+  applyUiStyle();
+
+  // ══ §27 输入框工具行：事件绑定（函数本身在模块级）══
+  $('#ctMore') && ($('#ctMore').onclick = e => { e.stopPropagation();
+    showMenu([
+      { title: '更多' },
+      { label: '新建文件', action: () => newTabAction('newFile') },
+      { label: '终端', action: () => newTabAction('terminal') },
+      { label: '新浏览器选项卡', action: () => newTabAction('browser') },
+      { label: '搜索文件', action: () => newTabAction('search') },
+      { label: '输入网址', action: () => newTabAction('url') },
+      { sep: true },
+      { label: 'Claude Code', action: () => newTabAction('claude') },
+      { label: 'Pi', action: () => newTabAction('pi') },
+    ], e.currentTarget);
+  });
+  $('#ctPerm') && ($('#ctPerm').onclick = e => { e.stopPropagation();
+    showMenu([
+      { title: '审批权限' },
+      { label: (S.permission === 'default' ? '✓ ' : '　') + '✋ 默认权限', action: () => setPermission('default') },
+      { label: (S.permission === 'approve' ? '✓ ' : '　') + '✎ 帮我审批', action: () => setPermission('approve') },
+      { label: (S.permission === 'full' ? '✓ ' : '　') + '⊙ 完全访问权限', action: () => setPermission('full') },
+    ], e.currentTarget);
+  });
+  function setPermission(v) { S.permission = v; save(true); updateComposerTools();
+    toast(`审批权限：<b>${PERM[v]}</b>`); }
+  $('#ctModel') && ($('#ctModel').onclick = e => { e.stopPropagation();
+    showMenu([{ title: '模型' }].concat(
+      MODELS.map(m => ({ label: (S.protoModel === m ? '✓ ' : '　') + m,
+        action: () => { S.protoModel = m; save(true); updateComposerTools(); toast(`模型已切到 <b>${m}</b>`); } })),
+      [{ sep: true }, { label: '⚙ 去设置里配模型…', action: () => { toast('真机这里进 设置 → 模型'); } }]
+    ), e.currentTarget);
+  });
+  $('#ctMic') && ($('#ctMic').onclick = () => {
+    S.mode = 'voice'; save(true); renderChatModes();
+    toast('语音输入 —— 已切到<b>语音</b>模式（原型：真机上这里按住说话、直接听写）');
+  });
 
   // §26 右侧独立会话的控件（与左边完全分开，只共享 S.dualScreen 这一个开关）
   const ta2 = $('#chatInput2');

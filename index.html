@@ -5,10 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=28 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=28">
+<!-- ?v=30 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=30">
 </head>
 <body>
+  <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
+       只换 CSS 变量，**不改任何布局与功能** -->
+  <div class="style-bar" id="styleBar" role="toolbar" aria-label="界面风格">
+    <span class="sb-label">风格</span>
+    <button class="sb on" data-style="">当前</button>
+    <button class="sb" data-style="orca" title="照 reference/Orca 的深色 token：页面 #0a0a0a、左栏 #2a2a2a（亮一档）、7% 白细线">Orca</button>
+    <button class="sb" data-style="contrast" title="分区对比更强：左栏更黑、中间更亮、线更实">高对比</button>
+    <button class="sb sb-hide" id="styleHide" title="收起这个条">收起 ✕</button>
+  </div>
+  <button class="style-dot" id="styleDot" hidden title="展开风格选择">◐</button>
 <div class="app">
 
   <!-- ── 导航栏：模式条不变（图文/语音/视频）+「项目」开关 ── -->
@@ -394,6 +404,25 @@
               <button class="btn btn-primary" id="btnSend">发送</button>
             </span>
           </div>
+
+          <!-- §27 输入框工具行（照 Xiaomi MiMo 输入框：左 ＋ 权限 ｜ 右 上下文环 · 模型 · 麦克风）
+               放在 composer-bar **下面**单独一行 —— 塞进同一行会把 §21.5 那排挤爆 -->
+          <div class="composer-tools" id="composerTools">
+            <button class="ct" id="ctMore" title="更多（新建文件 / 终端 / 浏览器…）">＋</button>
+            <button class="ct ct-perm" id="ctPerm" title="审批权限">
+              <span class="ct-ico">⊙</span><span id="ctPermLabel">完全访问</span> <span class="ct-caret">⌄</span>
+            </button>
+            <span class="ct-spacer"></span>
+            <span class="ct-ctx" id="ctCtx" title="上下文占用">
+              <svg class="ctx-ring" viewBox="0 0 18 18" aria-hidden="true">
+                <circle class="ctx-bg" cx="9" cy="9" r="7.2"></circle>
+                <circle class="ctx-fg" id="ctxArc" cx="9" cy="9" r="7.2"></circle>
+              </svg>
+              <span id="ctxPct">0%</span>
+            </span>
+            <button class="ct" id="ctModel" title="切换模型"><span id="ctModelName">qwen3-vl-plus</span> <span class="ct-caret">⌄</span></button>
+            <button class="ct ct-mic" id="ctMic" title="语音输入">🎤</button>
+          </div>
         </div><!-- /composer -->
       </div><!-- /chat-foot -->
       </div><!-- /chat-pane#chatMain -->
@@ -689,6 +718,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=28"></script>
+<script src="app.js?v=30"></script>
 </body>
 </html>

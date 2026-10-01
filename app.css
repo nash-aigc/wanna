@@ -314,7 +314,7 @@ code{font-family:var(--mono);font-size:11.5px}
 
 /* ── 对话 ─────────────────────────────────────── */
 .chat{flex:0 0 var(--chat-w);min-width:250px;max-width:52vw;display:flex;flex-direction:row;
-  background:var(--nav-bg);border-left:1px solid var(--line);position:relative}
+  background:var(--chat-bg,var(--nav-bg));border-left:1px solid var(--line);position:relative}
 /* §26 每个 pane 自己是一列（nav / 消息 / 输入框 竖着排），双屏时两个 pane 并排 */
 .chat-pane{display:flex;flex-direction:column;flex:1 1 0;min-width:0;position:relative}
 /* §26 分割线：一黑一浅，中间一条细线（照 Orca 的 7% 白 border） */
@@ -366,6 +366,78 @@ code{font-family:var(--mono);font-size:11.5px}
 .msg .tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:7px}
 .msg .tools i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--ink2);
   background:#1F1F22;border:1px solid var(--line2);border-radius:6px;padding:2px 8px}
+/* ══ §28 风格选择条 + 三套配色（只换变量，不改布局）══ */
+.style-bar{position:fixed;top:0;left:0;right:0;z-index:220;height:30px;
+  display:flex;align-items:center;gap:6px;padding:0 12px;
+  background:rgba(10,10,12,.92);border-bottom:1px solid var(--line);
+  backdrop-filter:blur(8px);font-size:12px}
+.style-bar .sb-label{font-family:var(--mono);font-size:11px;color:var(--ink3);letter-spacing:.08em;
+  text-transform:uppercase;margin-right:2px}
+.sb{appearance:none;font:inherit;font-size:12px;color:var(--ink3);background:transparent;
+  border:1px solid var(--line);border-radius:7px;padding:3px 12px;cursor:pointer;
+  transition:background .14s,color .14s,border-color .14s}
+.sb:hover{background:#1F1F22;color:var(--ink2)}
+.sb.on{color:#CFE4FF;border-color:rgba(10,132,255,.6);background:rgba(10,132,255,.14)}
+.sb-hide{margin-left:auto;border-color:transparent;color:var(--ink3);padding:3px 8px}
+.sb-hide:hover{background:transparent;color:var(--ink2)}
+.style-dot{position:fixed;top:4px;right:8px;z-index:220;width:22px;height:22px;border-radius:50%;
+  border:1px solid var(--line);background:rgba(10,10,12,.9);color:var(--ink3);font-size:12px;
+  cursor:pointer;line-height:1;display:flex;align-items:center;justify-content:center}
+.style-dot:hover{color:var(--ink);border-color:#3C3C42}
+
+/* B · Orca —— 值逐条抄自 reference/Orca/src/renderer/src/assets/main.css:278-330
+   （--background / --worktree-sidebar / --border / --input / --card） */
+body[data-style="orca"]{
+  --bg:#0a0a0a;              /* --background: #0a0a0a */
+  --nav-bg:#2a2a2a;          /* --worktree-sidebar: #2a2a2a —— 左栏比页面**亮一档** */
+  --chat-bg:#0a0a0a;         /* 对话区跟页面同色（我们 --nav-bg 同时管左栏，必须拆开） */
+  --panel:#171717;           /* --card: #171717 */
+  --surface2:#111111;
+  --line:rgba(255,255,255,.07);    /* --border: 7% 白 —— 细、淡、扁平 */
+  --line2:rgba(255,255,255,.13);
+  --ink:#fafafa;             /* --foreground */
+  --ink2:#a1a1a1;            /* --muted-foreground */
+  --ink3:#737373;            /* --ring */
+}
+/* C · 高对比 —— 分区更明显（左栏更黑、中间更亮、线更实），适合判断"边界在哪" */
+body[data-style="contrast"]{
+  --bg:#141416;
+  --nav-bg:#040405;
+  --chat-bg:#141416;
+  --panel:#1E1E22;
+  --line:#35353D;
+  --line2:#4A4A55;
+  --ink:#FFFFFF;
+  --ink2:#C9C9D2;
+  --ink3:#9696A0;
+}
+
+/* ══ §27 输入框工具行 —— 照 Xiaomi MiMo 输入框（图）：左 ＋ 权限 ｜ 右 上下文环·模型·麦克风 ══
+   扁平、细字、无多余描边；功能全在，只是样式按参考图重画 */
+.composer-tools{display:flex;align-items:center;gap:3px;padding:7px 2px 1px;margin-top:6px;
+  border-top:1px solid rgba(255,255,255,.05)}
+.ct{appearance:none;background:transparent;border:0;color:var(--ink3);font-size:12px;
+  display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:7px;cursor:pointer;
+  transition:background .14s,color .14s;white-space:nowrap}
+.ct:hover{background:#1F1F22;color:var(--ink2)}
+.ct:active{background:#26262A}
+.ct-caret{font-size:10px;opacity:.65}
+.ct-ico{font-size:13px}
+/* 完全访问用琥珀色（照 MiMo 图里的橙色权限字） */
+.ct-perm{color:#FFB454}
+.ct-perm:hover{color:#FFC978;background:rgba(255,180,84,.10)}
+.ct-spacer{flex:1;min-width:8px}
+.ct-ctx{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink3);
+  font-family:var(--mono);padding:2px 6px 2px 2px;letter-spacing:.02em}
+.ctx-ring{width:15px;height:15px;transform:rotate(-90deg);flex:0 0 15px}
+.ctx-bg{fill:none;stroke:#2E2E32;stroke-width:2.8}
+.ctx-fg{fill:none;stroke:var(--accent);stroke-width:2.8;stroke-linecap:round;
+  stroke-dasharray:45.24;stroke-dashoffset:45.24;   /* 2πr, r=7.2 */
+  transition:stroke-dashoffset .45s cubic-bezier(.3,.9,.3,1),stroke .3s}
+.ct-mic{font-size:13px;padding:3px 6px}
+.ct-mic:hover{color:#FF6B6B}
+#ctModelName{max-width:132px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 /* §25 拖动落点指示线：横向条里是竖线、纵向列里是横线，跟随鼠标 */
 .drop-line{position:absolute;top:3px;bottom:3px;width:2px;border-radius:2px;
   background:var(--accent);box-shadow:0 0 7px rgba(10,132,255,.85);
