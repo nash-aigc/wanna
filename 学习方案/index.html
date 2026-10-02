@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>守灯人手记 · 第七夜 —— 可视化（方案三）</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🗼</span>
+    <div>
+      <h1>守灯人手记 · 第七夜</h1>
+      <div class="sub">方案三 · 同一道题的图形化呈现 —— 看得见的关联</div>
+    </div>
+  </div>
+  <div class="stats">账面数 <b id="progressCount">0</b><span>/8</span></div>
+  <div class="tools">
+    <button class="btn primary on" id="btnEdges">关联</button>
+    <button class="btn" id="btnLedger">对照层</button>
+    <button class="btn" id="btnReset">重置</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="scene-wrap">
+    <svg id="scene" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid meet">
+      <!-- 背景：夜空与岛 -->
+      <rect x="0" y="0" width="1200" height="700" fill="#0A0D13"/>
+      <circle cx="140" cy="80" r="2" fill="#3A4152"/><circle cx="320" cy="140" r="1.5" fill="#3A4152"/>
+      <circle cx="520" cy="70" r="2" fill="#3A4152"/><circle cx="760" cy="110" r="1.5" fill="#3A4152"/>
+      <circle cx="900" cy="60" r="2" fill="#3A4152"/><circle cx="1130" cy="120" r="1.5" fill="#3A4152"/>
+      <circle cx="90" cy="200" r="1.5" fill="#3A4152"/><circle cx="640" cy="160" r="1.5" fill="#3A4152"/>
+      <!-- 月亮 -->
+      <circle cx="1050" cy="90" r="34" fill="#1B2130"/>
+      <circle cx="1062" cy="82" r="30" fill="#0A0D13"/>
+      <!-- 海与码头 -->
+      <path d="M0 430 L340 470 L360 700 L0 700 Z" fill="#0A1622"/>
+      <path d="M0 470 Q 90 462 180 474 T 350 480" stroke="#12263A" stroke-width="3" fill="none"/>
+      <rect x="40" y="470" width="300" height="16" fill="#2A2318"/>
+      <rect x="60" y="486" width="14" height="90" fill="#221C13"/>
+      <rect x="300" y="486" width="14" height="80" fill="#221C13"/>
+      <!-- 仓库 -->
+      <rect x="375" y="375" width="150" height="115" rx="6" fill="#171C25"/>
+      <path d="M365 375 L450 335 L535 375 Z" fill="#1F2632"/>
+      <rect x="425" y="430" width="50" height="60" fill="#0E1116"/>
+      <!-- 小路 -->
+      <ellipse cx="480" cy="620" rx="34" ry="12" fill="#171C25"/>
+      <ellipse cx="560" cy="635" rx="34" ry="12" fill="#171C25"/>
+      <ellipse cx="640" cy="645" rx="34" ry="12" fill="#171C25"/>
+      <ellipse cx="720" cy="650" rx="34" ry="12" fill="#171C25"/>
+      <ellipse cx="800" cy="648" rx="34" ry="12" fill="#171C25"/>
+      <!-- 集市摊 -->
+      <rect x="795" y="395" width="150" height="85" rx="6" fill="#171C25"/>
+      <path d="M785 395 L870 355 L955 395 Z" fill="#2B1E1E"/>
+      <rect x="800" y="440" width="140" height="8" fill="#0E1116"/>
+      <!-- 灯塔区地面 -->
+      <path d="M960 700 L960 300 Q 1080 250 1200 300 L1200 700 Z" fill="#12161D"/>
+      <!-- 灯塔 -->
+      <polygon points="1105,255 1145,255 1162,585 1088,585" fill="#C9CDD6"/>
+      <polygon points="1105,255 1145,255 1149,325 1101,325" fill="#8A8F99"/>
+      <polygon points="1097,400 1153,400 1157,470 1093,470" fill="#8A8F99"/>
+      <rect x="1096" y="216" width="58" height="40" rx="6" fill="#2A3140"/>
+      <circle cx="1125" cy="236" r="12" fill="#3A4152" id="lampBulb"/>
+      <polygon points="1096,216 1125,196 1154,216" fill="#1F2632"/>
+      <!-- 灯室小屋 -->
+      <rect x="1040" y="430" width="70" height="55" rx="4" fill="#1A1F28"/>
+      <polygon points="1032,430 1075,400 1118,430" fill="#232A36"/>
+      <!-- 连线层 / 节点层 -->
+      <g id="edges"></g>
+      <g id="nodes"></g>
+    </svg>
+    <div class="legend">
+      <span><i class="lg-dep"></i> 实线 = 数据依赖（谁引用谁）</span>
+      <span><i class="lg-fin"></i> 虚线 = 计入密码</span>
+      <span>点亮 = 处理掉了这条关联</span>
+    </div>
+  </section>
+
+  <aside class="panel" id="panel"></aside>
+</main>
+
+<div class="modal" id="modal" hidden>
+  <div class="panel-box" id="modalBox"></div>
+</div>
+
+<div class="finale" id="finale" hidden>
+  <div class="finale-card">
+    <div class="beam"></div>
+    <div class="tower-emoji">🗼</div>
+    <h2>灯塔点亮了！</h2>
+    <p>八个账面数、十六条关联，全部处理完毕 —— 这就是那道题。</p>
+    <div class="pw">1424</div>
+    <button class="btn primary" id="btnFinaleClose">继续看场景</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
