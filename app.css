@@ -1939,11 +1939,14 @@ body.fp-nozebra .fp-table tr.fp-row.alt td{background:var(--q-bg)}
 body.fp-nozebra .fp-table tr.fp-row:not(.alt) td{background:var(--q-bg)}
 
 /* —— 折叠 ▸（细灰无底）+ 文件夹/文件图标（图3/图4） —— */
-body.finder-on .fp-twisty{width:14px;height:var(--fp-row);flex:0 0 14px;background:transparent;
-  color:var(--q-dim);font-size:11px;border:0;border-radius:0}
+/* §39.2 箭头要像图2 那样明显：13.5px 亮灰加粗（原 11px/#898F91 根本看不见） */
+body.finder-on .fp-twisty{width:15px;height:var(--fp-row);flex:0 0 15px;background:transparent;
+  color:#C9D1D5;font-size:13.5px;font-weight:600;border:0;border-radius:0}
 body.finder-on .fp-twisty:hover{background:rgba(255,255,255,.06);color:var(--q-text)}
 body.finder-on .fp-twisty-sp{width:14px;flex:0 0 14px}
-body.finder-on .fp-c-name{gap:6px!important;padding-left:6px!important}
+/* §39.1 这里**绝不能**写 padding-left!important —— 它盖掉了行内 depth 缩进（全部行变 6px=平级）。
+   缩进由 fpRowHTML 行内 style="padding-left:6+depth*22" 提供（普通行内 style 会被 !important 压掉） */
+body.finder-on .fp-c-name{gap:6px}
 body.finder-on .fp-ico{width:var(--fp-icon);height:var(--fp-icon);flex:0 0 var(--fp-icon);
   border-radius:4px;background:transparent!important;font-size:8px;color:#5A6468}
 body.finder-on .fp-ico svg{width:100%;height:100%;display:block}

@@ -6377,6 +6377,20 @@ const FP_FS = {
     { f: 'index.html', s: '96KB', m: '2026/10/1', a: '2026/9/16', t: 'html' },
     { f: 'app.js', s: '312KB', m: '2026/10/1', a: '2026/9/16', t: 'js' },
     { f: 'app.css', s: '88KB', m: '2026/10/1', a: '2026/9/16', t: 'css' }],
+  // §39.3 演示数据补树深度（对照图2：目录→子→孙→文件，多层缩进可见）
+  '/Users/mjm/Desktop/【课件】': [
+    { d: '01-数学', m: '2026/9/19', a: '2026/9/19' },
+    { d: '02-语文', m: '2026/9/19', a: '2026/9/19' },
+    { f: '课件说明.md', s: '2KB', m: '2026/9/19', a: '2026/9/19', t: 'md' }],
+  '/Users/mjm/Desktop/【课件】/01-数学': [
+    { f: '公式表.md', s: '5KB', m: '2026/9/20', a: '2026/9/19', t: 'md' },
+    { f: '例题集.pdf', s: '820KB', m: '2026/9/18', a: '2026/9/19', t: 'pdf' }],
+  '/Users/mjm/Desktop/【课件】/02-语文': [{ f: '古诗清单.txt', s: '3KB', m: '2026/9/19', a: '2026/9/19', t: 'txt' }],
+  '/Users/mjm/Desktop/AI【工具】': [
+    { d: '脚本', m: '2026/9/18', a: '2026/9/15' },
+    { f: '工具清单.md', s: '6KB', m: '2026/9/18', a: '2026/9/15', t: 'md' }],
+  '/Users/mjm/Desktop/AI【工具】/脚本': [{ f: '一键部署.sh', s: '4KB', m: '2026/9/18', a: '2026/9/15', t: 'sh' }],
+  '/Users/mjm/Desktop/Wanna 临时目录': [{ f: '临时笔记.txt', s: '1KB', m: '2026/9/23', a: '2026/9/23', t: 'txt' }],
   // §36.12 位置（外置磁盘）与 iCloud 的演示目录 —— 侧栏点这些条目要能落到真实列表
   '/Volumes/ExtSSD-Backup': [
     { d: 'TimeMachine', m: '2026/9/30', a: '2026/1/4' },
@@ -7238,6 +7252,7 @@ function renderFinderMain() {
     row.addEventListener('click', ev => {
       ev.stopPropagation();
       if (ev.target.closest('.fp-twisty')) return;          // twisty 自己处理（不选中）
+      if (row.dataset.kind === 'ph') return;                // §39.3 空占位行不响应
       const pi = +row.dataset.pi, name = row.dataset.name;
       const t = Date.now();
       const last = FP.lastClick;
@@ -7252,19 +7267,22 @@ function renderFinderMain() {
         return;
       }
       FP.panes[pi].sel = name;              // 单击=选中（分栏视图同时联动右列 → 统一重绘）
+      FP.panes[pi].selFull = row.dataset.full;   // §39.4 ←→ 捷径按 full 定位（多层同名安全）
       FP.active = pi;
       renderFinderMain();
     });
     row.addEventListener('contextmenu', ev => {
       ev.preventDefault(); ev.stopPropagation();
+      if (row.dataset.kind === 'ph') return;              // §39.3 占位行无右键
       const pi = +row.dataset.pi;
-      FP.active = pi; FP.panes[pi].sel = row.dataset.name;
+      FP.active = pi; FP.panes[pi].sel = row.dataset.name; FP.panes[pi].selFull = row.dataset.full;
       renderFinderMain();
       fpRowMenu(ev.clientX, ev.clientY, pi, row.dataset.name, row.dataset.kind, row.dataset.full);
     });
     /* §36.6/36.7 拖拽源：拖到侧栏=收藏、拖到别的行/窗格=移动 */
     row.setAttribute('draggable', 'true');
     row.ondragstart = e => {
+      if (row.dataset.kind === 'ph') { e.preventDefault(); return; }   // §39.3 占位行不拖
       const pi = +row.dataset.pi;
       const full = row.dataset.full || fpJoin(FP.panes[pi].path, row.dataset.name);
       FP.drag = { kind: 'file', pi, name: row.dataset.name, full,
@@ -7433,12 +7451,21 @@ function fpCellHTML(pane, pi) {
     let alt = 0;
     const walk = (pth, depth) => {
       const q = String(pane.q || '').trim().toLowerCase();      // §37.11 窗格内搜索过滤
-      fpSorted(fpEntries(pth)).filter(e2 => !q || e2.name.toLowerCase().includes(q)).forEach(e2 => {
+      const list = fpSorted(fpEntries(pth)).filter(e2 => !q || e2.name.toLowerCase().includes(q));
+      list.forEach(e2 => {
         const full = fpJoin(pth, e2.name);
         const exp = e2.dir && (pane.expanded || []).includes(full);
         rows.push({ e: e2, depth, alt: alt % 2 === 1, full, expanded: exp });
         alt++;
-        if (exp) walk(full, depth + 1);
+        if (exp) {
+          const kids = fpSorted(fpEntries(full)).filter(k => !q || k.name.toLowerCase().includes(q));
+          if (!kids.length) {
+            // §39.3 无内容目录展开必须有反馈 —— 占位行（原来 0 行=「点了没反应」）
+            rows.push({ e: { name: '（空文件夹）', dir: false, placeholder: true }, depth: depth + 1,
+              alt: alt % 2 === 1, full: full + '/~empty', expanded: false });
+            alt++;
+          } else walk(full, depth + 1);
+        }
       });
     };
     walk(pane.path, 0);
@@ -7465,10 +7492,18 @@ function fpCellHTML(pane, pi) {
 function entriesLen(pane) { return fpEntries(pane.path).length; }
 function fpRowHTML(row, cols, pane, pi) {
   const e2 = row.e;
+  if (e2.placeholder) {                            // §39.3 空文件夹占位行（不可点不可拖）
+    const padP = 6 + row.depth * 22;
+    return `<tr class="fp-row fp-row-ph${row.alt ? ' alt' : ''}" data-kind="ph" data-pi="${pi}">`
+      + `<td class="fp-c-name" style="padding-left:${padP}px"><span class="fp-twisty-sp"></span>`
+      + `<span class="fp-ico" style="background:transparent"></span>`
+      + `<span style="color:#5F6A70;font-style:italic">（空文件夹）</span></td>`
+      + `<td class="fp-c-mono"></td>`.repeat(cols.length - 1) + `</tr>`;
+  }
   const twisty = e2.dir
     ? `<button class="fp-twisty${row.expanded ? ' open' : ''}" data-tw="${escapeHtml(row.full)}" title="展开/折叠（不进入）">${row.expanded ? '▾' : '▸'}</button>`
     : `<span class="fp-twisty-sp"></span>`;
-  const pad = 6 + row.depth * 18;
+  const pad = 6 + row.depth * 22;                       // §39.1 每层 22px（对照图2 层级感）
   const tds = cols.map(c => c === 'name'
     ? `<td class="fp-c-name" style="padding-left:${pad}px">${twisty}${fpIco(e2)}<span>${escapeHtml(e2.name)}</span>${e2.tag ? `<span class="tag-dot" style="background:${escapeHtml(e2.tag)}"></span>` : ''}</td>`
     : `<td class="fp-c-mono">${escapeHtml(String(fpColValue(e2, c)))}</td>`).join('');
@@ -7687,7 +7722,24 @@ function fpBlankMenu(x, y, pi) {
     if (!finderOpen) return;
     if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
       e.preventDefault(); fpStartPathEdit(FP.active);
+      return;
     }
+    // §39.4 → 展开 / ← 折叠（Finder 惯例）：仅当选中的是目录行；输入框内不抢
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    if (e.target && e.target.closest && e.target.closest('input,textarea,select')) return;
+    const pane = FP.panes[FP.active];
+    if (!pane || !pane.selFull) return;
+    const tr = document.querySelector(`#fpPanes .fp-row[data-full="${CSS.escape(pane.selFull)}"]`);
+    if (!tr || tr.dataset.kind !== 'dir') return;
+    const full = tr.dataset.full;
+    if (!Array.isArray(pane.expanded)) pane.expanded = [];
+    const idx = pane.expanded.indexOf(full);
+    if (e.key === 'ArrowRight') {
+      if (idx < 0) { pane.expanded.push(full); renderFinderMain(); }
+    } else if (idx >= 0) {
+      pane.expanded.splice(idx, 1); renderFinderMain();
+    }
+    e.preventDefault(); e.stopPropagation();
   });
   // 启动恢复
   if (S.finderOpen) setFinderOpen(true);
