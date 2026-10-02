@@ -2025,3 +2025,15 @@ body.finder-on .fp-cell.act::after{content:"";position:absolute;inset:0;z-index:
 /* 组拖过窗格 = 浏览器禁止光标（仅 file 拖拽 accept 后才高亮） */
 .fp-table tr.fp-row:not(.drag-over-row){cursor:default}
 .fp-table tr.fp-row[draggable="true"]{cursor:grab}
+
+/* ══ §40 chevron 箭头 / 重命名输入框 / 多选 ══ */
+/* 40.1 细线 chevron：折叠=右指，.open 旋转90°=下指（照图1/4/5，不是实心三角） */
+body.finder-on .fp-twisty svg{width:12px;height:12px;display:block;transition:transform .12s}
+body.finder-on .fp-twisty.open svg{transform:rotate(90deg)}
+/* 40.3 行内重命名：输入框贴行、蓝框、默认选中名称（图6） */
+.fp-rename{width:calc(100% - 4px);max-width:280px;height:22px;background:#0E1418;
+  border:1.5px solid #1569FF;border-radius:4px;color:#fff;font-size:inherit;font-family:inherit;
+  padding:0 4px;outline:none}
+.fp-rename::selection{background:#1569FF}
+/* 40.5/40.6 多选：全部同高亮（primary 用描边区分） */
+.fp-table tr.fp-row.sel-primary td{box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
