@@ -55,6 +55,21 @@
   .pnode.done .cap { color: var(--ok); }
   .pnode.lock .dot { opacity: .55; }
   .pnode.finale.done .dot { animation: pulse 1.4s infinite; }
+  .ref-chip {
+    font-size: 10.5px; color: #9CC9FF; background: rgba(10,132,255,.1);
+    border: 1px solid rgba(10,132,255,.4); border-radius: 5px; padding: 1px 7px; cursor: pointer; margin-left: 4px;
+  }
+  .ref-chip:hover { background: rgba(10,132,255,.25); }
+  .bstyle-chip {
+    font-size: 10px; color: var(--warn); background: rgba(251,191,36,.1);
+    border: 1px solid rgba(251,191,36,.4); border-radius: 5px; padding: 1px 6px; margin-left: 6px; vertical-align: middle;
+  }
+  .paper-head-note { font-size: 12px; color: var(--ink3); margin-left: 8px; }
+  .next-q-btn {
+    margin-left: auto; padding: 5px 14px; border-radius: 10px; font-size: 12.5px;
+    background: rgba(74,222,128,.14); border: 1px solid rgba(74,222,128,.5); color: var(--ok);
+  }
+  .next-q-btn:hover { background: rgba(74,222,128,.28); color: #fff; }
   .mastery { font-size: 12px; color: var(--ink2); white-space: nowrap; }
   .mastery b { color: var(--ok); font-size: 15px; font-family: var(--mono); }
   .mastery .weak { color: var(--warn); }
@@ -315,10 +330,10 @@
     <span class="logo">🗼</span>
     <div>
       <h1>数学岛 · 点亮灯塔</h1>
-      <div class="sub">一道题 · 小学数学 92 个知识点 · 7 关链式闯关</div>
+      <div class="sub">一道题 · 小学数学 92 个知识点 · 7 种难度（同一张卷）</div>
     </div>
   </div>
-  <nav class="progress" id="progress" aria-label="关卡进度"></nav>
+  <nav class="progress" id="progress" aria-label="难度切换（第 1~7 道题）"></nav>
   <div class="mastery" id="mastery"></div>
   <div class="tools">
     <button class="btn primary" id="btnMapping">全部对照关系</button>
