@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=38 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=38">
+<!-- ?v=39 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=39">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -495,6 +495,11 @@
           <button data-layout="quad" title="四宫格">4</button>
         </div>
         <button class="fp-tool" id="fpSwap" title="把左边窗口的内容移到右侧（交换前两个窗格）">⇄ 交换</button>
+        <!-- §37.6 三态：藏左 / 藏右 / 全屏访达（访达住编辑区位，默认三段都在） -->
+        <i class="fp-div"></i>
+        <button class="fp-tool" id="fpShowLeft" title="显示 / 隐藏左侧项目区">◧ 项目</button>
+        <button class="fp-tool" id="fpShowRight" title="显示 / 隐藏右侧对话区">◨ 对话</button>
+        <button class="fp-tool" id="fpFull" title="全屏访达（隐藏左右两侧）">⛶ 全屏访达</button>
       </div>
       <!-- §35.6 全局路径行删除 —— 每个窗格自带一行路径（QSpace 图7：各窗格自己的导航行），JS 渲染在 .fp-cell 顶部 -->
       <div class="fp-body">
@@ -765,6 +770,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=38"></script>
+<script src="app.js?v=39"></script>
 </body>
 </html>
