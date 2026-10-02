@@ -1921,9 +1921,33 @@ body.finder-on .fp-cell.act{box-shadow:inset 0 0 0 2px var(--q-edge)}
 body.finder-on .fp-panes .fp-cell.act{z-index:2}
 
 /* —— 列表（图4）：行高36 · 字14 · 斑马 · 列头 —— */
-body.finder-on .fp-table{min-width:100%;font-size:var(--fp-font)}
+/* §41.2 table-layout:fixed —— 列宽只由**表头那一行**决定，与内容无关。
+   auto 布局会按「最深那行的缩进」算名称列宽：展开 Documents 实测把 大小/修改日期/添加日期
+   三列表头整体右移 +32px、再展开 SuperAgent 再右移 +22px（基线量出来的）。
+   ① 非名称列用**百分比**（不是 px）：窄窗格里名称列也不会被挤成 0；
+   ② 名称列不给宽度 = 吃掉剩余全部；
+   ③ min-width 下限 560px：窗格比这窄就横向滚动，而不是把列压扁。
+   于是折叠/展开/换缩进都不动表头一个像素。 */
+body.finder-on .fp-table{min-width:max(100%,560px);font-size:var(--fp-font);table-layout:fixed}
+body.finder-on .fp-table th[data-col="size"]{width:15%}
+body.finder-on .fp-table th[data-col="mtime"]{width:19%}
+body.finder-on .fp-table th[data-col="added"]{width:19%}
+body.finder-on .fp-table th[data-col="ctime"]{width:19%}
+body.finder-on .fp-table th[data-col="atime"]{width:19%}
+body.finder-on .fp-table th[data-col="kind"]{width:13%}
+body.finder-on .fp-table th[data-col="editor"]{width:17%}
+body.finder-on .fp-table th[data-col="owner"]{width:15%}
+body.finder-on .fp-table th[data-col="version"]{width:12%}
+body.finder-on .fp-table th[data-col="comment"]{width:17%}
+body.finder-on .fp-table th[data-col="tag"]{width:12%}
+/* fixed 布局下单元格不再自动撑开 → 名字必须自己截断（超长名省略号，不压到隔壁列）。
+   这个 td 是 flex 容器，截断只能落在名字那个 span 上（min-width:0 才允许收缩）。 */
+body.finder-on .fp-table td.fp-c-name{overflow:hidden}
+body.finder-on .fp-table td.fp-c-name>span:not([class]),
+body.finder-on .fp-table td.fp-c-name>.fp-rename{
+  min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 body.finder-on .fp-table th{background:var(--q-head);color:var(--q-dim);font-size:12px;font-weight:500;
-  height:30px;padding:0 14px;border-bottom:1px solid #0E1518}
+  height:30px;padding:0 14px;border-bottom:1px solid #0E1518;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 body.finder-on .fp-table td{height:var(--fp-row);line-height:var(--fp-row);padding:0 14px;
   font-size:var(--fp-font);color:var(--q-text);border-bottom:0}
 body.finder-on .fp-table tr.fp-row td{background:transparent}          /* 底由奇偶给 */
@@ -2030,10 +2054,47 @@ body.finder-on .fp-cell.act::after{content:"";position:absolute;inset:0;z-index:
 /* 40.1 细线 chevron：折叠=右指，.open 旋转90°=下指（照图1/4/5，不是实心三角） */
 body.finder-on .fp-twisty svg{width:12px;height:12px;display:block;transition:transform .12s}
 body.finder-on .fp-twisty.open svg{transform:rotate(90deg)}
-/* 40.3 行内重命名：输入框贴行、蓝框、默认选中名称（图6） */
+/* 40.3 行内重命名：输入框贴行、蓝框、默认选中名称（图6）
+   §41.4 box-sizing 必须 border-box：宽度按原文字宽度量，否则 padding+边框会比原文多出 ~11px 右移观感 */
 .fp-rename{width:calc(100% - 4px);max-width:280px;height:22px;background:#0E1418;
   border:1.5px solid #1569FF;border-radius:4px;color:#fff;font-size:inherit;font-family:inherit;
-  padding:0 4px;outline:none}
+  padding:0 4px;outline:none;box-sizing:border-box}
 .fp-rename::selection{background:#1569FF}
-/* 40.5/40.6 多选：全部同高亮（primary 用描边区分） */
-.fp-table tr.fp-row.sel-primary td{box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+/* §41.1 选中行**不再**逐格描边：原来 4 个 td 各 inset 1px → 列与列之间出竖线（你圈的那条线）。
+   多选的主选中与次选中同色即可（macOS 也一样），靠 .sel 的蓝底已经分得开。 */
+/* 40.5/40.6 多选：全部同高亮 —— §41.1 这里**刻意什么都不画**（原 `sel-primary td` 的
+   inset 描边 = 每个格子一圈 → 列与列之间出现竖分割线，用户点名删掉） */
+
+/* ══ §41 访达九修 ══ */
+
+/* 41.5 拖分组：落点画成目标组顶上的一条**换位线**（不是整组虚线框 —— 框会读成"要塞进这个文件夹"） */
+body.finder-on .fp-fgroup.drag-insert{outline:none;position:relative}
+body.finder-on .fp-fgroup.drag-insert::before{content:"";position:absolute;left:2px;right:2px;top:0;
+  height:2.5px;background:var(--q-edge,#4EB3E8);border-radius:2px;z-index:4}
+/* 41.6 拖文件经过"分组之外"的侧栏空白 = 可落成不分组（虚线整栏提示） */
+body.finder-on .fp-side.drag-ungrouped{outline:1.5px dashed rgba(78,179,232,.75);outline-offset:-4px;
+  background:rgba(21,105,255,.06)}
+/* 41.3 子菜单与父菜单同款外观（.menu-sub 是独立元素，必须自己带完整皮肤） */
+.menu.menu-sub{z-index:120}
+.menu .mi-arrow{margin-left:auto;padding-left:14px;opacity:.55;font-size:13px;line-height:1}
+.menu .has-sub{display:flex;align-items:center;width:100%}
+/* 41.8 快捷键设置面板（挂在访达面板里，只有访达开着才可能可见） */
+.fp-hk{position:absolute;top:46px;right:10px;width:328px;max-height:calc(100% - 70px);overflow:auto;
+  background:#18282D;border:1px solid #2A383D;border-radius:12px;padding:12px 0 8px;z-index:60;
+  box-shadow:0 18px 46px rgba(0,0,0,.55);color:#D7D9DA;font-size:13px}
+.fp-hk h4{margin:0 0 2px;padding:0 14px;font-size:13px;font-weight:600;color:#EAF3F6}
+.fp-hk .hk-hint{padding:0 14px 8px;font-size:11.5px;color:#898F91;line-height:1.5}
+.fp-hk .hk-row{display:flex;align-items:center;gap:8px;padding:6px 14px}
+.fp-hk .hk-row:hover{background:rgba(255,255,255,.05)}
+.fp-hk .hk-name{flex:1;min-width:0}
+.fp-hk .hk-key{font-family:var(--mono);font-size:11.5px;color:#0C0C0E;background:#9EA6AA;
+  border-radius:5px;padding:2px 7px;letter-spacing:.02em;white-space:nowrap}
+.fp-hk .hk-key.is-rec{background:#1569FF;color:#fff}
+.fp-hk .hk-btn{border:1px solid #3A4C52;background:#1B272B;color:#D7D9DA;border-radius:7px;
+  font-size:11.5px;padding:3px 9px;cursor:pointer}
+.fp-hk .hk-btn:hover{background:#243439;border-color:#4C6066}
+.fp-hk .hk-foot{display:flex;gap:8px;justify-content:flex-end;padding:9px 14px 2px;
+  border-top:1px solid #2A383D;margin-top:6px}
+.fp-hk .hk-foot .primary{background:#1569FF;border-color:#1569FF;color:#fff}
+/* 41.8 快捷键面板要挂在访达面板内（absolute 定位的参照物） */
+body.finder-on .finder-pane{position:relative}

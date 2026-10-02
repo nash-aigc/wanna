@@ -242,6 +242,7 @@ let S = load() || {
   sendPolicy: 'queue',             // §22.13 发送方式：queue=排队（默认）/ interrupt=打断
   dualScreen: false,               // §26 双屏 = 右侧一个**完全独立**的对话界面（默认临时）
   finderOpen: false, finderSide: null, finderSideR: null, finderColsDefault: null,   // §34 访达（开关/左右收藏栏/默认列）
+  finderHotkeys: null,             // §41.8 访达快捷键覆盖（null=用 FP_HOTKEY_DEFAULTS；整对象存盘）
   chat2: [],                       // §26 右侧独立会话的消息（与 S.chat 互不相通）
   chat2Mode: 'temporary',          // §26 右侧默认就是「临时」
   speechRate2: 1,                  // §26 右侧独立语速
@@ -3566,19 +3567,37 @@ let menuTabXY = null;              // §21.4A 菜单要贴着鼠标（二级「�
 let menuTabGroupObj = null;
 let menuCardXY = null;
 let menuProjXY = null;      // §23.7 项目菜单贴鼠标（二级「移动到分组」要靠它）         // §23.1 会话菜单贴鼠标（二级复制菜单要靠它定位）
-/// 通用弹出菜单：给一串 {label, danger?, action?} 就画出来（分组菜单 / 卡片附加项都用它）
-function showMenu(items, anchor, xy) {
-  closeMenus();                              // 任何菜单打开前先关掉其它（含分组/卡片/项目）
-  closeGitPanel();
-  if (!menuDyn) {
-    menuDyn = document.createElement('div');
-    menuDyn.className = 'menu'; menuDyn.id = 'menuDyn';
-    document.body.appendChild(menuDyn);
+/// §41.9 子菜单元素池：menuDyn=root，menuSubs[0]=第 1 层子菜单……
+///   为什么不能像从前那样「action 里再调一次 showMenu」：showMenu 复用同一个 DOM 并
+///   `innerHTML=''` —— 一点开子菜单父菜单就没了（你：「自动就把右键菜单给删掉了」）。
+let menuSubs = [];
+function menuElAt(depth) {
+  if (depth === 0) {
+    if (!menuDyn) {
+      menuDyn = document.createElement('div');
+      menuDyn.className = 'menu'; menuDyn.id = 'menuDyn';
+      document.body.appendChild(menuDyn);
+    }
+    return menuDyn;
   }
-  menuDyn.innerHTML = '';
+  while (menuSubs.length < depth) {
+    const d = document.createElement('div');
+    d.className = 'menu menu-sub';
+    document.body.appendChild(d);
+    menuSubs.push(d);
+  }
+  return menuSubs[depth - 1];
+}
+/// 收起「深度 > depth」的所有子菜单（深度 d 的元素在 menuSubs[d-1]）
+function hideMenusDeeperThan(depth) {
+  menuSubs.forEach((m, i) => { if (i + 1 > depth) m.hidden = true; });
+}
+/// 把一串菜单项画进某个菜单元素（root 与子菜单共用同一套渲染，递归深度即层级）
+function renderMenuItems(container, items, depth) {
+  container.innerHTML = '';
   items.forEach(it => {
-    if (it.sep) { menuDyn.insertAdjacentHTML('beforeend', '<div class="menu-sep"></div>'); return; }
-    if (it.title) { menuDyn.insertAdjacentHTML('beforeend', `<div class="menu-title">${escapeHtml(it.title)}</div>`); return; }
+    if (it.sep) { container.insertAdjacentHTML('beforeend', '<div class="menu-sep"></div>'); return; }
+    if (it.title) { container.insertAdjacentHTML('beforeend', `<div class="menu-title">${escapeHtml(it.title)}</div>`); return; }
     // §37.13 图1 色点行：横排 6 色（showMenu 原本只会竖排按钮）
     if (Array.isArray(it.swatches)) {
       const wrap = document.createElement('div');
@@ -3586,10 +3605,10 @@ function showMenu(items, anchor, xy) {
       it.swatches.forEach((c, i) => {
         const s = document.createElement('button');
         s.className = 'mi-dot-btn'; s.style.background = c; s.title = c;
-        s.onclick = e => { e.stopPropagation(); menuDyn.hidden = true; it.action && it.action(i); };
+        s.onclick = e => { e.stopPropagation(); closeMenus(); it.action && it.action(i); };
         wrap.appendChild(s);
       });
-      menuDyn.appendChild(wrap);
+      container.appendChild(wrap);
       return;
     }
     const b = document.createElement('button');
@@ -3597,20 +3616,64 @@ function showMenu(items, anchor, xy) {
     b.innerHTML = (it.icon ? `<span class="mi-ico">${it.icon}</span>` : '')
       + escapeHtml(it.label || '');
     if (it.danger) b.className = 'danger';
-    // 必须拦冒泡：点菜单项会冒到 document 的「点外面就关菜单」—— 若 action 里又开了
-    // 子菜单（收藏›/多媒体›/新建文件›），旧按钮已 detach → closest('.menu')=null →
-    // 新菜单在同一击里被关掉（§36 实测：子菜单永远打不开）
-    b.onclick = e => { e.stopPropagation(); menuDyn.hidden = true; it.action && it.action(); };
-    menuDyn.appendChild(b);
+    if (it.sub) {
+      // §41.9 有子项：悬停/点击都在**父菜单右侧**开一层，父菜单留着
+      b.classList.add('has-sub');
+      b.insertAdjacentHTML('beforeend', '<span class="mi-arrow">›</span>');
+      const openSub = () => {
+        hideMenusDeeperThan(depth);
+        const sub = menuElAt(depth + 1);
+        renderMenuItems(sub, it.sub, depth + 1);
+        sub.hidden = false;
+        const pr = container.getBoundingClientRect(), br = b.getBoundingClientRect();
+        const w = sub.offsetWidth, h = sub.offsetHeight;
+        let left = pr.right - 6;                                  // 贴父菜单右缘（叠 6px 消除缝）
+        if (left + w > innerWidth - 6) left = Math.max(6, br.left - w + 6);   // 右边放不下 → 翻到左边
+        let top = br.top;
+        if (top + h > innerHeight - 6) top = Math.max(6, innerHeight - h - 6);
+        sub.style.left = left + 'px'; sub.style.top = top + 'px';
+      };
+      b.onmouseenter = openSub;
+      b.onclick = e => { e.stopPropagation(); openSub(); };        // 点击=展开，不关父菜单
+    } else {
+      b.onmouseenter = () => hideMenusDeeperThan(depth);           // 划到普通项 → 收掉已开的子层
+      // 必须拦冒泡：点菜单项会冒到 document 的「点外面就关菜单」—— 若 action 里又开了
+      // 别的菜单，旧按钮已 detach → closest('.menu')=null → 新菜单在同一击里被关掉（§36 实测）
+      b.onclick = e => { e.stopPropagation(); closeMenus(); it.action && it.action(); };
+    }
+    container.appendChild(b);
   });
+}
+/// 通用弹出菜单：给一串 {label, danger?, action? | sub?} 就画出来（分组菜单 / 卡片附加项都用它）
+function showMenu(items, anchor, xy) {
+  closeMenus();                              // 任何菜单打开前先关掉其它（含分组/卡片/项目）
+  closeGitPanel();
+  const menu = menuElAt(0);
+  renderMenuItems(menu, items, 0);
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
-  if (xy) { menuDyn.hidden = false; placeMenu(menuDyn, xy.x, xy.y); }
+  if (xy) { menu.hidden = false; placeMenu(menu, xy.x, xy.y); }
   else if (r) {
     // §35.11 带按钮锚点一律**贴按钮上方**（底边=按钮顶边）；上方放不下 placeMenuAbove 自动翻下 ——
     // 权限/审批/左右两列的＋原来都从下方弹、把按钮整个盖住（你点名的"覆盖按钮不对"）
-    placeMenuAbove(menuDyn, r.left, r.top, r.bottom);
-  } else { menuDyn.hidden = false; placeMenu(menuDyn, 100, 100); }
+    placeMenuAbove(menu, r.left, r.top, r.bottom);
+  } else { menu.hidden = false; placeMenu(menu, 100, 100); }
 }
+/// §41.3 菜单「点外面自动收起」——只绑 click 拦不住两条真实路径（基线实测两种都还开着）：
+///   ① 访达的行 / 左栏组头 onclick 里有 stopPropagation，click 根本冒不到 document；
+///   ② 右键点别处**不产生 click**（右键只发 mousedown/contextmenu）。
+/// 所以挂在 **capture 阶段的 mousedown**：任何在菜单外的按下（左/右键都算）当场收。
+/// 两条放行是硬要求：菜单**内部**放行（否则菜单项的 click 永远不会发生 —— 见 449 行那段历史）；
+/// 锚点按钮放行（否则 openMenuAt 的「再点一下=收起」会退化成「永远收不起」）。
+const MENU_ANCHOR_SEL = '#btnAddProject,#btnAddPlan,.proj-more,#btnSettings,#btnTabsCollapse,'
+  + '.pmore,.gmore,#fpGroupBtn,.fp-add-group,#fpHotkeys';
+document.addEventListener('mousedown', e => {
+  if (!e.target || typeof e.target.closest !== 'function') return;
+  if (e.target.closest('.menu') || e.target.closest(MENU_ANCHOR_SEL)) return;
+  closeMenus();
+  // §41.3 ⋮ 的「显示设置」面板同理（它不在 .menu 里，原来只绑 click → 点组头也关不掉）
+  const vp = document.getElementById('fpViewPanel');
+  if (vp && !vp.hidden && !e.target.closest('[data-fa="more"]')) vp.hidden = true;
+}, true);
 /// 标签条最左的 ☰：**纵向列出全部标签**（横向看不全时用，§13.4）
 function openTabsPopover() {
   const m = $('#tabsPopover');
@@ -6462,7 +6525,49 @@ const FP = {
   nameSort: !!(S.finderView && S.finderView.nameSort),
   panes: [{ path: '/Users/mjm', sel: null, expanded: [] }],
   sides: { L: null, R: null },     // 懒加载自 S.finderSide / S.finderSideR（左右两栏各自独立）
+  clipboard: null,                 // §41.7 Cmd+C/X 的内容 {mode:'copy'|'cut', items:[{dir,name}]}
+  hkRecording: null,               // §41.8 正在录制键位的动作 id（null=没在录）
+  hkPanelOpen: false,              // §41.8 快捷键设置面板开合
 };
+/// §41.7/41.8 访达快捷键 —— 默认键位里 ⌘D/⌥D 两条是 QSpace 的**真值**
+/// （reference/QSpacePro-DISSECT.md §9.3 `hotkey.json`：go_desktop=⌘D、go_downloads=⌥D），
+/// 其余四条是你点名的系统惯例。存 S.finderHotkeys（localStorage 整对象序列化 → 改了就存得住）。
+const FP_HOTKEY_DEFAULTS = {
+  selectAll: 'Cmd+A', copy: 'Cmd+C', cut: 'Cmd+X', paste: 'Cmd+V',
+  goDesktop: 'Cmd+D', goDownloads: 'Alt+D',
+};
+const FP_HOTKEY_LABELS = {
+  selectAll: '全选', copy: '复制', cut: '剪切', paste: '粘贴',
+  goDesktop: '前往桌面', goDownloads: '前往下载',
+};
+function fpHotkeys() {
+  const out = { ...FP_HOTKEY_DEFAULTS };
+  const saved = S.finderHotkeys;
+  if (saved && typeof saved === 'object') {
+    Object.keys(out).forEach(id => {
+      if (typeof saved[id] === 'string' && saved[id].trim()) out[id] = saved[id].trim();
+    });
+  }
+  return out;
+}
+/// 事件 → 组合串（与录制时用的是同一条，保证"录下来的就是按出来的"）
+/// 字母/数字一律取 e.code（⌥D 在 macOS 上 e.key 是 '∂'，读 key 必错）
+function fpComboFromEvent(e) {
+  if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return null;   // 只按了修饰键
+  let k;
+  if (/^Key[A-Z]$/.test(e.code)) k = e.code.slice(3);
+  else if (/^Digit[0-9]$/.test(e.code)) k = e.code.slice(5);
+  else if (e.key && e.key.length === 1) k = e.key.toUpperCase();
+  else k = (e.key || '').replace('Arrow', '');
+  if (!k) return null;
+  const parts = [];
+  if (e.metaKey) parts.push('Cmd');
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  parts.push(k);
+  return parts.join('+');
+}
 const fpSideStoreKey = k => k === 'R' ? 'finderSideR' : 'finderSide';
 /// §36 侧栏数据形状 = { groups: [...], ungrouped: [...] }（36.5 不分组收藏区）；
 /// 老存盘是纯数组 → 迁移；左栏若无「位置/iCloud」组 → 头部补（36.12）
@@ -6896,11 +7001,17 @@ function renderFinderSide(k) {
       };
     }
     // 组容器 = 拖放目标：文件拖进来=收藏进该组；组=换序；条目=跨组
-    gEl.ondragover = e => { e.preventDefault(); e.stopPropagation(); gEl.classList.add('drag-over-top'); };
-    gEl.ondragleave = () => gEl.classList.remove('drag-over-top');
+    gEl.ondragover = e => {
+      e.preventDefault(); e.stopPropagation();
+      // §41.5 拖的是**分组** → 只画"上下换位"的落点线，不画整组框（整组框看起来像"要塞进这个文件夹"）
+      const isGroupDrag = FP.drag && FP.drag.kind === 'group';
+      gEl.classList.toggle('drag-insert', isGroupDrag);
+      gEl.classList.toggle('drag-over-top', !isGroupDrag);
+    };
+    gEl.ondragleave = () => gEl.classList.remove('drag-over-top', 'drag-insert');
     gEl.ondrop = e => {
       e.preventDefault(); e.stopPropagation();
-      gEl.classList.remove('drag-over-top');
+      gEl.classList.remove('drag-over-top', 'drag-insert');
       const d = FP.drag; if (!d) return;
       const sd = fpSide(k);
       if (d.kind === 'file') {                     // §36.6 文件拖到侧栏 = 收藏
@@ -6940,11 +7051,37 @@ function renderFinderSide(k) {
     };
     // 落到组内条目 = 同样按组处理（落点常在条目上）
     gEl.querySelectorAll('.fp-fitem').forEach(el => {
-      el.ondragover = e => { e.preventDefault(); e.stopPropagation(); el.classList.add('drag-over'); };
+      el.ondragover = e => {
+        // §41.5 拖**分组**经过条目：条目一律不接（不描边、不 preventDefault）——
+        //  描边会被读成"这个文件夹被选中/分组要塞进它"（你图3 圈的就是 Docker 那格蓝框）。
+        //  不拦冒泡 → 事件继续走到组容器，那里画换位线并接受落点。
+        if (FP.drag && FP.drag.kind === 'group') return;
+        e.preventDefault(); e.stopPropagation(); el.classList.add('drag-over');
+      };
       el.ondragleave = () => el.classList.remove('drag-over');
       el.ondrop = e => { e.stopPropagation(); el.classList.remove('drag-over'); gEl.ondrop(e); };
     });
   });
+  /* §41.6 侧栏**分组之外**的空白 = 落成"不分组"单独显示。
+     修前侧栏整片都被组容器占着，落到哪都进组 ——「不分组」区永远建不出来（你第 7 条）。
+     组容器自己 stopPropagation，所以这条只会在"没落在任何组上"时命中。 */
+  side.ondragover = e => {
+    if (!FP.drag || FP.drag.kind !== 'file') return;
+    if (e.target.closest && e.target.closest('.fp-fgroup')) return;
+    e.preventDefault();
+    side.classList.add('drag-ungrouped');
+  };
+  side.ondragleave = e => {
+    if (!side.contains(e.relatedTarget)) side.classList.remove('drag-ungrouped');
+  };
+  side.ondrop = e => {
+    side.classList.remove('drag-ungrouped');
+    if (!FP.drag || FP.drag.kind !== 'file') return;
+    if (e.target.closest && e.target.closest('.fp-fgroup')) return;
+    e.preventDefault();
+    const d = FP.drag; FP.drag = null;
+    fpFavoriteInto(k, 'ungrouped', d.name, d.full, d.isDir);
+  };
   side.querySelector('.fp-add-group').onclick = e => { e.stopPropagation();
     // §38.1 ＋ = 添加分组 / 添加单个文件（无分组，直接进本栏「不分组」区）
     showMenu([
@@ -7048,15 +7185,21 @@ function fpSideItemMenu(x, y, k, gk, ii, it) {
     { label: '显示简介', action: () => toast(`简介（演示）：${escapeHtml(it.name)}`) },
     { label: '在访达中显示', action: () => toast(`在系统访达中显示（演示）：${escapeHtml(it.name)}`) },
     { sep: true },
-    { label: '速览 ›', action: () => showMenu([
+    { label: '速览 ›', sub: [
       { label: '图标', action: () => toast('速览 · 图标（演示）') },
       { label: '列表', action: () => toast('速览 · 列表（演示）') },
-      { label: '分栏', action: () => toast('速览 · 分栏（演示）') }], null, { x: x + 170, y: y }) },
+      { label: '分栏', action: () => toast('速览 · 分栏（演示）') }] },
     { sep: true },
-    { label: '常用 ›', action: () => toast('常用子菜单（演示）') },
-    { label: '最近 ›', action: () => toast('最近子菜单（演示）') },
-    { label: '标签 ›', action: () => fpTagsSub(x, y, it.name) },
-    { label: 'iCloud ›', action: () => toast('iCloud 子菜单（演示）') },
+    { label: '常用 ›', sub: [
+      { label: '桌面', action: () => fpNavTo(FP.active, '/Users/mjm/Desktop', true) },
+      { label: '下载', action: () => fpNavTo(FP.active, '/Users/mjm/Downloads', true) },
+      { label: '文档', action: () => fpNavTo(FP.active, '/Users/mjm/Documents', true) }] },
+    { label: '最近 ›', sub: [
+      { label: '（最近打开的目录演示）', action: () => toast('最近：原型里按访问顺序列目录（演示）') }] },
+    { label: '标签 ›', sub: fpTagsItems(it.name) },
+    { label: 'iCloud ›', sub: [
+      { label: 'iCloud 云盘', action: () => fpNavTo(FP.active, '/Users/mjm/Library/Mobile Documents/com~apple~CloudDocs', true) },
+      { label: '与我共享', action: () => fpNavTo(FP.active, '/Users/mjm/Library/Mobile Documents/com~apple~Shared', true) }] },
     { label: '添加分隔符', action: () => toast('已在侧栏加一条分隔符（演示）') },
     { sep: true },
     { label: '新建分组', action: () => askModal({ title: '新建分组', value: '新分组', okText: '添加',
@@ -7104,6 +7247,8 @@ function fpEditSideItemName(k, gk, ii) {
   inp.onblur = () => { it.name = inp.value.trim() || it.name; fpSaveSide(k); renderFinderSide(k); };
 }
 /// §40.3 行内重命名（Enter / 慢点 / 右键菜单共用）：默认选中=名称部分（图6：.ext 不选中）
+/// §41.4 只替换**名字那一段**：整格 innerHTML 会把 chevron+图标一起吃掉（你：「图标消失了」），
+///        换进来的 input 还带着 intrinsic 宽度，把右边几列一起推走（你：「向右偏移了一下」）。
 function fpStartRename(pi, full) {
   // 列表行 / 图标格 / 分栏行都能进（data-full 统一锚点）
   const tr = document.querySelector(`#fpPanes [data-full="${CSS.escape(full)}"]`);
@@ -7113,8 +7258,18 @@ function fpStartRename(pi, full) {
   const dot = oldName.lastIndexOf('.');
   const extLen = dot > 0 ? oldName.length - dot : 0;          // 「.md」等后缀长度（含点）
   const cell = tr.querySelector('.fp-c-name') || tr.querySelector('.gc-name') || tr;
-  cell.innerHTML = `<input class="fp-rename" spellcheck="false" value="${escapeHtml(oldName)}">`;
-  const inp = cell.querySelector('.fp-rename');
+  // 找到「名字那一段」：列表行里是无 class 的直接子 span（twisty / fp-ico / tag-dot 都带 class）；
+  // 图标格里 .gc-name 自己就是名字容器；找不到才退回整格替换（保底不比旧行为差）
+  let nameEl = null;
+  if (cell.classList.contains('gc-name')) nameEl = cell;
+  else nameEl = [...cell.children].find(el => el.tagName === 'SPAN' && !el.className) || null;
+  const nameRect = nameEl ? nameEl.getBoundingClientRect() : null;
+  const input = document.createElement('input');
+  input.className = 'fp-rename'; input.spellcheck = false; input.value = oldName;
+  if (nameRect && nameRect.width > 20) input.style.width = Math.round(nameRect.width) + 'px';
+  if (nameEl) nameEl.replaceWith(input); else cell.innerHTML = '';
+  if (!nameEl) cell.appendChild(input);
+  const inp = input;
   inp.focus();
   inp.setSelectionRange(0, Math.max(0, oldName.length - extLen));   // 默认只选名称
   let done = false;
@@ -7237,8 +7392,149 @@ function fpMoveEntry(fromDir, name, toDir) {
   }
   return true;
 }
-/// §36.4 文件右键「收藏 ›」子菜单：各分组 + 不分组 + 新建分组并收藏
-function fpFavoriteSub(x, y, name, full, isDir) {
+/// §41.7 复制 = 深拷贝（源不动）；同名自动加 " copy" / " copy 2"…（Finder 惯例）
+function fpCopyEntry(fromDir, name, toDir) {
+  const src = FP_FS[fromDir];
+  if (!src) return false;
+  const idx = src.findIndex(x => (x.d || x.f) === name);
+  if (idx < 0) return false;
+  const entry = src[idx];
+  if (!FP_FS[toDir]) FP_FS[toDir] = [];
+  let nm = entry.d || entry.f;
+  if (FP_FS[toDir].some(x => (x.d || x.f) === nm)) {
+    const base = nm.replace(/ copy( \d+)?$/, '');
+    let n = 1, cand;
+    do { n++; cand = `${base} copy${n > 2 ? ' ' + (n - 1) : ''}`; }
+    while (FP_FS[toDir].some(x => (x.d || x.f) === cand) && n < 30);
+    nm = cand;
+  }
+  const clone = entry.d ? { d: nm } : { f: nm };
+  ['s', 'm', 'a', 't', 'tag'].forEach(k => { if (entry[k] !== undefined) clone[k] = entry[k]; });
+  FP_FS[toDir].push(clone);
+  if (entry.d) {                                   // 子树整棵**复制**（键改写、原树保留）
+    const fromPref = (fromDir === '/' ? '' : fromDir) + '/' + (entry.d || '');
+    const toPref = (toDir === '/' ? '' : toDir) + '/' + nm;
+    Object.keys(FP_FS).filter(pk => pk === fromPref || pk.startsWith(fromPref + '/'))
+      .forEach(pk => {
+        FP_FS[toPref + pk.slice(fromPref.length)] = FP_FS[pk].map(e2 => ({ ...e2 }));
+      });
+  }
+  return true;
+}
+/// §41.7 当前选中的全部 full path（多选走 selSet，只有单选时退回 selFull）
+function fpSelectedFulls(pane) {
+  if (pane.selSet && pane.selSet.size) return [...pane.selSet].filter(Boolean);
+  return pane.selFull ? [pane.selFull] : [];
+}
+/// §41.7 六个快捷键的真正动作
+function fpRunHotkey(id) {
+  const pane = FP.panes[FP.active];
+  if (!pane) return;
+  if (id === 'selectAll') {
+    const rows = [...document.querySelectorAll('#fpPanes .fp-row:not(.fp-row-ph)')].map(r => r.dataset.full);
+    if (!rows.length) { toast('当前没有可选的行'); return; }
+    pane.selSet = new Set(rows);
+    pane.selFull = rows[rows.length - 1];
+    pane.sel = rows[rows.length - 1].split('/').pop();
+    pane.rangeAnchor = rows[0];
+    renderFinderMain();
+    toast(`已全选 <b>${rows.length}</b> 项`);
+    return;
+  }
+  if (id === 'goDesktop' || id === 'goDownloads') {
+    const p = id === 'goDesktop' ? '/Users/mjm/Desktop' : '/Users/mjm/Downloads';
+    if (FP_FS[p] === undefined) { toast('演示数据里没有这个目录'); return; }
+    fpNavTo(FP.active, p, true);
+    toast(id === 'goDesktop' ? '已前往 <b>桌面</b>' : '已前往 <b>下载</b>');
+    return;
+  }
+  if (id === 'copy' || id === 'cut') {
+    const sel = fpSelectedFulls(pane);
+    if (!sel.length) { toast('先选中几项，再' + (id === 'copy' ? '复制' : '剪切')); return; }
+    FP.clipboard = {
+      mode: id === 'copy' ? 'copy' : 'cut',
+      items: sel.map(f => { const i = f.lastIndexOf('/'); return { dir: f.slice(0, i) || '/', name: f.slice(i + 1) }; }),
+    };
+    try { navigator.clipboard && navigator.clipboard.writeText(sel.join('\n')); } catch (_) { /* 浏览器限制：内部状态仍在 */ }
+    toast(`${id === 'copy' ? '已复制' : '已剪切'} <b>${sel.length}</b> 项`);
+    return;
+  }
+  if (id === 'paste') {
+    const cb = FP.clipboard;
+    if (!cb || !cb.items || !cb.items.length) { toast('剪贴板是空的（先 ⌘C / ⌘X）'); return; }
+    const to = pane.path;
+    let ok = 0, fail = 0;
+    cb.items.forEach(it => {
+      const done = cb.mode === 'cut' ? fpMoveEntry(it.dir, it.name, to) : fpCopyEntry(it.dir, it.name, to);
+      done ? ok++ : fail++;
+    });
+    if (cb.mode === 'cut') FP.clipboard = null;
+    renderFinderMain();
+    toast(`已粘贴 <b>${ok}</b> 项到 <code>${escapeHtml(to)}</code>${fail ? `（${fail} 项未成功）` : ''}`);
+    return;
+  }
+}
+/// §41.8 快捷键设置面板（挂在 .finder-pane 里）
+function fpRenderHotkeyPanel() {
+  const p = document.getElementById('fpHotkeyPanel');
+  if (!p) return;
+  const hk = fpHotkeys();
+  const rows = Object.keys(FP_HOTKEY_DEFAULTS).map(id => {
+    const rec = FP.hkRecording === id;
+    return `<div class="hk-row" data-hk="${id}">
+      <span class="hk-name">${FP_HOTKEY_LABELS[id]}</span>
+      <span class="hk-key${rec ? ' is-rec' : ''}">${rec ? '请按组合键…' : escapeHtml(hk[id])}</span>
+      <button class="hk-btn" data-hkact="rec">${rec ? '取消' : '录制'}</button>
+    </div>`;
+  }).join('');
+  p.innerHTML = `<h4>访达快捷键</h4>
+    <div class="hk-hint">点「录制」后直接按新的组合键（Esc 取消）。<br>
+      默认里 ⌘D / ⌥D 取自 QSpace Pro 的 hotkey.json（前往桌面 / 前往下载）。</div>
+    ${rows}
+    <div class="hk-foot">
+      <button class="hk-btn" data-hkact="reset">恢复默认</button>
+      <button class="hk-btn primary" data-hkact="close">完成</button>
+    </div>`;
+  p.querySelectorAll('[data-hkact]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const act = b.dataset.hkact;
+    if (act === 'close') { FP.hkRecording = null; fpToggleHotkeyPanel(false); return; }
+    if (act === 'reset') {
+      S.finderHotkeys = null; FP.hkRecording = null; save(true); fpRenderHotkeyPanel();
+      toast('访达快捷键已恢复默认');
+      return;
+    }
+    const row = b.closest('[data-hk]');
+    if (!row) return;
+    const id = row.dataset.hk;
+    FP.hkRecording = (FP.hkRecording === id) ? null : id;
+    fpRenderHotkeyPanel();
+    if (FP.hkRecording) toast('按新的组合键完成录制 · Esc 取消');
+  });
+}
+function fpToggleHotkeyPanel(force) {
+  const p = document.getElementById('fpHotkeyPanel');
+  if (!p) return;
+  FP.hkPanelOpen = force !== undefined ? force : !FP.hkPanelOpen;
+  if (FP.hkPanelOpen) { fpRenderHotkeyPanel(); p.hidden = false; }
+  else { FP.hkRecording = null; p.hidden = true; }
+}
+/// §41.8 录制：capture 挡在一切派发之前，录到就存盘并收面板
+document.addEventListener('keydown', e => {
+  if (!FP.hkRecording) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.key === 'Escape') { FP.hkRecording = null; fpRenderHotkeyPanel(); return; }
+  const combo = fpComboFromEvent(e);
+  if (!combo) return;
+  const id = FP.hkRecording;
+  S.finderHotkeys = Object.assign({}, fpHotkeys(), { [id]: combo });
+  FP.hkRecording = null;
+  save(true);
+  fpRenderHotkeyPanel();
+  toast(`「${FP_HOTKEY_LABELS[id]}」已改为 <b>${escapeHtml(combo)}</b>`);
+}, true);
+/// §36.4 文件右键「收藏 ›」子菜单内容：各分组 + 不分组 + 新建分组并收藏（§41.9 改为子菜单数组）
+function fpFavoriteItems(name, full, isDir) {
   const mk = (label, gKey) => ({ label, action: () => fpFavoriteInto('L', gKey, name, full, isDir) });
   const items = fpSide('L').groups.map((g, gi) => mk(`到分组「${g.name}」`, gi));
   items.push({ sep: true });
@@ -7251,7 +7547,7 @@ function fpFavoriteSub(x, y, name, full, isDir) {
         items: [{ name, path: full, file: !isDir }] });
       fpSaveSide('L'); renderFinderSide('L');
       toast(`已新建分组「${escapeHtml(v.trim())}」并收藏`); } }) });
-  showMenu([{ title: `收藏「${name}」` }].concat(items), null, { x, y });
+  return [{ title: `收藏「${name}」` }].concat(items);
 }
 /// §36.11 地址栏右键（QSpace 惯例；你给的图未附）
 function fpAddressMenu(x, y, pi) {
@@ -7639,15 +7935,13 @@ function fpColumnMenu(x, y) {
     },
   }));
   items.push({ sep: true });
-  items.push({ label: '多媒体 ›', action: () => showMenu(
-    [{ label: '← 返回列设置', action: () => fpColumnMenu(x, y) }, { sep: true },
+  items.push({ label: '多媒体 ›', sub: [
      { label: '时长', action: () => toast('「时长」需要媒体文件的元数据（原型数据里没有，如实显示 —）') },
-     { label: '艺术家', action: () => toast('同上：媒体元数据列，原型显示 —') }], null, { x: x + 170, y: y }) });
-  items.push({ label: '其他 ›', action: () => showMenu(
-    [{ label: '← 返回列设置', action: () => fpColumnMenu(x, y) }, { sep: true },
-     { label: '所有者', action: () => fpToggleCol('owner') },
-     { label: '位置', action: () => toast('「位置」列原型数据没有，显示 —') },
-     { label: '注释', action: () => fpToggleCol('comment') }], null, { x: x + 170, y: y }) });
+     { label: '艺术家', action: () => toast('同上：媒体元数据列，原型显示 —') } ] });
+  items.push({ label: '其他 ›', sub: [
+      { label: '所有者', action: () => fpToggleCol('owner') },
+      { label: '位置', action: () => toast('「位置」列原型数据没有，显示 —') },
+      { label: '注释', action: () => fpToggleCol('comment') } ] });
   items.push({ sep: true });
   items.push({ label: '恢复到默认', action: () => { FP.cols = [...FP_COLS_DEFAULT]; renderFinderMain(); toast('列已恢复默认'); } });
   items.push({ label: '设置为默认', action: () => { S.finderColsDefault = [...FP.cols]; save(true); toast('当前列组合已存为默认'); } });
@@ -7662,20 +7956,23 @@ function fpToggleCol(k) {
 function fpCopy(text, say) {
   try { navigator.clipboard.writeText(text); toast(say); } catch (e) { toast('复制失败（浏览器限制）'); }
 }
-function fpTagsSub(x, y, name) {
+/// §41.9 三个「›」的**内容**都改成返回数组（由父菜单以子菜单形式挂在右侧），不再自己开一屏
+function fpTagsItems(name) {
   const colors = [['红', '#FF5F57'], ['橙', '#F7A23B'], ['黄', '#FFD60A'], ['绿', '#2CCB6E'], ['蓝', '#54A2FF'], ['紫', '#BF5AF2']];
-  showMenu([{ title: `给「${name}」添加标签` }].concat(
+  return [{ title: `给「${name}」添加标签` }].concat(
     colors.map(([n, c]) => ({ label: `${n}`, action: () => toast(`标签「${n}」已标上（演示）：${escapeHtml(name)}`) })),
-    [{ sep: true }, { label: '移除标签', action: () => toast('已移除标签（演示）') }]),
-    null, { x, y });
+    [{ sep: true }, { label: '移除标签', action: () => toast('已移除标签（演示）') }]);
 }
-function fpOpenWithSub(x, y, name) {
-  showMenu([{ title: '打开方式' },
+function fpOpenWithItems(name) {
+  return [{ title: '打开方式' },
     { label: '默认应用', action: () => toast(`用系统默认应用打开（演示）：<b>${escapeHtml(name)}</b>`) },
     { label: '文本编辑', action: () => toast(`用「文本编辑」打开（演示）：${escapeHtml(name)}`) },
     { label: 'Visual Studio Code', action: () => toast(`用 VS Code 打开（演示）：${escapeHtml(name)}`) },
-    { label: '选择其他应用…', action: () => toast('打开方式选择器（落 SwiftUI 用 NSWorkspace）') }],
-    null, { x, y });
+    { label: '选择其他应用…', action: () => toast('打开方式选择器（落 SwiftUI 用 NSWorkspace）') }];
+}
+function fpAlwaysOpenWithItems(name) {
+  return [{ title: '始终以此方式打开' }].concat(fpOpenWithItems(name).slice(1).map(it =>
+    ({ label: it.label, action: () => toast(`默认打开方式已改为「${escapeHtml(it.label)}」（演示）：${escapeHtml(name)}`) })));
 }
 function fpRowMenu(x, y, pi, name, kind, fullPath) {
   const path = fullPath || fpJoin(FP.panes[pi].path, name);   // §36.8 树形子行也有自己的 full path
@@ -7686,20 +7983,22 @@ function fpRowMenu(x, y, pi, name, kind, fullPath) {
     { icon: '📁', label: '用所选项目新建文件夹', action: () => askModal({ title: '用所选项目新建文件夹',
         text: `选中：${name} · 位置：${FP.panes[pi].path}`, value: '新建文件夹', okText: '创建',
         onOk: v => { if (v && v.trim()) toast(`已新建「${escapeHtml(v.trim())}」并放入所选项目（演示）`); } }) },
-    { label: '复制到… ›', action: () => showMenu([
+    { label: '复制到… ›', sub: [
       { label: '到左侧窗格', action: () => toast(`复制到左侧窗格（演示）：${escapeHtml(name)}`) },
       { label: '到右侧窗格', action: () => toast(`复制到右侧窗格（演示）：${escapeHtml(name)}`) },
       { label: '到桌面', action: () => toast(`复制到桌面（演示）：${escapeHtml(name)}`) },
-    ], null, { x: x + 170, y: y }) },
+    ] },
     { sep: true },
     { icon: '✏️', label: `重命名“${name}”`, action: () => fpStartRename(pi, path) },   // §40.3 真行内重命名
-    { icon: '☰', label: '快速重命名 ›', action: () => showMenu([
+    { icon: '☰', label: '快速重命名 ›', sub: [
       { label: '添加前缀…', action: () => toast('快速重命名 · 前缀（演示）') },
       { label: '添加后缀…', action: () => toast('快速重命名 · 后缀（演示）') },
       { label: '替换文本…', action: () => toast('快速重命名 · 替换（演示）') },
-    ], null, { x: x + 170, y: y }) },
+    ] },
     { icon: '📋', label: `拷贝“${name}”`, action: () => fpCopy(path, `已拷贝「${escapeHtml(name)}」的路径到剪贴板`) },
-    { label: '始终以此方式打开 ›', action: () => fpOpenWithSub(x, y, name) },
+    // §41.9 「打开方式」是**新增项**：QSpace DISSECT §3.1 里 open_with 与 always_open_with 是两条
+    { icon: '↗', label: '打开方式 ›', sub: fpOpenWithItems(name) },
+    { label: '始终以此方式打开 ›', sub: fpAlwaysOpenWithItems(name) },
     { sep: true },
     { icon: '🗜', label: `压缩“${name}”`, action: () => toast(`已压缩为 ${escapeHtml(name)}.zip（演示）`) },
   ];
@@ -7717,7 +8016,7 @@ function fpRowMenu(x, y, pi, name, kind, fullPath) {
   if (kind === 'dir') items.push({ icon: '⭐', label: '添加到项目',
     action: () => fpAddToProject(path, name) });                    // §37.14 你点名的联动
   items.push(
-    { icon: '📁', label: '收藏 ›', action: () => fpFavoriteSub(x, y, name, path, kind === 'dir') },
+    { icon: '📁', label: '收藏 ›', sub: fpFavoriteItems(name, path, kind === 'dir') },
     { icon: '🏷', label: '自定义文件夹…', action: () => toast('自定义文件夹（QSpace 扩展，演示）') },
   );
   showMenu(items, null, { x, y });
@@ -7750,22 +8049,21 @@ function fpBlankMenu(x, y, pi) {
   showMenu([
     { label: '新建文件夹', action: () => askModal({ title: '新建文件夹', text: `位置：${path}`, value: '未命名文件夹',
         okText: '创建', onOk: v => { if (v && v.trim()) toast(`已新建文件夹「${escapeHtml(v.trim())}」（演示）`); } }) },
-    { label: '新建文件 ›', action: () => showMenu([
+    { label: '新建文件 ›', sub: [
       { label: '纯文本 .txt', action: newFile('txt') },
       { label: 'Markdown .md', action: newFile('md') },
       { label: 'Shell 脚本 .sh', action: newFile('sh') },
       { label: '网页 .html', action: newFile('html') },
       { label: 'Python .py', action: newFile('py') },
-    ], null, { x, y }) },
+    ] },
     { sep: true },
     { label: '粘贴', action: () => toast('粘贴（演示）') },
     { sep: true },
-    { label: '排序方式 ›', action: () => showMenu(
+    { label: '排序方式 ›', sub:
       [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['added', '添加日期']].map(([k, l]) => ({
         label: (FP.sortKey === k ? '✓ ' : '　') + l,
         action: () => { FP.sortKey = k; FP.sortDir = 'asc'; renderFinderMain(); toast(`已按<b>${l}</b>排序`); },
-      })).concat([{ sep: true }, { label: '↑ 升序 / ↓ 降序（再点表头切换）', action: () => {} }]),
-      null, { x, y }) },
+      })).concat([{ sep: true }, { label: '↑ 升序 / ↓ 降序（再点表头切换）', action: () => {} }]) },
     { label: '刷新', action: () => { renderFinder(); toast('已刷新'); } },
     { sep: true },
     { label: '显示简介', action: () => toast(`当前文件夹简介（演示）：<code>${escapeHtml(path)}</code>`) },
@@ -7815,6 +8113,14 @@ function fpBlankMenu(x, y, pi) {
     const p = document.getElementById('fpViewPanel');
     if (p && !p.hidden && !e.target.closest('#fpViewPanel') && !e.target.closest('[data-fa="more"]')) p.hidden = true;
   });
+  // §41.8 快捷键设置面板（toggle 在 mousedown 捕获里已放行 #fpHotkeys，这里只管开合）
+  const hkBtn = $('#fpHotkeys');
+  if (hkBtn) hkBtn.onclick = e => { e.stopPropagation(); fpToggleHotkeyPanel(); };
+  document.addEventListener('mousedown', e => {
+    const p = document.getElementById('fpHotkeyPanel');
+    if (p && !p.hidden && !FP.hkRecording
+        && !e.target.closest('#fpHotkeyPanel') && !e.target.closest('#fpHotkeys')) fpToggleHotkeyPanel(false);
+  }, true);
   // 视图 / 分组 / 分屏 / 交换
   $$('#fpViews button').forEach(b => b.onclick = () => { FP.view = b.dataset.view; renderFinder(); });
   $$('#fpLayouts button').forEach(b => b.onclick = () => { FP.layout = b.dataset.layout; renderFinder(); });
@@ -7841,6 +8147,13 @@ function fpBlankMenu(x, y, pi) {
       return;
     }
     if (e.target && e.target.closest && e.target.closest('input,textarea,select')) return;
+    // §41.7 六条访达快捷键（⌘A/C/X/V · ⌘D · ⌥D）—— 组合串与设置面板「录制」用同一条 fpComboFromEvent
+    const combo41 = fpComboFromEvent(e);
+    if (combo41) {
+      const hk = fpHotkeys();
+      const hit = Object.keys(hk).find(id => hk[id].toLowerCase() === combo41.toLowerCase());
+      if (hit) { e.preventDefault(); e.stopPropagation(); fpRunHotkey(hit); return; }
+    }
     const pane0 = FP.panes[FP.active];
     // §40.2 ↑↓ 移动选中（跳过空占位行）
     if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && pane0) {
