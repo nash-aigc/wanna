@@ -2008,3 +2008,17 @@ body.finder-on .fa-pill .fp-crumb:hover{background:rgba(255,255,255,.08);color:v
 body.finder-on .fa-pill .fp-crumb-sep{color:#5A6468;opacity:1}
 /* 搜索态输入占满胶囊 */
 body.finder-on .fa-pill input#fpSearchInput,body.finder-on .fa-pill input#fpPathInput{width:100%}
+
+/* ══ §38 五个修复 ══ */
+
+/* 38.5 激活窗格蓝线四边贯穿：列表内容会盖住 inset shadow 的上半段 → 用 ::after 全周绘制（z 在内容之上） */
+body.finder-on .fp-cell.act::after{content:"";position:absolute;inset:0;z-index:6;pointer-events:none;
+  border:2px solid var(--q-edge,#4EB3E8)}
+/* 38.3 侧栏类型化图标（不再灰方块） */
+.fp-side-ico{width:17px;height:17px;flex:0 0 17px;border-radius:4px;display:inline-flex;
+  align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#0C0C0E}
+.fp-side-ico svg{width:17px;height:17px;display:block}
+.fp-side-ico.is-dot{border-radius:50%;background:#3A4148}
+/* 组拖过窗格 = 浏览器禁止光标（仅 file 拖拽 accept 后才高亮） */
+.fp-table tr.fp-row:not(.drag-over-row){cursor:default}
+.fp-table tr.fp-row[draggable="true"]{cursor:grab}

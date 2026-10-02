@@ -6484,6 +6484,16 @@ function fpEntries(path) {
   return [...dirs, ...files];
 }
 function fpJoin(base, name) { return base === '/' ? '/' + name : base + '/' + name; }
+/// §38.3 文件类型色（照你图6/图7：代码文本类蓝、图片青、音视频橙紫、压缩绿、pdf 红）
+const FP_FILE_COLORS = {
+  md: '#3E8FE8', js: '#3E8FE8', mjs: '#3E8FE8', ts: '#3E8FE8', css: '#3E8FE8', json: '#3E8FE8',
+  py: '#3E8FE8', sh: '#3E8FE8', swift: '#3E8FE8', yml: '#3E8FE8', yaml: '#3E8FE8', txt: '#6E7681',
+  png: '#45ACE6', jpg: '#45ACE6', jpeg: '#45ACE6', gif: '#45ACE6', webp: '#45ACE6', heic: '#45ACE6',
+  mp3: '#F7A23B', wav: '#F7A23B', m4a: '#F7A23B', aac: '#F7A23B',
+  mov: '#BF5AF2', mp4: '#BF5AF2', mkv: '#BF5AF2',
+  zip: '#2CCB6E', gz: '#2CCB6E', tgz: '#2CCB6E', rar: '#2CCB6E', '7z': '#2CCB6E',
+  pdf: '#E5484D',
+};
 /// §37.3 图标 = macOS 蓝文件夹 / 白折角文档（SVG，色值取自你图4：#57BEF0→#45ACE6）
 function fpIco(entry) {
   if (entry.dir) {
@@ -6492,13 +6502,20 @@ function fpIco(entry) {
       <path d="M2.2 9.2h19.6v8.7c0 1-.8 1.8-1.8 1.8H4c-1 0-1.8-.8-1.8-1.8V9.2z" fill="#45ACE6"/>
       <path d="M2.2 9.2h19.6v1.6H2.2z" fill="#6AC7F5" opacity=".85"/></svg></span>`;
   }
-  const ext = (entry.name.includes('.') ? entry.name.split('.').pop() : '?').slice(0, 2).toUpperCase();
-  return `<span class="fp-ico"><svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M5.5 3.5h9l4.5 4.5v12.5c0 .8-.7 1.5-1.5 1.5h-12c-.8 0-1.5-.7-1.5-1.5v-15c0-.8.7-1.5 1.5-1.5z" fill="#F4F6F7" stroke="#B8C0C4" stroke-width=".8"/>
-    <path d="M14.5 3.5L19 8h-4.5V3.5z" fill="#D3DADD"/>
-    <text x="12" y="16.5" text-anchor="middle" font-size="6.5" font-weight="700" fill="#6A747A">${escapeHtml(ext)}</text>
-    <rect x="6" y="18.5" width="7" height="1.4" rx=".7" fill="#C6CDD1"/>
-    <rect x="6" y="20.8" width="5" height="1.4" rx=".7" fill="#D8DEE1"/></svg></span>`;
+  const rawExt = (entry.name.includes('.') ? entry.name.split('.').pop() : '').toLowerCase();
+  const ext = (rawExt || '?').slice(0, 2).toUpperCase();
+  // html 保留白页（图7 实证）；其余按类型上色（图6/图7 实证：md/js/css 蓝、png 青、mp3 橙…）
+  if (rawExt === 'html' || rawExt === 'htm' || !rawExt) {
+    return `<span class="fp-ico"><svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5.5 3.5h9l4.5 4.5v12.5c0 .8-.7 1.5-1.5 1.5h-12c-.8 0-1.5-.7-1.5-1.5v-15c0-.8.7-1.5 1.5-1.5z" fill="#F4F6F7" stroke="#B8C0C4" stroke-width=".8"/>
+      <path d="M14.5 3.5L19 8h-4.5V3.5z" fill="#D3DADD"/>
+      <text x="12" y="16.5" text-anchor="middle" font-size="6.5" font-weight="700" fill="#6A747A">${escapeHtml(ext)}</text>
+      <rect x="6" y="18.5" width="7" height="1.4" rx=".7" fill="#C6CDD1"/>
+      <rect x="6" y="20.8" width="5" height="1.4" rx=".7" fill="#D8DEE1"/></svg></span>`;
+  }
+  const color = FP_FILE_COLORS[rawExt] || '#8E959B';
+  return `<span class="fp-ico" style="background:${color};color:#fff;border-radius:5px;
+    display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:800">${escapeHtml(ext)}</span>`;
 }
 function fpColValue(entry, key) {
   if (key === 'name') return '';
@@ -6781,9 +6798,31 @@ function fpToggleViewPanel(anchorBtn) {
   p.style.top = Math.min(r.bottom + 6, innerHeight - p.offsetHeight - 8) + 'px';
 }
 /// §36 收藏条目 HTML（ungrouped 用 data-g="ungrouped"）
+/// §38.3 侧栏条目图标：标签彩点 / 磁盘银 / iCloud云 / 目录蓝文件夹 / 文件类型色块（不再灰方块）
+function fpSideIconHTML(it) {
+  if (it.tag) return `<span class="fp-side-ico" style="background:${escapeHtml(it.tag)}"></span>`;
+  if (!it.path) return `<span class="fp-side-ico is-dot"></span>`;
+  if (it.path === '/' || it.path.startsWith('/Volumes')) {
+    return `<span class="fp-side-ico" style="background:linear-gradient(180deg,#D8DEE3,#9AA4AC)">
+      <svg viewBox="0 0 17 17"><rect x="2" y="4.5" width="13" height="8.5" rx="1.6" fill="#5A646C"/>
+      <circle cx="12" cy="11" r="1.1" fill="#8EE06B"/></svg></span>`;
+  }
+  if (/Mobile Documents/i.test(it.path)) {
+    return `<span class="fp-side-ico" style="background:#57BEF0">
+      <svg viewBox="0 0 17 17"><path d="M4.5 12h8a2.7 2.7 0 0 0 .3-5.4A4 4 0 0 0 5 6.2 2.9 2.9 0 0 0 4.5 12z" fill="#fff"/></svg></span>`;
+  }
+  if (FP_FS[it.path] !== undefined && !it.file) {
+    return `<span class="fp-side-ico" style="background:#45ACE6">
+      <svg viewBox="0 0 17 17"><path d="M2.5 4.6c0-.7.6-1.3 1.3-1.3h3.4l1 1H13c.7 0 1.3.6 1.3 1.3v6.5c0 .7-.6 1.3-1.3 1.3H3.8c-.7 0-1.3-.6-1.3-1.3V4.6z" fill="#fff" opacity=".92"/></svg></span>`;
+  }
+  // 文件条目：类型色块
+  const ext = (it.name.includes('.') ? it.name.split('.').pop() : '').toLowerCase();
+  const c = FP_FILE_COLORS[ext] || '#8E959B';
+  return `<span class="fp-side-ico" style="background:${c};color:#fff">${escapeHtml((ext || '?').slice(0, 2).toUpperCase())}</span>`;
+}
 function fpFItemHTML(gKey, ii, it) {
   return `<div class="fp-fitem" data-g="${gKey}" data-i="${ii}" draggable="true">
-    <span class="fi-dot" ${it.tag ? `style="background:${escapeHtml(it.tag)}"` : ''}></span>
+    ${fpSideIconHTML(it)}
     <span class="fi-name" title="${escapeHtml(it.path || it.name)}">${escapeHtml(it.name)}</span>
     <span class="fi-mv"><button data-ia="up" data-g="${gKey}" data-i="${ii}" title="上移">▲</button>
       <button data-ia="down" data-g="${gKey}" data-i="${ii}" title="下移">▼</button></span></div>`;
@@ -6893,12 +6932,25 @@ function renderFinderSide(k) {
     });
   });
   side.querySelector('.fp-add-group').onclick = e => { e.stopPropagation();
-    askModal({ title: '新建分组', text: '收藏栏里的一个分组（名字可随时改）',
-    value: '新分组', okText: '添加', onOk: v => {
-      if (!v.trim()) return;
-      fpSide(k).groups.push({ id: 'g' + now(), name: v.trim(), items: [], collapsed: false });
-      save(); rerender(); toast('已添加分组 <b>' + escapeHtml(v.trim()) + '</b>');
-    } }); };
+    // §38.1 ＋ = 添加分组 / 添加单个文件（无分组，直接进本栏「不分组」区）
+    showMenu([
+      { icon: '📁', label: '添加分组', action: () => askModal({ title: '新建分组',
+          text: '收藏栏里的一个分组（名字可随时改）', value: '新分组', okText: '添加',
+          onOk: v => { if (!v.trim()) return;
+            fpSide(k).groups.push({ id: 'g' + now(), name: v.trim(), items: [], collapsed: false });
+            save(); rerender(); toast('已添加分组 <b>' + escapeHtml(v.trim()) + '</b>'); } }) },
+      { icon: '📄', label: '添加单个文件（不分组）', action: () => askModal({ title: '添加单个文件',
+          text: `无分组，直接显示在${k === 'R' ? '右' : '左'}侧栏顶部的「不分组」区。格式：名称|绝对路径`,
+          value: '文件名|/Users/mjm/…', okText: '添加',
+          onOk: v => { if (!v.trim()) return;
+            const [name, path] = v.split('|').map(x => x.trim());
+            if (!name) return;
+            const sd = fpSide(k);
+            sd.ungrouped.push(path ? { name, path, file: true } : { name });
+            fpSaveSide(k); renderFinderSide(k);
+            toast(`已添加单个文件（不分组）：<b>${escapeHtml(name)}</b>`); } }) },
+    ], e.currentTarget);
+  };
   // 「＋添加条目」
   side.querySelectorAll('[data-ga]').forEach(b => b.onclick = e => {
     e.stopPropagation();
@@ -7220,7 +7272,11 @@ function renderFinderMain() {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', row.dataset.name);
     };
-    row.ondragover = e => { e.preventDefault(); row.classList.add('drag-over-row'); };
+    row.ondragover = e => {
+      // §38.4 只有「文件」拖拽能进窗格 —— 分组是标签不是路径，拖组经过不高亮不接受
+      if (!FP.drag || FP.drag.kind !== 'file') return;
+      e.preventDefault(); row.classList.add('drag-over-row');
+    };
     row.ondragleave = () => row.classList.remove('drag-over-row');
     row.ondrop = e => {
       e.preventDefault(); row.classList.remove('drag-over-row');
@@ -7580,6 +7636,28 @@ function fpBlankMenu(x, y, pi) {
     document.body.classList.toggle('finder-hide-right', !both);
     sync();
     toast(both ? '已退出全屏访达 —— 项目与对话都回来了' : '全屏访达 —— 只剩访达');
+  };
+  /* §38.2 QSpace 工具栏三钮（实证 id：share_airdrop / set_as_desktop_background / open_in_terminal） */
+  const selInfo = pi => {
+    const pane = FP.panes[pi] || FP.panes[FP.active];
+    return { sel: pane.sel, path: pane.path };
+  };
+  const activeInfo = () => selInfo(FP.active);
+  $('#fpAirDrop').onclick = () => {
+    const { sel, path } = activeInfo();
+    toast(sel ? `隔空投送「<b>${escapeHtml(sel)}</b>」（演示——真机走系统共享面板）`
+              : `隔空投送当前路径（演示）：<code>${escapeHtml(path)}</code>`);
+  };
+  $('#fpWallpaper').onclick = () => {
+    const { sel } = activeInfo();
+    if (!sel) return toast('先选中一张图片，再点「设为壁纸」');
+    if (!/\.(png|jpe?g|gif|webp|heic|tiff?)$/i.test(sel)) return toast(`「${escapeHtml(sel)}」不是图片 —— 选中图片再试`);
+    toast(`已设为桌面背景（演示）：<b>${escapeHtml(sel)}</b> —— 真机走 set_as_desktop_background`);
+  };
+  $('#fpTerminal').onclick = () => {
+    const { sel, path } = activeInfo();
+    const dir = sel && FP_FS[fpJoin(path, sel)] !== undefined ? fpJoin(path, sel) : path;
+    toast(`已在终端打开（演示）：<code>${escapeHtml(dir)}</code> —— 真机走 open_in_terminal`);
   };
   // ⋮ 面板：点外面关（面板与 ⋮ 本身除外）
   document.addEventListener('click', e => {
