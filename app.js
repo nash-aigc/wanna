@@ -561,6 +561,7 @@ function convCardRow(item, scope) {
   // 没置顶就不画 📌 —— 置顶的入口在 ⋯ 菜单里（§16.4）
   el.innerHTML = `<span class="plan-dot"></span><span class="pname"></span>
     ${item.unread ? '<span class="punread" title="未读"></span>' : ''}
+    ${item.handoff && item.handoff.platform ? `<span class="ppin" style="background:none" title="会话已交接（handoff_state=${escapeHtml(item.handoff.state || 'done')}）">→${escapeHtml(hHandoffLabel(item.handoff.platform))}</span>` : ''}
     <button class="pmore" title="选项（含会话 ID）">⋯</button>`
     + (item.pinned ? `<span class="ppin" title="已置顶（点一下取消）">📌</span>` : '');
   el.querySelector('.pname').textContent = item.title;
@@ -9614,6 +9615,8 @@ function renderHermesNav() {
     { v: 'quickEntry', label: '快捷输入', badge: (S.quickEntry && S.quickEntry.enabled) ? 'on' : 'off' },
     { v: 'skills', label: '技能', badge: `${(H2.skills || []).filter(s => s.state !== 'archived').length}` },
     { v: 'cron', label: '定时任务', badge: `${(H2.cronJobs || []).filter(j => j.enabled).length}/${(H2.cronJobs || []).length}` },
+    { v: 'tools', label: '工具', badge: (H2.toolsTab || 'disclose') === 'disclose' ? '披露' : '后端' },
+    { v: 'delegates', label: '子代理', badge: `${(H2.delegates || []).filter(d => d.status === 'running').length || ''}` },
   ];
   host.innerHTML = rows.map(r => `<div class="plan-row${hermesView === r.v ? ' is-on' : ''}" data-hv="${r.v}">
       <span class="plan-dot" style="background:#3B82F6"></span><span class="pname">${r.label}</span>
@@ -9639,6 +9642,8 @@ function renderHermes() {
   else if (v === 'quickEntry') hermesQuickEntryHTML(pane);
   else if (v === 'skills') hermesSkillsHTML(pane);
   else if (v === 'cron') hermesCronHTML(pane);
+  else if (v === 'tools') hermesToolsHTML(pane);
+  else if (v === 'delegates') hermesDelegatesHTML(pane);
   else pane.innerHTML = '';
 }
 /// 顶部条（三个页面共用）：标题 + 返回
@@ -10033,7 +10038,8 @@ function hermesArchivedHTML(pane) {
   const all = [];
   hAllConvPools().forEach(({ scope, pool }) => pool.forEach(c => { if (!c.isGroup && !c.archived) all.push({ conv: c, scope }); }));
   const badge = c => `${c.pinned ? '<span class="hbadge pin">置顶</span>' : ''}`
-    + (c.archived ? (c.autoArchived ? '<span class="hbadge auto">自动归档</span>' : '<span class="hbadge human">手动归档</span>') : '');
+    + (c.archived ? (c.autoArchived ? '<span class="hbadge auto">自动归档</span>' : '<span class="hbadge human">手动归档</span>') : '')
+    + (c.handoff && c.handoff.platform ? `<span class="hbadge" style="background:rgba(10,132,255,.18);color:#BFDBFE">→${escapeHtml(hHandoffLabel(c.handoff.platform))}</span>` : '');
   const row = (it, archivedView) => `<div class="harc">
       <div class="body"><div class="t">${badge(it.conv)}${escapeHtml(it.conv.title || '未命名对话')}</div>
       <div class="d">${it.scope.kind === 'default' ? '默认区' : '项目 · ' + escapeHtml(it.scope.project.name)}
@@ -10073,6 +10079,19 @@ function hermesArchivedHTML(pane) {
             </div>
             <div class="hnote">归档 ≠ 删除：真删除只有 <code>purge</code>（本页不提供）。<br>
               人归的永远不会被自动扫描撤销；自动归档的恢复时才清 <code>autoArchived</code>。</div>
+            <div class="hset-sec" style="margin-left:0">轨迹实验室（batch_runner / trajectory_compressor）</div>
+            <div class="hform">
+              <label>选会话<select id="tjConv">${all.slice(0, 10).map(it =>
+                `<option value="${it.conv.id}"${H0.trajectory && H0.trajectory.convId === it.conv.id ? ' selected' : ''}>${escapeHtml(it.conv.title || '未命名')}</option>`).join('')}
+                ${arch.slice(0, 5).map(it =>
+                `<option value="${it.conv.id}"${H0.trajectory && H0.trajectory.convId === it.conv.id ? ' selected' : ''}>[归档] ${escapeHtml(it.conv.title || '未命名')}</option>`).join('')}</select></label>
+              <div class="hrow">
+                <button class="hbtn" data-tjact="gen">生成轨迹</button>
+                <button class="hbtn" data-tjact="compress">压缩</button>
+              </div>
+            </div>
+            <div id="tjOut" class="hnote" style="margin-top:6px">${hTrajectoryHTML(H0.trajectory)}</div>
+            <div class="hnote" style="margin-top:8px">轨迹 = 会话的步骤回放；压缩把 N 步收成 3 行（首/合并/尾），真 LLM 摘要属引擎期。</div>
           </div></div></div>`;
   hBindCommon(pane);
   // §48 全局会话搜索：title + preview 跨会话匹配，带命中片段与 mock 摘要行
@@ -10103,6 +10122,23 @@ function hermesArchivedHTML(pane) {
     el.onchange = () => { H0.cfg[key] = num ? Math.max(0, parseInt(el.value, 10) || 0) : el.checked; hSave(); renderHermes(); }; };
   bind('#hAutoArc', 'autoArchive', false); bind('#hAutoDays', 'autoArchiveDays', true);
   bind('#hDispInt', 'dispatchInterval', true); bind('#hFailLim', 'failureLimit', true);
+  // §49 轨迹实验室
+  pane.querySelectorAll('[data-tjact]').forEach(b => b.onclick = () => {
+    const sel = pane.querySelector('#tjConv');
+    const cid = sel ? sel.value : null;
+    if (!cid) { toast('先选一个会话'); return; }
+    if (b.dataset.tjact === 'gen') {
+      H0.trajectory = hGenTrajectory(cid);
+      hSave(); renderHermes();
+      toast(`已生成轨迹：${H0.trajectory.steps.length} 步（${escapeHtml(H0.trajectory.title)}）`);
+    } else {
+      if (!H0.trajectory || H0.trajectory.convId !== cid) { toast('先生成这条会话的轨迹'); return; }
+      const before = H0.trajectory.steps.length;
+      H0.trajectory.compressed = hCompressTrajectory(H0.trajectory.steps);
+      hSave(); renderHermes();
+      toast(`压缩：${before} 步 → ${H0.trajectory.compressed.length} 行`);
+    }
+  });
 }
 
 /* ── §44e 接线：退出路径 + 启动 ── */
@@ -10191,6 +10227,13 @@ function hState2() {
     ];
   }
   if (H0.cronJobs.some(j => j.nextRun === undefined)) H0.cronJobs.forEach(j => { if (j.nextRun === undefined) j.nextRun = Date.now() + 3600e3; });
+  // ── §49 工具披露 / 终端后端 / 子代理 ──
+  if (H0.toolsTab === undefined) H0.toolsTab = 'disclose';                  // disclose | terminal | stream
+  if (H0.toolDisclosure === undefined) H0.toolDisclosure = 'full';          // full | progressive（tool_search 三桥）
+  if (H0.termBackend === undefined) H0.termBackend = 'local';
+  if (!Array.isArray(H0.delegates)) H0.delegates = [];
+  if (H0.trajectory === undefined) H0.trajectory = null;
+  if (H0.handoffs === undefined || typeof H0.handoffs !== 'object') H0.handoffs = {};
   if (!Array.isArray(H0.providers) || !H0.providers.length) H0.providers = hDefaultProviders();
   if (!H0.modelCfg || typeof H0.modelCfg !== 'object') {
     // §9.3：persist_switch_by_default 默认 false（不持久化）
@@ -11306,10 +11349,32 @@ function hermesChannelsHTML(pane) {
           ${c.fs ? hFeishuWizardHTML(fs) : ''}
         </div>`).join('')}
       </div>
+      <div class="hset-sec">会话交接 handoff（sessions 表 handoff_state / handoff_platform）</div>
+      <div class="hset-group"><div class="hset">
+        <div class="tx"><div class="tt">把当前会话交接给一个渠道</div>
+          <div class="ds">跨平台会话连续：交接后这条会话标记目标平台，侧栏行带「→平台」徽标；真投递与继续对话属 B 批（需要真渠道连接）。</div></div>
+        <div class="ct">
+          <select id="hoTarget"><option value="feishu">飞书</option><option value="telegram">Telegram</option>
+            <option value="discord">Discord</option><option value="slack">Slack</option></select>
+          <button class="hbtn primary" id="hoGo">交接</button>
+        </div></div></div>
       <div class="hgw-note">协议层与真凭证属 B 批（真 WebSocket / 长轮询 / 扫码端点）—— 本页的注入与建号向导
         <b>网络全部 mock</b>，但请求/响应形状照 <code>adapter.py</code> 的端点与字段（§4.2 步骤行号写在步骤里）。</div>
     </div>`;
   hBindCommon(pane);
+  // §49 handoff：给当前会话打交接标记（字段照 hermes_state_common sessions.handoff_*）
+  const hoGo = pane.querySelector('#hoGo');
+  if (hoGo) hoGo.onclick = () => {
+    const target = pane.querySelector('#hoTarget').value;
+    const id = (S.activePlan && S.activePlan !== 'default') ? S.activePlan : (S.plans.find(x => !x.isGroup) || {}).id;
+    const conv = id ? (S.plans.find(x => x.id === id) || null) : null;
+    if (!conv) { toast('没有可交接的会话（先在侧栏点一张对话卡）'); return; }
+    conv.handoff = { platform: target, state: 'done', at: Date.now() };
+    H0.handoffs[conv.id] = conv.handoff;
+    hSave(); renderHermes(); renderNav();
+    toast(`「${escapeHtml(conv.title)}」→ <b>${escapeHtml(hHandoffLabel(target))}</b>（handoff_state=done · 侧栏行已带徽标）`);
+  };
+  // ── §48 注入入站消息（mock，形状照真源码）──
   pane.querySelectorAll('[data-chact="inject"]').forEach(b => b.onclick = () => {
     const p = b.dataset.p;
     hMockInboundModal(p);
@@ -11821,6 +11886,330 @@ function hermesCronHTML(pane) {
       hSave(); renderHermes(); renderHermesNav(); toast(j.enabled ? '已启用' : '已停用'); return; }
     if (act === 'del') { confirmModal({ title: '删除定时任务', text: j.name, okText: '删除',
       onOk: () => { H0.cronJobs = jobs.filter(x => x.id !== id); hSave(); renderHermes(); renderHermesNav(); toast('已删除'); } }); return; }
+  });
+}
+
+/* ══ §49 Hermes 第五批：tool_search 渐进披露 · 终端后端 · 流式编辑 · 子代理 delegate · handoff · 轨迹 ══
+   真值来源：tools/tool_search.py:1-12（三桥与不变量）、tools/terminal_tool_backends.py:54（7 后端）、
+   tools/delegate_tool.py:440（隔离子代理）、原生流四不变量（DISSECT B 批）、
+   hermes_state_common.py sessions.handoff_state/handoff_platform、batch_runner/trajectory_compressor。
+   原型边界：披露=展示层（真接入用官方 defer_loading+ToolSearchTool / tool_filter）；终端后端=只存配置；
+   delegate=mock 进度；轨迹压缩=纯函数截断；handoff=状态与徽标（真投递属 B 批）。 */
+
+/* ── §49 辅助纯函数 ── */
+function hHandoffLabel(platform) {
+  return { feishu: '飞书', telegram: 'Telegram', discord: 'Discord', slack: 'Slack' }[platform] || platform;
+}
+/// 轨迹 = 会话的步骤回放（batch_runner 的极简形；数据取 title/msgs/preview 真字段）
+function hGenTrajectory(convId) {
+  const f = hFindConv(convId);
+  if (!f) return null;
+  const c = f.conv;
+  return {
+    convId, title: c.title || '未命名', generatedAt: Date.now(), compressed: null,
+    steps: [
+      { t: '收到请求', d: c.title || '（无标题）' },
+      { t: '会话上下文', d: `${f.scope.kind === 'default' ? '默认区' : '项目 ' + (f.scope.project || {}).name} · msgs≈${c.msgs || 0}${c.sid ? ' · ' + c.sid : ''}` },
+      { t: '最近消息', d: (c.preview || '（没有 preview）').slice(0, 100) },
+      { t: '终态', d: c.archived ? '已归档' : '进行中/未归档' },
+    ],
+  };
+}
+/// 轨迹压缩（trajectory_compressor 的极简形）：N 步 → 3 行（首 / 中间合并 / 尾）
+function hCompressTrajectory(steps) {
+  if (steps.length <= 3) return steps.map(s => `${s.t}：${s.d}`);
+  const head = `${steps[0].t}：${steps[0].d}`;
+  const tail = `${steps[steps.length - 1].t}：${steps[steps.length - 1].d}`;
+  const mid = `中间 ${steps.length - 2} 步合并：` + steps.slice(1, -1).map(s => s.t).join(' → ');
+  return [head, mid, tail];
+}
+function hTrajectoryHTML(tj) {
+  if (!tj) return '（还没生成轨迹 —— 选个会话点「生成轨迹」）';
+  const body = tj.compressed
+    ? `<b>压缩 ${tj.steps.length} 步 → ${tj.compressed.length} 行</b><br>` + tj.compressed.map((l, i) => `${i + 1}. ${escapeHtml(l)}`).join('<br>')
+    : `<b>${tj.steps.length} 步</b> · ${escapeHtml(tj.title)}<br>` + tj.steps.map((s, i) => `${i + 1}. <b>${escapeHtml(s.t)}</b> ${escapeHtml(s.d)}`).join('<br>');
+  return body;
+}
+
+/* ── 工具页（三个 tab：披露 / 终端后端 / 流式编辑） ── */
+/// 代表清单：core = 模型侧 tag/内建工具；mcp = MCP 直连工具。
+/// 真值锚点（AGENTS.md 2026-09-29 实测）：全量 18 个工具 / 8 020 字符；删 firecrawl 前 45 个 / 54 624 字符。
+const H_TOOL_CATALOG = [
+  { n: 'point', g: 'core', c: 210 }, { n: 'click', g: 'core', c: 480 }, { n: 'scroll', g: 'core', c: 320 },
+  { n: 'type', g: 'core', c: 350 }, { n: 'press', g: 'core', c: 410 }, { n: 'open', g: 'core', c: 260 },
+  { n: 'wait', g: 'core', c: 180 }, { n: 'ax_tree', g: 'core', c: 520 }, { n: 'shape', g: 'core', c: 440 },
+  { n: 'skill', g: 'core', c: 390 }, { n: 'run', g: 'core', c: 560 }, { n: 'search', g: 'core', c: 300 },
+  { n: 'anysearch.search', g: 'mcp', c: 640 }, { n: 'anysearch.extract', g: 'mcp', c: 580 },
+  { n: 'notion.create_page', g: 'mcp', c: 720 }, { n: 'notion.search', g: 'mcp', c: 510 },
+  { n: 'image.generate', g: 'mcp', c: 470 }, { n: 'tts.speech', g: 'mcp', c: 390 },
+];
+const H_BRIDGE_TOOLS = [
+  { n: 'tool_search', d: '按自然语言/关键词查工具目录，返回匹配的名字与一句话说明（每次最多 7 个查询）', schema: '{ queries: string[] } → { matches: [{name, summary}] }' },
+  { n: 'tool_describe', d: '取指定工具的完整描述与参数 schema（每次最多 10 个名字）', schema: '{ names: string[] } → { tools: [{name, description, input_schema}] }' },
+  { n: 'tool_call', d: '调用一个已 describe 过的工具，参数按 schema 校验', schema: '{ name: string, args: object } → { result }' },
+];
+const H_TERM_BACKENDS = [
+  { k: 'local', n: 'local 本地', fields: [['cwd', '/Users/you/project']] },
+  { k: 'docker', n: 'docker', fields: [['image', 'python:3.12-slim'], ['volumes', '.:/work'], ['workdir', '/work']] },
+  { k: 'ssh', n: 'ssh 远程主机', fields: [['host', 'gpu-01.internal'], ['user', 'root'], ['key_path', '~/.ssh/id_ed25519']] },
+  { k: 'singularity', n: 'singularity', fields: [['image', './env.sif']] },
+  { k: 'modal', n: 'modal 云沙箱', fields: [['image', 'ghcr.io/you/env:latest'], ['cpu', '4']] },
+  { k: 'daytona', n: 'daytona', fields: [['snapshot', 'base-python@v2']] },
+  { k: 'vercel_sandbox', n: 'vercel_sandbox', fields: [['project', 'you/sandbox-env']] },
+];
+
+function hermesToolsHTML(pane) {
+  const H0 = hState2();
+  const tab = H0.toolsTab || 'disclose';
+  const mode = H0.toolDisclosure || 'full';
+  const side = `<div class="hprof-list">
+      <div class="hcol-head" style="padding:2px 2px 8px">工具（Tools）</div>
+      <div class="hside">
+        <div class="hside-item${tab === 'disclose' ? ' is-on' : ''}" data-ttab="disclose"><span class="ic">🔍</span>工具披露</div>
+        <div class="hside-item${tab === 'terminal' ? ' is-on' : ''}" data-ttab="terminal"><span class="ic">🖥️</span>终端后端</div>
+        <div class="hside-item${tab === 'stream' ? ' is-on' : ''}" data-ttab="stream"><span class="ic">🌊</span>流式编辑</div>
+      </div>
+      <div class="hnote" style="padding:12px 4px 0;line-height:1.8">
+        <b>披露</b>：全量清单 vs tool_search 三桥（展示层）<br>
+        <b>后端</b>：7 种执行环境，只存配置<br>
+        <b>流式</b>：四不变量 demo<br>
+        <span style="opacity:.6">真接入走官方口子（defer_loading + ToolSearchTool / tool_filter），不自造机制。</span></div>
+    </div>`;
+
+  let body = '';
+  if (tab === 'disclose') {
+    const fullChars = 8020, bridgeChars = 700;
+    body = `<div class="hcrumb"><b>工具</b><span class="sep">›</span>工具披露</div>
+      <div class="hrow" style="padding:6px 16px 0">
+        <span class="hsub">披露模式：</span>
+        <button class="hbtn${mode === 'full' ? ' primary' : ''}" data-tact="mode-full">全量披露（18 个 / 8 020 字符，实测）</button>
+        <button class="hbtn${mode === 'progressive' ? ' primary' : ''}" data-tact="mode-prog">渐进披露（3 桥 ≈700 字符，估算）</button>
+        <span style="flex:1"></span>
+        <span class="hsub">省下 ≈ <b>${mode === 'full' ? '0' : (fullChars - bridgeChars).toLocaleString()}</b> 字符上下文</span>
+      </div>
+      ${mode === 'full' ? `
+        <div class="hset-sec">模型可见数组 —— 全量（tool_search.py:9：核心工具与门控工具集永不延迟）</div>
+        <div class="hgw" style="padding:0 16px 8px">${H_TOOL_CATALOG.map(t => `
+          <div class="hgw-card" style="padding:9px 11px"><div class="hgw-top">
+            <span class="hgw-kind ${t.g === 'core' ? 'local' : 'cloud'}">${t.g}</span>
+            <span class="hgw-label">${escapeHtml(t.n)}</span>
+            <span class="hsub" style="margin-left:auto">≈${t.c} 字符</span></div></div>`).join('')}
+        </div>
+        <div class="hnote" style="padding:0 16px 14px">合计口径按实测：<b>18 个工具 / 8 020 字符</b>（2026-09-29 删 firecrawl 后）；
+          上表为等量级的代表清单（逐条字符数为示意，总数锚在实测值上）。历史极值 45 个 / 54 624 字符（含 MCP 全挂时）。</div>`
+      : `
+        <div class="hset-sec">渐进披露 —— 模型只见三座桥（tool_search.py:1-12）</div>
+        <div class="hgw" style="padding:0 16px 8px">${H_BRIDGE_TOOLS.map(b => `
+          <div class="hgw-card is-primary"><div class="hgw-top">
+            <span class="hgw-label">${b.n}</span><span class="hchip on" style="margin-left:auto">bridge</span></div>
+            <div class="hgw-fields" style="display:block;font-size:12px;line-height:1.7;color:#C7D2DA">${escapeHtml(b.d)}
+              <br><code style="font-size:11px;color:#9FD0FF">${escapeHtml(b.schema)}</code></div></div>`).join('')}
+        </div>
+        <div class="hset-sec">桥上试一把（本地过滤，不出网）</div>
+        <div style="padding:0 16px 8px" class="hrow">
+          <input id="tsQuery" placeholder="搜工具：点 / notion / 搜索…" style="width:240px;background:#101418;border:1px solid var(--line,#2A2E33);border-radius:8px;color:var(--ink,#EDEEF0);padding:6px 10px;font-size:12.5px">
+          <button class="hbtn primary" data-tact="tsearch">tool_search</button>
+        </div>
+        <div id="tsOut" class="hnote" style="padding:0 16px 14px">（点 tool_search 看匹配结果；每条可 describe / call）</div>
+        <div class="hnote" style="padding:0 16px 14px">不变量（tool_search.py:9-11）：核心工具永不延迟 · <b>catalog 无状态</b>（每次从 live tool-defs 重建，
+          带状态的缓存会漂移并静默丢工具）· 桥调用经 handle_function_call 统一路由。本页是<b>展示层</b>，真接入用官方口子。</div>`}`;
+  } else if (tab === 'terminal') {
+    const be = H0.termBackend || 'local';
+    const cur = H_TERM_BACKENDS.find(b => b.k === be) || H_TERM_BACKENDS[0];
+    body = `<div class="hcrumb"><b>工具</b><span class="sep">›</span>终端后端</div>
+      <div class="hset-sec">七种执行后端（terminal_tool_backends.py:54 _BUILTIN_BACKENDS）—— 只存配置，不执行（B 批）</div>
+      <div class="hmode">${H_TERM_BACKENDS.map(b => `
+        <button class="hmode-card${b.k === be ? ' is-on' : ''}" data-tact="be" data-k="${b.k}">
+          <span class="tick">✓</span><div class="mi">🖥️</div>
+          <div class="mt">${escapeHtml(b.n)}</div>
+          <div class="md">terminal.backend = <code>${b.k}</code></div></button>`).join('')}</div>
+      <div class="hset-sec">「${escapeHtml(cur.n)}」配置样例（cli-config.yaml.example 形状）</div>
+      <div class="hset-group"><div class="hset"><div class="tx">
+        <div class="ds" style="font-family:var(--mono,monospace);font-size:12px;line-height:2">
+          terminal:<br>&nbsp;&nbsp;backend: <b style="color:#9FD0FF">${cur.k}</b><br>
+          ${cur.fields.map(([k, v]) => `&nbsp;&nbsp;${k}: <span style="color:#86EFAC">${escapeHtml(v)}</span>`).join('<br>')}
+        </div></div>
+        <div class="ct"><span class="hchip">只存配置</span></div></div></div>
+      <div class="hnote" style="padding:4px 16px 14px">Docker/SSH/Modal 等真沙箱属 B 批；本页保证换后端时配置形状与官方一致，Swift 期直接落 yaml。</div>`;
+  } else {
+    body = `<div class="hcrumb"><b>工具</b><span class="sep">›</span>流式编辑</div>
+      <div class="hset-sec">四不变量 demo（原生流：前缀稳定 · 只在尾部续 · finish 由消费者宣布 · 不重排）</div>
+      <div style="padding:0 16px 8px">
+        <div class="hrow" style="margin-bottom:8px">
+          <button class="hbtn primary" data-tact="st-start">开始流式</button>
+          <button class="hbtn" data-tact="st-append">尾部追加一段</button>
+          <button class="hbtn" data-tact="st-finish">宣布完成（消费者）</button>
+          <span class="qe-state off" id="stState">idle</span>
+        </div>
+        <div class="hme" id="stText" style="min-height:96px;margin-top:0">（点「开始流式」）</div>
+        <div class="hnote" id="stCheck" style="padding:6px 2px">断言区：生成中每次 append 都不改动已有前缀；自然生成停了也不自动 done。</div>
+      </div>`;
+  }
+
+  pane.innerHTML = hBar('工具 · Tools',
+    `披露 / 终端后端 / 流式编辑 —— tool_search 三桥 + 7 后端 + 四不变量（Hermes tools/ 族）`, hCurChip())
+    + `<div class="hbody"><div class="hprof">${side}<div class="hprof-body">${body}</div></div></div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-ttab]').forEach(el => el.onclick = () => {
+    H0.toolsTab = el.dataset.ttab; hSave(); renderHermes(); renderHermesNav();
+  });
+  pane.querySelectorAll('[data-tact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.tact;
+    if (act === 'mode-full' || act === 'mode-prog') {
+      H0.toolDisclosure = act === 'mode-full' ? 'full' : 'progressive';
+      hSave(); renderHermes(); return;
+    }
+    if (act === 'be') { H0.termBackend = b.dataset.k; hSave(); renderHermes();
+      toast(`terminal.backend → <b>${escapeHtml(b.dataset.k)}</b>（配置已存，不执行）`); return; }
+    if (act === 'tsearch') {
+      const q = (pane.querySelector('#tsQuery').value || '').trim().toLowerCase();
+      const out = pane.querySelector('#tsOut');
+      if (!q) { out.innerHTML = '输入关键词再搜。'; return; }
+      const hits = H_TOOL_CATALOG.filter(t => t.n.toLowerCase().includes(q) || t.g.includes(q));
+      out.innerHTML = hits.length
+        ? `<b>tool_search → ${hits.length} 个匹配</b>（单次上限 7 组查询，tool_search.py:31）：<br>` +
+          hits.slice(0, 7).map(t => `• <code>${escapeHtml(t.n)}</code> <span style="opacity:.75">（${t.g === 'core' ? '核心' : 'MCP'}）</span>
+            <button class="hbtn ghost" data-tsact="describe" data-n="${escapeHtml(t.n)}" style="padding:1px 8px;font-size:11px">describe</button>
+            <button class="hbtn ghost" data-tsact="call" data-n="${escapeHtml(t.n)}" style="padding:1px 8px;font-size:11px">call</button>
+            <span data-tsout="${escapeHtml(t.n)}"></span>`).join('<br>')
+        : `0 个匹配「${escapeHtml(q)}」。`;
+      out.querySelectorAll('[data-tsact]').forEach(btn => btn.onclick = () => {
+        const n = btn.dataset.n;
+        const slot = out.querySelector(`[data-tsout="${CSS.escape(n)}"]`);
+        if (btn.dataset.tsact === 'describe') {
+          const t = H_TOOL_CATALOG.find(x => x.n === n);
+          slot.innerHTML = ` <span style="color:#9FD0FF">→ schema：{ type:"function", name:"${escapeHtml(n)}", ≈${t.c} chars }</span>`;
+        } else {
+          slot.innerHTML = ` <span style="color:#86EFAC">→ {ok:true, result:"${escapeHtml(n)} mock 执行"}</span>`;
+        }
+      });
+      return;
+    }
+    if (act === 'st-start') {
+      const el = pane.querySelector('#stText'), st = pane.querySelector('#stState');
+      if (el.dataset.timer) { toast('已经在生成了'); return; }
+      el.textContent = ''; st.className = 'qe-state err'; st.textContent = 'streaming（生成器停了也不 done）';
+      let tick = 0; let last = '';
+      const chunk = '模型正在边生成边把已输出的前缀固定下来，'.split('');
+      const timer = setInterval(() => {
+        const before = el.textContent;
+        if (before && !el.textContent.startsWith(before)) { /* 结构上不可能：只 append */ }
+        el.textContent = before + (chunk[tick % chunk.length] || '·');
+        tick++;
+        if (tick >= 40) { clearInterval(timer); el.dataset.timer = '';
+          pane.querySelector('#stCheck').innerHTML =
+            `<b>前缀稳定 ✓</b>（40 次 append，每次都 startsWith 上一拍文本）· 生成器已停但状态仍 <b>streaming</b> —— finish 必须由消费者宣布。`; }
+      }, 60);
+      el.dataset.timer = String(timer);
+      last = el.textContent;
+      return;
+    }
+    if (act === 'st-append') {
+      const el = pane.querySelector('#stText');
+      const before = el.textContent;
+      if (before === '（点「开始流式」）' || !before) { toast('先点开始流式'); return; }
+      el.textContent = before + '【消费者在尾部追加】';
+      const ok = el.textContent.startsWith(before);
+      pane.querySelector('#stCheck').innerHTML =
+        `尾部追加 → 前缀稳定 <b style="color:${ok ? '#86EFAC' : '#FCA5A5'}">${ok ? '✓' : '✗'}</b>（新文本 startsWith 旧文本）；不重排、不改中段。`;
+      return;
+    }
+    if (act === 'st-finish') {
+      const el = pane.querySelector('#stText'), st = pane.querySelector('#stState');
+      if (el.dataset.timer) { clearInterval(+el.dataset.timer); el.dataset.timer = ''; }
+      st.className = 'qe-state ok'; st.textContent = 'done（消费者宣布）';
+      pane.querySelector('#stCheck').innerHTML = `<b>finish ✓</b> —— 由消费者按钮宣布，不是生成器自己到点关掉（四不变量之三）。`;
+      return;
+    }
+  });
+}
+
+/* ── 子代理页（delegate_task：一次性、隔离、只回结果） ── */
+function hermesDelegatesHTML(pane) {
+  const H0 = hState2();
+  const list = H0.delegates;
+  const TOOL_CHOICES = ['point', 'click', 'type', 'press', 'run', 'skill', 'ax_tree', 'search'];
+  const badgeOf = d => d.status === 'running' ? '<span class="hbadge" style="background:rgba(59,130,246,.22);color:#BFDBFE">运行中</span>'
+    : d.status === 'done' ? '<span class="hbadge pin">完成</span>'
+    : '<span class="hbadge auto" style="background:rgba(248,113,113,.18);color:#FECACA">已中断</span>';
+  pane.innerHTML = hBar('子代理 · Delegate',
+    `一次性隔离子代理：预算 + 工具白名单 + 只回结果（delegate_tool.py:440 delegate_task）`, hCurChip())
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      <div class="hset-sec">委派一个任务</div>
+      <div class="hset-group"><div class="hform" style="padding:10px 14px">
+        <label>任务描述<textarea id="dlTask" rows="2" placeholder="例：把这 5 个文件按类型分到子目录"></textarea></label>
+        <div class="hrow">
+          <span class="hsub" style="flex:0 0 auto">工具白名单：</span>
+          ${TOOL_CHOICES.map(t => `<label class="hrow" style="gap:4px;font-size:12px;color:var(--ink2)">
+            <input type="checkbox" data-dlt="${t}" ${['point', 'click', 'run'].includes(t) ? 'checked' : ''}> ${t}</label>`).join('')}
+        </div>
+        <div class="hrow">
+          <label class="hrow" style="gap:6px">预算 tokens <input type="number" id="dlBudget" value="8000" min="500" max="100000" style="width:110px"></label>
+          <label class="hrow" style="gap:8px"><span>上下文隔离（父代理只收结果）</span>
+            <label class="hsw"><input type="checkbox" id="dlIso" checked><span class="tr"><span class="kb"></span></span></label></label>
+          <span style="flex:1"></span>
+          <button class="hbtn primary" data-dlact="spawn">委派</button>
+        </div>
+      </div></div>
+      <div class="hset-sec">子代理列表（${list.length}）</div>
+      <div class="hgw" style="padding:0 16px 16px">${list.map(d => `
+        <div class="hgw-card${d.status === 'running' ? ' is-primary' : ''}">
+          <div class="hgw-top"><span class="hgw-label">${escapeHtml(d.task.slice(0, 40))}${d.task.length > 40 ? '…' : ''}</span>
+            ${badgeOf(d)}<span class="hsub" style="margin-left:auto">${d.tokensUsed}/${d.budget} tokens</span></div>
+          <div class="hgw-fields"><span><b>tools</b>${escapeHtml(d.tools.join(' / ') || '（无）')}</span>
+            <span><b>隔离</b>${d.isolate ? 'on' : 'off'}</span><span><b>创建</b>${new Date(d.created).toLocaleTimeString()}</span></div>
+          ${d.steps.length ? `<div class="hme" style="margin-top:8px;font-size:11.5px">${d.steps.map((s, i) => `${i + 1}. ${escapeHtml(s)}`).join('\n')}</div>` : ''}
+          ${d.result ? `<div class="hgw-fields" style="margin-top:8px;color:#86EFAC"><b>结果</b>${escapeHtml(d.result)}</div>` : ''}
+          <div class="hgw-ops">${d.status === 'running'
+            ? `<button class="hbtn danger" data-dlact="stop" data-id="${d.id}">中断</button>`
+            : `<button class="hbtn ghost" data-dlact="del" data-id="${d.id}">移除</button>`}</div>
+        </div>`).join('') || '<div class="hempty">还没有子代理 —— 上面粉一个任务点「委派」。</div>'}</div>
+      <div class="hnote" style="padding:0 16px 16px">与已撤掉的常驻子 agent 的区别：delegate 是<b>一次性</b>的 ——
+        带预算与工具白名单跑完就退，父代理只收结果，不接力多轮（delegate_tool_dispatch / _progress 一族）。
+        进度为 mock（B 批才起真子进程）。</div>
+    </div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-dlact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.dlact, id = b.dataset.id;
+    if (act === 'spawn') {
+      const task = (pane.querySelector('#dlTask').value || '').trim();
+      const budget = Math.max(0, parseInt(pane.querySelector('#dlBudget').value, 10) || 0);
+      const tools = [...pane.querySelectorAll('[data-dlt]')].filter(c => c.checked).map(c => c.dataset.dlt);
+      if (!task) return toast('先写任务描述');
+      if (budget < 500) return toast('预算太小：至少 500 tokens');
+      if (!tools.length) return toast('至少选一个工具');
+      const isolate = pane.querySelector('#dlIso').checked;
+      const d = { id: hNewId('dl'), task, budget, tools, isolate,
+        status: 'running', steps: [], tokensUsed: 0, result: '', created: Date.now() };
+      list.unshift(d); hSave(); renderHermes(); renderHermesNav();
+      toast(`已委派（隔离=${isolate ? 'on' : 'off'} · 预算 ${budget} · 白名单 ${tools.length} 个）`);
+      // mock 进度：3 步，每步消耗 tokens；中断（status≠running）时自然停
+      const stepTexts = [`分析任务：${task.slice(0, 30)}`, `调用白名单工具：${tools.slice(0, 3).join(' → ')}`, '汇总结果并退出'];
+      let i = 0;
+      const adv = () => {
+        const live = H0.delegates.find(x => x.id === d.id);
+        if (!live || live.status !== 'running') return;
+        if (i < stepTexts.length) {
+          live.steps.push(stepTexts[i]);
+          live.tokensUsed = Math.min(live.budget, live.tokensUsed + 900 + Math.floor(Math.random() * 1400));
+          i++; hSave();
+          if (typeof hermesView !== 'undefined' && hermesView === 'delegates') renderHermes();
+          setTimeout(adv, 700);
+        } else {
+          live.status = 'done';
+          live.result = `完成：${live.task.slice(0, 36)}（用 ${live.tokensUsed}/${live.budget} tokens${live.isolate ? ' · 上下文隔离' : ''}）`;
+          hSave();
+          if (typeof hermesView !== 'undefined' && hermesView === 'delegates') renderHermes();
+          toast(`子代理完成：${escapeHtml(live.task.slice(0, 24))}…`);
+        }
+      };
+      setTimeout(adv, 700);
+      return;
+    }
+    const d = list.find(x => x.id === id); if (!d) return;
+    if (act === 'stop') { d.status = 'failed'; d.result = `已中断（用了 ${d.tokensUsed}/${d.budget} tokens）`;
+      hSave(); renderHermes(); toast('已中断（部分步骤保留在卡上）'); return; }
+    if (act === 'del') { H0.delegates = list.filter(x => x.id !== id); hSave(); renderHermes(); toast('已移除'); return; }
   });
 }
 
