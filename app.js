@@ -1518,9 +1518,11 @@ function openConvCardMenu(item, scope, anchor, xy) {
     <button data-act="delete" class="danger">删除对话</button>`;
   $$('button', m).forEach(b => b.onclick = () => convCardMenuAction(b.dataset.act));
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
-  const left = xy ? xy.x : (r ? r.left : 100), top = xy ? xy.y : (r ? r.bottom + 4 : 100);
-  m.hidden = false;
-  placeMenu(m, left, top);
+  // §50 规范 §四：带锚点的菜单一律贴上方（placeMenuAbove：上放不下自动翻下且不盖锚点）；
+  // 右键（xy）保持光标处。老的 bottom+4 在菜单超高时被 placeMenu 上提，实测盖住 ⋯ 400px²（D82）。
+  if (xy) { m.hidden = false; placeMenu(m, xy.x, xy.y); }
+  else if (r) { placeMenuAbove(m, r.left, r.top, r.bottom); }
+  else { m.hidden = false; placeMenu(m, 100, 100); }
 }
 /// 「复制 ›」的二级菜单（四项都收在这里，别在两处重复出现）
 function openConvCopyMenu() {
@@ -9688,7 +9690,7 @@ function hermesRoomsHTML(pane) {
 
   const left = `<div class="hcol" style="width:230px;flex:0 0 230px">
       <div class="hcol-head">房间<span style="margin-left:auto"></span>
-        <button class="hbtn" data-hact="new-room" style="padding:3px 9px">＋ 新建群聊</button></div>
+        <button class="hbtn primary" data-hact="new-room">＋ 新建群聊</button></div>
       <div class="hcol-body">${rooms.length ? rooms.map(r => `
         <div class="hitem${r.id === H0.activeRoom ? ' is-on' : ''}" data-room="${r.id}">
           <span class="dot" style="background:${r.disbanded_at ? '#6B7280' : '#22C55E'}"></span>
@@ -9728,12 +9730,12 @@ function hermesRoomsHTML(pane) {
 
     right = `<div class="hcol" style="width:250px;flex:0 0 250px">
       <div class="hcol-head">成员 <span class="hsub">（${room.members.length}/${H_MAX_DISC}）</span>
-        <span style="margin-left:auto"></span><button class="hbtn" data-hact="edit-members" style="padding:3px 9px">编辑</button></div>
+        <span style="margin-left:auto"></span><button class="hbtn" data-hact="edit-members">编辑</button></div>
       <div class="hcol-body">
         ${room.members.map((m, i) => `<div class="hitem" style="cursor:default">
             <span class="hchip on">@${escapeHtml(m.handle)}</span>
             <span style="min-width:0;overflow:hidden">${escapeHtml(hProfileName(m.profile))}</span>
-            <button class="hbtn ghost" data-hrm="${i}" title="移出" style="padding:0 6px;margin-left:auto">×</button>
+            <button class="hbtn ghost sm" data-hrm="${i}" title="移出" style="margin-left:auto">×</button>
           </div>`).join('') || '<div class="hempty">无成员</div>'}
         <div class="hsec">房间属性</div>
         <div class="hnote">成员上限 ${H_MAX_MEMBERS} · 活跃房间上限 ${H_MAX_ROOMS}<br>
@@ -11357,6 +11359,11 @@ function hermesChannelsHTML(pane) {
           <select id="hoTarget"><option value="feishu">飞书</option><option value="telegram">Telegram</option>
             <option value="discord">Discord</option><option value="slack">Slack</option></select>
           <button class="hbtn primary" id="hoGo">交接</button>
+          <button class="hbtn danger" id="hoUndo"${(() => {
+            const id = (S.activePlan && S.activePlan !== 'default') ? S.activePlan : ((S.plans.find(x => !x.isGroup) || {}).id);
+            const c = id ? S.plans.find(x => x.id === id) : null;
+            return c && c.handoff ? '' : ' hidden';
+          })()}>撤销交接</button>
         </div></div></div>
       <div class="hgw-note">协议层与真凭证属 B 批（真 WebSocket / 长轮询 / 扫码端点）—— 本页的注入与建号向导
         <b>网络全部 mock</b>，但请求/响应形状照 <code>adapter.py</code> 的端点与字段（§4.2 步骤行号写在步骤里）。</div>
@@ -11373,6 +11380,16 @@ function hermesChannelsHTML(pane) {
     H0.handoffs[conv.id] = conv.handoff;
     hSave(); renderHermes(); renderNav();
     toast(`「${escapeHtml(conv.title)}」→ <b>${escapeHtml(hHandoffLabel(target))}</b>（handoff_state=done · 侧栏行已带徽标）`);
+  };
+  const hoUndo = pane.querySelector('#hoUndo');
+  if (hoUndo) hoUndo.onclick = () => {
+    const id = (S.activePlan && S.activePlan !== 'default') ? S.activePlan : (S.plans.find(x => !x.isGroup) || {}).id;
+    const conv = id ? (S.plans.find(x => x.id === id) || null) : null;
+    if (!conv || !conv.handoff) { toast('当前会话没有交接标记'); return; }
+    const was = hHandoffLabel(conv.handoff.platform);
+    delete conv.handoff; delete H0.handoffs[conv.id];
+    hSave(); renderHermes(); renderNav();
+    toast(`已撤销交接（原 → ${escapeHtml(was)}），会话回到本机`);
   };
   // ── §48 注入入站消息（mock，形状照真源码）──
   pane.querySelectorAll('[data-chact="inject"]').forEach(b => b.onclick = () => {
@@ -11399,7 +11416,7 @@ function hFeishuWizardHTML(fs) {
       ${step(2, '轮询取凭证')}<span>→</span>${step(3, '校验 bot')}<span>→</span>${step(4, '接入配置')}
       <span style="flex:1"></span>
       <span class="qe-state ${fs.err ? 'err' : s >= 4 ? 'ok' : 'off'}">${fs.err ? escapeHtml(fs.err) : (s >= 4 ? '✓ 已就绪' : H_FS_STEP[s])}</span>
-      ${s > 0 ? '<button class="hbtn" data-chact="fsreset" style="padding:3px 9px">重来</button>' : ''}</div>
+      ${s > 0 ? '<button class="hbtn sm" data-chact="fsreset">重来</button>' : ''}</div>
     <div class="hfs-body">
       ${s === 0 ? `入口 <code>hermes gateway setup</code> → 飞书 → <b>“Scan QR code to create a new bot automatically (recommended)”</b>
           （adapter.py:4361-4364）。端点 <code>POST accounts.feishu.cn/oauth/v1/app/registration</code>（:203-208）。`
@@ -11434,7 +11451,7 @@ function hFeishuWizardHTML(fs) {
             <label>群策略 FEISHU_GROUP_POLICY=<select data-fs="gp" style="background:#161B20;color:#C7D2DA;border-radius:7px;padding:3px 7px;border:1px solid #333A41">
               <option value="open"${fs.groupPolicy === 'open' ? ' selected' : ''}>open（只在被 @ 时响应）</option>
               <option value="closed"${fs.groupPolicy === 'closed' ? ' selected' : ''}>closed</option></select></label>
-            <button class="hbtn" data-chact="fsmanual" style="padding:4px 10px">改用手输 App ID / Secret</button>
+            <button class="hbtn" data-chact="fsmanual">改用手输 App ID / Secret</button>
           </div>`}
     </div>
     ${s === 4 ? `<div class="hrow" style="margin-top:9px"><span class="qe-hint">事件订阅（:1429-1444，WS 模式无需在平台配回调）：</span>
@@ -11743,7 +11760,8 @@ function hermesSkillsHTML(pane) {
             ${sk.description ? escapeHtml(sk.description) : '<span style="color:#FDE68A">⚠ 缺 description</span>'}
             <br><span style="color:var(--ink3);font-size:11px">最后使用：${sk.lastUsedAt ? new Date(sk.lastUsedAt).toLocaleDateString() : '—'} · 来源 ${escapeHtml(sk.source || 'local')}</span></div>
           <div class="hgw-ops">
-            <button class="hbtn" data-skact="use" data-id="${sk.id}">引用一次（[SKILL:]）</button>
+            <button class="hbtn ghost sm" data-skact="editdesc" data-id="${sk.id}">编辑描述</button>
+            <button class="hbtn" data-skact="use" data-id="${sk.id}"${sk.state === 'archived' ? ' disabled' : ''}>引用一次（[SKILL:]）</button>
             ${sk.state === 'archived'
               ? `<button class="hbtn" data-skact="restore" data-id="${sk.id}">恢复</button>`
               : `<button class="hbtn" data-skact="archive" data-id="${sk.id}">归档</button>`}
@@ -11809,6 +11827,15 @@ function hermesSkillsHTML(pane) {
       toast(`[SKILL:${escapeHtml(sk.name)}] → 正文已注入本轮（usage=${sk.usage}）`); return; }
     if (act === 'archive') { sk.state = 'archived'; hSave(); renderHermes(); renderHermesNav(); toast('已归档'); return; }
     if (act === 'restore') { sk.state = 'active'; hSave(); renderHermes(); renderHermesNav(); toast('已恢复 active'); return; }
+    if (act === 'editdesc') {
+      askModal({ title: `编辑描述 — ${sk.name}`,
+        text: 'frontmatter 的 description（linter 报「缺 description」就是补这里）',
+        value: sk.description || '', okText: '保存', onOk: v => {
+          sk.description = String(v || '').trim(); hSave(); renderHermes();
+          toast('描述已保存（SKILL.md frontmatter 已更新）');
+        } });
+      return;
+    }
     if (act === 'view') { askModal({ title: `SKILL.md — ${sk.name}`, text: hSkillFrontmatter(sk), okText: '关闭' }); return; }
     if (act === 'del') { confirmModal({ title: '删除技能', text: `将删除 ${sk.name}（含正文）`, okText: '删除',
       onOk: () => { H0.skills = H0.skills.filter(x => x.id !== id); hSave(); renderHermes(); renderHermesNav(); toast('已删除'); } }); return; }
@@ -11844,6 +11871,7 @@ function hermesCronHTML(pane) {
               → 下次 ${fmt(j.nextRun)} · 上次 ${fmt(j.lastRun)} · 已跑 ${j.runs} 次 · 投递 ${escapeHtml(j.target)}</div></div>
           <div class="ct">
             <button class="hbtn primary" data-cjact="run" data-id="${j.id}">立即触发</button>
+            <button class="hbtn" data-cjact="edit" data-id="${j.id}">编辑</button>
             <button class="hbtn" data-cjact="toggle" data-id="${j.id}">${j.enabled ? '停用' : '启用'}</button>
             <button class="hbtn danger" data-cjact="del" data-id="${j.id}">删除</button>
           </div></div>`).join('') || '<div class="hset"><div class="tx"><div class="ds">还没有定时任务。</div></div></div>'}</div>
@@ -11879,6 +11907,20 @@ function hermesCronHTML(pane) {
       j.runs++; j.lastRun = Date.now(); j.nextRun = hcScheduleNext(j.schedule);
       hSave(); renderHermes(); renderHermesNav();
       toast(`⏰ 「${escapeHtml(j.name)}」已触发 → 投递到 ${escapeHtml(j.target)}（mock）· 下次 ${new Date(j.nextRun).toLocaleString()}`);
+      return;
+    }
+    if (act === 'edit') {
+      askModal({ title: '编辑任务', text: '格式：任务名|schedule（如 每晚总结|every 6h）',
+        value: `${j.name}|${j.schedule}`, okText: '保存', onOk: v => {
+          const [nm, sc] = String(v || '').split('|');
+          const name = (nm || '').trim(), schedule = (sc || '').trim();
+          if (!name || !schedule) { toast('两个字段都要填'); return false; }
+          const r = hcParseSchedule(schedule);
+          if (!r.ok) { toast('schedule 不合法：' + r.err); return false; }
+          j.name = name; j.schedule = schedule; j.nextRun = r.next;
+          hSave(); renderHermes(); renderHermesNav();
+          toast(`已更新「${escapeHtml(name)}」→ 下次 ${new Date(r.next).toLocaleString()}`);
+        } });
       return;
     }
     if (act === 'toggle') { j.enabled = !j.enabled;
@@ -12069,8 +12111,8 @@ function hermesToolsHTML(pane) {
       out.innerHTML = hits.length
         ? `<b>tool_search → ${hits.length} 个匹配</b>（单次上限 7 组查询，tool_search.py:31）：<br>` +
           hits.slice(0, 7).map(t => `• <code>${escapeHtml(t.n)}</code> <span style="opacity:.75">（${t.g === 'core' ? '核心' : 'MCP'}）</span>
-            <button class="hbtn ghost" data-tsact="describe" data-n="${escapeHtml(t.n)}" style="padding:1px 8px;font-size:11px">describe</button>
-            <button class="hbtn ghost" data-tsact="call" data-n="${escapeHtml(t.n)}" style="padding:1px 8px;font-size:11px">call</button>
+            <button class="hbtn ghost sm" data-tsact="describe" data-n="${escapeHtml(t.n)}">describe</button>
+            <button class="hbtn ghost sm" data-tsact="call" data-n="${escapeHtml(t.n)}">call</button>
             <span data-tsout="${escapeHtml(t.n)}"></span>`).join('<br>')
         : `0 个匹配「${escapeHtml(q)}」。`;
       out.querySelectorAll('[data-tsact]').forEach(btn => btn.onclick = () => {
@@ -12151,7 +12193,8 @@ function hermesDelegatesHTML(pane) {
           <button class="hbtn primary" data-dlact="spawn">委派</button>
         </div>
       </div></div>
-      <div class="hset-sec">子代理列表（${list.length}）</div>
+      <div class="hset-sec">子代理列表（${list.length}）
+        <span style="float:right"><button class="hbtn primary sm" data-dlact="add">＋ 添加子代理</button></span></div>
       <div class="hgw" style="padding:0 16px 16px">${list.map(d => `
         <div class="hgw-card${d.status === 'running' ? ' is-primary' : ''}">
           <div class="hgw-top"><span class="hgw-label">${escapeHtml(d.task.slice(0, 40))}${d.task.length > 40 ? '…' : ''}</span>
@@ -12171,6 +12214,11 @@ function hermesDelegatesHTML(pane) {
   hBindCommon(pane);
   pane.querySelectorAll('[data-dlact]').forEach(b => b.onclick = () => {
     const act = b.dataset.dlact, id = b.dataset.id;
+    if (act === 'add') {
+      const t = pane.querySelector('#dlTask');
+      if (t) { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(() => t.focus(), 250); }
+      return;
+    }
     if (act === 'spawn') {
       const task = (pane.querySelector('#dlTask').value || '').trim();
       const budget = Math.max(0, parseInt(pane.querySelector('#dlBudget').value, 10) || 0);

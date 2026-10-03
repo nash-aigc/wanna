@@ -2338,6 +2338,24 @@ That plist is now a **first-run seed only**. The first time the app starts with 
 
 The recommended way to configure the app is the notch sheet's 设置 (hover or click the notch pill, then 设置 in the sidebar). Both write the same stores: It writes `~/Library/Application Support/Wanna/ModelConfiguration.json` and `~/Library/Application Support/Wanna/AppSettings.json`, both with `0600` permissions, and both take effect immediately — no restart, no rebuild.
 
+## ⛔ 原型 UI 风格强制规范（2026-10-03 用户定，改任何原型 UI 前必读）
+
+> 用户原话：「没有的话提取成文件，然后写入 claude.md」「我不希望再看到（UI风格不统一）」
+> 「不希望看到任何的按钮的弹窗 or 菜单位置错误」「你自己应该独立考虑，而不是所有功能全部让我教会你」。
+
+**唯一真相文件：`设计框架/03-原型UI风格规范.md`。** 动 `app.css` / `app.js` 里任何按钮、颜色、
+菜单、下拉、设置行之前**必须先读它**；与它冲突的写法一律改到合规。四条铁律：
+
+1. **按钮只有 `.hbtn` 家族**（基础/primary/ghost/danger/sm，全尺寸 32px），颜色只从 tokens 取
+   （accent 蓝=操作与选中、grad=主 CTA、focus 琥珀=悬停焦点环、red=danger）——
+   ⛔ 禁止 inline `style="padding…"` 按钮、禁止裸配色、禁止第三种蓝（D80 教训）。
+2. **锚点菜单只许走 `showMenu`**（贴上方、放不下翻下）——任何浮层打开后与触发它的元素
+   **矩形不相交**（§35.11 用户点名过两次的坑）。
+3. **每批判据必带两条样式断言**：按钮实高 ≥30px + primary 用渐变/accent；菜单与锚点不相交。
+4. **功能完整性自己查**（规范文件第六节清单）：列表有无添加入口、报错有无修复入口、
+   打标有无撤销、增删之外有无改、mock 有无标注——不许等用户来教。
+
+
 ## Code Style & Conventions
 
 ### Variable and Method Naming

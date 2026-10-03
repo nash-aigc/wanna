@@ -1122,7 +1122,7 @@ body[data-style="contrast"]{
 .tv-item .fico{width:16px;height:16px;flex:0 0 16px;font-size:8px;line-height:16px}
 /* §21.4 菜单可能比一屏还高（标签菜单 18 项）—— 给它封顶并自己滚，
    否则贴边之后最后几项仍在屏幕外，点不到 */
-.menu{max-height:calc(100vh - 16px);overflow:auto}
+.menu{max-height:55vh;overflow:auto}   /* §50：限高保证贴上方/翻下都能整块放下 → 与锚点恒不相交 */
 
 /* §22.9.7 终端面板（＋→终端 / Claude Code / Pi / 快捷指令的「终端」动作都用它） */
 .term-panel{position:absolute;left:0;right:0;bottom:0;height:46%;z-index:30;
@@ -2290,13 +2290,23 @@ body.finder-on .finder-pane{position:relative}
 .hbar .htitle{font-size:14px;font-weight:600;color:var(--ink,#EDEEF0)}
 .hbar .hsub{font-size:11.5px;color:var(--ink3,#8A8F96)}
 .hbar .spacer{flex:1}
+/* §50 规范化（设计框架/03-原型UI风格规范.md §二）：全尺寸 32px · 主 CTA=渐变 · 只有 .sm 一个例外 */
 .hbtn{border:1px solid var(--line,#2A2E33);background:var(--surface2,#1B1F23);color:var(--ink,#EDEEF0);
-  font-size:12.5px;padding:5px 11px;border-radius:8px;cursor:pointer}
-.hbtn:hover{border-color:var(--focus,#3B82F6);background:#232830}
-.hbtn.primary{background:var(--focus,#2563EB);border-color:transparent;color:#fff}
-.hbtn.ghost{background:transparent}
-.hbtn[disabled]{opacity:.4;cursor:default}
-.hbtn.danger{color:#F87171;border-color:rgba(248,113,113,.4)}
+  font-size:13px;font-weight:500;padding:6px 16px;border-radius:9px;cursor:pointer;line-height:18px;
+  min-height:32px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  transition:background .14s,border-color .14s,filter .14s}
+.hbtn:hover{border-color:rgba(10,132,255,.55);background:#232830}
+.hbtn.primary{background:var(--grad);border-color:transparent;color:#fff;font-weight:600;
+  box-shadow:0 2px 8px rgba(10,132,255,.28)}
+.hbtn.primary:hover{filter:brightness(1.1);background:var(--grad);border-color:transparent}
+.hbtn.ghost{background:transparent;border-color:transparent;color:var(--ink2,#B5B5BC);box-shadow:none}
+.hbtn.ghost:hover{background:rgba(255,255,255,.07);border-color:transparent;color:var(--ink)}
+.hbtn.danger{color:#FF9B9B;border-color:rgba(255,107,107,.45);background:rgba(255,107,107,.16);box-shadow:none}
+.hbtn.danger:hover{background:rgba(255,107,107,.26);border-color:rgba(255,107,107,.7);color:#FFC2C2}
+.hbtn[disabled]{opacity:.45;cursor:default}
+.hbtn[disabled]:hover{border-color:var(--line,#2A2E33);background:var(--surface2,#1B1F23)}
+.hbtn.sm{min-height:26px;padding:3px 10px;font-size:12px;border-radius:7px;font-weight:400}
+.hbtn.primary.sm{box-shadow:none}
 .hbody{flex:1;min-height:0;display:flex;overflow:hidden}
 .hcol{min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .hcol + .hcol{border-left:1px solid var(--line,#26292C)}
@@ -2483,7 +2493,7 @@ body.finder-on .finder-pane{position:relative}
 .hgw-fields{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:9px;font-size:11.5px;color:#9FB0B8;
   font-family:var(--mono,monospace)}
 .hgw-fields b{color:var(--ink3,#8A8F96);font-weight:400;font-family:inherit;margin-right:5px}
-.hgw-ops{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+.hgw-ops{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;align-items:center}
 .hgw-note{font-size:11.5px;color:var(--ink3,#8A8F96);line-height:1.75;padding:2px 14px 0}
 
 /* ══ §46 Hermes 第三批：快捷输入 · 渠道 · 飞书一键建 bot ══ */
@@ -2555,10 +2565,8 @@ body.finder-on .finder-pane{position:relative}
    select 一律去原生（appearance:none + 自绘箭头）。任何页不许再出现原生白底 select /
    裸 checkbox 行 / 只给这一页用的按钮颜色。 */
 
-/* 主按钮 = --accent 蓝（qsp-btn.primary / btn-primary 同一语言；var(--focus) 是琥珀
-   焦点色，管"焦点/高亮"，不管"主操作"—— §44 把 primary 挂到 focus 上是错的） */
-.hbtn.primary{background:var(--accent,#0A84FF);border-color:transparent;color:#fff}
-.hbtn.primary:hover{background:#2592FF;border-color:transparent;color:#fff}
+/* 主按钮 = --grad 主 CTA 渐变（§50 规范 §二；D80 曾错挂 --focus 琥珀，已废除该路径） */
+.hbtn.primary{background:var(--grad);border-color:transparent;color:#fff}
 .hbtn.ghost{background:transparent}
 
 /* select 去原生：深色底 + 自绘 chevron（macOS 原生 select 在深色页上是系统灰白按钮，
@@ -2621,7 +2629,7 @@ body.finder-on .finder-pane{position:relative}
   font-weight:700;opacity:0;transition:opacity .14s}
 .hmode-card.is-on .tick{opacity:1}
 /* 模式卡下方的操作行（保存到下次重启 / 保存并重连 —— 右对齐，照真图） */
-.hmode-ops{display:flex;justify-content:flex-end;gap:10px;padding:10px 16px 4px}
+.hmode-ops{display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:10px 16px 4px}
 
 /* 提供方页左子导航（照真图侧栏「提供方 › 账号/API 密钥/自定义端点/本地模型」的层级） */
 .hside{display:flex;flex-direction:column;gap:2px}
