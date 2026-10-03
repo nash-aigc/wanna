@@ -2349,7 +2349,8 @@ The recommended way to configure the app is the notch sheet's 设置 (hover or c
 1. **按钮只有 `.hbtn` 家族，且它是顶栏 `.btn` 的镜像**（27px / 12.5px / radius8 / 深底 #1A1A1C +
    line2 边；primary=accent 实心；danger=红字不红块；.sm=23px）——
    ⛔ **永久禁止：渐变按钮、投影按钮、红底色块 danger、32px 胖按钮、inline padding、裸配色**
-   （用户 2026-10-03 两次点名「不符合 wanna 的按钮，以后也禁止」）。
+   （用户 2026-10-03 两次点名「不符合 wanna 的按钮，以后也禁止」）。多选/行内开关用
+   **`.hchk` 按钮**（is-on=accent 浅底+✓，同 finder-toggle 惯例），⛔ Hermes 页禁裸 checkbox）。
 2. **锚点菜单只许走 `showMenu`**（贴上方、放不下翻下），且 `.menu` z-index 必须**高于一切
    常驻浮层**（现 340；曾因 80 被 qe-bar 320 盖住）——菜单打开后与锚点矩形不相交、
    `elementFromPoint(菜单首项中心)` 必须命中菜单本身（§35.11 + D83）。

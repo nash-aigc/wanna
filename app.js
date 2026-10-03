@@ -10069,9 +10069,7 @@ function hermesArchivedHTML(pane) {
           <div class="hcol-head">自动归档设置</div>
           <div class="hcol-body">
             <div class="hform">
-              <label class="hrow" style="flex-direction:row;align-items:center;gap:8px">
-                <input type="checkbox" id="hAutoArc" ${H0.cfg.autoArchive ? 'checked' : ''} style="width:auto">
-                <span>sessions.auto_archive（默认 false）</span></label>
+              <button type="button" class="hchk${H0.cfg.autoArchive ? ' is-on' : ''}" id="hAutoArc">sessions.auto_archive（默认 false）</button>
               <label>空闲天数 sessions.auto_archive_days
                 <input type="number" id="hAutoDays" min="1" max="90" value="${H0.cfg.autoArchiveDays}"></label>
               <label>分发间隔 dispatch_interval_seconds（0=关）
@@ -10122,7 +10120,14 @@ function hermesArchivedHTML(pane) {
   if (scan) scan.onclick = () => { const n = hAutoArchiveScan(); renderHermes(); renderNav(); toast(n ? `自动归档了 ${n} 个` : '没有可自动归档的（开关关着 / 没有超期 / 置顶豁免）'); };
   const bind = (id, key, num) => { const el = pane.querySelector(id); if (!el) return;
     el.onchange = () => { H0.cfg[key] = num ? Math.max(0, parseInt(el.value, 10) || 0) : el.checked; hSave(); renderHermes(); }; };
-  bind('#hAutoArc', 'autoArchive', false); bind('#hAutoDays', 'autoArchiveDays', true);
+  const hArc = pane.querySelector('#hAutoArc');
+  if (hArc) hArc.onclick = () => {
+    const on = !hArc.classList.contains('is-on');
+    hArc.classList.toggle('is-on', on);
+    H0.cfg.autoArchive = on; hSave();
+    toast(on ? '自动归档已开（空闲超期且非置顶才归）' : '自动归档已关');
+  };
+  bind('#hAutoDays', 'autoArchiveDays', true);
   bind('#hDispInt', 'dispatchInterval', true); bind('#hFailLim', 'failureLimit', true);
   // §49 轨迹实验室
   pane.querySelectorAll('[data-tjact]').forEach(b => b.onclick = () => {
@@ -11235,8 +11240,7 @@ function hermesQuickEntryHTML(pane) {
     + `<div class="hbody" style="flex-direction:column;overflow:auto">
       <div class="qe-set">
         <div class="hrow">
-          <label class="hrow" style="gap:7px"><input type="checkbox" id="qeEnabled" ${q.enabled ? 'checked' : ''}>
-            启用快捷输入</label>
+          <button type="button" class="hchk${q.enabled ? ' is-on' : ''}" id="qeEnabled">启用快捷输入</button>
           <span class="qe-state ${stateCls}">${stateTxt}</span>
           <span style="flex:1"></span>
           <span class="qe-hint" style="font-size:11.5px;color:#6B7680">页面内唤起：按下面这个组合（真·全局热键属 B 批，Swift 期用 RegisterEventHotKey + NSPanel）</span>
@@ -11272,7 +11276,11 @@ function hermesQuickEntryHTML(pane) {
       </div></div>`;
   hBindCommon(pane);
   const en = pane.querySelector('#qeEnabled');
-  en.onchange = () => { q.enabled = en.checked; save(true); hermesQuickEntryHTML(pane); };
+  en.onclick = () => {
+    q.enabled = !en.classList.contains('is-on');
+    save(true); hermesQuickEntryHTML(pane);
+    toast(q.enabled ? '快捷输入已启用' : '快捷输入已关闭（disabled 从不注册）');
+  };
   pane.querySelector('#qeRec').onclick = () => { q.hkRecording = !q.hkRecording; save(true); hermesQuickEntryHTML(pane);
     if (q.hkRecording) toast('按新的组合键完成录制 · Esc 取消'); };
   pane.querySelector('#qeReset').onclick = () => { q.shortcut = QE_DEFAULT; q.hkRecording = false; save(true);
@@ -12182,13 +12190,11 @@ function hermesDelegatesHTML(pane) {
         <label>任务描述<textarea id="dlTask" rows="2" placeholder="例：把这 5 个文件按类型分到子目录"></textarea></label>
         <div class="hrow">
           <span class="hsub" style="flex:0 0 auto">工具白名单：</span>
-          ${TOOL_CHOICES.map(t => `<label class="hrow" style="gap:4px;font-size:12px;color:var(--ink2)">
-            <input type="checkbox" data-dlt="${t}" ${['point', 'click', 'run'].includes(t) ? 'checked' : ''}> ${t}</label>`).join('')}
+          ${TOOL_CHOICES.map(t => `<button type="button" class="hchk${['point', 'click', 'run'].includes(t) ? ' is-on' : ''}" data-dlt="${t}">${t}</button>`).join('')}
         </div>
         <div class="hrow">
           <label class="hrow" style="gap:6px">预算 tokens <input type="number" id="dlBudget" value="8000" min="500" max="100000" style="width:110px"></label>
-          <label class="hrow" style="gap:8px"><span>上下文隔离（父代理只收结果）</span>
-            <label class="hsw"><input type="checkbox" id="dlIso" checked><span class="tr"><span class="kb"></span></span></label></label>
+          <button type="button" class="hchk is-on" id="dlIso">上下文隔离（父代理只收结果）</button>
           <span style="flex:1"></span>
           <button class="hbtn primary" data-dlact="spawn">委派</button>
         </div>
@@ -12212,6 +12218,10 @@ function hermesDelegatesHTML(pane) {
         进度为 mock（B 批才起真子进程）。</div>
     </div>`;
   hBindCommon(pane);
+  // §52：白名单与隔离 = 按钮式（.hchk），点击只切 is-on，不整页重绘
+  pane.querySelectorAll('[data-dlt]').forEach(b => b.onclick = () => b.classList.toggle('is-on'));
+  const isoBtn = pane.querySelector('#dlIso');
+  if (isoBtn) isoBtn.onclick = () => isoBtn.classList.toggle('is-on');
   pane.querySelectorAll('[data-dlact]').forEach(b => b.onclick = () => {
     const act = b.dataset.dlact, id = b.dataset.id;
     if (act === 'add') {
@@ -12222,11 +12232,11 @@ function hermesDelegatesHTML(pane) {
     if (act === 'spawn') {
       const task = (pane.querySelector('#dlTask').value || '').trim();
       const budget = Math.max(0, parseInt(pane.querySelector('#dlBudget').value, 10) || 0);
-      const tools = [...pane.querySelectorAll('[data-dlt]')].filter(c => c.checked).map(c => c.dataset.dlt);
+      const tools = [...pane.querySelectorAll('[data-dlt].is-on')].map(c => c.dataset.dlt);
       if (!task) return toast('先写任务描述');
       if (budget < 500) return toast('预算太小：至少 500 tokens');
       if (!tools.length) return toast('至少选一个工具');
-      const isolate = pane.querySelector('#dlIso').checked;
+      const isolate = pane.querySelector('#dlIso').classList.contains('is-on');
       const d = { id: hNewId('dl'), task, budget, tools, isolate,
         status: 'running', steps: [], tokensUsed: 0, result: '', created: Date.now() };
       list.unshift(d); hSave(); renderHermes(); renderHermesNav();
