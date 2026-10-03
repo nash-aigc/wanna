@@ -101,3 +101,6 @@ Clone_From/
 # 注意：**Wanna录音/ Wanna图形/ Wanna复盘/ WannaAgents/ 不在这里** ——
 # 它们是代码写死了路径的运行时数据，归 C 节，移动即坏。
 .cache/
+
+# §60 模型页 API Key 预置（明文密钥不进 git；页面运行时 fetch 同目录此文件）
+model-keys.local.json

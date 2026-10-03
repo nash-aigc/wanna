@@ -6412,6 +6412,7 @@ function monitorCountdowns() {
 /// 监控模式开关 —— 左栏：搜索+项目/默认列表 ⇄ 监控选项；右栏：编辑区+对话+分隔+右 rail
 /// 全部换成监控页；nav-quick（设置/历史/添加/角色/录音）原样保留（你点名的"设置部分保留不变"）
 function setMonitorMode(on) {
+  if (on && typeof modelView !== 'undefined' && modelView) setModelView(null);        // §60 与模型页互斥
   if (on && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);   // §34 两个独立页互斥
   monitorOpen = on;
   document.querySelectorAll('#navQuick button[data-q="monitor"]')
@@ -6706,6 +6707,7 @@ function fpGroupValue(entry, g) {
 }
 
 function setFinderOpen(on) {
+  if (on && typeof modelView !== 'undefined' && modelView) setModelView(null);  // §60 与模型页互斥
   if (on && monitorOpen) setMonitorMode(false);          // 两个独立页互斥
   finderOpen = on;
   S.finderOpen = on; save(true);
@@ -9584,6 +9586,7 @@ function setHermesView(v) {
   if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);   // 与访达互斥
   if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
   if (v && typeof wikiView !== 'undefined' && wikiView) setWikiView(null);          // §53 与知识库互斥
+  if (v && typeof modelView !== 'undefined' && modelView) setModelView(null);        // §60 与模型页互斥
   hermesView = v;
   const on = !!v;
   ['.workspace', '.chat', '.split-v', '.split-h', '#railRight', '#panelSide', '#panelAutomation', '#tabsVertical']
@@ -12372,6 +12375,7 @@ function wikiOwnerLabel() {
 }
 
 function setWikiView(v) {
+  if (v && typeof modelView !== 'undefined' && modelView) setModelView(null);  // §60 与模型页互斥
   if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);
   if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
   if (v && hermesView) {                       // 与 Hermes 互斥（不走 setHermesView(null) 免得闪一下工作区）
@@ -13736,5 +13740,459 @@ function wikiGraphHTML(pane) {
   wgBindCanvas(pane);
   wikiGraphStatsRefresh();
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   §60 「模型」页 —— 火山方舟 / 阿里百炼 / MiniMax 全模型目录
+   · 数据：models-catalog.json（scripts/build-models-catalog.py 生成，纯文档整理）
+   · 顶部三把 API Key 输入框（localStorage + model-keys.local.json 预置，不进 git）
+   · ⛔ 页面与代码生成全程**不调用任何模型 API**（用户明令：测一次太贵）
+   · 每卡三颗复制：模型ID / 文档地址 / 完整实现代码；点卡进详情可自定义参数
+   ══════════════════════════════════════════════════════════════════════ */
+let modelView = null;                 // null | 'catalog'
+let MC = null;                        // models-catalog.json
+const mcState = { vendor: 'all', type: 'all', q: '', sel: null, tab: 'python', edits: {} };
+let mcKeys = { volcano: '', bailian: '', minimax: '' };
+
+function setModelView(v) {
+  if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);
+  if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
+  if (v && typeof hermesView !== 'undefined' && hermesView) {
+    hermesView = null;
+    const hp = $('#hermesPane'); if (hp) hp.hidden = true;
+    renderHermesNav();
+  }
+  if (v && typeof wikiView !== 'undefined' && wikiView) setWikiView(null);
+  modelView = v;
+  const on = !!v;
+  ['.workspace', '.chat', '.split-v', '.split-h', '#railRight', '#panelSide', '#panelAutomation', '#tabsVertical']
+    .forEach(sel => document.querySelectorAll(sel).forEach(el => {
+      if (on) { el.dataset.mHide = '1'; el.style.display = 'none'; }
+      else if (el.dataset.mHide && !el.dataset.wHide && !el.dataset.hHide) { delete el.dataset.mHide; el.style.display = ''; }
+    }));
+  const pane = $('#modelPane');
+  if (pane) pane.hidden = !on;
+  if (on) { modelCatalogHTML(pane); mcEnsureLoaded(); } else renderNav();
+  renderModelNav();
+}
+
+function renderModelNav() {
+  const host = $('#modelList');
+  if (!host) return;
+  const n = MC ? MC.models.length : 0;
+  const rows = [{ v: 'catalog', label: '模型目录', badge: n ? String(n) : '' }];
+  host.innerHTML = rows.map(r => `<div class="plan-row${modelView === r.v ? ' is-on' : ''}" data-mv="${r.v}">
+      <span class="plan-dot" style="background:#7C5CFF"></span><span class="pname">${r.label}</span>
+      ${r.badge ? `<span class="sc" style="margin-left:auto;font-size:10.5px;color:var(--ink3,#8A8F96)">${r.badge}</span>` : ''}
+    </div>`).join('');
+  host.querySelectorAll('[data-mv]').forEach(el => el.onclick = () => setModelView(el.dataset.mv));
+  const sect = $('#btnModelSect');
+  if (sect) sect.classList.toggle('closed', !modelView);
+}
+
+async function mcEnsureLoaded() {
+  if (MC) return;
+  try {
+    const r = await fetch(`models-catalog.json?v=${(document.querySelector('script[src*="app.js"]')?.src.match(/v=(\d+)/) || [])[1] || '62'}`, { cache: 'no-store' });
+    MC = await r.json();
+  } catch (e) { MC = { models: [], types: [], vendors: [], params: {} }; toast('模型目录加载失败'); }
+  try { mcKeys = Object.assign(mcKeys, JSON.parse(localStorage.getItem('wanna-model-keys') || '{}')); } catch (e) {}
+  // 火山 Key 预置（model-keys.local.json，gitignore —— 不测 API，只填输入框）
+  if (!mcKeys.volcano) {
+    try {
+      const kr = await fetch('model-keys.local.json', { cache: 'no-store' });
+      if (kr.ok) {
+        const kj = await kr.json();
+        if (kj.volcano) { mcKeys.volcano = kj.volcano; mcSaveKeys(); }
+      }
+    } catch (e) { /* 没有预置文件就留空，由用户手填 */ }
+  }
+  renderModelNav();
+  if (modelView) modelCatalogHTML($('#modelPane'));
+}
+
+function mcSaveKeys() {
+  try { localStorage.setItem('wanna-model-keys', JSON.stringify(mcKeys)); } catch (e) {}
+}
+function mcKey(v) { return (mcKeys[v] || '').trim() || 'YOUR_API_KEY'; }
+
+/* ── 页面骨架 ─────────────────────────────────────────────────────── */
+function modelCatalogHTML(pane) {
+  if (!pane) return;
+  const keyRow = (MC?.vendors || []).map(v => `
+    <label class="md-key"><span>${escapeHtml(v.name)}</span>
+      <input type="password" id="mkey-${v.id}" placeholder="API Key（只存本机，不发网络）"
+        value="${escapeHtml(mcKeys[v.id] || '')}" autocomplete="off" spellcheck="false">
+      <button class="hbtn sm" data-keyeye="${v.id}" title="显示/隐藏">👁</button>
+    </label>`).join('');
+  pane.innerHTML = `
+    <div class="hbar">
+      <b>模型 · 火山方舟 / 阿里百炼 / MiniMax</b>
+      <span class="hsub">目录与代码全部整理自官方文档 —— <b style="color:#FBBF24">不调用、不测连通性（不产生任何费用）</b></span>
+      <span class="hrow" style="gap:6px"><span id="mdCount" class="hchip"></span></span>
+    </div>
+    <div class="md-keys">${keyRow}</div>
+    <div class="md-filters">
+      <div class="md-frow" id="mdVendorRow"></div>
+      <div class="md-frow" id="mdTypeRow"></div>
+      <input id="mdSearch" class="md-search" placeholder="搜索模型 id / 名称 / 描述…" value="${escapeHtml(mcState.q)}">
+    </div>
+    <div class="md-body">
+      <div class="md-grid" id="mdGrid"></div>
+      <aside class="md-drawer" id="mdDrawer" hidden></aside>
+    </div>`;
+  // 键输入
+  (MC?.vendors || []).forEach(v => {
+    const inp = pane.querySelector(`#mkey-${v.id}`);
+    inp.oninput = () => { mcKeys[v.id] = inp.value.trim(); mcSaveKeys(); if (mcState.sel) mcRenderDrawer(); };
+    pane.querySelector(`[data-keyeye="${v.id}"]`).onclick = e => {
+      e.preventDefault();
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+    };
+  });
+  const chips = (host, list, cur, key) => {
+    host.innerHTML = list.map(x => `<button class="hbtn sm${cur === x.v ? ' primary' : ''}" data-f="${x.v}">${escapeHtml(x.label)}</button>`).join('');
+    host.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { mcState[key] = b.dataset.f; modelCatalogHTML(pane); });
+  };
+  const vRow = pane.querySelector('#mdVendorRow'), tRow = pane.querySelector('#mdTypeRow');
+  vRow.dataset.lbl = '厂商：'; tRow.dataset.lbl = '类型：';
+  chips(vRow,
+    [{ v: 'all', label: '全部厂商' }].concat((MC?.vendors || []).map(v => ({ v: v.id, label: v.name }))),
+    mcState.vendor, 'vendor');
+  chips(tRow,
+    [{ v: 'all', label: '全部类型' }].concat((MC?.types || []).map(t => ({ v: t, label: t }))),
+    mcState.type, 'type');
+  const s = pane.querySelector('#mdSearch');
+  s.oninput = () => { mcState.q = s.value.trim().toLowerCase(); mcRenderGrid(); };
+  mcRenderGrid();
+  if (mcState.sel) mcRenderDrawer();
+}
+
+function mcFiltered() {
+  if (!MC) return [];
+  return MC.models.filter(m => {
+    if (mcState.vendor !== 'all' && m.vendor !== mcState.vendor) return false;
+    if (mcState.type !== 'all' && !(m.types || []).includes(mcState.type)) return false;
+    if (mcState.q) {
+      const hay = `${m.id} ${m.name} ${m.family || ''} ${m.desc || ''} ${(m.variants || []).join(' ')}`.toLowerCase();
+      if (!hay.includes(mcState.q)) return false;
+    }
+    return true;
+  });
+}
+function mcVendorName(id) { return (MC?.vendors || []).find(v => v.id === id)?.name || id; }
+
+function mcRenderGrid() {
+  const grid = document.getElementById('mdGrid');
+  if (!grid) return;
+  const list = mcFiltered();
+  const cnt = document.getElementById('mdCount');
+  if (cnt) cnt.textContent = `${list.length} / ${MC ? MC.models.length : 0} 个模型`;
+  if (!list.length) { grid.innerHTML = `<div class="hsub" style="padding:24px">没有匹配的模型 —— 放宽筛选或清空搜索</div>`; return; }
+  grid.innerHTML = list.map(m => `
+    <div class="md-card${mcState.sel === m.id ? ' is-sel' : ''}" data-mid="${escapeHtml(m.id)}">
+      <div class="md-crow">
+        <span class="md-badge vb-${escapeHtml(m.vendor)}">${escapeHtml(mcVendorName(m.vendor))}</span>
+        ${(m.types || []).map(t => `<span class="md-badge ty">${escapeHtml(t)}</span>`).join('')}
+        ${m.price ? `<span class="md-badge pr">${escapeHtml(m.price)}</span>` : ''}
+      </div>
+      <div class="md-name">${escapeHtml(m.name)}</div>
+      <code class="md-id">${escapeHtml(m.id)}</code>
+      <div class="md-desc">${escapeHtml(m.desc || '')}</div>
+      <div class="md-cbtns">
+        <button class="hbtn sm" data-copy="id" title="复制模型 ID">ID</button>
+        <button class="hbtn sm" data-copy="doc" title="复制官方文档地址">文档</button>
+        <button class="hbtn sm primary" data-copy="code" title="查看并复制完整实现代码">代码</button>
+      </div>
+    </div>`).join('');
+  grid.querySelectorAll('.md-card').forEach(card => {
+    const id = card.dataset.mid;
+    const model = MC.models.find(x => x.id === id);
+    card.querySelector('[data-copy="id"]').onclick = e => { e.stopPropagation(); copyText(model.id, `已复制模型 ID：${model.id}`); };
+    card.querySelector('[data-copy="doc"]').onclick = e => { e.stopPropagation(); copyText(model.docUrl || '', '已复制官方文档地址'); };
+    card.querySelector('[data-copy="code"]').onclick = e => { e.stopPropagation(); mcOpen(id); mcState.tab = 'python'; };
+    card.onclick = () => mcOpen(id);
+  });
+}
+
+function mcOpen(id) {
+  mcState.sel = id;
+  if (!mcState.edits[id]) {
+    const m = MC.models.find(x => x.id === id);
+    const specs = mcSpecs(m);
+    const init = {};
+    specs.forEach(p => { init[p.name] = p.def === null || p.def === undefined ? '' : String(p.def === true ? 'true' : p.def === false ? 'false' : p.def); });
+    mcState.edits[id] = init;
+  }
+  mcRenderGrid();
+  mcRenderDrawer();
+}
+function mcClose() { mcState.sel = null; mcRenderGrid(); const d = document.getElementById('mdDrawer'); if (d) d.hidden = true; }
+
+function mcSpecs(m) {
+  if (!m || !MC) return [];
+  const base = (MC.params && MC.params[`${m.vendor}.${m.kind}`]) || [];
+  return base;
+}
+function mcVals(m) {                 // spec → 当前值（编辑后的字符串）
+  const edits = mcState.edits[m.id] || {};
+  return mcSpecs(m).map(p => ({ p, v: edits[p.name] !== undefined ? edits[p.name] : (p.def === null ? '' : String(p.def)) }));
+}
+function mcLit(p, v) {               // 值 → {t:类型, v:..} ；空 = 不传
+  if (v === '' || v === null || v === undefined) return null;
+  if (p.type === 'number') { const n = Number(v); return Number.isFinite(n) ? { t: 'n', v: n } : null; }
+  if (p.type === 'bool') return { t: 'b', v: v === true || v === 'true' };
+  if (p.type === 'json') { try { return { t: 'j', v: JSON.parse(v) }; } catch (e) { return { t: 's', v: String(v) }; } }
+  return { t: 's', v: String(v) };
+}
+
+/* ── 代码生成（Python / cURL / JavaScript，按 厂商×类型 走各自真实端点）── */
+const MC_CHAT_BASE = {
+  volcano: 'https://ark.cn-beijing.volces.com/api/v3',
+  bailian: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  minimax: 'https://api.minimax.io/v1',
+};
+function mcPyLit(l) {                // Python 字面量
+  if (!l) return null;
+  if (l.t === 'n') return String(l.v);
+  if (l.t === 'b') return l.v ? 'True' : 'False';
+  if (l.t === 'j') return `json.loads(${JSON.stringify(JSON.stringify(l.v))})`;
+  return JSON.stringify(l.v);
+}
+function mcJsonLit(l) {              // JSON/cURL/JS 值
+  if (!l) return undefined;
+  if (l.t === 'n' || l.t === 'b') return l.v;
+  if (l.t === 'j') return l.v;
+  return l.v;
+}
+function mcBody(m, vals) {
+  // 返回 {json: 对象} 或 {form: [[k,v]]}；prompt/text 等输入并入结构
+  const get = n => { const row = vals.find(x => x.p.name === n); return row ? mcLit(row.p, row.v) : null; };
+  const kv = {};
+  for (const row of vals) {
+    if (row.p.name === 'prompt' || row.p.name === 'text' || row.p.name === 'texts' || row.p.name === 'file') continue;
+    const l = mcLit(row.p, row.v);
+    if (l) kv[row.p.name] = mcJsonLit(l);
+  }
+  const promptV = get('prompt'), textV = get('text');
+  if (m.kind === 'chat') {
+    const body = { model: m.id, messages: [{ role: 'user', content: promptV ? promptV.v : '你好' }] };
+    return { json: Object.assign(body, kv) };
+  }
+  if (m.kind === 'image') {
+    const body = { model: m.id, prompt: promptV ? promptV.v : '' };
+    if (m.vendor === 'bailian') return { json: Object.assign({ model: m.id, prompt: body.prompt }, pick(kv, ['size', 'n', 'seed'])), async: true };
+    return { json: Object.assign(body, kv) };
+  }
+  if (m.kind === 'video') {
+    const content = [{ type: 'text', text: promptV ? promptV.v : '' }];
+    if (m.vendor === 'volcano') return { json: Object.assign({ model: m.id, content }, pick(kv, ['duration', 'ratio', 'seed', 'camerafixed'])), async: true };
+    if (m.vendor === 'bailian') return { json: { model: m.id, input: Object.assign({ prompt: content[0].text }, pick(kv, ['size', 'duration'])) }, async: true };
+    return { json: Object.assign({ model: m.id, content }, pick(kv, ['duration', 'resolution'])), async: true };
+  }
+  if (m.kind === 'tts') {
+    if (m.vendor === 'volcano') return { json: { model: m.id, input: textV ? textV.v : '', voice: kv.voice || '', format: kv.format || 'mp3', speed: kv.speed } };
+    if (m.vendor === 'bailian') {
+      const body = { model: m.id, input: { text: textV ? textV.v : '', voice: kv.voice || '', format: kv.format || 'mp3' } };
+      if (kv.sample_rate) body.input.sample_rate = kv.sample_rate;
+      if (kv.rate) body.parameters = { rate: kv.rate };
+      return { json: body };
+    }
+    return { json: { model: m.id, text: textV ? textV.v : '', stream: kv.stream || false,
+      voice_setting: { voice_id: kv.voice_id || '', speed: kv.speed, vol: kv.vol, pitch: kv.pitch },
+      audio_setting: { format: kv.format || 'mp3' } } };
+  }
+  if (m.kind === 'asr') {
+    if (m.vendor === 'minimax') return { form: [['model', m.id], ['file', kv.file || 'audio.mp3'],
+      ['response_format', kv.response_format || 'json'], ['timestamp_level', kv.timestamp_level || 'word'], ['stream', kv.stream || 'false']] };
+    if (m.vendor === 'bailian') return { json: { model: m.id, input: { file_url: kv.file_url || '' },
+      parameters: { format: kv.format || 'mp3', sample_rate: kv.sample_rate || 16000 } } };
+    return { json: { model: m.id, input: { audio_url: kv.audio_url || '' },
+      parameters: { format: kv.format || 'mp3', ...(kv.sample_rate ? { sample_rate: kv.sample_rate } : {}) } } };
+  }
+  if (m.kind === 'embedding') {
+    if (m.vendor === 'bailian') {
+      const body = { model: m.id, input: { texts: [kv.texts || ''] } };
+      const par = {}; if (kv.text_type) par.text_type = kv.text_type; if (kv.dimension) par.dimension = kv.dimension;
+      if (Object.keys(par).length) body.parameters = par;
+      return { json: body };
+    }
+    return { json: { model: m.id, input: kv.text || '' } };
+  }
+  if (m.kind === 'music') {
+    const body = { model: m.id, prompt: promptV ? promptV.v : '' };
+    if (kv.lyrics) body.lyrics = kv.lyrics;
+    body.audio_setting = { format: kv.format || 'mp3', sample_rate: kv.sample_rate || 44100, bitrate: kv.bitrate || 256000 };
+    return { json: body };
+  }
+  return { json: { model: m.id } };
+}
+function pick(obj, keys) { const r = {}; keys.forEach(k => { if (obj[k] !== undefined) r[k] = obj[k]; }); return r; }
+
+function mcCode(m, lang) {
+  if (!m) return '';
+  if (m.kind === 'realtime' || m.kind === 'none') {
+    return `# ${m.name} 无单一 REST 调用端点（实时 WebSocket / 专用流程）\n` +
+      `# 接入方式见官方文档：\n# ${m.docUrl || ''}\n` +
+      `# 模型 ID：${m.id}\n`;
+  }
+  const key = mcKey(m.vendor);
+  const b = mcBody(m, mcVals(m));
+  const url = m.endpoint || '';
+  const asyncNote = b.async ? (m.vendor === 'bailian'
+    ? '# 百炼生成类是异步任务：返回 task_id 后轮询 GET /api/v1/tasks/{task_id}/results\n'
+    : '# 方舟生成类是异步任务：返回 task_id 后轮询 GET /api/v3/contents/generations/tasks/{id}\n') : '';
+  if (lang === 'python') {
+    if (m.kind === 'chat') {
+      const base = MC_CHAT_BASE[m.vendor];
+      const kv = {}; mcVals(m).forEach(row => {
+        if (row.p.name === 'prompt') return;
+        const l = mcLit(row.p, row.v); if (l) kv[row.p.name] = l;
+      });
+      const kw = [];
+      for (const [k, l] of Object.entries(kv)) {
+        if (m.vendor === 'bailian' && (k === 'enable_thinking')) { kw.push(`    extra_body={${JSON.stringify(k)}: ${mcPyLit(l)}}`); continue; }
+        kw.push(`    ${k}=${mcPyLit(l)}`);
+      }
+      return `# 推荐 SDK：openai（三家全部 OpenAI 兼容）\nfrom openai import OpenAI\nimport json\n\n` +
+        `client = OpenAI(\n    api_key=${JSON.stringify(key)},\n    base_url=${JSON.stringify(base)},\n)\n` +
+        `resp = client.chat.completions.create(\n    model=${JSON.stringify(m.id)},\n` +
+        `    messages=[{"role": "user", "content": ${JSON.stringify((mcVals(m).find(x => x.p.name === 'prompt') || {}).v || '你好')}],\n` +
+        (kw.length ? kw.join(',\n') + '\n' : '') + `)\nprint(resp.choices[0].message.content)\n`;
+    }
+    const j = JSON.stringify(b.json, null, 2) || '{}';
+    if (b.form) {
+      return `# ${asyncNote ? asyncNote.replace(/# /g, '') : ''}import requests\n\nfiles = {"file": open(${JSON.stringify(String((b.form.find(x => x[0] === 'file') || [])[1] || 'audio.mp3'))}, "rb")}\n` +
+        `data = {${b.form.filter(x => x[0] !== 'file').map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ')}}\n` +
+        `r = requests.post(${JSON.stringify(url)}, data=data, files=files,\n` +
+        `                  headers={"Authorization": "Bearer ${key}"})\nprint(r.text)\n`;
+    }
+    return `import requests\n\n${asyncNote}r = requests.post(\n    ${JSON.stringify(url)},\n` +
+      `    headers={"Authorization": "Bearer ${key}", "Content-Type": "application/json"` +
+      (b.async && m.vendor === 'bailian' ? `, "X-DashScope-Async": "enable"` : '') + `},\n` +
+      `    json=${j},\n)\nprint(r.json())\n`;
+  }
+  if (lang === 'curl') {
+    if (b.form) {
+      return `curl -X POST ${url} \\\n  -H "Authorization: Bearer ${key}" \\\n` +
+        b.form.map(([k, v]) => k === 'file' ? `  -F "${k}=@${v}"` : `  -F "${k}=${v}"`).join(' \\\n') + '\n';
+    }
+    const hdrs = [`-H "Authorization: Bearer ${key}"`, `-H "Content-Type: application/json"`];
+    if (b.async && m.vendor === 'bailian') hdrs.push(`-H "X-DashScope-Async: enable"`);
+    return `curl -X POST ${url} \\\n  ${hdrs.join(' \\\n  ')} \\\n  -d '${JSON.stringify(b.json, null, 2)}'\n`;
+  }
+  // javascript
+  if (b.form) {
+    const fd = b.form.map(([k, v]) => k === 'file'
+      ? `fd.append(${JSON.stringify(k)}, fileInput.files[0]);   // <input type=file id=fileInput>`
+      : `fd.append(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join('\n  ');
+    return `// fileInput = 页面上的 <input type="file">\nconst fd = new FormData();\n  ${fd}\n` +
+      `const r = await fetch(${JSON.stringify(url)}, {\n  method: "POST",\n  headers: { Authorization: "Bearer ${key}" },\n  body: fd,\n});\nconsole.log(await r.json());\n`;
+  }
+  const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+  if (b.async && m.vendor === 'bailian') headers['X-DashScope-Async'] = 'enable';
+  return `const r = await fetch(${JSON.stringify(url)}, {\n  method: "POST",\n  headers: ${JSON.stringify(headers, null, 2).replace(/\n/g, '\n  ')},\n` +
+    `  body: JSON.stringify(${JSON.stringify(b.json, null, 2).replace(/\n/g, '\n  ')}),\n});\nconsole.log(await r.json());\n`;
+}
+
+/* ── 详情抽屉 ─────────────────────────────────────────────────────── */
+function mcRenderDrawer() {
+  const d = document.getElementById('mdDrawer');
+  if (!d) return;
+  if (!mcState.sel) { d.hidden = true; d.innerHTML = ''; return; }
+  const m = MC.models.find(x => x.id === mcState.sel);
+  if (!m) { d.hidden = true; return; }
+  d.hidden = false;
+  const specs = mcSpecs(m);
+  const editable = specs.length > 0 && m.kind !== 'realtime' && m.kind !== 'none';
+  const tabs = ['python', 'curl', 'js'];
+  if (m.officialSample && m.officialSample.python && m.kind === 'chat') tabs.push('official');
+  const tabLabel = { python: 'Python', curl: 'cURL', js: 'JavaScript', official: '官方示例' };
+  const code = mcState.tab === 'official'
+    ? `# ── 官方示例（模型文档原文） · Python ──\n${m.officialSample.python || ''}\n\n# ── cURL ──\n${m.officialSample.curl || ''}\n`
+    : mcCode(m, mcState.tab === 'js' ? 'javascript' : mcState.tab);
+  d.innerHTML = `
+    <div class="md-dh">
+      <div>
+        <div class="md-name">${escapeHtml(m.name)}</div>
+        <code class="md-id">${escapeHtml(m.id)}</code>
+      </div>
+      <button class="hbtn sm" id="mdClose">✕</button>
+    </div>
+    <div class="md-dscroll">
+      <div class="md-tags">${(m.types || []).map(t => `<span class="md-badge ty">${escapeHtml(t)}</span>`).join('')}
+        <span class="md-badge vb-${escapeHtml(m.vendor)}">${escapeHtml(mcVendorName(m.vendor))}</span>
+        ${m.ctx ? `<span class="md-badge ty">上下文 ${m.ctx}</span>` : ''}${m.price ? `<span class="md-badge pr">${escapeHtml(m.price)}</span>` : ''}</div>
+      <p class="md-p"><b>功能</b>：${escapeHtml(m.desc || '—')}</p>
+      ${m.example ? `<p class="md-p"><b>案例效果</b>：${escapeHtml(m.example)}</p>` : ''}
+      ${m.endpoint ? `<p class="md-p"><b>端点</b>：<code>${escapeHtml(m.endpoint)}</code></p>` : `<p class="md-p"><b>端点</b>：实时/专用流程，见官方文档</p>`}
+      ${(m.variants && m.variants.length) ? `<div class="md-var"><b>同族变体（合并展示，可分别复制）</b>
+        ${m.variants.map(v => `<button class="hbtn sm" data-vid="${escapeHtml(v)}" title="复制 ${escapeHtml(v)}">${escapeHtml(v)}</button>`).join('')}</div>` : ''}
+      <div class="md-ids">
+        <button class="hbtn sm" id="mdCopyId">复制模型 ID</button>
+        <button class="hbtn sm" id="mdCopyDoc">复制文档地址</button>
+        <button class="hbtn sm" id="mdCopyCode">复制当前代码</button>
+        ${m.docUrl ? `<a class="hbtn sm" href="${escapeHtml(m.docUrl)}" target="_blank" rel="noopener">打开文档 ↗</a>` : ''}
+      </div>
+      ${editable ? `
+      <div class="md-sec"><b>参数（默认值已按官方文档预填，可自定义；留空 = 请求里不带该参数）</b></div>
+      <div class="md-params">
+        ${specs.map(p => `
+          <div class="md-prow">
+            <span class="md-pn"><code>${escapeHtml(p.name)}</code><i>${escapeHtml(p.desc || '')}</i></span>
+            ${p.type === 'bool' ? `<select data-p="${escapeHtml(p.name)}">
+                <option value="" ${mcCur(m, p) === '' ? 'selected' : ''}>（不传）</option>
+                <option value="true" ${mcCur(m, p) === 'true' ? 'selected' : ''}>true</option>
+                <option value="false" ${mcCur(m, p) === 'false' ? 'selected' : ''}>false</option>
+              </select>`
+              : p.type === 'select' && p.options ? `<select data-p="${escapeHtml(p.name)}">
+                <option value="" ${mcCur(m, p) === '' ? 'selected' : ''}>（不传）</option>
+                ${p.options.map(o => `<option value="${escapeHtml(o)}" ${mcCur(m, p) === String(o) ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+              </select>`
+              : `<input data-p="${escapeHtml(p.name)}" type="${p.type === 'number' ? 'number' : 'text'}"
+                  value="${escapeHtml(mcCur(m, p))}" placeholder="${p.def === null || p.def === undefined ? '留空=不传' : '默认 ' + String(p.def)}">`}
+          </div>`).join('')}
+      </div>` : `<p class="md-p hsub">该类型没有可配置的 REST 参数 —— 复制 ID + 打开文档即可接入。</p>`}
+      <div class="md-sec"><b>实现代码</b>（${editable ? '随参数实时变化 · ' : ''}含当前 API Key，可直接粘贴到其他软件）</div>
+      <div class="md-tabs">${tabs.map(t => `<button class="hbtn sm${mcState.tab === t ? ' primary' : ''}" data-tab="${t}">${tabLabel[t]}</button>`).join('')}</div>
+      <pre class="md-code" id="mdCodeBox">${escapeHtml(code)}</pre>
+      <div class="md-p hsub">⚠️ 本页不提供「测试/试运行」——按要求不消耗任何模型额度；接入前请对照官方文档核对参数。</div>
+    </div>`;
+  d.querySelector('#mdClose').onclick = mcClose;
+  d.querySelector('#mdCopyId').onclick = () => copyText(m.id, `已复制模型 ID：${m.id}`);
+  d.querySelector('#mdCopyDoc').onclick = () => copyText(m.docUrl || '', '已复制官方文档地址');
+  d.querySelector('#mdCopyCode').onclick = () => copyText(document.getElementById('mdCodeBox').textContent, '已复制完整实现代码');
+  d.querySelectorAll('[data-vid]').forEach(b => b.onclick = () => copyText(b.dataset.vid, `已复制变体 ID：${b.dataset.vid}`));
+  d.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { mcState.tab = b.dataset.tab; mcRenderDrawer(); });
+  d.querySelectorAll('[data-p]').forEach(inp => {
+    inp.oninput = inp.onchange = () => {
+      mcState.edits[m.id] = mcState.edits[m.id] || {};
+      mcState.edits[m.id][inp.dataset.p] = inp.value;
+      const box = document.getElementById('mdCodeBox');
+      if (box) box.textContent = mcState.tab === 'official'
+        ? `# ── 官方示例（模型文档原文） · Python ──\n${m.officialSample.python || ''}\n\n# ── cURL ──\n${m.officialSample.curl || ''}\n`
+        : mcCode(m, mcState.tab === 'js' ? 'javascript' : mcState.tab);
+    };
+  });
+}
+function mcCur(m, p) {
+  const e = mcState.edits[m.id];
+  if (e && e[p.name] !== undefined) return e[p.name];
+  return p.def === null || p.def === undefined ? '' : String(p.def === true ? 'true' : p.def === false ? 'false' : p.def);
+}
+
+/* ── 侧栏分区接线（与 wiki/hermes 同一套互斥）───────────────────────── */
+(function bindModel() {
+  const sect = document.getElementById('btnModelSect');
+  if (sect) sect.onclick = () => { if (modelView) setModelView(null); else setModelView('catalog'); };
+  setTimeout(() => {
+    ['btnProjSect', 'btnPlanSect', 'btnHermesSect', 'btnWikiSect'].forEach(id => {
+      const b = document.getElementById(id);
+      if (!b) return;
+      const orig = b.onclick;
+      b.onclick = e => { if (modelView) setModelView(null); if (orig) orig(e); };
+    });
+  }, 0);
+  renderModelNav();
+})();
 
 })();
