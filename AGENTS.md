@@ -2346,11 +2346,13 @@ The recommended way to configure the app is the notch sheet's 设置 (hover or c
 **唯一真相文件：`设计框架/03-原型UI风格规范.md`。** 动 `app.css` / `app.js` 里任何按钮、颜色、
 菜单、下拉、设置行之前**必须先读它**；与它冲突的写法一律改到合规。四条铁律：
 
-1. **按钮只有 `.hbtn` 家族**（基础/primary/ghost/danger/sm，全尺寸 32px），颜色只从 tokens 取
-   （accent 蓝=操作与选中、grad=主 CTA、focus 琥珀=悬停焦点环、red=danger）——
-   ⛔ 禁止 inline `style="padding…"` 按钮、禁止裸配色、禁止第三种蓝（D80 教训）。
-2. **锚点菜单只许走 `showMenu`**（贴上方、放不下翻下）——任何浮层打开后与触发它的元素
-   **矩形不相交**（§35.11 用户点名过两次的坑）。
+1. **按钮只有 `.hbtn` 家族，且它是顶栏 `.btn` 的镜像**（27px / 12.5px / radius8 / 深底 #1A1A1C +
+   line2 边；primary=accent 实心；danger=红字不红块；.sm=23px）——
+   ⛔ **永久禁止：渐变按钮、投影按钮、红底色块 danger、32px 胖按钮、inline padding、裸配色**
+   （用户 2026-10-03 两次点名「不符合 wanna 的按钮，以后也禁止」）。
+2. **锚点菜单只许走 `showMenu`**（贴上方、放不下翻下），且 `.menu` z-index 必须**高于一切
+   常驻浮层**（现 340；曾因 80 被 qe-bar 320 盖住）——菜单打开后与锚点矩形不相交、
+   `elementFromPoint(菜单首项中心)` 必须命中菜单本身（§35.11 + D83）。
 3. **每批判据必带两条样式断言**：按钮实高 ≥30px + primary 用渐变/accent；菜单与锚点不相交。
 4. **功能完整性自己查**（规范文件第六节清单）：列表有无添加入口、报错有无修复入口、
    打标有无撤销、增删之外有无改、mock 有无标注——不许等用户来教。

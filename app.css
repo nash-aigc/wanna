@@ -532,7 +532,7 @@ body[data-style="contrast"]{
 #chatCtxFocusWrap.has-focus code{color:var(--focus)}
 
 /* ── 菜单 ─────────────────────────────────────── */
-.menu{position:fixed;z-index:80;min-width:186px;background:#1D1D20;border:1px solid var(--line2);
+.menu{position:fixed;z-index:340;min-width:186px;background:#1D1D20;border:1px solid var(--line2);
   border-radius:10px;padding:5px;box-shadow:0 16px 40px rgba(0,0,0,.55);animation:pop .14s ease-out}
 .menu button{display:flex;width:100%;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:7px;
   font-size:12.5px;color:var(--ink2);text-align:left}
@@ -2290,23 +2290,24 @@ body.finder-on .finder-pane{position:relative}
 .hbar .htitle{font-size:14px;font-weight:600;color:var(--ink,#EDEEF0)}
 .hbar .hsub{font-size:11.5px;color:var(--ink3,#8A8F96)}
 .hbar .spacer{flex:1}
-/* §50 规范化（设计框架/03-原型UI风格规范.md §二）：全尺寸 32px · 主 CTA=渐变 · 只有 .sm 一个例外 */
-.hbtn{border:1px solid var(--line,#2A2E33);background:var(--surface2,#1B1F23);color:var(--ink,#EDEEF0);
-  font-size:13px;font-weight:500;padding:6px 16px;border-radius:9px;cursor:pointer;line-height:18px;
-  min-height:32px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  transition:background .14s,border-color .14s,filter .14s}
-.hbtn:hover{border-color:rgba(10,132,255,.55);background:#232830}
-.hbtn.primary{background:var(--grad);border-color:transparent;color:#fff;font-weight:600;
-  box-shadow:0 2px 8px rgba(10,132,255,.28)}
-.hbtn.primary:hover{filter:brightness(1.1);background:var(--grad);border-color:transparent}
-.hbtn.ghost{background:transparent;border-color:transparent;color:var(--ink2,#B5B5BC);box-shadow:none}
+/* §51 规范（设计框架/03 §二 · 用户 2026-10-03 二次裁定）：hbtn = 顶栏 .btn 的**镜像**，
+   不自创任何视觉 —— 27px / 12.5px / radius8 / 深底 #1A1A1C + line2 细边。
+   ⛔ 永久禁止：渐变按钮、投影按钮、红底色块 danger（§50 的 32px 胖按钮 + 渐变 primary 已废）。 */
+.hbtn{height:27px;padding:0 11px;border-radius:8px;font-size:12.5px;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  border:1px solid var(--line2,#2E2E33);color:var(--ink2,#B5B5BC);background:#1A1A1C;
+  cursor:pointer;font-weight:400;line-height:1;
+  transition:border-color .14s,color .14s,background .14s}
+.hbtn:hover{border-color:#3C3C42;color:var(--ink,#EDEDEF)}
+.hbtn.primary{background:var(--accent,#0A84FF);border-color:transparent;color:#fff;font-weight:600}
+.hbtn.primary:hover{background:#2592FF;border-color:transparent;color:#fff;filter:none}
+.hbtn.ghost{background:transparent;border-color:transparent;color:var(--ink2,#B5B5BC)}
 .hbtn.ghost:hover{background:rgba(255,255,255,.07);border-color:transparent;color:var(--ink)}
-.hbtn.danger{color:#FF9B9B;border-color:rgba(255,107,107,.45);background:rgba(255,107,107,.16);box-shadow:none}
-.hbtn.danger:hover{background:rgba(255,107,107,.26);border-color:rgba(255,107,107,.7);color:#FFC2C2}
+.hbtn.danger{background:transparent;border-color:transparent;color:#FF8A8A}
+.hbtn.danger:hover{background:rgba(255,107,107,.14);border-color:transparent;color:#FFB0B0}
 .hbtn[disabled]{opacity:.45;cursor:default}
-.hbtn[disabled]:hover{border-color:var(--line,#2A2E33);background:var(--surface2,#1B1F23)}
-.hbtn.sm{min-height:26px;padding:3px 10px;font-size:12px;border-radius:7px;font-weight:400}
-.hbtn.primary.sm{box-shadow:none}
+.hbtn[disabled]:hover{border-color:var(--line2,#2E2E33);color:var(--ink2);background:#1A1A1C}
+.hbtn.sm{height:23px;padding:0 8px;font-size:11.5px;border-radius:6px}
 .hbody{flex:1;min-height:0;display:flex;overflow:hidden}
 .hcol{min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .hcol + .hcol{border-left:1px solid var(--line,#26292C)}
@@ -2565,8 +2566,6 @@ body.finder-on .finder-pane{position:relative}
    select 一律去原生（appearance:none + 自绘箭头）。任何页不许再出现原生白底 select /
    裸 checkbox 行 / 只给这一页用的按钮颜色。 */
 
-/* 主按钮 = --grad 主 CTA 渐变（§50 规范 §二；D80 曾错挂 --focus 琥珀，已废除该路径） */
-.hbtn.primary{background:var(--grad);border-color:transparent;color:#fff}
 .hbtn.ghost{background:transparent}
 
 /* select 去原生：深色底 + 自绘 chevron（macOS 原生 select 在深色页上是系统灰白按钮，
