@@ -9561,6 +9561,8 @@ function renderHermesNav() {
     { v: 'memory', label: '记忆', badge: memEntries ? `${memEntries}` : '' },
     { v: 'providers', label: '提供商', badge: `${H2.providers.length}` },
     { v: 'gateways', label: '网关', badge: `${H2.gateways.connections.length}` },
+    { v: 'channels', label: '渠道', badge: (typeof H_CHANNELS !== 'undefined' && H_CHANNELS) ? `${H_CHANNELS.length}` : '16' },
+    { v: 'quickEntry', label: '快捷输入', badge: (S.quickEntry && S.quickEntry.enabled) ? 'on' : 'off' },
   ];
   host.innerHTML = rows.map(r => `<div class="plan-row${hermesView === r.v ? ' is-on' : ''}" data-hv="${r.v}">
       <span class="plan-dot" style="background:#3B82F6"></span><span class="pname">${r.label}</span>
@@ -9582,6 +9584,8 @@ function renderHermes() {
   else if (v === 'memory') hermesMemoryHTML(pane);
   else if (v === 'providers') hermesProvidersHTML(pane);
   else if (v === 'gateways') hermesGatewaysHTML(pane);
+  else if (v === 'channels') hermesChannelsHTML(pane);
+  else if (v === 'quickEntry') hermesQuickEntryHTML(pane);
   else pane.innerHTML = '';
 }
 /// 顶部条（三个页面共用）：标题 + 返回
@@ -10735,5 +10739,496 @@ function hGwAddModal() {
       return true;
     } });
 }
+
+
+/* ══ §46 Hermes 第三批：快捷输入（§6）· 多渠道（§4.1）· 飞书一键建 bot（§4.2）══ */
+
+/* ── §6 快捷输入：accelerator 词表 + 校验（quick-entry.ts:31-86 / :282 sanitize） ── */
+const QE_MODS = { cmd: 'Cmd', command: 'Cmd', commandorcontrol: 'Cmd', ctrl: 'Control', control: 'Control',
+  alt: 'Alt', option: 'Alt', shift: 'Shift', none: '' };
+const QE_MOD_ALIAS = { cmd: 'CommandOrControl', command: 'CommandOrControl', commandorcontrol: 'CommandOrControl',
+  ctrl: 'Control', control: 'Control', alt: 'Option', option: 'Option', shift: 'Shift' };
+const QE_KEYS = ['backspace','enter','tab','space','escape','delete','up','down','left','right','home','end',
+  'pageup','pagedown','f1','f2','f3','f4','f5','f6','f7','f8','f9','f10','f11','f12','plus','minus','equal',
+  'comma','period','slash','backslash','bracketleft','bracketright','quote','backquote','0','1','2','3','4',
+  '5','6','7','8','9','a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u',
+  'v','w','x','y','z'];
+/// 浏览器/系统已占的组合（Hermes 的 taken 分支；输入法冲突不模拟）
+const QE_TAKEN = ['commandorcontrol+t', 'commandorcontrol+w', 'commandorcontrol+n', 'commandorcontrol+q',
+  'commandorcontrol+l', 'commandorcontrol+r', 'commandorcontrol+shift+3', 'commandorcontrol+shift+4'];
+const QE_DEFAULT = 'CommandOrControl+Shift+Space';       // quick-entry.ts:19
+/// normalize：接受多种写法 → 规范 Electron accelerator 形（quick-entry.ts:282 sanitizeQuickEntrySettings 等价）
+function qeNormalize(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const parts = s.split('+').map(x => x.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  const mods = [], keys = [];
+  for (const p of parts) {
+    const low = p.toLowerCase();
+    if (QE_MODS[low] !== undefined) { if (QE_MOD_ALIAS[low]) mods.push(QE_MOD_ALIAS[low]); continue; }
+    let k = low;
+    if (k === 'esc') k = 'escape';
+    if (k === 'del') k = 'delete';
+    if (k === 'arrowup') k = 'up'; if (k === 'arrowdown') k = 'down';
+    if (k === 'arrowleft') k = 'left'; if (k === 'arrowright') k = 'right';
+    if (QE_KEYS.indexOf(k) >= 0) keys.push(k);
+    else if (/^f([1-9]|1[0-2])$/.test(k)) keys.push(k);
+    else return { error: 'invalid', why: `不认识的键「${p}」（词表见 quick-entry.ts:50-86）` };
+  }
+  if (keys.length !== 1) return { error: 'invalid', why: keys.length ? '只能有一个主键' : '只有修饰键，缺主键' };
+  const isFn = /^f\d+$/.test(keys[0]);
+  if (!mods.length && !isFn) return { error: 'invalid', why: '必须至少带一个修饰键（或 F1–F12）' };
+  const order = ['CommandOrControl', 'Control', 'Option', 'Shift'];
+  mods.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const cand = mods.concat([keys[0].length === 1 ? keys[0].toUpperCase() : capitalize(keys[0])]).join('+');
+  if (QE_TAKEN.indexOf(cand.toLowerCase()) >= 0) return { error: 'taken', value: cand, why: '已被系统/浏览器占用' };
+  return { value: cand };
+}
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function qeDisplay(acc) {
+  if (!acc) return '';
+  return acc.split('+').map(p => ({ CommandOrControl: '⌘', Control: '⌃', Option: '⌥', Shift: '⇧' }[p] || p)).join('');
+}
+function qeState() {
+  if (!S.quickEntry || typeof S.quickEntry !== 'object') {
+    S.quickEntry = { enabled: true, shortcut: QE_DEFAULT, target: 'current', recentCount: 5,
+      registered: false, error: '' };
+  }
+  const q = S.quickEntry;
+  if (typeof q.recentCount !== 'number') q.recentCount = 5;   // 近期会话固定 5 条（use-quick-entry-bridge.ts:21）
+  const v = qeNormalize(q.shortcut);
+  if (v && v.error) { q.registered = false; q.error = v.why; }
+  else if (v && v.value !== q.shortcut) { q.shortcut = v.value; }
+  else if (v) { q.error = ''; q.registered = !!q.enabled; }
+  return q;
+}
+/// 与主输入框**完全同一条提交管线**（use-quick-entry-bridge.ts:42: one submit pipeline）
+function qeSubmit(text) {
+  const t = String(text || '').trim();
+  if (!t) return { ok: false, err: '内容为空' };
+  const q = qeState();
+  if (q.target === 'new') {
+    // 照「＋新建对话」那条路（openConvAddMenu 的新建分支）：建卡 + 选中，**不清空历史**
+    const p2 = S.plans;
+    const lastGroup = [...p2].reverse().find(x => x.isGroup);
+    const nid = 't' + now();
+    p2.push({ id: nid, sid: newSid(), title: `对话 ${p2.filter(x => !x.isGroup).length + 1}`,
+      ts: now(), group: lastGroup ? lastGroup.title : null });
+    save(true); selectTempCard(nid);
+  }
+  else if (q.target && q.target !== 'current') {
+    const pl = (S.plans || []).find(x => x.id === q.target);
+    if (pl) selectTempCard(pl.id);                 // 切到那张对话卡（= 指定近期会话）
+  }
+  const ta = $('#chatInput');
+  if (ta) { ta.value = t; sendChat(); }
+  else dispatchReply(t);                            // 兜底：没有 composer 也走同一条
+  return { ok: true };
+}
+function qeToggle() {
+  const q = qeState();
+  const bar = document.querySelector('.qe-bar');
+  if (!bar) return;
+  const show = bar.hidden;
+  if (show && !q.enabled) { toast('快捷输入已关闭（去「快捷输入」页打开）'); return; }
+  if (show) {
+    const v = qeNormalize(q.shortcut);
+    if (v && v.error) { toast(`快捷键不可用：${escapeHtml(v.why)}`); return; }
+  }
+  bar.hidden = !show;
+  if (show) { const ta = bar.querySelector('textarea'); if (ta) { ta.value = ''; setTimeout(() => ta.focus(), 20); } }
+}
+function qeRenderBar() {
+  let bar = document.querySelector('.qe-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'qe-bar'; bar.hidden = true;
+    bar.innerHTML = `<div class="qe-top"><span class="qe-dot"></span>
+        <span class="qe-title">快捷输入 · Quick Entry</span>
+        <span class="qe-esc">Esc 关闭</span></div>
+      <textarea rows="3" placeholder="直接输入，Enter 发送（走与主输入框完全相同的提交管线）"></textarea>
+      <div class="qe-bot">
+        <button class="qe-target" id="qeTargetBtn">目标：当前会话</button>
+        <span class="qe-hint" id="qeHint"></span>
+        <button class="qe-send" id="qeSend">发送</button></div>`;
+    document.body.appendChild(bar);
+    const ta = bar.querySelector('textarea');
+    ta.onkeydown = e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { bar.hidden = true; return; }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); qeDoSend(); }
+    };
+    bar.querySelector('#qeSend').onclick = () => qeDoSend();
+    bar.querySelector('#qeTargetBtn').onclick = e => { e.stopPropagation(); qeTargetMenu(e.currentTarget); };
+    // blur 即隐藏（quick-entry.ts blur 隐藏语义）
+    document.addEventListener('mousedown', ev => {
+      if (bar.hidden) return;
+      if (ev.target && ev.target.closest && ev.target.closest('.qe-bar')) return;
+      bar.hidden = true;
+    }, true);
+  }
+  const q = qeState();
+  const v = qeNormalize(q.shortcut);
+  bar.querySelector('#qeHint').textContent =
+    (v && v.value ? qeDisplay(v.value) : '—') + ' 唤起 · Enter 发送 · Esc 关闭';
+  const labels = { current: '当前会话', new: '新建会话' };
+  bar.querySelector('#qeTargetBtn').textContent = '目标：' + (labels[q.target] || (S.plans.find(x => x.id === q.target) || {}).title || q.target);
+}
+function qeDoSend() {
+  const bar = document.querySelector('.qe-bar');
+  const ta = bar.querySelector('textarea');
+  const text = ta.value;
+  const res = qeSubmit(text);
+  if (!res.ok) { toast(escapeHtml(res.err)); return; }
+  ta.value = ''; bar.hidden = true;
+  toast('已从快捷输入发出（同一提交管线）');
+}
+function qeTargetMenu(anchor) {
+  const q = qeState();
+  const recent = (S.plans || []).filter(x => !x.isGroup).slice(0, q.recentCount || 5);
+  showMenu([
+    { title: '发送目标（use-quick-entry-bridge.ts:21 近期会话固定 5 条）' },
+    { label: (q.target === 'current' ? '✓ ' : '　') + '当前会话', action: () => { q.target = 'current'; save(true); qeRenderBar(); } },
+    { label: (q.target === 'new' ? '✓ ' : '　') + '新建会话', action: () => { q.target = 'new'; save(true); qeRenderBar(); } },
+    { sep: true },
+    ...recent.map(pl => ({ label: (q.target === pl.id ? '✓ ' : '　') + pl.title,
+      action: () => { q.target = pl.id; save(true); qeRenderBar(); } })),
+  ], anchor);
+}
+
+/* ── §46.2 快捷输入设置页 ── */
+function hermesQuickEntryHTML(pane) {
+  const q = qeState();
+  const v = qeNormalize(q.shortcut);
+  const stateCls = !q.enabled ? 'off' : (v && v.error) ? 'err' : 'ok';
+  const stateTxt = !q.enabled ? '已关闭（disabled 从不注册）'
+    : (v && v.error) ? (v.error === 'taken' ? '被占用（taken）' : `非法（invalid）：${v.why}`)
+    : '已注册（registered）';
+  const recent = (S.plans || []).filter(x => !x.isGroup).slice(0, q.recentCount || 5);
+  const labels = { current: '当前会话', new: '新建会话' };
+  pane.innerHTML = hBar('快捷输入 · Quick Entry',
+    '全局热键唤起的迷你窗：无边框常驻置顶、不带自己的网关连接，文本转发给主 renderer（Hermes §6）')
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      <div class="qe-set">
+        <div class="hrow">
+          <label class="hrow" style="gap:7px"><input type="checkbox" id="qeEnabled" ${q.enabled ? 'checked' : ''}>
+            启用快捷输入</label>
+          <span class="qe-state ${stateCls}">${stateTxt}</span>
+          <span style="flex:1"></span>
+          <span class="qe-hint" style="font-size:11.5px;color:#6B7680">页面内唤起：按下面这个组合（真·全局热键属 B 批，Swift 期用 RegisterEventHotKey + NSPanel）</span>
+        </div>
+        <div class="hrow">
+          <span class="qe-hint">快捷键</span>
+          <span class="qe-key${q.hkRecording ? ' rec' : ''}" id="qeKey">${q.hkRecording ? '请按组合键…' : escapeHtml(q.shortcut)}</span>
+          <button class="hbtn" id="qeRec">${q.hkRecording ? '取消' : '录制'}</button>
+          <span class="qe-hint">默认 <code>${QE_DEFAULT}</code>（对齐 Claude Desktop / ChatGPT Quick Chat 的 ⌘⇧ 肌肉记忆）</span>
+          <span style="flex:1"></span>
+          <button class="hbtn" id="qeReset">恢复默认</button>
+          <button class="hbtn primary" id="qeOpen">打开浮条</button>
+        </div>
+        <div class="hrow">
+          <span class="qe-hint">窗口几何（quick-entry.ts:24-28）：</span>
+          <span class="qe-key">640×168</span><span class="qe-key">水平居中</span><span class="qe-key">顶部 22%</span>
+          <span style="flex:1"></span>
+          <label class="hrow" style="gap:7px">发送目标
+            <select id="qeTarget" class="hbtn" style="padding:5px 8px">
+              <option value="current"${q.target === 'current' ? ' selected' : ''}>当前会话</option>
+              <option value="new"${q.target === 'new' ? ' selected' : ''}>新建会话</option>
+              ${recent.map(pl => `<option value="${pl.id}"${q.target === pl.id ? ' selected' : ''}>${escapeHtml(pl.title)}</option>`).join('')}
+            </select></label>
+          <label class="hrow" style="gap:7px">近期会话
+            <input type="number" id="qeRecent" value="${q.recentCount}" min="1" max="20" style="width:64px"></label>
+        </div>
+        <div class="hnote" style="font-size:12px;color:#8B96A0;line-height:1.8">
+          <b>提交管线</b>：浮条 → 写入主输入框 → <code>sendChat()</code> —— 与手动输入**完全同一条**（one submit pipeline，无第二套 RPC）。<br>
+          <b>注册状态</b>：仅主窗口注册（副窗口注册会一键发 N 条）；本页 <code>registered/error</code> 是实况。<br>
+          <b>macOS 侧</b>（B 批）：Electron <code>globalShortcut</code> → RegisterEventHotKey；窗口 <code>type:'panel'</code>（NSPanel 不抢 ⌘Tab 焦点）、
+          常驻置顶、blur 即隐藏、每次唤起重定位到光标所在显示器。
+        </div>
+      </div></div>`;
+  hBindCommon(pane);
+  const en = pane.querySelector('#qeEnabled');
+  en.onchange = () => { q.enabled = en.checked; save(true); hermesQuickEntryHTML(pane); };
+  pane.querySelector('#qeRec').onclick = () => { q.hkRecording = !q.hkRecording; save(true); hermesQuickEntryHTML(pane);
+    if (q.hkRecording) toast('按新的组合键完成录制 · Esc 取消'); };
+  pane.querySelector('#qeReset').onclick = () => { q.shortcut = QE_DEFAULT; q.hkRecording = false; save(true);
+    hermesQuickEntryHTML(pane); toast('已恢复默认 ' + QE_DEFAULT); };
+  pane.querySelector('#qeOpen').onclick = () => { qeRenderBar(); qeToggle(); };
+  pane.querySelector('#qeTarget').onchange = e => { q.target = e.target.value; save(true); };
+  pane.querySelector('#qeRecent').onchange = e => { q.recentCount = Math.max(1, Math.min(20, +e.target.value || 5));
+    save(true); hermesQuickEntryHTML(pane); };
+}
+
+/* ── §46.3 多渠道（§4.1 总表）+ MessageEvent mock ── */
+var H_CHANNELS = [
+  { p: 'feishu', n: '飞书 / Lark', f: 'plugins/platforms/feishu/adapter.py', cn: true,
+    proto: '官方 lark-oapi SDK · WebSocket（默认）/ webhook 双模', env: 'FEISHU_APP_ID · FEISHU_APP_SECRET', fs: true },
+  { p: 'weixin', n: '微信（个人号）', f: 'gateway/platforms/weixin.py', cn: true,
+    proto: '腾讯 iLink Bot API · 长轮询 getupdates + context_token 回信 + AES-128-ECB 媒体', env: 'WEIXIN_TOKEN · account_id',
+    qr: 'qr_login 扫码登录（weixin.py:594）' },
+  { p: 'qqbot', n: 'QQ 机器人', f: 'gateway/platforms/qqbot/adapter.py + onboard.py', cn: true,
+    proto: 'QQ Bot API v2 · WebSocket 收 + REST(api.sgroup.qq.com) 发', env: 'app_id · client_secret',
+    qr: '扫码 onboard（onboard.py:85 qr_register）' },
+  { p: 'wecom', n: '企业微信', f: 'plugins/platforms/wecom/adapter.py', cn: true,
+    proto: '回调/webhook + 加密（wecom_crypto.py）+ 发送队列', env: 'WECOM_*' },
+  { p: 'dingtalk', n: '钉钉', f: 'plugins/platforms/dingtalk/adapter.py', cn: true,
+    proto: '钉钉开放平台', env: 'DINGTALK_*' },
+  { p: 'telegram', n: 'Telegram', f: 'plugins/platforms/telegram/adapter.py',
+    proto: 'python-telegram-bot · 长轮询（可切 webhook）', env: 'TELEGRAM_BOT_TOKEN' },
+  { p: 'discord', n: 'Discord', f: 'plugins/platforms/discord/adapter.py',
+    proto: 'discord.py 网关（语音 / 线程 / 历史回填）', env: 'DISCORD_BOT_TOKEN' },
+  { p: 'slack', n: 'Slack', f: 'plugins/platforms/slack/adapter.py',
+    proto: 'slack-bolt Socket Mode（免公网）+ 原生流式 + slash 命令', env: 'SLACK_BOT_TOKEN · SLACK_APP_TOKEN' },
+  { p: 'whatsapp', n: 'WhatsApp（个人）', f: 'plugins/platforms/whatsapp/adapter.py',
+    proto: '本地 Node.js Baileys 桥 · HTTP 轮询', env: 'WHATSAPP_ENABLED' },
+  { p: 'signal', n: 'Signal', f: 'gateway/platforms/signal.py',
+    proto: 'signal-cli daemon HTTP · SSE 收 + JSON-RPC 2.0 发', env: 'SIGNAL_HTTP_URL · SIGNAL_ACCOUNT' },
+  { p: 'email', n: 'Email', f: 'plugins/platforms/email/', proto: 'IMAP 收 / SMTP 发', env: 'EMAIL_*' },
+  { p: 'sms', n: 'SMS（Twilio）', f: 'plugins/platforms/sms/', proto: 'Twilio', env: 'TWILIO_*' },
+  { p: 'webhook', n: 'Webhook（通用入站）', f: 'gateway/platforms/webhook.py',
+    proto: '用户脚本路由 · 30s 超时', env: 'WEBHOOK_SECRET' },
+  { p: 'api_server', n: 'API Server', f: 'gateway/platforms/api_server.py',
+    proto: 'OpenAI 兼容 http://localhost:8642/v1 + REST/WS', env: 'API_SERVER_KEY（≥16 字符）' },
+  { p: 'relay', n: 'Relay（实验）', f: 'gateway/relay/', proto: '网关主动外拨 connector · CapabilityDescriptor 握手', env: 'GATEWAY_RELAY_*' },
+  { p: 'matrix', n: 'Matrix', f: 'plugins/platforms/matrix/adapter.py', proto: 'Matrix 协议', env: 'MATRIX_*' },
+];
+const H_PLATFORM_ENUM = ['local', 'telegram', 'discord', 'whatsapp', 'whatsapp_cloud', 'slack', 'signal',
+  'mattermost', 'matrix', 'homeassistant', 'email', 'sms', 'dingtalk', 'api_server', 'webhook',
+  'msgraph_webhook', 'feishu', 'wecom', 'wecom_callback', 'weixin', 'bluebubbles', 'qqbot', 'yuanbao', 'relay'];
+/// MessageEvent / SessionSource 形状（event.py:36、session.py:66）—— mock 入站用
+function hMockMessageEvent(platform, text) {
+  const rid = Math.random().toString(36).slice(2, 12);
+  return { platform, chat_id: `oc_${rid}`, chat_type: 'p2p', thread_id: null,
+    user_id: `ou_${Math.random().toString(36).slice(2, 12)}`, role: 'user',
+    text, ts: Date.now(), source: { platform, chat_type: 'p2p' } };
+}
+const H_FS_STEP = ['未开始', '① init', '② begin（二维码）', '③ poll 轮询', '④ probe 校验', '✓ 完成'];
+function hermesChannelsHTML(pane) {
+  const H0 = hState2();
+  const fs = H0.feishu || (H0.feishu = { step: 0, appId: '', appSecret: '', domain: '', openId: '', botName: '',
+    connMode: 'websocket', auth: 'pairing', groupPolicy: 'open', err: '', busy: false, userCode: '',
+    qrUrl: '', deviceCode: '', interval: 2, expireIn: 600, manual: false, log: [] });
+  pane.innerHTML = hBar('多渠道通讯 · Channels',
+    `Platform 枚举 ${H_PLATFORM_ENUM.length} 个 · 适配器 ${H_CHANNELS.length} 条（Hermes §4.1）`)
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      <div class="hch-enums"><b>Platform 枚举</b>（gateway/config.py:217-241，插件平台经 _missing_ 动态补）：<br>
+        ${H_PLATFORM_ENUM.join(' · ')}</div>
+      <div class="hch-grid">
+        ${H_CHANNELS.map(c => `<div class="hch-card${c.fs ? ' hl' : ''}" data-ch="${c.p}">
+          <div class="pn">${escapeHtml(c.n)}${c.cn ? '<span class="flag">中文渠道</span>' : ''}
+            ${c.fs ? '<span class="flag" style="background:rgba(59,130,246,.25);color:#BFDBFE">可一键创建</span>' : ''}</div>
+          <div class="meta"><b>adapter</b> ${escapeHtml(c.f)}<br>
+            <b>接入</b> ${escapeHtml(c.proto)}<br>
+            <b>凭据</b> ${escapeHtml(c.env)}${c.qr ? '<br><b>扫码</b> ' + escapeHtml(c.qr) : ''}</div>
+          <div class="ops">
+            ${c.fs ? `<button class="hbtn primary" data-chact="fs">🤖 一键创建飞书机器人</button>` : ''}
+            <button class="hbtn" data-chact="inject" data-p="${c.p}">📨 注入一条入站消息</button>
+          </div>
+          ${c.fs ? hFeishuWizardHTML(fs) : ''}
+        </div>`).join('')}
+      </div>
+      <div class="hgw-note">协议层与真凭证属 B 批（真 WebSocket / 长轮询 / 扫码端点）—— 本页的注入与建号向导
+        <b>网络全部 mock</b>，但请求/响应形状照 <code>adapter.py</code> 的端点与字段（§4.2 步骤行号写在步骤里）。</div>
+    </div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-chact="inject"]').forEach(b => b.onclick = () => {
+    const p = b.dataset.p;
+    hMockInboundModal(p);
+  });
+  const fsBtn = pane.querySelector('[data-chact="fs"]');
+  if (fsBtn) fsBtn.onclick = () => hFeishuWizardStep();
+  const fsResetBtn = pane.querySelector('[data-chact="fsreset"]');
+  if (fsResetBtn) fsResetBtn.onclick = () => {
+    const fs = hState2().feishu;
+    fs.step = 0; fs.err = ''; fs.busy = false; fs.log = [];
+    hSave(); renderHermes(); toast('向导已重置');
+  };
+  const fsManualBtn = pane.querySelector('[data-chact="fsmanual"]');
+  if (fsManualBtn) fsManualBtn.onclick = () => hFeishuManual();
+}
+/// 飞书一键创建：三步设备码流（§4.2 的 init / begin / poll，网络 mock）
+function hFeishuWizardHTML(fs) {
+  const s = fs.step;
+  const step = (i, label) => `<span class="hfs-step${s === i ? ' on' : ''}${s > i ? ' done' : ''}">${label}</span>`;
+  return `<div class="hfs">
+    <div class="hfs-steps">${step(0, '准备')}<span>→</span>${step(1, '扫码授权')}<span>→</span>
+      ${step(2, '轮询取凭证')}<span>→</span>${step(3, '校验 bot')}<span>→</span>${step(4, '接入配置')}
+      <span style="flex:1"></span>
+      <span class="qe-state ${fs.err ? 'err' : s >= 4 ? 'ok' : 'off'}">${fs.err ? escapeHtml(fs.err) : (s >= 4 ? '✓ 已就绪' : H_FS_STEP[s])}</span>
+      ${s > 0 ? '<button class="hbtn" data-chact="fsreset" style="padding:3px 9px">重来</button>' : ''}</div>
+    <div class="hfs-body">
+      ${s === 0 ? `入口 <code>hermes gateway setup</code> → 飞书 → <b>“Scan QR code to create a new bot automatically (recommended)”</b>
+          （adapter.py:4361-4364）。端点 <code>POST accounts.feishu.cn/oauth/v1/app/registration</code>（:203-208）。`
+        : s === 1 ? `<code>action=init</code> 确认环境支持 client_secret 认证（:4102）<br>
+          <code>action=begin</code> archetype=<code>PersonalAgent</code> · auth_method=<code>client_secret</code> ·
+          request_user_info=<code>open_id</code>（:4113）→ 拿 device_code / qr_url / user_code<br>
+          <div class="qr">▛▀▀▀▀▀▀▀▀▜<br>▌ 📷 扫码授权 ▐<br>▙▄▄▄▄▄▄▄▄▟</div>
+          user_code <code>${escapeHtml(fs.userCode || '—')}</code> · interval <code>${fs.interval}s</code> ·
+          expire_in <code>${fs.expireIn}s</code>`
+        : s === 2 ? `<code>action=poll</code> 按 interval 轮询（:4129）… ${fs.busy ? '等待手机飞书扫码…' : '（mock 3 次 pending 后成功）'}<br>
+          ${fs.appId ? `app_id <code>${escapeHtml(fs.appId)}</code><br>app_secret <code>${escapeHtml(maskSecret(fs.appSecret))}</code><br>
+            domain <code>${escapeHtml(fs.domain)}</code> · open_id <code>${escapeHtml(fs.openId)}</code>` : ''}`
+        : s === 3 ? `<code>GET /bot/v3/info</code> probe_bot（:4197）→ bot 名 <code>${escapeHtml(fs.botName || '—')}</code><br>
+          凭证写入 env：<code>FEISHU_APP_ID</code> / <code>FEISHU_APP_SECRET</code> / <code>FEISHU_DOMAIN</code>（:4405-4407）`
+        : `凭证（已写入 env：FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_DOMAIN，:4405-4407）：
+          <div class="hfs-cfg">
+            <span class="hchip">bot ${escapeHtml(fs.botName || '—')}</span>
+            <span class="hchip">app_id ${escapeHtml(fs.appId || '—')}</span>
+            <span class="hchip">secret ${escapeHtml(maskSecret(fs.appSecret))}</span>
+            <span class="hchip">domain ${escapeHtml(fs.domain || '—')}</span>
+          </div>
+          连接方式（:4409-4424，QR 路径固定 websocket）：
+          <div class="hfs-cfg">
+            <label><input type="radio" name="fscm" value="websocket" ${fs.connMode === 'websocket' ? 'checked' : ''}> WebSocket（推荐，免公网）</label>
+            <label><input type="radio" name="fscm" value="webhook" ${fs.connMode === 'webhook' ? 'checked' : ''}> Webhook（默认 127.0.0.1:8765/feishu/webhook）</label>
+          </div>
+          <div class="hfs-cfg">
+            <label>DM 授权：<select data-fs="auth" style="background:#161B20;color:#C7D2DA;border-radius:7px;padding:3px 7px;border:1px solid #333A41">
+              <option value="pairing"${fs.auth === 'pairing' ? ' selected' : ''}>pairing 配对</option>
+              <option value="allow-all"${fs.auth === 'allow-all' ? ' selected' : ''}>allow-all 全放行</option>
+              <option value="allowlist"${fs.auth === 'allowlist' ? ' selected' : ''}>allowlist 白名单</option></select></label>
+            <label>群策略 FEISHU_GROUP_POLICY=<select data-fs="gp" style="background:#161B20;color:#C7D2DA;border-radius:7px;padding:3px 7px;border:1px solid #333A41">
+              <option value="open"${fs.groupPolicy === 'open' ? ' selected' : ''}>open（只在被 @ 时响应）</option>
+              <option value="closed"${fs.groupPolicy === 'closed' ? ' selected' : ''}>closed</option></select></label>
+            <button class="hbtn" data-chact="fsmanual" style="padding:4px 10px">改用手输 App ID / Secret</button>
+          </div>`}
+    </div>
+    ${s === 4 ? `<div class="hrow" style="margin-top:9px"><span class="qe-hint">事件订阅（:1429-1444，WS 模式无需在平台配回调）：</span>
+      <span class="hchip">im.message.receive_v1</span><span class="hchip">message_read</span>
+      <span class="hchip">reaction.created</span><span class="hchip">bot_p2p_chat_entered</span>
+      <span class="hchip">drive.notice.comment_add_v1</span><span class="hchip">vc.bot.meeting_invited_v1</span></div>` : ''}
+    ${fs.log.length ? `<div class="hme">${escapeHtml(fs.log.slice(-8).join('\n'))}</div>` : ''}
+  </div>`;
+}
+function maskSecret(s) { return s ? s.slice(0, 4) + '••••' + s.slice(-4) : ''; }
+function hFeishuWizardStep() {
+  const H0 = hState2();
+  const fs = H0.feishu;
+  if (fs.busy) return;
+  fs.err = ''; fs.busy = true;
+  const log = m => { fs.log.push(`[${new Date().toLocaleTimeString()}] ${m}`); };
+  if (fs.step === 0) {
+    log('→ POST /oauth/v1/app/registration {action:"init"}');
+    log('← 200 {"supported_client_secret_auth":true}（mock）');
+    fs.step = 1;
+    fs.userCode = 'HM-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+    fs.qrUrl = 'https://accounts.feishu.cn/qr/' + Math.random().toString(36).slice(2, 10);
+    fs.deviceCode = 'dc_' + Math.random().toString(36).slice(2, 14);
+    fs.interval = 2; fs.expireIn = 600;
+    log('→ {action:"begin", archetype:"PersonalAgent", auth_method:"client_secret", request_user_info:"open_id"}');
+    log(`← device_code=${fs.deviceCode} qr_url=… user_code=${fs.userCode} interval=2 expire_in=600`);
+    fs.busy = false; hSave(); renderHermes(); return;
+  }
+  if (fs.step === 1) {
+    fs.step = 2; log('→ {action:"poll"}（每 2s 一次）'); fs.busy = false;
+    hSave(); renderHermes();
+    // mock：3 次 pending 后成功（real: adapter.py:4129 按 interval 轮询）
+    let n = 0;
+    const tick = () => {
+      n++;
+      if (n < 3) { log(`← {"status":"pending"} 第 ${n}/3 次（mock）`); hSave(); if (H0.view === 'channels') renderHermes(); setTimeout(tick, 650); return; }
+      fs.appId = 'cli_a' + Math.random().toString(36).slice(2, 10);
+      fs.appSecret = 'S3cr' + Math.random().toString(36).slice(2, 18);
+      fs.domain = 'feishu.cn';
+      fs.openId = 'ou_' + Math.random().toString(36).slice(2, 12);
+      log(`← 200 app_id=${fs.appId} app_secret=${maskSecret(fs.appSecret)} domain=${fs.domain} open_id=${fs.openId}`);
+      fs.step = 3; hSave(); if (H0.view === 'channels') renderHermes();
+      setTimeout(() => { hFeishuWizardStep(); }, 700);
+    };
+    setTimeout(tick, 650);
+    return;
+  }
+  if (fs.step === 3) {
+    log('→ GET /bot/v3/info');
+    fs.botName = 'Wanna 小助 · ' + Math.random().toString(36).slice(2, 5);
+    log(`← 200 bot_name="${fs.botName}"`);
+    fs.step = 4;
+    fs.busy = false; hSave(); renderHermes();
+    toast(`飞书机器人已创建：<b>${escapeHtml(fs.botName)}</b>（凭证已写入 FEISHU_APP_ID / SECRET / DOMAIN — mock）`);
+    return;
+  }
+  fs.busy = false; hSave(); renderHermes();
+}
+function hFeishuManual() {
+  const H0 = hState2();
+  const fs = H0.feishu;
+  askModal({ title: '手输 App ID / Secret', text: '（QR 路径失败时的回落：adapter.py:4371-4390）',
+    value: `${fs.appId || 'cli_…'}|${fs.appSecret || '…'}`, okText: '保存并 probe',
+    onOk: v => {
+      const [id, sec] = String(v || '').split('|');
+      if (!id || !sec) return false;
+      fs.appId = id.trim(); fs.appSecret = sec.trim(); fs.domain = 'feishu.cn';
+      fs.log.push(`[${new Date().toLocaleTimeString()}] 手输 app_id=${fs.appId}（回落路径）`);
+      fs.log.push(`→ GET /bot/v3/info（手输路径 :4391 同样 probe）`);
+      fs.step = 4; fs.botName = fs.botName || '手输接入的 bot';
+      hSave(); renderHermes(); toast('已手输并完成 probe');
+      return true;
+    } });
+}
+function hMockInboundModal(platform) {
+  const ch = H_CHANNELS.find(c => c.p === platform) || { n: platform };
+  askModal({ title: `注入入站消息（${ch.n}）`,
+    text: '会生成 MessageEvent / SessionSource 形状（event.py:36、session.py:66），并走主输入框同一条提交管线',
+    value: `${ch.n} 收到：请总结一下当前看板状态`, okText: '注入并发送',
+    onOk: v => {
+      const text = String(v || '').trim();
+      if (!text) return false;
+      const ev = hMockMessageEvent(platform, text);
+      const res = qeSubmit(text);
+      if (!res.ok) { toast(escapeHtml(res.err)); return false; }
+      setTimeout(() => toast(`<div style="font-family:var(--mono,monospace);font-size:11.5px;text-align:left">
+        ${escapeHtml(JSON.stringify({ platform: ev.platform, chat_id: ev.chat_id, chat_type: ev.chat_type,
+          thread_id: ev.thread_id, user_id: ev.user_id }))}</div>`), 120);
+      return true;
+    } });
+}
+
+/* ── 页面内唤起浮条的键位监听（真·全局热键属 B 批） ── */
+function qeComboFromEvent(e) {
+  const mods = [];
+  if (e.metaKey) mods.push('CommandOrControl');      // macOS 的 ⌘ = CommandOrControl
+  if (e.ctrlKey) mods.push('Control');
+  if (e.altKey) mods.push('Option');
+  if (e.shiftKey) mods.push('Shift');
+  let k = null;
+  if (/^Key[A-Z]$/.test(e.code)) k = e.code.slice(3);
+  else if (/^Digit[0-9]$/.test(e.code)) k = e.code.slice(5);
+  else if (e.code === 'Space') k = 'Space';
+  else if (/^F[0-9]{1,2}$/.test(e.code)) k = e.code;
+  else if (e.key && e.key.length === 1) k = e.key.toUpperCase();
+  else if (e.key) k = capitalize(e.key.replace('Arrow', '').toLowerCase());
+  if (!k || ['Meta', 'Control', 'Alt', 'Shift', 'OS'].indexOf(k) >= 0) return null;
+  const order = ['CommandOrControl', 'Control', 'Option', 'Shift'];
+  mods.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  return mods.concat([k]).join('+');
+}
+(function bindQE() {
+  qeRenderBar();
+  document.addEventListener('keydown', e => {
+    const q = S.quickEntry;
+    // ── 录制态：吃掉这次按键并落盘（Esc 取消） ──
+    if (q && q.hkRecording) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { q.hkRecording = false; save(true);
+        if (hermesView === 'quickEntry') renderHermes(); return; }
+      if (['Meta', 'Control', 'Alt', 'Shift', 'OS'].indexOf(e.key) >= 0) return;   // 只按了修饰键
+      const combo = qeComboFromEvent(e);
+      if (!combo) return;
+      q.shortcut = combo; q.hkRecording = false; save(true);
+      if (hermesView === 'quickEntry') renderHermes();
+      const v = qeNormalize(combo);
+      toast(v && v.error ? `已记录，但不可用：<b>${escapeHtml(v.why)}</b>` : `快捷键已改为 <b>${escapeHtml(combo)}</b>`);
+      return;
+    }
+    if (!q || !q.enabled) return;
+    const v = qeNormalize(q.shortcut);
+    if (!v || v.error) return;
+    const combo = qeComboFromEvent(e);
+    if (!combo || combo.toLowerCase() !== String(v.value).toLowerCase()) return;
+    e.preventDefault(); e.stopPropagation();
+    qeToggle();
+  }, true);
+})();
 
 })();

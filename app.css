@@ -2485,3 +2485,67 @@ body.finder-on .finder-pane{position:relative}
 .hgw-fields b{color:var(--ink3,#8A8F96);font-weight:400;font-family:inherit;margin-right:5px}
 .hgw-ops{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
 .hgw-note{font-size:11.5px;color:var(--ink3,#8A8F96);line-height:1.75;padding:2px 14px 0}
+
+/* ══ §46 Hermes 第三批：快捷输入 · 渠道 · 飞书一键建 bot ══ */
+/* 快捷输入浮条：几何照 quick-entry.ts:24-28（640×168 · 水平居中 · 顶部 22%） */
+.qe-bar{position:fixed;top:22%;left:50%;transform:translateX(-50%);width:640px;height:168px;max-width:94vw;
+  z-index:320;background:rgba(16,19,23,.97);border:1px solid #333A41;border-radius:16px;
+  box-shadow:0 30px 70px rgba(0,0,0,.62);padding:14px 16px;display:flex;flex-direction:column;gap:10px;
+  backdrop-filter:blur(16px)}
+.qe-bar[hidden]{display:none}
+.qe-bar .qe-top{display:flex;align-items:center;gap:9px}
+.qe-bar .qe-dot{width:8px;height:8px;border-radius:50%;background:#22C55E;flex:0 0 8px}
+.qe-bar .qe-title{font-size:12px;color:#9FB0B8}
+.qe-bar .qe-esc{margin-left:auto;font-size:11px;color:#6B7680;font-family:var(--mono,monospace)}
+.qe-bar textarea{flex:1;width:100%;resize:none;background:#0C1014;border:1px solid #333A41;border-radius:11px;
+  color:#EDF1F3;font-size:15px;line-height:1.5;padding:11px 13px;outline:none;font-family:inherit}
+.qe-bar textarea:focus{border-color:var(--focus,#3B82F6)}
+.qe-bar .qe-bot{display:flex;align-items:center;gap:9px}
+.qe-bar .qe-hint{font-size:11.5px;color:#6B7680}
+.qe-bar .qe-target{background:#161B20;border:1px solid #333A41;color:#93C5FD;border-radius:8px;
+  font-size:12px;padding:5px 9px;cursor:pointer}
+.qe-bar .qe-send{margin-left:auto;background:var(--focus,#2563EB);border:0;color:#fff;border-radius:9px;
+  font-size:13px;padding:8px 18px;cursor:pointer}
+.qe-bar .qe-send:hover{background:#2C74E6}
+/* 快捷输入设置页 */
+.qe-set{padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+.qe-key{font-family:var(--mono,monospace);background:#9EA6AA;color:#0C0C0E;border-radius:6px;
+  padding:3px 9px;font-size:12px;letter-spacing:.02em}
+.qe-key.rec{background:var(--focus,#2563EB);color:#fff}
+.qe-state{font-size:11.5px;padding:3px 9px;border-radius:11px}
+.qe-state.ok{background:rgba(34,197,94,.18);color:#BBF7D0}
+.qe-state.err{background:rgba(239,68,68,.18);color:#FECACA}
+.qe-state.off{background:rgba(255,255,255,.08);color:#8A8F96}
+/* 渠道页 */
+.hch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;padding:12px}
+.hch-card{background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;
+  padding:11px 12px;position:relative}
+.hch-card.hl{border-color:rgba(59,130,246,.55);background:rgba(59,130,246,.07)}
+.hch-card .pn{font-size:13.5px;font-weight:600;color:var(--ink,#EDEEF0);display:flex;align-items:center;gap:7px}
+.hch-card .pn .flag{font-size:11px;padding:1px 6px;border-radius:6px;background:rgba(255,255,255,.08);color:#9FB0B8}
+.hch-card .meta{font-size:11.5px;color:#8B96A0;line-height:1.75;margin-top:6px;font-family:var(--mono,monospace);
+  word-break:break-all}
+.hch-card .meta b{color:#6B7680;font-weight:400;font-family:inherit}
+.hch-card .ops{display:flex;gap:7px;margin-top:9px;flex-wrap:wrap}
+.hch-enums{margin:0 14px;padding:10px 12px;background:#0E1216;border:1px solid var(--line,#26292C);
+  border-radius:10px;font-family:var(--mono,monospace);font-size:11.5px;line-height:1.85;color:#8FA0AA;
+  word-break:break-all}
+.hch-enums b{color:#7DD3FC;font-weight:500}
+/* 飞书一键创建：三步卡 */
+.hfs{margin-top:10px;border:1px dashed rgba(59,130,246,.5);border-radius:10px;padding:10px 12px;
+  background:rgba(59,130,246,.06)}
+.hfs-steps{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:#9FB0B8}
+.hfs-step{padding:2px 9px;border-radius:11px;background:rgba(255,255,255,.07);color:#8FA0AA}
+.hfs-step.on{background:var(--focus,#2563EB);color:#fff}
+.hfs-step.done{background:rgba(34,197,94,.22);color:#BBF7D0}
+.hfs-body{margin-top:9px;font-size:12.5px;line-height:1.8;color:#C7D2DA}
+.hfs-body .qr{display:inline-flex;flex-direction:column;gap:4px;background:#fff;color:#0C0C0E;border-radius:9px;
+  padding:9px 11px;font-family:var(--mono,monospace);font-size:11px;line-height:1.35;margin:6px 0}
+.hfs-body code{font-family:var(--mono,monospace);background:rgba(0,0,0,.35);border-radius:5px;padding:1px 6px;
+  color:#9FD0FF}
+.hfs-cfg{display:flex;gap:14px;flex-wrap:wrap;margin-top:9px;font-size:12px;align-items:center}
+.hfs-cfg label{display:flex;align-items:center;gap:5px;cursor:pointer;color:#C7D2DA}
+/* MessageEvent 预览 */
+.hme{background:#0E1216;border:1px solid var(--line,#26292C);border-radius:10px;padding:11px 12px;
+  font-family:var(--mono,monospace);font-size:11.5px;line-height:1.85;color:#9FD0FF;white-space:pre-wrap;
+  word-break:break-all;margin-top:8px}
