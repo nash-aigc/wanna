@@ -13239,12 +13239,13 @@ function wikiGraphStatsRefresh() {
 }
 
 /// §56 单色规范（用户：颜色太乱，应该是一个颜色——参照 Obsidian 灰白常态 + 高亮态）
-const WG_NODE = '#E6E6E6';              // 常态节点（全部同色）
-const WG_NODE_DIM = 'rgba(230,230,230,.16)';  // focus 时被暗化的无关节点
+const WG_NODE = '#C4C4C9';              // 常态节点（浅灰非纯白——图2 比例/色感）
+const WG_NODE_DIM = 'rgba(196,196,201,.45)';  // focus 时降亮的无关节点：0.45=明显变暗但仍可见（§57 用户：不要完全看不到）
 const WG_FOCUS = '#0A84FF';             // 焦点节点 = 站内 accent（高亮态参照右3）
 const WG_NEIGHBOR = '#FFFFFF';          // 一度邻居
 const WG_EDGE = 'rgba(148,163,184,.16)';// 常态边（更淡）
 const WG_EDGE_FOCUS = 'rgba(10,132,255,.9)'; // 关联边高亮
+const WG_EDGE_DIM = 'rgba(148,163,184,.08)'; // focus 时无关边：常态(.16)的一半——「亮度降低」但肉眼仍可感（§57）
 let wgView = { scale: 1, targetScale: 1, tx: 40, ty: 40, drag: null, moved: 0, positions: [],
   alpha: 0, dragNode: null, draggedNode: false, raf: 0, hoverId: null, pins: new Set() };
 
@@ -13261,7 +13262,7 @@ function wgLayout(g, w, h) {
     i++;
     pos.set(node.id, {
       x: Math.cos(a) * rr, y: Math.sin(a) * rr, vx: 0, vy: 0,    // 世界原点=圆心
-      r: 3 + Math.min(node.linkCount || 1, 8) * 0.45,            // §56 3~6.6px：小点才露字（13px 的大球曾把标签全盖住）
+      r: 2.2 + Math.min(node.linkCount || 1, 10) * 0.28,         // §57 2.5~5.0 **CSS px**（屏幕恒定）：画时除以 scale，任何缩放档下点/字比例≈图2（放大不再变大饼）
       t: node.nodeType || 'concept', n: node,
     });
   });
@@ -13356,16 +13357,19 @@ function wgFocusSet() {
 /// 命中测试：圆点 + **标签区**也算（文字很长，点在字上也应能抓住节点——§56 用户"无法拖拽"多半是点在字上）
 function wgHitNode(wx, wy) {
   if (!wgView.positions) return null;
+  const sc = Math.max(wgView.scale, 0.0001);
   const pad = 8 / Math.max(wgView.scale, 0.4);
+  const gap = 4 / sc;                                     // §57 与绘制同式：4 CSS px 换算成世界单位
   let best = null, bestD = Infinity;
   for (const [, p] of wgView.positions) {
-    const d = Math.hypot(p.x - wx, p.y - wy) - p.r;
+    const rr = p.r / sc;                                  // §57 屏幕恒定半径（与 wgDraw.arc 同式）
+    const d = Math.hypot(p.x - wx, p.y - wy) - rr;
     if (d < pad && d < bestD) { bestD = d; best = p; continue; }
     // 标签盒（画在节点右侧，约 10px/字）
     const charW = 10 / Math.max(wgView.scale, 0.6);
     const lw = Math.min(String(p.n.label).length, 16) * charW;
-    if (wx >= p.x + p.r && wx <= p.x + p.r + 4 + lw && Math.abs(wy - p.y) < charW * 0.8) {
-      const dd = (wx - p.x - p.r) / (lw + 1);
+    if (wx >= p.x + rr && wx <= p.x + rr + gap + lw && Math.abs(wy - p.y) < charW * 0.8) {
+      const dd = (wx - p.x - rr) / (lw + 1);
       if (dd < bestD) { bestD = dd; best = p; }
     }
   }
@@ -13422,7 +13426,7 @@ function wgDraw() {
     ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
     edgeIdx++;
   }
-  ctx.strokeStyle = hasFocus ? 'rgba(148,163,184,.05)' : WG_EDGE;
+  ctx.strokeStyle = hasFocus ? WG_EDGE_DIM : WG_EDGE;   // §57 无关边不压黑（保持可感）
   ctx.stroke();
   if (hasFocus) {
     ctx.beginPath();
@@ -13442,19 +13446,22 @@ function wgDraw() {
   for (const [id, p] of pos) {
     const isFocus = focus.id === id;
     const isNeigh = hasFocus && focus.nodes.has(id);
+    const rr = p.r / wgView.scale;                        // §57 屏幕恒定：世界半径随 scale 缩，屏上始终 = p.r CSS px
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
     if (isFocus) { ctx.fillStyle = WG_FOCUS; ctx.shadowColor = WG_FOCUS; ctx.shadowBlur = 10 / wgView.scale; }
     else if (isNeigh) ctx.fillStyle = WG_NEIGHBOR;
     else ctx.fillStyle = hasFocus ? WG_NODE_DIM : WG_NODE;
     ctx.fill();
     ctx.shadowBlur = 0;
-    if (showLabel && (!hasFocus || isNeigh)) {
-      ctx.fillStyle = isFocus ? '#EAF3FF' : (hasFocus ? '#FFFFFF' : 'rgba(228,228,228,.62)');
+    if (showLabel) {
+      // §57 focus 时无关标签改为暗画可见（.30），不再整批隐藏
+      ctx.fillStyle = isFocus ? '#EAF3FF' : (isNeigh ? '#FFFFFF'
+        : (hasFocus ? 'rgba(228,228,228,.30)' : 'rgba(228,228,228,.62)'));
       const fw = 10 / Math.max(wgView.scale, 0.6);
       ctx.font = `${isFocus ? 600 : 400} ${fw}px sans-serif`;
       const label = p.n.label.length > 20 ? p.n.label.slice(0, 19) + '…' : p.n.label;
-      ctx.fillText(label, p.x + p.r + 4, p.y + fw * 0.36);
+      ctx.fillText(label, p.x + rr + 4 / wgView.scale, p.y + fw * 0.36);
     }
   }
   ctx.restore();
@@ -13466,11 +13473,47 @@ function wgDraw() {
   let maxR = 0, maxNodeR = 0;
   for (const [, p] of pos) { maxR = Math.max(maxR, Math.hypot(p.x, p.y)); maxNodeR = Math.max(maxNodeR, p.r); }
   canvas.dataset.radius = String(Math.round(maxR));
-  canvas.dataset.maxR = maxNodeR.toFixed(1);                       // §56 节点大小断言
+  canvas.dataset.maxR = maxNodeR.toFixed(1);                       // §56 节点大小断言 = §57 屏上半径 CSS px（与 scale 无关）
   canvas.dataset.focus = focus.id || '';                          // §56 焦点断言
   canvas.dataset.focusEdges = hasFocus ? String(focus.edges.size) : '0';
   canvas.dataset.scale = wgView.scale.toFixed(3);                 // §56 平滑缩放断言
   canvas.dataset.target = String(wgView.targetScale ?? wgView.scale);
+  // §57 非焦点节点采样点（验证"降亮仍可见"）—— 必须取**画布内可见**的，放大后视野小、首个很可能在屏外
+  const inView = (sx, sy) => sx >= 8 && sy >= 8 && sx <= cw - 8 && sy <= ch - 8;
+  canvas.dataset.other = '';
+  canvas.dataset.otherEdge = '';
+  if (hasFocus) {
+    for (const [oid, op] of pos) {
+      if (focus.nodes.has(oid)) continue;
+      const sx = op.x * wgView.scale + wgView.tx, sy = op.y * wgView.scale + wgView.ty;
+      if (!inView(sx, sy)) continue;
+      canvas.dataset.other = `${Math.round(sx)},${Math.round(sy)}`;
+      break;
+    }
+    // §57 无关边中点采样（验证"压暗但仍可感"）：最多扫 300 条边，避免拖拽热路径 O(e×n)
+    let scanned = 0;
+    for (let ei = 0; ei < g.edges.length && scanned < 300; ei++) {
+      if (focus.edges.has(ei)) continue;
+      scanned++;
+      const e = g.edges[ei];
+      if (focus.nodes.has(e.source) || focus.nodes.has(e.target)) continue;
+      const a = pos.get(e.source), b = pos.get(e.target);
+      if (!a || !b) continue;
+      const mxw = (a.x + b.x) / 2, myw = (a.y + b.y) / 2;
+      const sx = mxw * wgView.scale + wgView.tx, sy = myw * wgView.scale + wgView.ty;
+      if (!inView(sx, sy)) continue;
+      let near = false;                                   // 中点贴着任一节点/其标签带则换一条（采样会撞上圆点或文字）
+      for (const [, q] of pos) {
+        if (Math.hypot(q.x - mxw, q.y - myw) * wgView.scale < 8) { near = true; break; }
+        const qx = q.x * wgView.scale + wgView.tx, qy = q.y * wgView.scale + wgView.ty;
+        const labelW = 6 + Math.min(String(q.n.label).length, 16) * 10 + 6;  // 圆点半径 + 间隙 + 字宽（屏幕 px）
+        if (sx >= qx - 6 && sx <= qx + labelW && Math.abs(sy - qy) < 8) { near = true; break; }
+      }
+      if (near) continue;
+      canvas.dataset.otherEdge = `${Math.round(sx)},${Math.round(sy)}`;
+      break;
+    }
+  }
 }
 
 function wgBindCanvas(pane) {
