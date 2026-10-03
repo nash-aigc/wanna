@@ -2346,11 +2346,14 @@ The recommended way to configure the app is the notch sheet's 设置 (hover or c
 **唯一真相文件：`设计框架/03-原型UI风格规范.md`。** 动 `app.css` / `app.js` 里任何按钮、颜色、
 菜单、下拉、设置行之前**必须先读它**；与它冲突的写法一律改到合规。四条铁律：
 
-1. **按钮只有 `.hbtn` 家族，且它是顶栏 `.btn` 的镜像**（27px / 12.5px / radius8 / 深底 #1A1A1C +
-   line2 边；primary=accent 实心；danger=红字不红块；.sm=23px）——
-   ⛔ **永久禁止：渐变按钮、投影按钮、红底色块 danger、32px 胖按钮、inline padding、裸配色**
-   （用户 2026-10-03 两次点名「不符合 wanna 的按钮，以后也禁止」）。多选/行内开关用
-   **`.hchk` 按钮**（is-on=accent 浅底+✓，同 finder-toggle 惯例），⛔ Hermes 页禁裸 checkbox）。
+1. **按钮家族只有两个成员，都是顶栏 `.btn` 的镜像**：
+   **`.hbtn`**（动作：27px / 12.5px / radius8 / 深底 #1A1A1C + line2 边；primary=accent 实心；
+   danger=红字不红块；.sm=23px）与 **`.hchk`**（选中：同外观，点击切 `is-on` = accent 浅底
+   rgba(10,132,255,.14)+描边+✓，finder-toggle 惯例——多选组与行内开关一律用它，
+   用户 §52 点名后**正式入档**）。——
+   ⛔ **永久禁止：渐变按钮、投影按钮、红底色块 danger、32px 胖按钮、inline padding、裸配色、
+   第三种按钮样式**（用户 2026-10-03 两次点名「不符合 wanna 的按钮，以后也禁止」）；
+   ⛔ Hermes 页禁裸 checkbox（唯一定义在 `设计框架/03` §二 家族表）。
 2. **锚点菜单只许走 `showMenu`**（贴上方、放不下翻下），且 `.menu` z-index 必须**高于一切
    常驻浮层**（现 340；曾因 80 被 qe-bar 320 盖住）——菜单打开后与锚点矩形不相交、
    `elementFromPoint(菜单首项中心)` 必须命中菜单本身（§35.11 + D83）。
