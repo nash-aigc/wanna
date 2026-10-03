@@ -2098,3 +2098,147 @@ body.finder-on .fp-side.drag-ungrouped{outline:1.5px dashed rgba(78,179,232,.75)
 .fp-hk .hk-foot .primary{background:#1569FF;border-color:#1569FF;color:#fff}
 /* 41.8 快捷键面板要挂在访达面板内（absolute 定位的参照物） */
 body.finder-on .finder-pane{position:relative}
+
+/* ══ §42 QSpace 偏好设置窗 ══
+   像素基准全部 PIL 实测自用户 3 张 QSpace 截图（图片 2x 视网膜 → 下面用 pt，= 图像 px ÷ 2）：
+   窗口 800×836pt · 侧栏 247pt(30.9%) · 侧栏行高 28pt · 侧栏 #162227 · 选中 #0640C7 ·
+   内容底 #192124 · 卡片 #1D2629 · 顶栏 #192125 · 次按钮 #2A3336 · 分节标题 #545B5E · 红灯 #ED4240 */
+.qsp{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.45)}
+.qsp[hidden]{display:none}
+.qsp-win{position:relative;display:flex;width:min(1100px,92vw);height:min(760px,88vh);
+  background:#192124;border-radius:12px;overflow:hidden;
+  box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 .5px rgba(255,255,255,.07)}
+/* 三灯 */
+.qsp-lights{position:absolute;top:0;left:0;height:34px;display:flex;align-items:center;gap:8px;
+  padding:0 14px;z-index:5;pointer-events:none}
+.qsp-dot{width:12px;height:12px;border-radius:50%;border:0;padding:0;display:block;pointer-events:auto}
+.qsp-red{background:#ED4240;cursor:pointer}
+.qsp-yellow{background:#F5BD4F}
+.qsp-green{background:#61C454}
+/* 左栏 */
+.qsp-side{width:30.9%;min-width:230px;background:#162227;padding:44px 12px 14px;
+  display:flex;flex-direction:column;gap:8px;overflow:auto}
+.qsp-filter{display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border-radius:8px;
+  background:#101A1E;color:#7C8B90;flex:0 0 auto}
+.qsp-filter input{flex:1;min-width:0;background:none;border:0;outline:none;color:#D7D9DA;
+  font-size:13px;padding:0}
+.qsp-filter input::placeholder{color:#6E7C81}
+.qsp-nav{display:flex;flex-direction:column;gap:2px}
+.qsp-group{height:10px}                          /* 分组之间的空隙（照图2） */
+.qsp-item{display:flex;align-items:center;gap:9px;height:28px;padding:0 9px;border-radius:7px;
+  color:#D7D9DA;font-size:13.5px;cursor:pointer;user-select:none}
+.qsp-item:hover{background:rgba(255,255,255,.06)}
+.qsp-item.is-on{background:#0640C7;color:#fff}
+.qsp-item .qsp-ico{width:18px;height:18px;border-radius:5px;flex:0 0 18px;display:inline-flex;
+  align-items:center;justify-content:center;font-size:11px;line-height:1;color:#fff;
+  font-weight:700;font-family:-apple-system,'PingFang SC',sans-serif}
+.qsp-item .qsp-lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qsp-item.is-hidden{display:none}
+/* 右栏 */
+.qsp-main{flex:1;min-width:0;display:flex;flex-direction:column;background:#192124}
+.qsp-top{height:46px;flex:0 0 46px;display:flex;align-items:center;gap:14px;padding:0 18px;
+  background:#192125}
+.qsp-navbtns{display:flex;background:#101A1E;border-radius:9px;padding:2px;gap:2px}
+.qsp-navbtns button{width:34px;height:24px;border:0;border-radius:7px;background:transparent;
+  color:#9AA6AA;font-size:16px;line-height:1;cursor:pointer}
+.qsp-navbtns button:hover{background:#223036;color:#fff}
+.qsp-navbtns button[disabled]{opacity:.35;cursor:default;background:transparent}
+.qsp-title{font-size:15.5px;font-weight:600;color:#EAF0F1}
+.qsp-body{flex:1;min-height:0;overflow:auto;padding:6px 20px 22px}
+/* 分节标题（照图：小一号、灰、无底） */
+.qsp-sec{font-size:13px;color:#545B5E;margin:16px 0 7px;font-weight:500}
+.qsp-card{background:#1D2629;border-radius:10px;overflow:hidden}
+.qsp-row{display:flex;align-items:center;gap:10px;min-height:44px;padding:9px 14px;
+  border-bottom:1px solid rgba(255,255,255,.055);font-size:13.5px;color:#D7D9DA}
+.qsp-row:last-child{border-bottom:0}
+.qsp-row .qsp-lab{flex:1;min-width:0}
+.qsp-row .qsp-sub{font-size:12px;color:#7C8B90}
+.qsp-desc{background:#1D2629;border-radius:10px;padding:13px 15px;font-size:13px;line-height:1.65;
+  color:#C9CFD1;margin-bottom:12px}
+/* 开关 / 单选 / 复选（照图3） */
+.qsp-sw{width:40px;height:23px;border-radius:12px;background:#3A4448;position:relative;
+  border:0;cursor:pointer;flex:0 0 40px;transition:background .15s}
+.qsp-sw::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;
+  background:#fff;transition:transform .15s}
+.qsp-sw.on{background:#0A84FF}
+.qsp-sw.on::after{transform:translateX(17px)}
+.qsp-radio{width:17px;height:17px;border-radius:50%;border:1.5px solid #556066;background:transparent;
+  position:relative;cursor:pointer;flex:0 0 17px;padding:0}
+.qsp-radio.on{border-color:#0A84FF;background:#0A84FF}
+.qsp-radio.on::after{content:"";position:absolute;inset:4px;border-radius:50%;background:#fff}
+.qsp-chk{width:17px;height:17px;border-radius:4.5px;border:1.5px solid #556066;background:transparent;
+  position:relative;cursor:pointer;flex:0 0 17px;padding:0;font-size:11px;color:#fff;line-height:1}
+.qsp-chk.on{border-color:#0A84FF;background:#0A84FF}
+.qsp-chk.on::after{content:"✓";position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.qsp-opt{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:13.5px;color:#D7D9DA}
+/* 次按钮（照图右下 清空/默认值/访达模式） */
+.qsp-btn{border:0;border-radius:7px;background:#2A3336;color:#D7D9DA;font-size:13px;
+  padding:6px 14px;cursor:pointer}
+.qsp-btn:hover{background:#354044}
+.qsp-btn.primary{background:#0A84FF;color:#fff}
+.qsp-btn.primary:hover{background:#2592FF}
+.qsp-btn.sm{padding:4px 11px;font-size:12.5px;border-radius:14px}
+.qsp-btn[disabled]{opacity:.4;cursor:default}
+/* 右键菜单页：左右两列（照图2） */
+.qsp-cm{display:flex;gap:14px;align-items:stretch}
+.qsp-cm-l,.qsp-cm-r{flex:1;min-width:0;display:flex;flex-direction:column;background:#1D2629;
+  border-radius:10px;overflow:hidden}
+.qsp-cm-l{min-height:330px}
+.qsp-cm-r{max-height:430px}
+.qsp-cm-list{flex:1;min-height:0;overflow:auto;padding:6px 0;position:relative}
+.qsp-cm-item{display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;font-size:13px;
+  color:#D7D9DA;cursor:grab;user-select:none;white-space:nowrap}
+.qsp-cm-item:hover{background:rgba(255,255,255,.05)}
+.qsp-cm-item.is-sel{background:#0A84FF;color:#fff}
+.qsp-cm-item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.qsp-cm-item .kw{font-size:11.5px;color:#8B9599;font-family:var(--mono)}
+.qsp-cm-item.is-sel .kw{color:#DCE9FF}
+.qsp-cm-item .tp{font-size:11.5px;color:#767F83;flex:0 0 auto}
+.qsp-cm-item.is-sel .tp{color:#CFE0FF}
+.qsp-cm-item.is-dragging{opacity:.4}
+.qsp-cm-item.drop-above{box-shadow:inset 0 2.5px 0 -1px #0A84FF}
+.qsp-cm-item.drop-below{box-shadow:inset 0 -2.5px 0 -1px #0A84FF}
+.qsp-cm-empty{padding:14px;text-align:center;color:#767F83;font-size:12.5px}
+.qsp-cm-tools{display:flex;gap:8px;padding:9px 12px;border-top:1px solid rgba(255,255,255,.055)}
+.qsp-cm-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:12px}
+.qsp-cm-head{padding:10px 12px 4px;border-bottom:1px solid rgba(255,255,255,.055)}
+.qsp-cm-search{display:flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:7px;
+  background:#101A1E;color:#7C8B90;margin-bottom:8px}
+.qsp-cm-search input{flex:1;min-width:0;background:none;border:0;outline:none;color:#D7D9DA;font-size:12.5px}
+.qsp-cm-grouphd{font-size:12.5px;color:#95A0A4;padding:6px 12px 4px;cursor:pointer;user-select:none}
+.qsp-cm-dropzone{outline:1.5px dashed rgba(10,132,255,.75);outline-offset:-3px;
+  background:rgba(10,132,255,.07)}
+/* 表格（聚焦搜索的种类表 / 快捷键表） */
+.qsp-table{width:100%;border-collapse:collapse;font-size:13px}
+.qsp-table th{text-align:left;font-weight:500;color:#95A0A4;font-size:12.5px;padding:9px 14px;
+  background:#273134;border-bottom:1px solid rgba(0,0,0,.35)}
+.qsp-table td{padding:9px 14px;color:#D7D9DA;border-bottom:1px solid rgba(255,255,255,.055);
+  vertical-align:middle}
+.qsp-table tr:last-child td{border-bottom:0}
+.qsp-table tbody tr:hover td{background:rgba(255,255,255,.045)}
+.qsp-table tbody tr.is-sel td{background:#0A84FF;color:#fff}
+.qsp-table input{width:100%;background:#101A1E;border:1px solid transparent;border-radius:5px;
+  color:inherit;font-size:12.5px;padding:3px 7px;outline:none;font-family:inherit}
+.qsp-table input:focus{border-color:#0A84FF}
+.qsp-tablebar{display:flex;gap:8px;padding:8px 10px;border-top:1px solid rgba(255,255,255,.055);
+  background:#1D2629}
+/* 快捷键页 */
+.qsp-hk-sec{font-size:13px;color:#545B5E;padding:9px 14px;background:#273134;font-weight:500}
+.qsp-hk-key{font-family:var(--mono);font-size:11.5px;color:#0C0C0E;background:#9EA6AA;
+  border-radius:5px;padding:2px 7px;white-space:nowrap}
+.qsp-hk-key.is-rec{background:#0A84FF;color:#fff}
+.qsp-hint{font-size:12px;color:#7C8B90;line-height:1.7;background:#1D2629;border-radius:10px;
+  padding:11px 14px;margin-top:12px;white-space:pre-line}
+/* 新建文件 / 批量重命名 的输入行 */
+.qsp-inp{background:#101A1E;border:1px solid #26333A;border-radius:6px;color:#D7D9DA;
+  font-size:12.5px;padding:5px 9px;outline:none;min-width:0;font-family:inherit}
+.qsp-inp:focus{border-color:#0A84FF}
+.qsp-seg{display:inline-flex;background:#101A1E;border-radius:8px;padding:2px;gap:2px}
+.qsp-seg button{border:0;border-radius:6px;background:transparent;color:#95A0A4;font-size:12.5px;
+  padding:4px 12px;cursor:pointer}
+.qsp-seg button.on{background:#2A3336;color:#fff}
+.qsp-steps{display:inline-flex;align-items:center;gap:7px;color:#D7D9DA;font-size:13.5px}
+.qsp-steps button{width:22px;height:20px;border:0;border-radius:5px;background:#2A3336;color:#D7D9DA;
+  cursor:pointer;font-size:13px;line-height:1}
+.qsp-steps button:hover{background:#354044}

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=43 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=43">
+<!-- ?v=44 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=44">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -502,7 +502,9 @@
         <button class="fp-tool" id="fpTerminal" title="在终端打开选择的文件夹（open_in_terminal）">⌘_ 终端</button>
         <!-- §41.8 访达快捷键设置入口（⌘A/C/X/V · ⌘D · ⌥D 都在这块面板里改） -->
         <i class="fp-div"></i>
-        <button class="fp-tool" id="fpHotkeys" title="访达快捷键：全选/复制/剪切/粘贴/前往桌面/前往下载，键位可改">⌨ 快捷键</button>
+        <button class="fp-tool" id="fpHotkeys" title="快捷键 —— 打开设置窗的「快捷键」页（⌘A/C/X/V · ⌘D · ⌥D 都在那儿改）">⌨ 快捷键</button>
+        <!-- §42.1 QSpace 偏好设置窗入口（快捷键 / 右键菜单 / 聚焦搜索 / 新建文件 / 批量重命名 / 连接 / iCloud） -->
+        <button class="fp-tool" id="fpPrefs" title="QSpace 风格设置（只留：快捷键 / 右键 / 搜索 / 新建文件 / 批量重命名 / 连接 / iCloud）">⚙ 设置</button>
         <!-- §37.6 三态：藏左 / 藏右 / 全屏访达（访达住编辑区位，默认三段都在） -->
         <i class="fp-div"></i>
         <button class="fp-tool" id="fpShowLeft" title="显示 / 隐藏左侧项目区">◧ 项目</button>
@@ -516,9 +518,33 @@
         <!-- §34 右收藏栏：与左栏一模一样的分组/标签/拖动（你给的照片右侧那列 Harness/Agents/APP…） -->
         <div class="fp-side fp-side-r" id="fpSideR"></div>
       </div>
-      <!-- §41.8 快捷键设置面板（内容由 fpRenderHotkeyPanel 画） -->
-      <div class="fp-hk" id="fpHotkeyPanel" hidden></div>
     </section>
+    <!-- §42 QSpace 偏好设置窗（浮在整个工作区上；左栏只有用户点名的 7 页） -->
+    <div class="qsp" id="qspWin" hidden>
+      <div class="qsp-win">
+        <div class="qsp-lights">
+          <button class="qsp-dot qsp-red" id="qspClose" title="关闭"></button>
+          <i class="qsp-dot qsp-yellow"></i><i class="qsp-dot qsp-green"></i>
+        </div>
+        <div class="qsp-side">
+          <div class="qsp-filter">
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5 L14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <input id="qspFilterInput" spellcheck="false" placeholder="搜索">
+          </div>
+          <div class="qsp-nav" id="qspNav"></div>
+        </div>
+        <div class="qsp-main">
+          <div class="qsp-top">
+            <div class="qsp-navbtns">
+              <button id="qspBack" title="后退">‹</button>
+              <button id="qspFwd" title="前进">›</button>
+            </div>
+            <div class="qsp-title" id="qspTitle">右键菜单</div>
+          </div>
+          <div class="qsp-body" id="qspBody"></div>
+        </div>
+      </div>
+    </div>
 <div class="side-panel side-panel-right" id="panelSide" hidden>
       <div class="sp-head">
         <div class="sp-tabs" id="sideTabs">
@@ -780,6 +806,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=43"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>

@@ -7185,19 +7185,19 @@ function fpSideItemMenu(x, y, k, gk, ii, it) {
     { label: '显示简介', action: () => toast(`简介（演示）：${escapeHtml(it.name)}`) },
     { label: '在访达中显示', action: () => toast(`在系统访达中显示（演示）：${escapeHtml(it.name)}`) },
     { sep: true },
-    { label: '速览 ›', sub: [
+    { label: '速览', sub: [
       { label: '图标', action: () => toast('速览 · 图标（演示）') },
       { label: '列表', action: () => toast('速览 · 列表（演示）') },
       { label: '分栏', action: () => toast('速览 · 分栏（演示）') }] },
     { sep: true },
-    { label: '常用 ›', sub: [
+    { label: '常用', sub: [
       { label: '桌面', action: () => fpNavTo(FP.active, '/Users/mjm/Desktop', true) },
       { label: '下载', action: () => fpNavTo(FP.active, '/Users/mjm/Downloads', true) },
       { label: '文档', action: () => fpNavTo(FP.active, '/Users/mjm/Documents', true) }] },
-    { label: '最近 ›', sub: [
+    { label: '最近', sub: [
       { label: '（最近打开的目录演示）', action: () => toast('最近：原型里按访问顺序列目录（演示）') }] },
-    { label: '标签 ›', sub: fpTagsItems(it.name) },
-    { label: 'iCloud ›', sub: [
+    { label: '标签', sub: fpTagsItems(it.name) },
+    { label: 'iCloud', sub: [
       { label: 'iCloud 云盘', action: () => fpNavTo(FP.active, '/Users/mjm/Library/Mobile Documents/com~apple~CloudDocs', true) },
       { label: '与我共享', action: () => fpNavTo(FP.active, '/Users/mjm/Library/Mobile Documents/com~apple~Shared', true) }] },
     { label: '添加分隔符', action: () => toast('已在侧栏加一条分隔符（演示）') },
@@ -7474,65 +7474,6 @@ function fpRunHotkey(id) {
     return;
   }
 }
-/// §41.8 快捷键设置面板（挂在 .finder-pane 里）
-function fpRenderHotkeyPanel() {
-  const p = document.getElementById('fpHotkeyPanel');
-  if (!p) return;
-  const hk = fpHotkeys();
-  const rows = Object.keys(FP_HOTKEY_DEFAULTS).map(id => {
-    const rec = FP.hkRecording === id;
-    return `<div class="hk-row" data-hk="${id}">
-      <span class="hk-name">${FP_HOTKEY_LABELS[id]}</span>
-      <span class="hk-key${rec ? ' is-rec' : ''}">${rec ? '请按组合键…' : escapeHtml(hk[id])}</span>
-      <button class="hk-btn" data-hkact="rec">${rec ? '取消' : '录制'}</button>
-    </div>`;
-  }).join('');
-  p.innerHTML = `<h4>访达快捷键</h4>
-    <div class="hk-hint">点「录制」后直接按新的组合键（Esc 取消）。<br>
-      默认里 ⌘D / ⌥D 取自 QSpace Pro 的 hotkey.json（前往桌面 / 前往下载）。</div>
-    ${rows}
-    <div class="hk-foot">
-      <button class="hk-btn" data-hkact="reset">恢复默认</button>
-      <button class="hk-btn primary" data-hkact="close">完成</button>
-    </div>`;
-  p.querySelectorAll('[data-hkact]').forEach(b => b.onclick = e => {
-    e.stopPropagation();
-    const act = b.dataset.hkact;
-    if (act === 'close') { FP.hkRecording = null; fpToggleHotkeyPanel(false); return; }
-    if (act === 'reset') {
-      S.finderHotkeys = null; FP.hkRecording = null; save(true); fpRenderHotkeyPanel();
-      toast('访达快捷键已恢复默认');
-      return;
-    }
-    const row = b.closest('[data-hk]');
-    if (!row) return;
-    const id = row.dataset.hk;
-    FP.hkRecording = (FP.hkRecording === id) ? null : id;
-    fpRenderHotkeyPanel();
-    if (FP.hkRecording) toast('按新的组合键完成录制 · Esc 取消');
-  });
-}
-function fpToggleHotkeyPanel(force) {
-  const p = document.getElementById('fpHotkeyPanel');
-  if (!p) return;
-  FP.hkPanelOpen = force !== undefined ? force : !FP.hkPanelOpen;
-  if (FP.hkPanelOpen) { fpRenderHotkeyPanel(); p.hidden = false; }
-  else { FP.hkRecording = null; p.hidden = true; }
-}
-/// §41.8 录制：capture 挡在一切派发之前，录到就存盘并收面板
-document.addEventListener('keydown', e => {
-  if (!FP.hkRecording) return;
-  e.preventDefault(); e.stopPropagation();
-  if (e.key === 'Escape') { FP.hkRecording = null; fpRenderHotkeyPanel(); return; }
-  const combo = fpComboFromEvent(e);
-  if (!combo) return;
-  const id = FP.hkRecording;
-  S.finderHotkeys = Object.assign({}, fpHotkeys(), { [id]: combo });
-  FP.hkRecording = null;
-  save(true);
-  fpRenderHotkeyPanel();
-  toast(`「${FP_HOTKEY_LABELS[id]}」已改为 <b>${escapeHtml(combo)}</b>`);
-}, true);
 /// §36.4 文件右键「收藏 ›」子菜单内容：各分组 + 不分组 + 新建分组并收藏（§41.9 改为子菜单数组）
 function fpFavoriteItems(name, full, isDir) {
   const mk = (label, gKey) => ({ label, action: () => fpFavoriteInto('L', gKey, name, full, isDir) });
@@ -7824,6 +7765,67 @@ function fpSorted(arr) {
   };
   return [...dirs.sort(cmp), ...files.sort(cmp)];
 }
+/* ══ §42.7–42.9 聚焦搜索：语法（或 / 且 / 排除）按设置真的生效 ══
+   QSpace「聚焦搜索」页把分隔符做成勾选（图3 实拍：或者=☑空格、并且=☑&、排除=☑-），
+   同一个搜索框因此能表达不同的搜索方式 —— 这里照同一套语义实现。 */
+const FP_SEARCH_DEF = {
+  or: { space: true, bar: false, semi: false, comma: false },
+  and: { space: false, amp: true, semi: false, comma: false },
+  excl: { minus: true, caret: false, bang: false },
+};
+const FP_SEARCH_OR_CH = { space: ' ', bar: '|', semi: ';', comma: ',' };
+const FP_SEARCH_AND_CH = { space: ' ', amp: '&', semi: ';', comma: ',' };
+const FP_SEARCH_EXCL_CH = { minus: '-', caret: '^', bang: '!' };
+function fpSearchSyntax() {
+  const out = JSON.parse(JSON.stringify(FP_SEARCH_DEF));
+  const s = S.finderSearchSyntax;
+  if (s && typeof s === 'object') {
+    ['or', 'and', 'excl'].forEach(k => { if (s[k] && typeof s[k] === 'object') Object.assign(out[k], s[k]); });
+  }
+  return out;
+}
+/// 查询串 → { groups: [[或-词…], …]（组间=并且）, excluded: [排除词] }
+function fpParseSearch(raw) {
+  const cfg = fpSearchSyntax();
+  const andCh = [], orCh = [], exclCh = [];
+  Object.keys(FP_SEARCH_AND_CH).forEach(k => { const c = FP_SEARCH_AND_CH[k]; if (cfg.and[k] && andCh.indexOf(c) < 0) andCh.push(c); });
+  Object.keys(FP_SEARCH_OR_CH).forEach(k => { const c = FP_SEARCH_OR_CH[k]; if (cfg.or[k] && orCh.indexOf(c) < 0) orCh.push(c); });
+  Object.keys(FP_SEARCH_EXCL_CH).forEach(k => { if (cfg.excl[k]) exclCh.push(FP_SEARCH_EXCL_CH[k]); });
+  orCh.slice().forEach(c => { const i = orCh.indexOf(c), j = andCh.indexOf(c); if (j >= 0) orCh.splice(i, 1); });  // 两边都勾 → 按"并且"
+  const s = String(raw || '').trim();
+  if (!s) return { groups: [], excluded: [] };
+  if (!andCh.length && !orCh.length) {
+    if (exclCh.length && exclCh.indexOf(s[0]) >= 0 && s.length > 1) return { groups: [], excluded: [s.slice(1).toLowerCase()] };
+    return { groups: [[s.toLowerCase()]], excluded: [] };
+  }
+  const groups = [];
+  let cur = [], buf = '', excluded = [];
+  const flushTok = () => {
+    const t = buf; buf = '';
+    if (!t) return;
+    if (exclCh.indexOf(t[0]) >= 0) { const w = t.slice(1).toLowerCase(); if (w) excluded.push(w); return; }
+    cur.push(t.toLowerCase());
+  };
+  const flushGroup = () => { flushTok(); if (cur.length) { groups.push(cur); cur = []; } };
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (andCh.indexOf(ch) >= 0) { flushGroup(); continue; }
+    if (orCh.indexOf(ch) >= 0) { flushTok(); continue; }
+    buf += ch;
+  }
+  flushGroup();
+  return { groups, excluded };
+}
+/// 一个名字过不过搜索（大小写不敏感子串）
+function fpSearchPass(name, raw) {
+  const q = String(raw || '').trim();
+  if (!q) return true;
+  const p = fpParseSearch(q);
+  const n = name.toLowerCase();
+  if (p.excluded.some(w => n.indexOf(w) >= 0)) return false;
+  if (!p.groups.length) return true;                     // 只写了排除项 → 除它们之外全过
+  return p.groups.every(g => g.some(w => n.indexOf(w) >= 0));
+}
 function fpCellHTML(pane, pi) {
   const entries = fpSorted(fpEntries(pane.path));
   const wrap = inner => fpPathRowHTML(pane, pi) + `<div class="fp-cellbody">${inner}</div>`;
@@ -7862,15 +7864,15 @@ function fpCellHTML(pane, pi) {
     const rows = [];
     let alt = 0;
     const walk = (pth, depth) => {
-      const q = String(pane.q || '').trim().toLowerCase();      // §37.11 窗格内搜索过滤
-      const list = fpSorted(fpEntries(pth)).filter(e2 => !q || e2.name.toLowerCase().includes(q));
+      // §42.8 窗格内搜索走「聚焦搜索」的语法（或/且/排除），不再是裸 includes
+      const list = fpSorted(fpEntries(pth)).filter(e2 => fpSearchPass(e2.name, pane.q));
       list.forEach(e2 => {
         const full = fpJoin(pth, e2.name);
         const exp = e2.dir && (pane.expanded || []).includes(full);
         rows.push({ e: e2, depth, alt: alt % 2 === 1, full, expanded: exp });
         alt++;
         if (exp) {
-          const kids = fpSorted(fpEntries(full)).filter(k => !q || k.name.toLowerCase().includes(q));
+          const kids = fpSorted(fpEntries(full)).filter(k => fpSearchPass(k.name, pane.q));
           if (!kids.length) {
             // §39.3 无内容目录展开必须有反馈 —— 占位行（原来 0 行=「点了没反应」）
             rows.push({ e: { name: '（空文件夹）', dir: false, placeholder: true }, depth: depth + 1,
@@ -7935,10 +7937,10 @@ function fpColumnMenu(x, y) {
     },
   }));
   items.push({ sep: true });
-  items.push({ label: '多媒体 ›', sub: [
+  items.push({ label: '多媒体', sub: [
      { label: '时长', action: () => toast('「时长」需要媒体文件的元数据（原型数据里没有，如实显示 —）') },
      { label: '艺术家', action: () => toast('同上：媒体元数据列，原型显示 —') } ] });
-  items.push({ label: '其他 ›', sub: [
+  items.push({ label: '其他', sub: [
       { label: '所有者', action: () => fpToggleCol('owner') },
       { label: '位置', action: () => toast('「位置」列原型数据没有，显示 —') },
       { label: '注释', action: () => fpToggleCol('comment') } ] });
@@ -7974,51 +7976,147 @@ function fpAlwaysOpenWithItems(name) {
   return [{ title: '始终以此方式打开' }].concat(fpOpenWithItems(name).slice(1).map(it =>
     ({ label: it.label, action: () => toast(`默认打开方式已改为「${escapeHtml(it.label)}」（演示）：${escapeHtml(name)}`) })));
 }
+/* ══ §42.3–42.6 右键菜单 = **配置清单驱动**（QSpace 的 JHSContextMenuConf 模型）══
+   以前 fpRowMenu 是一串写死的 items；现在：S.finderCtxMenu = 已启用项 id 顺序，
+   设置窗拖拽改的就是它，右键渲染读的也是它 —— 两边不可能不同步。 */
+const FP_CTX_DEFAULT = ['showInFinder', 'newFolderSel', 'copyTo', 'sep',
+  'rename', 'quickRename', 'copy', 'openWith', 'alwaysOpenWith', 'sep',
+  'compress', 'alias', 'imgJoin', 'paneLeft', 'sep',
+  'swatches', 'sep', 'favorite', 'customFolder'];
+const FP_CTX_FINDER_MODE = ['showInFinder', 'sep', 'rename', 'sep', 'copy', 'cut', 'sep', 'openWith', 'sep', 'getInfo'];
+/// 静态文案（设置窗左列显示用）+ type 标签 + 快捷键（照 QSpace hotkey.json / 图2）
+const FP_CTX_META = {
+  showInFinder: { l: '在访达中显示', i: '👁', t: 'function', k: '⌘↩' },
+  newFolderSel: { l: '用所选项目新建文件夹', i: '📁', t: 'function', k: '^⌘N' },
+  copyTo: { l: '复制到…', i: '⧉', t: 'function' },
+  moveTo: { l: '移动到…', i: '✂', t: 'function' },
+  rename: { l: '重命名', i: '✏️', t: 'function', k: '⇧⌘R' },
+  quickRename: { l: '快速重命名', i: '☰', t: 'function' },
+  copy: { l: '拷贝', i: '📋', t: 'function', k: '⌘C' },
+  copyPath: { l: '拷贝路径', i: '/…', t: 'function', k: '⇧⌘L' },
+  copyTermPath: { l: '拷贝终端路径', i: '/..', t: 'function' },
+  copyWinPath: { l: '拷贝 Windows 路径', i: '\\W', t: 'function' },
+  copyURL: { l: '拷贝 URL', i: '://', t: 'function' },
+  copyFileName: { l: '拷贝文件名', i: '📄', t: 'function' },
+  openWith: { l: '打开方式', i: '↗', t: 'function' },
+  alwaysOpenWith: { l: '始终以此方式打开', i: '', t: 'function' },
+  compress: { l: '压缩', i: '🗜', t: 'function' },
+  compressAlone: { l: '单独压缩', i: '⇊', t: 'function' },
+  decompress: { l: '解压', i: '⇕', t: 'function' },
+  decompressTo: { l: '解压到…', i: '', t: 'function' },
+  alias: { l: '制作替身', i: '🔗', t: 'function' },
+  imgJoin: { l: '图片拼接', i: '🖼', t: 'quicklaunch' },
+  setWallpaper: { l: '设为桌面背景', i: '🏞', t: 'function' },
+  convertImage: { l: '转换图像', i: '🔄', t: 'function' },
+  rotateRight: { l: '向右旋转', i: '↻', t: 'function', k: '⌥R' },
+  paneLeft: { l: '将窗格向左移', i: '⇤', t: 'function' },
+  paneRight: { l: '将窗格向右移', i: '⇥', t: 'function' },
+  tags: { l: '标签', i: '🏷', t: 'function' },
+  swatches: { l: '标签色点', i: '🎨', t: 'function' },
+  favorite: { l: '收藏', i: '📁', t: 'function' },
+  customFolder: { l: '自定义文件夹…', i: '🏷', t: 'function' },
+  getInfo: { l: '显示简介', i: 'ⓘ', t: 'function', k: '⇧⌘I' },
+  cut: { l: '剪切', i: '✂', t: 'function', k: '⌘X' },
+  dup: { l: '复制', i: '⧉', t: 'function' },
+  invertSel: { l: '反向选择', i: '⇄', t: 'function' },
+  selectByCond: { l: '按条件选择', i: '☑', t: 'function' },
+  addBookmark: { l: '添加书签', i: '⭐', t: 'function' },
+  copyToHere: { l: '复制到此处…', i: '', t: 'function' },
+  moveToHere: { l: '移动到此处…', i: '', t: 'function' },
+  copyToPaneUp: { l: '复制到上方窗格', i: '', t: 'function' },
+  copyToPaneDown: { l: '复制到下方窗格', i: '', t: 'function' },
+  copyToPaneLeft: { l: '复制到左侧窗格', i: '', t: 'function' },
+  copyToPaneRight: { l: '复制到右侧窗格', i: '', t: 'function' },
+  moveToPaneUp: { l: '移动到上方窗格', i: '', t: 'function' },
+  moveToPaneDown: { l: '移动到下方窗格', i: '', t: 'function' },
+  moveToPaneLeft: { l: '移动到左侧窗格', i: '', t: 'function' },
+  moveToPaneRight: { l: '移动到右侧窗格', i: '', t: 'function' },
+  extractBetterZip: { l: 'Extract with BetterZip*', i: '📦', t: 'service' },
+  sep: { l: '—— 分割线 ——', i: '', t: 'separator' },
+};
+function fpCtxEnabled() {
+  const v = S.finderCtxMenu;
+  // ⚠️ 只在「压根不是数组」时才回落默认：`[]` 是用户按了「清空」的**真实状态**，
+  //    写成 `&& v.length` 会让清空按钮看起来按了没反应（42.6 实测踩到）。
+  return Array.isArray(v) ? [...v] : [...FP_CTX_DEFAULT];
+}
+function fpCtxShowSelection() { return S.finderCtxShowSelection !== false; }   // 图2 底部开关，默认开
+/// 一个已启用的 id → showMenu 的一个 item（ctx = {pi,name,path,kind}）
+function fpCtxItem(id, ctx, showSel) {
+  if (id === 'sep') return { sep: true };
+  if (id.indexOf('group:') === 0) return { title: id.slice(6) };
+  const nm = showSel ? `“${ctx.name}”` : '';          // 42.5 关掉「显示选择项」→ 所有 “X” 后缀消失
+  switch (id) {
+    case 'showInFinder': return { icon: '👁', label: '在访达中显示', action: () => toast(`在系统访达中显示（演示）：<b>${escapeHtml(ctx.name)}</b>`) };
+    case 'newFolderSel': return { icon: '📁', label: '用所选项目新建文件夹', action: () => askModal({ title: '用所选项目新建文件夹',
+        text: `选中：${ctx.name} · 位置：${ctx.path}`, value: '新建文件夹', okText: '创建',
+        onOk: v => { if (v && v.trim()) toast(`已新建「${escapeHtml(v.trim())}」并放入所选项目（演示）`); } }) };
+    case 'copyTo': return { icon: '⧉', label: '复制到…', sub: [
+        { label: '到左侧窗格', action: () => toast(`复制到左侧窗格（演示）：${escapeHtml(ctx.name)}`) },
+        { label: '到右侧窗格', action: () => toast(`复制到右侧窗格（演示）：${escapeHtml(ctx.name)}`) },
+        { label: '到桌面', action: () => toast(`复制到桌面（演示）：${escapeHtml(ctx.name)}`) }] };
+    case 'moveTo': return { icon: '✂', label: '移动到…', sub: [
+        { label: '到左侧窗格', action: () => toast(`移动到左侧窗格（演示）：${escapeHtml(ctx.name)}`) },
+        { label: '到桌面', action: () => toast(`移动到桌面（演示）：${escapeHtml(ctx.name)}`) }] };
+    case 'rename': return { icon: '✏️', label: `重命名${nm}`, action: () => fpStartRename(ctx.pi, ctx.path) };
+    case 'quickRename': return { icon: '☰', label: '快速重命名', sub: [
+        { label: '添加前缀…', action: () => toast('快速重命名 · 前缀（演示）') },
+        { label: '添加后缀…', action: () => toast('快速重命名 · 后缀（演示）') },
+        { label: '替换文本…', action: () => toast('快速重命名 · 替换（演示）') }] };
+    case 'copy': return { icon: '📋', label: `拷贝${nm}`, action: () => fpCopy(ctx.path, `已拷贝「${escapeHtml(ctx.name)}」的路径到剪贴板`) };
+    case 'copyPath': return { icon: '/…', label: '拷贝路径', action: () => fpCopy(ctx.path, `已拷贝路径：<code>${escapeHtml(ctx.path)}</code>`) };
+    case 'copyTermPath': return { icon: '/..', label: '拷贝终端路径', action: () => fpCopy(ctx.path, '已按终端格式拷贝路径（演示）') };
+    case 'copyWinPath': return { icon: '\\W', label: '拷贝 Windows 路径', action: () => fpCopy(ctx.path, '已按 Windows 格式拷贝路径（演示）') };
+    case 'copyURL': return { icon: '://', label: '拷贝 URL', action: () => fpCopy('file://' + ctx.path, '已拷贝 URL') };
+    case 'copyFileName': return { icon: '📄', label: '拷贝文件名', action: () => fpCopy(ctx.name, `已拷贝文件名：${escapeHtml(ctx.name)}`) };
+    case 'openWith': return { icon: '↗', label: '打开方式', sub: fpOpenWithItems(ctx.name) };
+    case 'alwaysOpenWith': return { label: '始终以此方式打开', sub: fpAlwaysOpenWithItems(ctx.name) };
+    case 'compress': return { icon: '🗜', label: `压缩${nm}`, action: () => toast(`已压缩为 ${escapeHtml(ctx.name)}.zip（演示）`) };
+    case 'compressAlone': return { icon: '⇊', label: '单独压缩', action: () => toast(`单独压缩（演示）：${escapeHtml(ctx.name)}`) };
+    case 'decompress': return { icon: '⇕', label: '解压', action: () => toast(`解压「${escapeHtml(ctx.name)}」（演示）`) };
+    case 'decompressTo': return { label: '解压到…', sub: [{ label: '到当前窗格', action: () => toast('解压到当前窗格（演示）') }] };
+    case 'alias': return { icon: '🔗', label: '制作替身', action: () => toast(`已制作替身（演示）：${escapeHtml(ctx.name)}`) };
+    case 'imgJoin': return { icon: '🖼', label: '图片拼接', action: () => toast('图片拼接（QSpace 扩展功能，演示）') };
+    case 'setWallpaper': return { icon: '🏞', label: '设为桌面背景', action: () => toast(`已设为桌面背景（演示）：${escapeHtml(ctx.name)}`) };
+    case 'convertImage': return { icon: '🔄', label: '转换图像', action: () => toast('转换图像（演示）') };
+    case 'rotateRight': return { icon: '↻', label: '向右旋转', action: () => toast('已向右旋转 90°（演示）') };
+    case 'paneLeft': return { icon: '⇤', label: '将窗格向左移', action: () => toast('已将本窗格内容移向左侧窗格（演示）') };
+    case 'paneRight': return { icon: '⇥', label: '将窗格向右移', action: () => toast('已将本窗格内容移向右侧窗格（演示）') };
+    case 'tags': return { icon: '🏷', label: '标签', sub: fpTagsItems(ctx.name) };
+    case 'swatches': return { swatches: ['#FF5F57', '#F7A23B', '#FFD60A', '#2CCB6E', '#54A2FF', '#BF5AF2'],
+        action: i => fpSetTag(ctx.path, ['#FF5F57', '#F7A23B', '#FFD60A', '#2CCB6E', '#54A2FF', '#BF5AF2'][i]) };
+    case 'favorite': return { icon: '📁', label: '收藏', sub: fpFavoriteItems(ctx.name, ctx.path, ctx.kind === 'dir') };
+    case 'customFolder': return { icon: '🏷', label: '自定义文件夹…', action: () => toast('自定义文件夹（QSpace 扩展，演示）') };
+    case 'getInfo': return { icon: 'ⓘ', label: '显示简介', action: () => toast(`简介（演示）：${escapeHtml(ctx.name)}`) };
+    case 'cut': return { icon: '✂', label: '剪切', action: () => toast(`已剪切（演示）：${escapeHtml(ctx.name)}`) };
+    case 'dup': return { icon: '⧉', label: '复制', action: () => toast(`已复制副本（演示）：${escapeHtml(ctx.name)}`) };
+    case 'invertSel': return { icon: '⇄', label: '反向选择', action: () => toast('已反向选择（演示）') };
+    case 'selectByCond': return { icon: '☑', label: '按条件选择', sub: [
+        { label: '按名称…', action: () => toast('按条件选择 · 名称（演示）') },
+        { label: '按修改日期…', action: () => toast('按条件选择 · 日期（演示）') }] };
+    case 'addBookmark': return { icon: '⭐', label: '添加书签', action: () => toast(`已添加书签（演示）：${escapeHtml(ctx.name)}`) };
+    case 'copyToHere': return { label: '复制到此处…', action: () => toast('复制到此处（演示）') };
+    case 'moveToHere': return { label: '移动到此处…', action: () => toast('移动到此处（演示）') };
+    case 'copyToPaneUp': case 'copyToPaneDown': case 'copyToPaneLeft': case 'copyToPaneRight':
+    case 'moveToPaneUp': case 'moveToPaneDown': case 'moveToPaneLeft': case 'moveToPaneRight': {
+      const m = FP_CTX_META[id];
+      return { label: m.l, action: () => toast(`${m.l}（演示）：${escapeHtml(ctx.name)}`) };
+    }
+    case 'extractBetterZip': return { icon: '📦', label: 'Extract with BetterZip*', action: () => toast('BetterZip 解压（服务，演示）') };
+    default: return null;
+  }
+}
 function fpRowMenu(x, y, pi, name, kind, fullPath) {
-  const path = fullPath || fpJoin(FP.panes[pi].path, name);   // §36.8 树形子行也有自己的 full path
-  const isZip = /\.(zip|tar|gz|tgz|rar|7z)$/i.test(name);
-  // §37.13 照你图1 逐项（文案原样）+ 你点名的「添加到项目」+ §36 保留的「收藏 ›」
-  const items = [
-    { icon: '👁', label: '在访达中显示', action: () => toast(`在系统访达中显示（演示）：<b>${escapeHtml(name)}</b>`) },
-    { icon: '📁', label: '用所选项目新建文件夹', action: () => askModal({ title: '用所选项目新建文件夹',
-        text: `选中：${name} · 位置：${FP.panes[pi].path}`, value: '新建文件夹', okText: '创建',
-        onOk: v => { if (v && v.trim()) toast(`已新建「${escapeHtml(v.trim())}」并放入所选项目（演示）`); } }) },
-    { label: '复制到… ›', sub: [
-      { label: '到左侧窗格', action: () => toast(`复制到左侧窗格（演示）：${escapeHtml(name)}`) },
-      { label: '到右侧窗格', action: () => toast(`复制到右侧窗格（演示）：${escapeHtml(name)}`) },
-      { label: '到桌面', action: () => toast(`复制到桌面（演示）：${escapeHtml(name)}`) },
-    ] },
-    { sep: true },
-    { icon: '✏️', label: `重命名“${name}”`, action: () => fpStartRename(pi, path) },   // §40.3 真行内重命名
-    { icon: '☰', label: '快速重命名 ›', sub: [
-      { label: '添加前缀…', action: () => toast('快速重命名 · 前缀（演示）') },
-      { label: '添加后缀…', action: () => toast('快速重命名 · 后缀（演示）') },
-      { label: '替换文本…', action: () => toast('快速重命名 · 替换（演示）') },
-    ] },
-    { icon: '📋', label: `拷贝“${name}”`, action: () => fpCopy(path, `已拷贝「${escapeHtml(name)}」的路径到剪贴板`) },
-    // §41.9 「打开方式」是**新增项**：QSpace DISSECT §3.1 里 open_with 与 always_open_with 是两条
-    { icon: '↗', label: '打开方式 ›', sub: fpOpenWithItems(name) },
-    { label: '始终以此方式打开 ›', sub: fpAlwaysOpenWithItems(name) },
-    { sep: true },
-    { icon: '🗜', label: `压缩“${name}”`, action: () => toast(`已压缩为 ${escapeHtml(name)}.zip（演示）`) },
-  ];
-  if (isZip) items.push({ icon: '📦', label: '解压', action: () => toast(`解压「${escapeHtml(name)}」（演示）`) });
-  items.push(
-    { icon: '🔗', label: '制作替身', action: () => toast(`已制作替身（演示）：${escapeHtml(name)}`) },
-    { label: '图片拼接', action: () => toast('图片拼接（QSpace 扩展功能，演示）') },
-    { icon: '⇤', label: '将窗格向左移', action: () => toast('已将本窗格内容移向左侧窗格（演示）') },
-    { sep: true },
-    // 图1 的六色标签点（横排一行）
-    { swatches: ['#FF5F57', '#F7A23B', '#FFD60A', '#2CCB6E', '#54A2FF', '#BF5AF2'],
-      action: i => fpSetTag(path, ['#FF5F57', '#F7A23B', '#FFD60A', '#2CCB6E', '#54A2FF', '#BF5AF2'][i]) },
-    { sep: true },
-  );
-  if (kind === 'dir') items.push({ icon: '⭐', label: '添加到项目',
-    action: () => fpAddToProject(path, name) });                    // §37.14 你点名的联动
-  items.push(
-    { icon: '📁', label: '收藏 ›', sub: fpFavoriteItems(name, path, kind === 'dir') },
-    { icon: '🏷', label: '自定义文件夹…', action: () => toast('自定义文件夹（QSpace 扩展，演示）') },
-  );
+  const path = fullPath || fpJoin(FP.panes[pi].path, name);
+  const ctx = { pi, name, path, kind };
+  const showSel = fpCtxShowSelection();
+  const items = fpCtxEnabled().map(id => fpCtxItem(id, ctx, showSel)).filter(Boolean);
+  // §37.14 添加到项目：文件夹专属，钉在收藏上面（与配置无关 —— 它是本项目自己的联动）
+  if (kind === 'dir' && !items.some(it => it.label === '添加到项目')) {
+    const fi = items.findIndex(it => it.icon === '📁' && String(it.label).startsWith('收藏'));
+    const entry = { icon: '⭐', label: '添加到项目', action: () => fpAddToProject(path, name) };
+    items.splice(fi < 0 ? items.length : fi, 0, entry);
+  }
   showMenu(items, null, { x, y });
 }
 /// §37.13 色点 = 贴标签（真改数据，行首名称后显示圆点）
@@ -8049,7 +8147,7 @@ function fpBlankMenu(x, y, pi) {
   showMenu([
     { label: '新建文件夹', action: () => askModal({ title: '新建文件夹', text: `位置：${path}`, value: '未命名文件夹',
         okText: '创建', onOk: v => { if (v && v.trim()) toast(`已新建文件夹「${escapeHtml(v.trim())}」（演示）`); } }) },
-    { label: '新建文件 ›', sub: [
+    { label: '新建文件', sub: [
       { label: '纯文本 .txt', action: newFile('txt') },
       { label: 'Markdown .md', action: newFile('md') },
       { label: 'Shell 脚本 .sh', action: newFile('sh') },
@@ -8059,7 +8157,7 @@ function fpBlankMenu(x, y, pi) {
     { sep: true },
     { label: '粘贴', action: () => toast('粘贴（演示）') },
     { sep: true },
-    { label: '排序方式 ›', sub:
+    { label: '排序方式', sub:
       [['name', '名称'], ['size', '大小'], ['mtime', '修改日期'], ['added', '添加日期']].map(([k, l]) => ({
         label: (FP.sortKey === k ? '✓ ' : '　') + l,
         action: () => { FP.sortKey = k; FP.sortDir = 'asc'; renderFinderMain(); toast(`已按<b>${l}</b>排序`); },
@@ -8113,14 +8211,9 @@ function fpBlankMenu(x, y, pi) {
     const p = document.getElementById('fpViewPanel');
     if (p && !p.hidden && !e.target.closest('#fpViewPanel') && !e.target.closest('[data-fa="more"]')) p.hidden = true;
   });
-  // §41.8 快捷键设置面板（toggle 在 mousedown 捕获里已放行 #fpHotkeys，这里只管开合）
+  // §42 「⌨ 快捷键」并入 QSpace 设置窗的快捷键页（同一个 S.finderHotkeys，同一套录制/恢复/存盘）
   const hkBtn = $('#fpHotkeys');
-  if (hkBtn) hkBtn.onclick = e => { e.stopPropagation(); fpToggleHotkeyPanel(); };
-  document.addEventListener('mousedown', e => {
-    const p = document.getElementById('fpHotkeyPanel');
-    if (p && !p.hidden && !FP.hkRecording
-        && !e.target.closest('#fpHotkeyPanel') && !e.target.closest('#fpHotkeys')) fpToggleHotkeyPanel(false);
-  }, true);
+  if (hkBtn) hkBtn.onclick = e => { e.stopPropagation(); qspOpenPage('hotkeys'); };
   // 视图 / 分组 / 分屏 / 交换
   $$('#fpViews button').forEach(b => b.onclick = () => { FP.view = b.dataset.view; renderFinder(); });
   $$('#fpLayouts button').forEach(b => b.onclick = () => { FP.layout = b.dataset.layout; renderFinder(); });
@@ -8198,6 +8291,640 @@ function fpBlankMenu(x, y, pi) {
   });
   // 启动恢复
   if (S.finderOpen) setFinderOpen(true);
+})();
+
+
+/* ══ §42 QSpace 偏好设置窗 —— 只保留用户点名的 7 页 ══
+   有截图的两页（右键菜单 / 聚焦搜索）按 PIL 实测像素基准 100% 复刻；
+   另外 5 页按 reference/QSpacePro-DISSECT.md 的逐字文案与字段（无截图可对像素）。 */
+const QSP_PAGES = [
+  { g: 0, id: 'connections', l: '连接', ico: '🌐', c: '#2E7CF6' },
+  { g: 0, id: 'icloud', l: 'iCloud', ico: '☁', c: '#3B9BF5' },
+  { g: 1, id: 'search', l: '聚焦搜索', ico: '⌕', c: '#5A6165' },
+  { g: 2, id: 'context_menu', l: '右键菜单', ico: '☰', c: '#2E7CF6' },
+  { g: 2, id: 'hotkeys', l: '快捷键', ico: '⌘', c: '#5A6165' },
+  { g: 2, id: 'newfiles', l: '新建文件', ico: '＋', c: '#33B158' },
+  { g: 3, id: 'batch_rename', l: '批量重命名', ico: '↻', c: '#33B158' },
+];
+const QSP = {
+  open: false, page: 'context_menu',
+  hist: ['context_menu'], hIdx: 0,
+  filter: '',
+  ctxSel: -1,            // 右键菜单页左列选中（"自动选择"）
+  ctxQuery: '',
+  kindSel: -1,           // 聚焦搜索 种类表选中
+  drag: null,            // {from:'left'|'right', idx?, id}
+  hkRec: null,           // {id, fpKey?, def}
+  newSel: 0, batchSel: 0,
+};
+function qspPrefs() {
+  if (!S.qspPrefs || typeof S.qspPrefs !== 'object') {
+    S.qspPrefs = {
+      showSelection: true,
+      searchRememberDomain: true, searchRecentCount: 10, searchShowIn: 'new_window',
+      searchKinds: [
+        { n: '文件夹', e: '', u: 'public.folder' },
+        { n: '归档', e: 'zip, 7z, rar, tar, gz, bz2,…', u: '' },
+        { n: '应用', e: '', u: 'com.apple.application' },
+        { n: '视频', e: '', u: 'public.movie' },
+        { n: '图像', e: '', u: 'public.image' },
+        { n: '文稿', e: '', u: 'public.data' },
+        { n: '文稿', e: 'doc, docx, pages, xls, x…', u: '' },
+      ],
+      newfileExpanded: true,
+      batchMode: 'lite', batchEnterConfirm: true, batchLog: true, batchFormat: '$n',
+      batchReplace: '', batchAdd: '',
+      connType: 'FTP', connSSL: true, connProxy: false, connOnDemand: true, connAtLaunch: false, connAskUpload: true,
+      icloudApps: 'auto',
+    };
+  }
+  return S.qspPrefs;
+}
+/* ── 开 / 关 ── */
+function qspOpenPage(page) {
+  const win = document.getElementById('qspWin');
+  if (!win) return;
+  QSP.open = true; win.hidden = false;
+  if (page && page !== QSP.page) { QSP.hist = [page]; QSP.hIdx = 0; QSP.page = page; }
+  qspRenderNav(); qspRenderBody();
+}
+function qspClose() {
+  QSP.open = false; QSP.hkRec = null;
+  const win = document.getElementById('qspWin'); if (win) win.hidden = true;
+}
+function qspGo(page) {
+  if (page === QSP.page) return;
+  QSP.hist = QSP.hist.slice(0, QSP.hIdx + 1);
+  QSP.hist.push(page); QSP.hIdx = QSP.hist.length - 1;
+  QSP.page = page; QSP.ctxSel = -1; QSP.hkRec = null;
+  qspRenderNav(); qspRenderBody();
+}
+function qspNavStep(d) {
+  const i = QSP.hIdx + d;
+  if (i < 0 || i >= QSP.hist.length) return;
+  QSP.hIdx = i; QSP.page = QSP.hist[i];
+  qspRenderNav(); qspRenderBody();
+}
+/* ── 左栏 ── */
+function qspRenderNav() {
+  const nav = document.getElementById('qspNav');
+  if (!nav) return;
+  const f = (QSP.filter || '').trim().toLowerCase();
+  let html = '', lastG = -1;
+  QSP_PAGES.forEach(p => {
+    const hit = !f || p.l.toLowerCase().indexOf(f) >= 0 || p.id.indexOf(f) >= 0;
+    if (!hit) return;
+    if (lastG >= 0 && p.g !== lastG) html += '<div class="qsp-group"></div>';
+    lastG = p.g;
+    html += `<div class="qsp-item${QSP.page === p.id ? ' is-on' : ''}" data-qsp="${p.id}">
+      <span class="qsp-ico" style="background:${p.c}">${p.ico}</span>
+      <span class="qsp-lb">${p.l}</span></div>`;
+  });
+  nav.innerHTML = html || '<div class="qsp-group"></div>';
+  nav.querySelectorAll('[data-qsp]').forEach(el => el.onclick = () => qspGo(el.dataset.qsp));
+  const ti = QSP_PAGES.find(p => p.id === QSP.page);
+  const tt = document.getElementById('qspTitle'); if (tt && ti) tt.textContent = ti.l;
+  const bk = document.getElementById('qspBack'), fw = document.getElementById('qspFwd');
+  if (bk) bk.disabled = QSP.hIdx <= 0;
+  if (fw) fw.disabled = QSP.hIdx >= QSP.hist.length - 1;
+}
+function qspRenderBody() {
+  const body = document.getElementById('qspBody');
+  if (!body) return;
+  const map = {
+    context_menu: qspRenderContextMenuPage, search: qspRenderSearchPage,
+    hotkeys: qspRenderHotkeysPage, newfiles: qspRenderNewfilesPage,
+    batch_rename: qspRenderBatchRenamePage, connections: qspRenderConnectionsPage,
+    icloud: qspRenderICloudPage,
+  };
+  (map[QSP.page] || (() => { body.innerHTML = ''; }))(body);
+}
+/* ── 42.3/42.4 右键菜单页（图2 逐段照抄） ── */
+function qspCtxAllIds() { return Object.keys(FP_CTX_META); }
+function qspCtxLeft() { return fpCtxEnabled(); }
+function qspCtxRightGroups() {
+  const left = qspCtxLeft();
+  const q = (QSP.ctxQuery || '').trim().toLowerCase();
+  const out = [
+    { t: 'function', l: '功能', items: [] },
+    { t: 'service', l: '服务', items: [] },
+    { t: 'quicklaunch', l: '快捷启动', items: [] },
+  ];
+  qspCtxAllIds().forEach(id => {
+    const m = FP_CTX_META[id]; if (!m) return;
+    if (left.indexOf(id) >= 0 && id !== 'sep') return;   // 分割线可以加多条（照 QSpace）
+    if (q && m.l.toLowerCase().indexOf(q) < 0) return;
+    const g = out.find(x => x.t === m.t) || out[0];
+    g.items.push(id);
+  });
+  return out.filter(g => g.items.length);
+}
+function qspRenderContextMenuPage(body) {
+  const left = qspCtxLeft();
+  const sel = QSP.ctxSel;
+  const leftHtml = left.length ? left.map((id, i) => {
+    const m = FP_CTX_META[id] || { l: id, i: '', t: 'function', k: '' };
+    if (id.indexOf('group:') === 0) {
+      return `<div class="qsp-cm-item${sel === i ? ' is-sel' : ''}" draggable="true" data-side="left" data-idx="${i}">
+        <span class="nm">${escapeHtml(id.slice(6))}</span><span class="tp">[群组]</span></div>`;
+    }
+    if (id === 'sep') {
+      return `<div class="qsp-cm-item${sel === i ? ' is-sel' : ''}" draggable="true" data-side="left" data-idx="${i}">
+        <span class="nm">—— 分割线 ——</span><span class="tp"></span></div>`;
+    }
+    return `<div class="qsp-cm-item${sel === i ? ' is-sel' : ''}" draggable="true" data-side="left" data-idx="${i}">
+      <span style="width:16px;text-align:center;flex:0 0 16px">${m.i || ''}</span>
+      <span class="nm">${escapeHtml(m.l)}</span>
+      ${m.k ? `<span class="kw">${escapeHtml(m.k)}</span>` : ''}
+      <span class="tp">[${m.t === 'function' ? '功能' : m.t === 'service' ? '服务' : m.t === 'quicklaunch' ? '快捷启动' : ''}]</span></div>`;
+  }).join('') : '<div class="qsp-cm-empty">拖到此处以禁用...</div>';
+
+  const groups = qspCtxRightGroups().map(g =>
+    `<div class="qsp-cm-grouphd">▼ ${g.l}</div>` + g.items.map(id => {
+      const m = FP_CTX_META[id];
+      return `<div class="qsp-cm-item" draggable="true" data-side="right" data-id="${id}">
+        <span style="width:16px;text-align:center;flex:0 0 16px">${m.i || ''}</span>
+        <span class="nm">${escapeHtml(m.l)}</span>
+        ${m.k ? `<span class="kw">${escapeHtml(m.k)}</span>` : ''}</div>`;
+    }).join('')).join('') || '<div class="qsp-cm-empty">没有匹配的菜单项</div>';
+
+  body.innerHTML = `
+    <div class="qsp-sec">菜单项</div>
+    <div class="qsp-desc">将菜单项从“功能”或“服务”列表中拖拽到左侧列表，即可启用菜单项。拖回可以删除菜单项。你还可以通过拖拽对菜单项进行排序。</div>
+    <div class="qsp-cm">
+      <div class="qsp-cm-l"><div class="qsp-cm-list" id="qspCtxLeft" data-side="left">${leftHtml}</div>
+        <div class="qsp-cm-tools">
+          <button class="qsp-btn sm" id="qspCtxRemove">移除</button>
+          <button class="qsp-btn sm" id="qspCtxAddGroup">添加群组</button>
+        </div></div>
+      <div class="qsp-cm-r">
+        <div class="qsp-cm-head">
+          <div class="qsp-cm-search">
+            <svg viewBox="0 0 16 16" width="12" height="12"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5 L14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <input id="qspCtxQuery" placeholder="搜索" value="${escapeHtml(QSP.ctxQuery)}">
+          </div>
+        </div>
+        <div class="qsp-cm-list" id="qspCtxRight" data-side="right">${groups}</div>
+      </div>
+    </div>
+    <div class="qsp-cm-foot">
+      <button class="qsp-btn" id="qspCtxClear">清空</button>
+      <button class="qsp-btn" id="qspCtxDefault">默认值</button>
+      <button class="qsp-btn primary" id="qspCtxFinder">访达模式</button>
+    </div>
+    <div class="qsp-sec"></div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">在菜单项中显示选择项</span>
+        <button class="qsp-sw ${fpCtxShowSelection() ? 'on' : ''}" id="qspCtxShowSel"></button></div>
+    </div>`;
+
+  // 点左列 = 自动选中（再点同一项不取消）
+  body.querySelectorAll('#qspCtxLeft .qsp-cm-item').forEach(el => {
+    el.onclick = () => { QSP.ctxSel = +el.dataset.idx; qspRenderBody(); };
+    el.ondragstart = e => {
+      QSP.drag = { from: 'left', idx: +el.dataset.idx, id: qspCtxLeft()[+el.dataset.idx] };
+      el.classList.add('is-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', el.dataset.idx);
+    };
+    el.ondragend = () => { el.classList.remove('is-dragging'); qspClearDropHints(); };
+  });
+  body.querySelectorAll('#qspCtxRight .qsp-cm-item').forEach(el => {
+    el.ondragstart = e => {
+      QSP.drag = { from: 'right', id: el.dataset.id };
+      el.classList.add('is-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', el.dataset.id);
+    };
+    el.ondragend = () => { el.classList.remove('is-dragging'); qspClearDropHints(); };
+  });
+  const leftBox = document.getElementById('qspCtxLeft');
+  const rightBox = document.getElementById('qspCtxRight');
+  qspBindDropZone(leftBox, 'left');
+  qspBindDropZone(rightBox, 'right');
+
+  document.getElementById('qspCtxRemove').onclick = () => {
+    if (QSP.ctxSel < 0 || QSP.ctxSel >= left.length) return toast('先点左边要移除的那一项');
+    left.splice(QSP.ctxSel, 1); QSP.ctxSel = -1;
+    S.finderCtxMenu = left; save(true); qspRenderBody();
+  };
+  document.getElementById('qspCtxAddGroup').onclick = () => {
+    askModal({ title: '添加群组', text: '右键菜单里显示的一个分组标题（分组只是标签）', value: '新群组',
+      okText: '添加', onOk: v => { if (!v.trim()) return;
+        left.push('group:' + v.trim()); S.finderCtxMenu = left; save(true); qspRenderBody(); } });
+  };
+  document.getElementById('qspCtxClear').onclick = () => {
+    askModal({ title: '清空', text: '您确定要清除所有项目吗?', okText: '清空', onOk: () => {
+      S.finderCtxMenu = []; QSP.ctxSel = -1; save(true); qspRenderBody(); toast('右键菜单已清空'); } });
+  };
+  document.getElementById('qspCtxDefault').onclick = () => {
+    S.finderCtxMenu = [...FP_CTX_DEFAULT]; QSP.ctxSel = -1; save(true); qspRenderBody(); toast('已恢复默认菜单');
+  };
+  document.getElementById('qspCtxFinder').onclick = () => {
+    askModal({ title: '访达模式', text: '您确定要设置为访达样式吗?', okText: '设置', onOk: () => {
+      S.finderCtxMenu = [...FP_CTX_FINDER_MODE]; QSP.ctxSel = -1; save(true); qspRenderBody(); toast('已切到访达样式'); } });
+  };
+  document.getElementById('qspCtxShowSel').onclick = () => {
+    S.finderCtxShowSelection = !fpCtxShowSelection(); save(true); qspRenderBody();
+  };
+  const qi = document.getElementById('qspCtxQuery');
+  if (qi) {
+    qi.oninput = () => { QSP.ctxQuery = qi.value; const p = qi.selectionStart; qspRenderBody();
+      const n = document.getElementById('qspCtxQuery'); if (n) { n.focus(); n.setSelectionRange(p, p); } };
+  }
+}
+function qspClearDropHints() {
+  document.querySelectorAll('.qsp-cm-item').forEach(el =>
+    el.classList.remove('drop-above', 'drop-below'));
+  document.querySelectorAll('.qsp-cm-dropzone').forEach(el => el.classList.remove('qsp-cm-dropzone'));
+}
+/// 三向拖放（42.4）：右→左=启用 / 左内=排序 / 左→右=删除
+function qspBindDropZone(box, side) {
+  if (!box) return;
+  box.ondragover = e => {
+    if (!QSP.drag) return;
+    if (side === 'right' && QSP.drag.from !== 'left') return;   // 右列内部不排序
+    e.preventDefault();
+    qspClearDropHints();
+    if (side === 'right') { box.classList.add('qsp-cm-dropzone'); return; }
+    const rows = [...box.querySelectorAll('.qsp-cm-item')];
+    if (!rows.length) return;
+    let idx = rows.length, above = false;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { idx = i; above = true; break; }
+    }
+    if (rows.length) {
+      const t = above ? rows[idx] : rows[rows.length - 1];
+      t.classList.add(above ? 'drop-above' : 'drop-below');
+      box.dataset.dropIdx = String(idx);
+    }
+  };
+  box.ondragleave = e => { if (!box.contains(e.relatedTarget)) qspClearDropHints(); };
+  box.ondrop = e => {
+    e.preventDefault();
+    const d = QSP.drag; QSP.drag = null; qspClearDropHints();
+    if (!d) return;
+    const left = qspCtxLeft();
+    if (side === 'left') {
+      const at = box.dataset.dropIdx !== undefined ? +box.dataset.dropIdx : left.length;
+      delete box.dataset.dropIdx;
+      if (d.from === 'right') {
+        if (left.indexOf(d.id) >= 0) return;
+        const insertAt = Math.max(0, Math.min(at, left.length));
+        left.splice(insertAt, 0, d.id);
+        QSP.ctxSel = insertAt;
+      } else {
+        const from = d.idx;
+        if (isNaN(from)) return;
+        let to = at;
+        if (to > from) to -= 1;
+        if (to === from) return;
+        const [moved] = left.splice(from, 1);
+        left.splice(Math.max(0, Math.min(to, left.length)), 0, moved);
+        QSP.ctxSel = Math.max(0, Math.min(to, left.length - 1));
+      }
+      S.finderCtxMenu = left; save(true); qspRenderBody();
+      return;
+    }
+    // 拖到右列 = 从已启用移除
+    if (d.from === 'left' && !isNaN(d.idx)) {
+      left.splice(d.idx, 1);
+      if (QSP.ctxSel >= left.length) QSP.ctxSel = left.length - 1;
+      S.finderCtxMenu = left; save(true); qspRenderBody();
+    }
+  };
+}
+/* ── 42.7–42.9 聚焦搜索页（图3 逐段照抄） ── */
+function qspSearchChk(rowKey, optKey) {
+  const cfg = fpSearchSyntax();
+  return !!cfg[rowKey][optKey];
+}
+function qspToggleSearchChk(rowKey, optKey) {
+  const s = S.finderSearchSyntax;
+  const cur = (s && s[rowKey]) ? { ...s[rowKey] } : { ...FP_SEARCH_DEF[rowKey] };
+  cur[optKey] = !qspSearchChk(rowKey, optKey);
+  S.finderSearchSyntax = Object.assign({}, s || {}, { [rowKey]: cur });
+  save(true);
+}
+function qspRenderSearchPage(body) {
+  const p = qspPrefs();
+  const chk = (row, key, label) =>
+    `<label class="qsp-opt"><span class="qsp-chk${qspSearchChk(row, key) ? ' on' : ''}"
+      data-srow="${row}" data-sopt="${key}"></span>${label}</label>`;
+  const kinds = p.searchKinds;
+  body.innerHTML = `
+    <div class="qsp-sec">搜索语法</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">「或者」分隔符</span>
+        ${chk('or', 'space', '[空格]')}${chk('or', 'bar', '|')}${chk('or', 'semi', ';')}${chk('or', 'comma', ',')}</div>
+      <div class="qsp-row"><span class="qsp-lab">「并且」分隔符</span>
+        ${chk('and', 'space', '[空格]')}${chk('and', 'amp', '&amp;')}${chk('and', 'semi', ';')}${chk('and', 'comma', ',')}</div>
+      <div class="qsp-row"><span class="qsp-lab">「排除」前缀符</span>
+        ${chk('excl', 'minus', '-')}${chk('excl', 'caret', '^')}${chk('excl', 'bang', '!')}</div>
+    </div>
+    <div class="qsp-sec">选项</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">记住搜索域</span>
+        <button class="qsp-sw ${p.searchRememberDomain ? 'on' : ''}" data-pref="searchRememberDomain"></button></div>
+      <div class="qsp-row"><span class="qsp-lab">记录最近搜索位置</span>
+        <span class="qsp-steps"><button data-steps="-1">−</button>
+          <span id="qspRecentCount">${p.searchRecentCount} 项</span>
+          <button data-steps="1">＋</button></span></div>
+    </div>
+    <div class="qsp-card" style="margin-top:12px">
+      <div class="qsp-row"><span class="qsp-lab">显示项目</span>
+        ${[['cur_window', '当前窗口'], ['new_window', '新窗口'], ['tab', '标签页']].map(([k, l]) =>
+          `<label class="qsp-opt"><span class="qsp-radio${p.searchShowIn === k ? ' on' : ''}" data-showin="${k}"></span>${l}</label>`).join('')}
+      </div>
+    </div>
+    <div class="qsp-sec">种类</div>
+    <div class="qsp-card">
+      <table class="qsp-table"><thead><tr><th style="width:26%">名称</th><th style="width:37%">扩展名</th><th>UTI</th></tr></thead>
+      <tbody>${kinds.map((k, i) => `<tr data-kind-i="${i}" class="${QSP.kindSel === i ? 'is-sel' : ''}">
+        <td><input value="${escapeHtml(k.n)}" data-kf="n" data-ki="${i}"></td>
+        <td><input value="${escapeHtml(k.e)}" data-kf="e" data-ki="${i}"></td>
+        <td><input value="${escapeHtml(k.u)}" data-kf="u" data-ki="${i}"></td></tr>`).join('')}
+      </tbody></table>
+      <div class="qsp-tablebar"><button class="qsp-btn sm" id="qspKindAdd">＋</button>
+        <button class="qsp-btn sm" id="qspKindDel">−</button></div>
+    </div>`;
+  body.querySelectorAll('[data-srow]').forEach(el =>
+    el.onclick = () => { qspToggleSearchChk(el.dataset.srow, el.dataset.sopt); qspRenderBody(); });
+  body.querySelectorAll('[data-pref]').forEach(el => el.onclick = () => {
+    const k = el.dataset.pref; p[k] = !p[k]; save(true); qspRenderBody();
+  });
+  body.querySelectorAll('[data-steps]').forEach(el => el.onclick = () => {
+    const d = +el.dataset.steps;
+    p.searchRecentCount = Math.max(5, Math.min(100, p.searchRecentCount + d * (p.searchRecentCount === 5 && d < 0 ? 0 : 5)));
+    if (d > 0 && p.searchRecentCount % 5 !== 0) p.searchRecentCount = 10;
+    save(true); qspRenderBody();
+  });
+  body.querySelectorAll('[data-showin]').forEach(el => el.onclick = () => {
+    p.searchShowIn = el.dataset.showin; save(true); qspRenderBody();
+  });
+  body.querySelectorAll('[data-kind-i]').forEach(tr => tr.onclick = e => {
+    if (e.target.tagName === 'INPUT') return;
+    QSP.kindSel = +tr.dataset.kindI; qspRenderBody();
+  });
+  body.querySelectorAll('[data-kf]').forEach(inp => inp.oninput = () => {
+    const i = +inp.dataset.ki; kinds[i][inp.dataset.kf] = inp.value; save(true);
+  });
+  document.getElementById('qspKindAdd').onclick = () => {
+    kinds.push({ n: '', e: '', u: '' }); QSP.kindSel = kinds.length - 1; save(true); qspRenderBody();
+  };
+  document.getElementById('qspKindDel').onclick = () => {
+    if (QSP.kindSel < 0 || QSP.kindSel >= kinds.length) return toast('先点表格里要删的那一行');
+    kinds.splice(QSP.kindSel, 1); QSP.kindSel = -1; save(true); qspRenderBody();
+  };
+}
+/* ── 42.10 快捷键页（QSpace 形制 + hotkey.json 真值） ── */
+const QSP_HK_GROUPS = [
+  { g: '操作', items: [
+    { id: 'rename', l: '重命名', d: '⇧⌘R' },
+    { id: 'search', l: '搜索', d: '⌘F' },
+    { id: 'show_in_finder', l: '在访达中显示', d: '⌘↩' },
+    { id: 'copy_path', l: '拷贝路径', d: '⇧⌘L' },
+    { id: 'getinfo', l: '显示简介', d: '⇧⌘I' },
+    { id: 'show_view_options', l: '查看显示选项', d: '⌘J' },
+    { id: 'go_desktop', l: '前往桌面', d: '⌘D', fp: 'goDesktop' },
+    { id: 'go_downloads', l: '前往下载', d: '⌥D', fp: 'goDownloads' },
+    { id: 'select_all', l: '全选', d: '⌘A', fp: 'selectAll' },
+    { id: 'copy_sel', l: '拷贝选中', d: '⌘C', fp: 'copy' },
+    { id: 'cut_sel', l: '剪切选中', d: '⌘X', fp: 'cut' },
+    { id: 'paste_sel', l: '粘贴', d: '⌘V', fp: 'paste' },
+  ] },
+  { g: '工作区', items: [
+    { id: 'new_workspace_tab', l: '新建标签页', d: '⌘T' },
+    { id: 'close_tab', l: '关闭', d: '⌘W' },
+    { id: 'go_enclosing_folder', l: '前往上层文件夹', d: '⌘↑' },
+  ] },
+  { g: '视图样式', items: [
+    { id: 'as_list_view', l: '列表视图', d: '⌘2' },
+    { id: 'zoom_in', l: '放大', d: '⌘=' },
+    { id: 'zoom_out', l: '缩小', d: '⌘-' },
+  ] },
+];
+/// 存盘用 'Cmd+Shift+D'，显示要照 QSpace 的 '⇧⌘D' —— 只在**显示**这一层换符号，
+/// 匹配与录制仍走 fpComboFromEvent 的原始串（否则设了又认不出来）。
+function qspHKDisplay(combo) {
+  if (!combo) return '';
+  return combo.split('+').map(part => {
+    if (part === 'Cmd') return '⌘';
+    if (part === 'Alt') return '⌥';
+    if (part === 'Shift') return '⇧';
+    if (part === 'Ctrl') return '⌃';
+    return part;
+  }).join('');
+}
+function qspHKValue(it) {
+  const raw = it.fp ? (fpHotkeys()[it.fp] || it.d) : ((S.qspHotkeys && S.qspHotkeys[it.id]) || it.d);
+  return qspHKDisplay(raw);
+}
+function qspRenderHotkeysPage(body) {
+  let rows = '';
+  QSP_HK_GROUPS.forEach(g => {
+    rows += `<div class="qsp-hk-sec">${g.g}</div>`;
+    g.items.forEach(it => {
+      const rec = QSP.hkRec && QSP.hkRec.id === it.id;
+      rows += `<div class="qsp-row"><span class="qsp-lab">${it.l}</span>
+        <span class="qsp-hk-key ${rec ? 'is-rec' : ''}" data-hkid="${it.id}">${rec ? '请按组合键…' : escapeHtml(qspHKValue(it))}</span>
+        <span class="qsp-hk-key" style="opacity:.45">—</span>
+        <button class="qsp-btn sm" data-hkrec="${it.id}">${rec ? '取消' : '录制'}</button>
+        <button class="qsp-btn sm" data-hkreset="${it.id}">恢复</button></div>`;
+    });
+  });
+  body.innerHTML = `
+    <div class="qsp-sec">快捷键</div>
+    <div class="qsp-card">
+      <div class="qsp-row" style="background:#273134;color:#95A0A4;font-size:12.5px">
+        <span class="qsp-lab" style="flex:1">操作</span><span>主快捷键</span><span>副快捷键</span><span style="width:112px"></span></div>
+      ${rows}
+    </div>
+    <div class="qsp-cm-foot"><button class="qsp-btn primary" id="qspHkResetAll">恢复默认</button></div>
+    <div class="qsp-hint">提示：已保存的工作区窗口可以分配快捷键。对于同一操作，可以分配两个不同的快捷键。
+修饰键：⌃ (control)、⌥ (option)、⌘ (command)、⇧ (shift)、⇥ (tab)</div>`;
+  body.querySelectorAll('[data-hkrec]').forEach(b => b.onclick = () => {
+    const id = b.dataset.hkrec;
+    let it = null; QSP_HK_GROUPS.forEach(g => g.items.forEach(x => { if (x.id === id) it = x; }));
+    QSP.hkRec = (QSP.hkRec && QSP.hkRec.id === id) ? null : { id, fpKey: it && it.fp, def: it && it.d };
+    qspRenderBody();
+    if (QSP.hkRec) toast('按新的组合键完成录制 · Esc 取消');
+  });
+  body.querySelectorAll('[data-hkreset]').forEach(b => b.onclick = () => {
+    const id = b.dataset.hkreset;
+    let it = null; QSP_HK_GROUPS.forEach(g => g.items.forEach(x => { if (x.id === id) it = x; }));
+    if (it && it.fp) { const o = { ...S.finderHotkeys }; delete o[it.fp]; S.finderHotkeys = o; }
+    else if (S.qspHotkeys) { delete S.qspHotkeys[id]; }
+    save(true); qspRenderBody();
+  });
+  document.getElementById('qspHkResetAll').onclick = () => {
+    S.finderHotkeys = null; S.qspHotkeys = null; QSP.hkRec = null; save(true);
+    qspRenderBody(); toast('快捷键已全部恢复默认');
+  };
+}
+/* ── 42.11 新建文件页（XS:JHSNewfileSettingsView 逐字） ── */
+const QSP_NEWFILES = [
+  { k: '', n: '文本.txt', c: '0 B', t: '' },
+  { k: '', n: 'Bash.sh', c: '0 B', t: '' },
+  { k: '', n: 'HTML.html', c: '0 B', t: '' },
+  { k: '', n: 'Swift.swift', c: '0 B', t: '' },
+  { k: '', n: 'python.py', c: '0 B', t: '' },
+  { k: '', n: 'As.applescript', c: '0 B', t: '' },
+  { k: '', n: '—— 分割线 ——', c: '', t: '', sep: true },
+];
+function qspRenderNewfilesPage(body) {
+  const p = qspPrefs();
+  body.innerHTML = `
+    <div class="qsp-sec">文件模板</div>
+    <div class="qsp-card">
+      <table class="qsp-table"><thead><tr><th style="width:16%">快捷键</th><th style="width:34%">名称</th><th style="width:24%">内容</th><th>模板</th></tr></thead>
+      <tbody>${QSP_NEWFILES.map((f, i) => `<tr data-nf="${i}" class="${QSP.newSel === i ? 'is-sel' : ''}">
+        <td style="color:#7C8B90">${f.k || 'A'}</td><td>${escapeHtml(f.n)}</td>
+        <td style="color:#7C8B90">${f.c || '—'}</td><td style="color:#7C8B90">${f.t || '使用空“' + escapeHtml((f.n.split('.').pop() || '') + '”') }</td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="qsp-sec">右键菜单</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">在右键菜单中展开显示</span>
+        <button class="qsp-sw ${p.newfileExpanded ? 'on' : ''}" data-pref="newfileExpanded"></button></div>
+      <div class="qsp-row"><span class="qsp-lab">显示右键菜单项图标</span>
+        <button class="qsp-sw ${p.newfileIcon ? 'on' : ''}" data-pref="newfileIcon"></button></div>
+    </div>
+    <div class="qsp-hint">文件名支持格式化的日期表达式：$date(format)
+示例：$date(yyyy-MM-dd)-会议记录.md</div>`;
+  body.querySelectorAll('[data-nf]').forEach(tr => tr.onclick = () => {
+    QSP.newSel = +tr.dataset.nf; qspRenderBody();
+  });
+  body.querySelectorAll('[data-pref]').forEach(el => el.onclick = () => {
+    const k = el.dataset.pref; p[k] = !p[k]; save(true); qspRenderBody();
+  });
+}
+/* ── 42.12 批量重命名页（XS:JHSBatchRenameSettingsView 逐字） ── */
+function qspRenderBatchRenamePage(body) {
+  const p = qspPrefs();
+  body.innerHTML = `
+    <div class="qsp-sec">启动模式</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">启动模式</span>
+        <span class="qsp-seg"><button data-bm="lite" class="${p.batchMode === 'lite' ? 'on' : ''}">简洁</button>
+          <button data-bm="pro" class="${p.batchMode === 'pro' ? 'on' : ''}">高级</button></span></div>
+      <div class="qsp-row"><span class="qsp-lab">按下回车确认重命名</span>
+        <button class="qsp-sw ${p.batchEnterConfirm ? 'on' : ''}" data-pref="batchEnterConfirm"></button></div>
+      <div class="qsp-row"><span class="qsp-lab">日志记录</span>
+        <button class="qsp-sw ${p.batchLog ? 'on' : ''}" data-pref="batchLog"></button></div>
+    </div>
+    <div class="qsp-sec">预置</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">加载预置</span><button class="qsp-btn sm" id="qspBrLoad">加载预置</button>
+        <button class="qsp-btn sm" id="qspBrSave">保存预置</button></div>
+    </div>
+    <div class="qsp-sec">规则</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">格式</span>
+        <span class="qsp-seg">${['$n', '($n)', '_$n'].map(f =>
+          `<button data-bf="${f}" class="${p.batchFormat === f ? 'on' : ''}">${escapeHtml(f)}</button>`).join('')}</span></div>
+      <div class="qsp-row"><span class="qsp-lab">替换文本</span>
+        <input class="qsp-inp" style="flex:1;max-width:320px" data-prefi="batchReplace" value="${escapeHtml(p.batchReplace)}" placeholder="要被替换掉的文字"></div>
+      <div class="qsp-row"><span class="qsp-lab">添加文本</span>
+        <input class="qsp-inp" style="flex:1;max-width:320px" data-prefi="batchAdd" value="${escapeHtml(p.batchAdd)}" placeholder="前缀或后缀"></div>
+    </div>
+    <div class="qsp-hint">在高级模式下，您可以将重命名规则保存为预置。并在右键菜单项“快速重命名”中执行预置。</div>`;
+  body.querySelectorAll('[data-bm]').forEach(b => b.onclick = () => { p.batchMode = b.dataset.bm; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-bf]').forEach(b => b.onclick = () => { p.batchFormat = b.dataset.bf; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-pref]').forEach(el => el.onclick = () => { const k = el.dataset.pref; p[k] = !p[k]; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-prefi]').forEach(inp => inp.oninput = () => { p[inp.dataset.prefi] = inp.value; save(true); });
+  document.getElementById('qspBrLoad').onclick = () => toast('已加载预置「默认规则」（演示）');
+  document.getElementById('qspBrSave').onclick = () => askModal({ title: '保存预置', text: '请输入预置项名称',
+    value: '我的预置', okText: '保存', onOk: v => { if (v && v.trim()) toast(`已保存预置「${escapeHtml(v.trim())}」`); } });
+}
+/* ── 42.13 连接页（XS:JHSServerConnSettingsView 字段节选） ── */
+const QSP_CONN_TYPES = ['FTP', 'SFTP', 'WebDAV', 'WebDAVS', '阿里云OSS', '亚马逊S3', '腾讯云COS', '七牛云KODO'];
+function qspRenderConnectionsPage(body) {
+  const p = qspPrefs();
+  const inp = (k, ph) => `<input class="qsp-inp" style="flex:1;max-width:360px" data-ci="${k}" value="${escapeHtml(p['conn_' + k] || '')}" placeholder="${ph}">`;
+  const sw = k => `<button class="qsp-sw ${p[k] ? 'on' : ''}" data-csw="${k}"></button>`;
+  body.innerHTML = `
+    <div class="qsp-sec">连接类型</div>
+    <div class="qsp-card"><div class="qsp-row" style="flex-wrap:wrap;gap:8px">
+      ${QSP_CONN_TYPES.map(t => `<button class="qsp-btn sm ${p.connType === t ? 'primary' : ''}" data-ctype="${t}">${t}</button>`).join('')}
+    </div></div>
+    <div class="qsp-sec">服务器</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">名称</span>${inp('name', '我的服务器')}</div>
+      <div class="qsp-row"><span class="qsp-lab">地址</span>${inp('addr', 'ftp.example.com')}</div>
+      <div class="qsp-row"><span class="qsp-lab">端口</span>${inp('port', '21')}</div>
+      <div class="qsp-row"><span class="qsp-lab">用户名</span>${inp('user', '')}</div>
+      <div class="qsp-row"><span class="qsp-lab">密码</span>${inp('pass', '')}</div>
+      <div class="qsp-row"><span class="qsp-lab">字符编码</span>
+        <span class="qsp-seg">${['UTF-8', 'GBK', 'ISO-8859-1'].map(e =>
+          `<button data-enc="${e}" class="${(p.connEnc || 'UTF-8') === e ? 'on' : ''}">${e}</button>`).join('')}</span></div>
+    </div>
+    <div class="qsp-sec">选项</div>
+    <div class="qsp-card">
+      <div class="qsp-row"><span class="qsp-lab">启用SSL</span>${sw('connSSL')}</div>
+      <div class="qsp-row"><span class="qsp-lab">私钥文件</span>${inp('key', '未选择')}</div>
+      <div class="qsp-row"><span class="qsp-lab">代理</span>${sw('connProxy')}</div>
+      <div class="qsp-row"><span class="qsp-lab">按需连接</span>${sw('connOnDemand')}</div>
+      <div class="qsp-row"><span class="qsp-lab">应用启动时连接</span>${sw('connAtLaunch')}</div>
+      <div class="qsp-row"><span class="qsp-lab">上传前确认</span>${sw('connAskUpload')}</div>
+    </div>`;
+  body.querySelectorAll('[data-ctype]').forEach(b => b.onclick = () => { p.connType = b.dataset.ctype; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-enc]').forEach(b => b.onclick = () => { p.connEnc = b.dataset.enc; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-csw]').forEach(b => b.onclick = () => { const k = b.dataset.csw; p[k] = !p[k]; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-ci]').forEach(i => i.oninput = () => { p['conn_' + i.dataset.ci] = i.value; save(true); });
+}
+/* ── 42.14 iCloud 页（XS:JHSiCloudSettingsView 逐字） ── */
+function qspRenderICloudPage(body) {
+  const p = qspPrefs();
+  body.innerHTML = `
+    <div class="qsp-sec">iCloud云盘</div>
+    <div class="qsp-card">
+      <div class="qsp-row" style="flex-wrap:wrap">
+        <span class="qsp-lab">在 iCloud云盘 中显示应用文件夹</span>
+        ${[['auto', '自动'], ['hidden', '自定义隐藏项'], ['visible', '自定义可见项']].map(([k, l]) =>
+          `<label class="qsp-opt"><span class="qsp-radio${p.icloudApps === k ? ' on' : ''}" data-ic="${k}"></span>${l}</label>`).join('')}
+        <button class="qsp-btn sm" id="qspIcView" style="margin-left:auto">查看</button>
+      </div>
+    </div>`;
+  body.querySelectorAll('[data-ic]').forEach(el => el.onclick = () => {
+    p.icloudApps = el.dataset.ic; save(true); qspRenderBody();
+  });
+  document.getElementById('qspIcView').onclick = () =>
+    fpNavTo(FP.active, '/Users/mjm/Library/Mobile Documents/com~apple~CloudDocs', true);
+}
+/* ── 42.15 关窗三条路径 + 快捷键录制（与 §41.8 共用捕获监听） ── */
+document.addEventListener('keydown', e => {
+  if (!QSP.hkRec) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.key === 'Escape') { QSP.hkRec = null; qspRenderBody(); return; }
+  const combo = fpComboFromEvent(e);
+  if (!combo) return;
+  const r = QSP.hkRec;
+  if (r.fpKey) { S.finderHotkeys = Object.assign({}, fpHotkeys(), { [r.fpKey]: combo }); }
+  else { S.qspHotkeys = Object.assign({}, S.qspHotkeys || {}, { [r.id]: combo }); }
+  QSP.hkRec = null;
+  save(true); qspRenderBody();
+  toast(`已改为 <b>${escapeHtml(combo)}</b>`);
+}, true);
+(function bindQSP() {
+  const btn = document.getElementById('fpPrefs');
+  if (btn) btn.onclick = e => { e.stopPropagation(); QSP.open ? qspClose() : qspOpenPage(); };
+  const cl = document.getElementById('qspClose');
+  if (cl) cl.onclick = () => qspClose();
+  const bk = document.getElementById('qspBack'), fw = document.getElementById('qspFwd');
+  if (bk) bk.onclick = () => qspNavStep(-1);
+  if (fw) fw.onclick = () => qspNavStep(1);
+  const fi = document.getElementById('qspFilterInput');
+  if (fi) fi.oninput = () => { QSP.filter = fi.value; qspRenderNav(); };
+  // 42.15 Esc 关窗（录制键位时 Esc 由录制监听先吃掉）
+  document.addEventListener('keydown', e => {
+    if (!QSP.open || QSP.hkRec) return;
+    if (e.key !== 'Escape') return;
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;   // 输入框里打字的 Esc 归输入框
+    e.preventDefault(); qspClose();
+  });
 })();
 
 })();
