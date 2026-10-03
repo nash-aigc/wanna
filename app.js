@@ -13262,7 +13262,7 @@ function wgLayout(g, w, h) {
     i++;
     pos.set(node.id, {
       x: Math.cos(a) * rr, y: Math.sin(a) * rr, vx: 0, vy: 0,    // 世界原点=圆心
-      r: 2.2 + Math.min(node.linkCount || 1, 10) * 0.28,         // §57 2.5~5.0 **CSS px**（屏幕恒定）：画时除以 scale，任何缩放档下点/字比例≈图2（放大不再变大饼）
+      r: 1.15 + Math.min(node.linkCount || 1, 12) * 0.07,        // §59 1.22~1.99 CSS px（直径2.4~4.0）：实测 Obsidian 点/字=0.31（点6.0px/字19.5px 同图双方法），我原公式0.85大2.7倍且密集库全饱和在上限
       t: node.nodeType || 'concept', n: node,
     });
   });
