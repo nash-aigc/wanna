@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>项目模式 · 项目工作区</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%230C0C0E'/><circle cx='8' cy='8' r='4' fill='%230A84FF'/></svg>">
-<!-- ?v=45 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
-  <link rel="stylesheet" href="app.css?v=45">
+<!-- ?v=46 破缓存（每批 bump 一次，见 开发经验/10 D69）：app.css 一旦被浏览器缓存，改样式**看起来不生效**（实测吃过这个亏） -->
+  <link rel="stylesheet" href="app.css?v=46">
 </head>
 <body>
   <!-- §28 风格选择条（你的原话：「在页面里面设计多种风格，让我来选…我选完之后你再取消或者隐藏」）
@@ -134,6 +134,12 @@
           <button class="plus" id="btnAddPlan" title="给「默认」新建分组 / 对话">＋</button>
         </div>
         <div id="planList"></div>
+
+        <!-- §44 Hermes 还原：多 agent 群聊 / 任务看板 / 归档会话（数据面 100% 照 Hermes，见 reference/Hermes-DISSECT.md §13 A批） -->
+        <div class="nav-head nav-head-2">
+          <button class="sect" id="btnHermesSect">Hermes <span class="caret">⌄</span></button>
+        </div>
+        <div id="hermesList"></div>
       </div>
 
           <!-- §31 监控选项（全部/费用/软件/debate）—— 监控模式下替换项目/默认列表 -->
@@ -520,6 +526,7 @@
       </div>
     </section>
     <!-- §42 QSpace 偏好设置窗（浮在整个工作区上；左栏只有用户点名的 7 页） -->
+    <section class="hermes-pane" id="hermesPane" hidden></section>
     <div class="qsp" id="qspWin" hidden>
       <div class="qsp-win">
         <div class="qsp-lights">
@@ -806,6 +813,6 @@
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="app.js?v=45"></script>
+<script src="app.js?v=46"></script>
 </body>
 </html>

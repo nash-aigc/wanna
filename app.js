@@ -512,7 +512,7 @@ function locateFileInTree(rel, pid) {
 const poolOf = scope => scope.kind === 'default'
   ? S.plans
   : (scope.project.chats = scope.project.chats || []);
-const convCount = pool => pool.filter(x => !x.isGroup).length;
+const convCount = pool => pool.filter(x => !x.isGroup && !x.archived).length;   // §44 归档的不计数（Archived ≠ 删除）
 /// 分组折叠状态的 key：默认区沿用**老的 title key**（不丢你已有的折叠状态），
 /// 项目区带项目 id —— 否则两个项目里同名的分组会一起折。
 const groupOpenKey = (g, scope) => scope.kind === 'default' ? g.title : `${scope.project.id}|${g.title}`;
@@ -635,7 +635,8 @@ function appendGroup(host, g, pool, scope) {
 /// ⭐ 对话列表的**唯一实现**：默认区与每个项目的对话分组都走它（§20.10.1）
 function renderConvList(host, pool, scope) {
   host.innerHTML = '';
-  const items = Array.isArray(pool) ? pool : [];
+  // §44 归档会话：archived=true 的**不进导航列表**（这正是归档的联动效果），Archived 页里才能看到并恢复
+  const items = (Array.isArray(pool) ? pool : []).filter(x => !x.archived);
   if (scope.kind === 'default') host.appendChild(defaultCardRow());
   const groups = items.filter(x => x.isGroup).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
   const loose = items.filter(x => !x.isGroup && !x.group);
@@ -9016,6 +9017,1010 @@ document.addEventListener('keydown', e => {
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;   // 输入框里打字的 Esc 归输入框
     e.preventDefault(); qspClose();
   });
+})();
+
+
+/* ══ §44 Hermes 还原 —— 数据面照 reference/Hermes-DISSECT.md §13「A 批：纯数据/纯逻辑」══
+   本块做三件事：① 房间（hosted room）事件日志与幂等追加  ② 成员校验 2~6  ③ plan_next_task 决策机
+   三者的规则全部从 Hermes 源码逐条移植（见每条注释里的 Hermes 出处），不是我自己的设计。
+   需要真进程/真渠道的部分（B 批）在下一批，这里只做数据与决策。 */
+
+const H_MIN_DISC = 2, H_MAX_DISC = 6;          // hosted_room_discussion.py:25-26
+const H_MAX_ROUNDS = 3, H_MAX_MSGS = 10;       // hosted_room_discussion.py:27-28
+const H_MAX_ROOMS = 256, H_MAX_MEMBERS = 128;  // hosted_rooms.py:30
+const H_STATUSES = ['triage', 'todo', 'scheduled', 'ready', 'running', 'blocked', 'review', 'done', 'archived'];
+                                                     // kanban_db.py:103 VALID_STATUSES（顺序即泳道顺序）
+const H_STATUS_ZH = { triage: '待分诊', todo: '待办', scheduled: '已排期', ready: '可认领', running: '进行中',
+  blocked: '受阻', review: '待评审', done: '完成', archived: '已归档' };
+const H_FAILURE_LIMIT = 2;                     // kanban_db_dispatch.py:36 DEFAULT_FAILURE_LIMIT
+const H_DISPATCH_INTERVAL = 60;                // config_defaults.py:1897 dispatch_interval_seconds
+
+/// Hermes 侧的全部状态（rooms / profiles / 看板 / 归档会话 / 配置）—— 存 S.hermes
+function hState() {
+  if (!S.hermes || typeof S.hermes !== 'object') S.hermes = {};
+  const H0 = S.hermes;
+  if (!Array.isArray(H0.rooms)) H0.rooms = [];
+  if (!Array.isArray(H0.profiles) || !H0.profiles.length) {
+    // §7 多角色隔离的**最小可用种子**：每个角色一份独立配置（模型/提供商/绑定项目/系统提示词）
+    H0.profiles = [
+      { id: 'p-arch', name: '架构师', handle: 'arch', model: 'qwen3-vl-plus', provider: 'bailian',
+        projectPath: '/Users/mjm/Documents/SuperAgent', persona: '负责拆需求、定边界，回答偏结构化。' },
+      { id: 'p-code', name: '编码手', handle: 'code', model: 'deepseek-chat', provider: 'deepseek',
+        projectPath: '/Users/mjm/Documents/SuperAgent/Wanna', persona: '直接给可运行的代码与命令。' },
+      { id: 'p-qa', name: '验收员', handle: 'qa', model: 'qwen3-vl-plus', provider: 'bailian',
+        projectPath: '', persona: '只挑毛病：缺判据、没实测、漏边界。' },
+      { id: 'p-doc', name: '文档官', handle: 'doc', model: 'deepseek-chat', provider: 'deepseek',
+        projectPath: '', persona: '把讨论收成可入库的中文文档。' },
+    ];
+  }
+  if (!Array.isArray(H0.tasks)) H0.tasks = [];
+  if (!Array.isArray(H0.taskComments)) H0.taskComments = [];
+  if (!Array.isArray(H0.taskEvents)) H0.taskEvents = [];
+  if (!Array.isArray(H0.taskRuns)) H0.taskRuns = [];
+  if (!Array.isArray(H0.taskLinks)) H0.taskLinks = [];
+  if (!H0.cfg || typeof H0.cfg !== 'object') H0.cfg = {};
+  const c = H0.cfg;
+  if (typeof c.autoArchive !== 'boolean') c.autoArchive = false;   // config_defaults.py:2275 sessions.auto_archive=false
+  if (typeof c.autoArchiveDays !== 'number') c.autoArchiveDays = 3; // :2276 auto_archive_days=3
+  if (typeof c.dispatchInterval !== 'number') c.dispatchInterval = H_DISPATCH_INTERVAL;
+  if (typeof c.failureLimit !== 'number') c.failureLimit = H_FAILURE_LIMIT;
+  if (typeof c.defaultAssignee !== 'string') c.defaultAssignee = H0.profiles[0].id;
+  if (typeof c.groupSessionsPerUser !== 'boolean') c.groupSessionsPerUser = true; // cli-config.yaml.example:1037
+  if (H0.view === undefined) H0.view = null;
+  if (H0.activeRoom === undefined) H0.activeRoom = null;
+  if (H0.activeTask === undefined) H0.activeTask = null;
+  return H0;
+}
+const hProfiles = () => hState().profiles;
+const hProfile = id => hProfiles().find(p => p.id === id) || null;
+const hProfileName = id => (hProfile(id) || {}).name || id || '—';
+function hSave() { save(true); }
+const hNewId = pfx => pfx + '-' + Math.random().toString(36).slice(2, 10);
+
+/* ── 房间（§2.1 / hosted_rooms.py）──────────────────────────────── */
+/// 成员校验：2~6 个、handle 唯一且不能占 @all/@everyone（hosted_room_discussion.py:253 validate_roster）
+function hValidateRoster(members) {
+  if (!Array.isArray(members)) return { ok: false, err: 'members must be a list' };
+  if (members.length < H_MIN_DISC || members.length > H_MAX_DISC) {
+    return { ok: false, err: `成员必须在 ${H_MIN_DISC}~${H_MAX_DISC} 个之间（当前 ${members.length}）` };
+  }
+  const seenTarget = new Set(), seenHandle = new Set(['all', 'everyone']);
+  for (const m of members) {
+    if (!m || !m.profile) return { ok: false, err: '每个成员都要有 profile' };
+    const t = String(m.profile).toLowerCase();
+    if (seenTarget.has(t)) return { ok: false, err: '成员的 profile 不能重复' };
+    seenTarget.add(t);
+    const h = String(m.handle || '').toLowerCase();
+    if (!h) return { ok: false, err: '每个成员都要有 handle（@名字）' };
+    if (seenHandle.has(h)) return { ok: false, err: 'handle 必须唯一，且不能用 @all / @everyone' };
+    seenHandle.add(h);
+  }
+  return { ok: true };
+}
+/// 事件种类 → 允许的 actor（hosted_rooms.py:49-57 逐条照搬）
+const H_EVENT_KINDS_BY_ACTOR = {
+  user: ['message.user'],
+  member: ['message.member'],
+  gateway: ['member.unavailable', 'room.activity', 'room.stop_requested', 'turn.deferred', 'turn.reassigned',
+    'turn.cancelled', 'turn.failed', 'turn.settled', 'turn.started'],
+  system: ['authority.claimed', 'authority.lost', 'room.created', 'room.disbanded', 'room.members_changed',
+    'room.renamed'],
+};
+const H_CONTROL_KINDS = ['authority.claimed', 'authority.lost', 'room.disbanded', 'room.stop_requested'];
+/// 幂等追加（hosted_rooms.py:942 append_event）：同 event_id 同内容 → 返回原事件；内容不同 → 失败
+function hAppendEvent(room, { eventId, kind, actor, payload }) {
+  const actorKind = (actor && actor.kind) || 'system';
+  if (!H_EVENT_KINDS_BY_ACTOR[actorKind] || !H_EVENT_KINDS_BY_ACTOR[actorKind].includes(kind)) {
+    return { ok: false, err: `kind「${kind}」不允许 actor=${actorKind}` };
+  }
+  const dup = room.events.find(e => e.event_id === eventId);
+  if (dup) {
+    const same = JSON.stringify({ kind: dup.kind, actor: dup.actor, payload: dup.payload })
+             === JSON.stringify({ kind, actor, payload });
+    return same ? { ok: true, event: dup, idempotent: true }
+                : { ok: false, err: 'event_id 冲突且内容不同（fail closed）' };
+  }
+  const ev = { seq: room.events.length + 1, event_id: eventId, kind, actor, payload: payload || {},
+    created_at: Date.now() };
+  room.events.push(ev);
+  room.rev = (room.rev || 0) + 1;
+  return { ok: true, event: ev };
+}
+/// 幂等创建房间（hosted_rooms.py:857 create_room）：同 room_id 已存在则原样返回
+function hCreateRoom({ name, members, profiles }) {
+  const H0 = hState();
+  if (H0.rooms.length >= H_MAX_ROOMS) return { ok: false, err: `活跃房间上限 ${H_MAX_ROOMS}` };
+  const v = hValidateRoster(members);
+  if (!v.ok) return v;
+  const roomId = hNewId('room');
+  const room = { id: roomId, name: String(name || '未命名群聊').slice(0, 60), members,
+    authority_gateway_id: 'local', authority_epoch: 1, rev: 0, events: [], created_at: Date.now(),
+    disbanded_at: null, watermarks: {} };
+  H0.rooms.unshift(room);
+  hAppendEvent(room, { eventId: 'system:room.created', kind: 'room.created',
+    actor: { kind: 'system', id: 'local' }, payload: { name: room.name,
+      members: members.map(m => ({ profile: m.profile, handle: m.handle })) } });
+  H0.activeRoom = roomId;
+  hSave();
+  return { ok: true, room };
+}
+/// 成员变化控制事件 + 重写清单（group-chat-view-members.tsx:49 commitGroupChatRoster 的语义）
+function hSetRoomMembers(roomId, members) {
+  const H0 = hState();
+  const room = H0.rooms.find(r => r.id === roomId);
+  if (!room) return { ok: false, err: 'room not found' };
+  const v = hValidateRoster(members);
+  if (!v.ok) return v;
+  const before = room.members.map(m => m.handle).join(',');
+  room.members = members;
+  room.rev = (room.rev || 0) + 1;
+  hAppendEvent(room, { eventId: hNewId('ev'), kind: 'room.members_changed',
+    actor: { kind: 'system', id: 'local' },
+    payload: { before: before.split(',').filter(Boolean), after: members.map(m => m.handle) } });
+  hSave();
+  return { ok: true };
+}
+function hDisbandRoom(roomId) {
+  const H0 = hState();
+  const room = H0.rooms.find(r => r.id === roomId);
+  if (!room) return;
+  room.disbanded_at = Date.now();
+  hAppendEvent(room, { eventId: hNewId('ev'), kind: 'room.disbanded',
+    actor: { kind: 'system', id: 'local' }, payload: {} });
+  if (H0.activeRoom === roomId) H0.activeRoom = (H0.rooms.find(r => !r.disbanded_at) || {}).id || null;
+  hSave();
+}
+
+/* ── 讨论决策机（§2.5a / hosted_room_discussion.py:617 plan_next_task）────────
+   Hermes 的**纯函数**：重放整个房间日志，返回「下一个成员任务」或 idle/settled/bounded。
+   三条硬上限与轮次规则照搬：
+   · 3 轮（:27）、每轮 10 条消息（:28）
+   · 第 0 轮 = 用户消息里的 @mention 选 responder，没人 @ 就全员（:639-645）
+   · 后续轮只给「被某个 Bot 点名且此后没发言」的成员（_unaddressed_member_mentions）
+   · 一轮全员沉默 → settled；轮次耗尽 → bounded
+*/
+function hResolveMentions(texts, members, defaultAll = true) {
+  const byHandle = new Set(members.map(m => String(m.handle).toLowerCase()));
+  const mentioned = new Set();
+  let everyone = false;
+  for (const t of texts) {
+    const re = /@([A-Za-z0-9_一-龥-]+)/g;
+    let m;
+    while ((m = re.exec(String(t || '')))) {
+      const h = m[1].toLowerCase();
+      if (h === 'all' || h === 'everyone') everyone = true;
+      else if (byHandle.has(h)) mentioned.add(h);
+    }
+  }
+  if (everyone || (defaultAll && !mentioned.size)) return members.slice();
+  return members.filter(m => mentioned.has(String(m.handle).toLowerCase()));
+}
+/// 某轮之后，「被 Bot 点名且此后没发言」的成员（= 下一轮的 responder 池）
+function hUnaddressedMembers(discussionMessages, members) {
+  const lastSaid = new Set();
+  for (const e of discussionMessages) {
+    if (e.kind === 'message.member') lastSaid.add(e.payload.member_id);
+  }
+  const cited = new Set();
+  for (const e of discussionMessages) {
+    if (e.kind !== 'message.member') continue;
+    hResolveMentions([e.payload.text || ''], members, false).forEach(m => {
+      if (m.member_id !== e.payload.member_id) cited.add(m.member_id);
+    });
+  }
+  return members.filter(m => cited.has(m.member_id) && !lastSaid.has(m.member_id));
+}
+function hPlanNextTask(roomId) {
+  const H0 = hState();
+  const room = H0.rooms.find(r => r.id === roomId);
+  if (!room || room.disbanded_at) return { status: 'idle', reason: 'no_room' };
+  // 成员带 member_id（Hermes 的 DiscussionMember：member_id / profile / handle / display_name）
+  const members = room.members.map((m, i) => ({ ...m, member_id: `${m.handle}#${i}`,
+    display_name: m.display_name || hProfileName(m.profile) }));
+  const events = room.events;
+  // _pending_discussion：最后一条尚未被成员消息终结过的 message.user
+  let discussion = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === 'message.user') {
+      const settled = events.some(x => x.kind === 'message.member'
+        && x.payload.discussion_event_id === e.event_id && x.payload.settled === true);
+      if (!settled) { discussion = e; }
+      break;
+    }
+  }
+  if (!discussion) return { status: 'idle', reason: 'no_pending_user_event' };
+  const threadId = discussion.payload.thread_id;
+  const threadMessages = events.filter(e => e.payload.thread_id === threadId);
+  const discussionMessages = threadMessages.filter(e => e.payload.discussion_event_id === discussion.event_id
+    || e.kind === 'message.user');
+  const memberMessages = discussionMessages.filter(e => e.kind === 'message.member');
+  if (memberMessages.length >= H_MAX_MSGS) return { status: 'bounded', reason: 'max_messages' };
+  // 已终结的 (round, member)
+  const terminals = new Set(memberMessages.map(e => `${e.payload.round_index}|${e.payload.member_id}`));
+  // watermark：每 (thread, member) 已读到的最大 seq（_effective_watermarks 的派生部分）
+  const wm = { ...(room.watermarks || {}) };
+  memberMessages.forEach(e => {
+    const k = `${threadId}|${e.payload.member_id}`;
+    wm[k] = Math.max(wm[k] || 0, e.seq);
+  });
+  const seenThrough = threadMessages.reduce((a, e) => Math.max(a, e.seq), 0);
+  for (let round = 0; round < H_MAX_ROUNDS; round++) {
+    const responders = round === 0
+      ? hResolveMentions([discussion.payload.text || ''], members, true)
+      : hUnaddressedMembers(discussionMessages, members);
+    // _rotate(responders, round)
+    const rot = responders.slice(round % Math.max(responders.length, 1))
+      .concat(responders.slice(0, round % Math.max(responders.length, 1)));
+    for (let mi = 0; mi < rot.length; mi++) {
+      const member = rot[mi];
+      if (terminals.has(`${round}|${member.member_id}`)) continue;
+      const w = wm[`${threadId}|${member.member_id}`] || 0;
+      const hasDelta = threadMessages.some(e => w < e.seq && e.seq <= seenThrough);
+      if (!hasDelta) continue;
+      const delta = threadMessages.filter(e => w < e.seq && e.seq <= seenThrough);
+      return { status: 'task', reason: 'member_turn', discussionEventId: discussion.event_id,
+        sourceEventSeq: discussion.seq, threadId, member, memberIndex: mi, roundIndex: round,
+        seenThroughSeq: seenThrough, watermark: w,
+        prompt: hBuildPrompt({ room, member, delta, discussion }) };
+    }
+    if (!memberMessages.some(e => Number(e.payload.round_index) === round)) {
+      return { status: 'settled', reason: 'silent_round' };
+    }
+    if (round === H_MAX_ROUNDS - 1) return { status: 'bounded', reason: 'max_rounds' };
+  }
+  return { status: 'bounded', reason: 'exhausted' };
+}
+/// _build_prompt（:519）的等价物：控制帧 + 增量 transcript + 任务指令
+function hBuildPrompt({ room, member, delta, discussion }) {
+  const lines = [];
+  lines.push('[control] 这是房间讨论的一轮；你是被点名的成员。只回答这一轮，不要重复别人已说过的。');
+  lines.push(`[room] ${room.name}`);
+  lines.push('[transcript-delta]');
+  delta.forEach(e => {
+    const who = e.kind === 'message.user' ? '用户'
+      : hProfileName((room.members.find(m => m.handle === e.payload.handle) || {}).profile);
+    lines.push(`${e.seq > discussion.seq ? '' : ''}${who}: ${e.payload.text}`);
+  });
+  lines.push(`[your-turn] 成员 @${member.handle}（${member.display_name}）请给出你的回复。`);
+  return lines.join('\n');
+}
+/// 用户在房间里发一条消息（= 起一个 discussion）
+function hRoomSend(roomId, text) {
+  const H0 = hState();
+  const room = H0.rooms.find(r => r.id === roomId);
+  if (!room || !String(text || '').trim()) return { ok: false };
+  const evId = hNewId('ev');
+  hAppendEvent(room, { eventId: evId, kind: 'message.user', actor: { kind: 'user', id: 'me' },
+    payload: { thread_id: evId, text: String(text) } });
+  hSave();
+  return { ok: true };
+}
+/// 按 plan_next_task 的决策产出一条成员回复（原型里 = 假 worker 的"生成结果"）
+function hRunNextTurn(roomId) {
+  const plan = hPlanNextTask(roomId);
+  if (plan.status !== 'task') return plan;
+  const H0 = hState();
+  const room = H0.rooms.find(r => r.id === roomId);
+  const prof = hProfile(plan.member.profile);
+  const text = hFakeMemberReply(prof, plan);
+  hAppendEvent(room, { eventId: hNewId('ev'), kind: 'message.member',
+    actor: { kind: 'member', id: plan.member.member_id, profile: plan.member.profile },
+    payload: { discussion_event_id: plan.discussionEventId, thread_id: plan.threadId,
+      member_id: plan.member.member_id, handle: plan.member.handle,
+      round_index: plan.roundIndex, task_id: hNewId('dtask'), text } });
+  // 一轮全员回复完 → 标 settled（Hermes 里由 turn.settled 控制事件表达）
+  const after = hPlanNextTask(roomId);
+  if (after.status === 'settled' || after.status === 'bounded') {
+    hAppendEvent(room, { eventId: hNewId('ev'), kind: 'turn.settled',
+      actor: { kind: 'gateway', id: 'local' },
+      payload: { thread_id: plan.threadId, discussion_event_id: plan.discussionEventId,
+        status: after.status, reason: after.reason } });
+  }
+  hSave();
+  return after;
+}
+/// 假 worker 的回复文本（数据面演示用；真回复属 B 批"真子进程"）
+function hFakeMemberReply(prof, plan) {
+  const p = prof || {};
+  const head = `【${p.name || plan.member.handle}】@${plan.member.handle} 第 ${plan.roundIndex + 1} 轮：`;
+  const body = p.persona
+    ? `${p.persona} 我这条只处理 @${plan.member.handle} 该负责的那一段（水位 ${plan.watermark} → ${plan.seenThroughSeq}）。`
+    : `收到（轮次 ${plan.roundIndex}，增量 ${plan.deltaCount || 1} 条）。`;
+  return head + body;
+}
+
+/* ══ §44b 任务看板（§3 / kanban_db.py 7 表 + 状态机 + dispatcher）══
+   数据表字段照 kanban_db.py:875-1055 的核心列；状态机照 :103；
+   认领是 CAS（ready→running，:2269 claim_task）；dispatcher 是"单写者 tick"（:1953 dispatch_once）。
+   原型里 worker 是**模拟的**（B 批才起真子进程）—— 所有假日志都标了「模拟」。 */
+function hTask(id) { return hState().tasks.find(t => t.id === id) || null; }
+function hTaskEvents(id) { return hState().taskEvents.filter(e => e.task_id === id); }
+function hTaskComments(id) { return hState().taskComments.filter(c => c.task_id === id); }
+function hAddTaskEvent(taskId, kind, payload) {
+  const H0 = hState();
+  H0.taskEvents.push({ id: hNewId('te'), task_id: taskId, kind, payload: payload || {}, created_at: Date.now() });
+}
+function hCreateTask({ title, body, assignee, priority, projectId, parents }) {
+  const H0 = hState();
+  const t = {
+    id: hNewId('task'), title: String(title || '未命名任务').slice(0, 120), body: String(body || ''),
+    assignee: assignee || H0.cfg.defaultAssignee, status: 'triage',
+    priority: priority || 'P2', created_by: 'user', created_at: Date.now(),
+    started_at: null, completed_at: null, project_id: projectId || (proj() && proj().id) || '',
+    workspace_kind: 'scratch', workspace_path: '', branch_name: '',
+    claim_lock: null, claim_expires: null, result: '', idempotency_key: null,
+    consecutive_failures: 0, worker_pid: null, last_failure_error: '', max_runtime_seconds: 900,
+    last_heartbeat_at: null, current_run_id: null, session_id: '', model_override: null, provider_override: null,
+    max_retries: 2, archived: false,
+  };
+  H0.tasks.push(t);
+  hAddTaskEvent(t.id, 'task.created', { title: t.title, assignee: t.assignee });
+  (parents || []).forEach(pid => hState().taskLinks.push({ parent_id: pid, child_id: t.id }));
+  // triage → todo（Hermes 的自动分诊在原型里只做一步；kanban_decompose.py 的 LLM 分解属 B 批）
+  t.status = 'todo';
+  hAddTaskEvent(t.id, 'status.changed', { from: 'triage', to: 'todo' });
+  hSave();
+  return t;
+}
+function hSetTaskStatus(id, status, extra) {
+  const t = hTask(id);
+  if (!t) return { ok: false, err: 'task not found' };
+  if (!H_STATUSES.includes(status)) return { ok: false, err: `非法状态 ${status}` };
+  const from = t.status;
+  t.status = status;
+  if (status === 'running' && !t.started_at) t.started_at = Date.now();
+  if (status === 'done') { t.completed_at = Date.now(); if (extra && extra.result) t.result = extra.result; }
+  hAddTaskEvent(t.id, 'status.changed', { from, to: status, ...(extra || {}) });
+  hSave();
+  return { ok: true };
+}
+/// CAS 认领（kanban_db.py:2269 claim_task 的两条规则）：
+/// ① 只有 ready 能变 running；② 父任务没完成 → 降回 todo 并记 claim_rejected
+function hClaimTask(id) {
+  const t = hTask(id);
+  if (!t) return { ok: false, err: 'task not found' };
+  const parents = hState().taskLinks.filter(l => l.child_id === id).map(l => l.parent_id);
+  const openParent = parents.find(pid => { const p = hTask(pid); return p && p.status !== 'done' && p.status !== 'archived'; });
+  if (openParent) {
+    if (t.status === 'ready') hSetTaskStatus(id, 'todo');
+    hAddTaskEvent(id, 'claim_rejected', { parent: openParent });
+    hSave();
+    return { ok: false, err: '父任务未完成', parent: openParent };
+  }
+  if (t.status !== 'ready') return { ok: false, err: `状态 ${t.status} 不能被认领（只能 ready）` };
+  t.claim_lock = t.assignee; t.claim_expires = Date.now() + t.max_runtime_seconds * 1000;
+  t.current_run_id = hNewId('run');
+  hSetTaskStatus(id, 'running');
+  const run = { id: t.current_run_id, task_id: id, status: 'running', outcome: null,
+    claimed_at: Date.now(), profile: t.assignee, progress: 0, summary: '' };
+  hState().taskRuns.push(run);
+  hAddTaskEvent(id, 'task.claimed', { worker: t.assignee, run_id: run.id, simulated: true });
+  hSave();
+  hScheduleWorker(run.id);
+  return { ok: true, run };
+}
+/// 模拟 worker（B 批才是真子进程 kanban_db_dispatch.py:2831 _default_spawn）
+function hScheduleWorker(runId) {
+  const H0 = hState();
+  const run = H0.taskRuns.find(r => r.id === runId);
+  if (!run) return;
+  const step = () => {
+    const H = hState();
+    const r = H.taskRuns.find(x => x.id === runId);
+    if (!r || r.status !== 'running') return;
+    const t = hTask(r.task_id);
+    if (!t || t.status !== 'running') { r.status = 'released'; return; }
+    r.progress = Math.min(100, (r.progress || 0) + 12 + Math.floor(Math.random() * 14));
+    t.last_heartbeat_at = Date.now();
+    if (r.progress >= 100) {
+      if (r.failNext) {
+        r.status = 'done'; r.outcome = 'failed';
+        t.consecutive_failures += 1;
+        t.last_failure_error = '模拟 worker 报错（演示熔断）';
+        hAddTaskEvent(t.id, 'run.failed', { failures: t.consecutive_failures, simulated: true });
+        if (t.consecutive_failures >= H.cfg.failureLimit) {
+          hSetTaskStatus(t.id, 'blocked', { reason: `连续失败 ${t.consecutive_failures} 次（failure_limit=${H.cfg.failureLimit}）` });
+        } else hSetTaskStatus(t.id, 'ready');
+        t.current_run_id = null; t.claim_lock = null;
+      } else {
+        r.status = 'done'; r.outcome = 'completed';
+        t.consecutive_failures = 0;
+        hSetTaskStatus(t.id, 'done', { result: `模拟 worker 完成（run ${r.id}）` });
+        t.current_run_id = null; t.claim_lock = null;
+      }
+      hSave(); renderHermes();
+      return;
+    }
+    hSave();
+    if (hState().view === 'kanban') renderHermes();
+    setTimeout(step, 700);
+  };
+  setTimeout(step, 700);
+}
+/// dispatcher 单写者 tick（kanban_db_dispatch.py:1953；网关版每 60s 一次 kanban_watchers.py:251）
+function hDispatchTick() {
+  const H0 = hState();
+  let claimed = 0;
+  const capPerProfile = 1;
+  for (const t of H0.tasks) {
+    if (t.status !== 'ready') continue;
+    if (H0.cfg.failureLimit > 0 && t.consecutive_failures >= H0.cfg.failureLimit) continue; // 熔断
+    const running = H0.tasks.filter(x => x.status === 'running' && x.assignee === t.assignee).length;
+    if (running >= capPerProfile) continue;
+    const res = hClaimTask(t.id);
+    if (res.ok) claimed++;
+  }
+  if (claimed) { hSave(); if (H0.view === 'kanban') renderHermes(); }
+  return claimed;
+}
+function hAddTaskComment(id, author, body) {
+  if (!String(body || '').trim()) return;
+  hState().taskComments.push({ id: hNewId('c'), task_id: id, author, body: String(body), created_at: Date.now() });
+  hAddTaskEvent(id, 'comment.added', { author });
+  hSave();
+}
+
+/* ══ §44c Archived Chats（§10 / hermes_state_sessions.py:923-958 双标记）══
+   原型里"会话" = 「默认」区的 S.plans + 每个项目 p.chats（同一份 poolOf(scope)）。
+   两列软删：archived（归档了没有）+ autoArchived（是自动扫的还是人归的）；pinned 豁免自动归档。 */
+function hAllConvPools() {
+  const out = [];
+  out.push({ scope: { kind: 'default' }, pool: S.plans });
+  S.projects.forEach(p => { if (p && p.chats) out.push({ scope: { kind: 'project', project: p }, pool: p.chats }); });
+  return out;
+}
+function hFindConv(id) {
+  for (const { scope, pool } of hAllConvPools()) {
+    const c = pool.find(x => x.id === id);
+    if (c) return { conv: c, scope };
+  }
+  return null;
+}
+/// 人归档（hermes_state_sessions.py:923 set_session_archived：**清掉 auto_archived** —— 这是人归的）
+function hArchiveConv(id, { manual = true } = {}) {
+  const f = hFindConv(id); if (!f) return false;
+  f.conv.archived = true;
+  if (manual) f.conv.autoArchived = false;
+  // 选中态被归档 → 让位
+  if (f.scope.kind === 'default' && S.activePlan === id) S.activePlan = null;
+  if (f.scope.kind === 'project' && S.activeProjChat === id) S.activeProjChat = null;
+  hSave();
+  return true;
+}
+/// 空闲扫描自动归档（:930 _auto_archive_lineage：打 auto_archived=1；pinned 永不自动归档）
+function hAutoArchiveScan() {
+  const H0 = hState();
+  if (!H0.cfg.autoArchive) return 0;
+  const cutoff = Date.now() - H0.cfg.autoArchiveDays * 86400000;
+  let n = 0;
+  hAllConvPools().forEach(({ pool }) => {
+    pool.forEach(c => {
+      if (c.isGroup || c.archived || c.pinned) return;          // pinned 豁免
+      const ts = c.ts || 0;
+      if (ts && ts < cutoff) { c.archived = true; c.autoArchived = true; n++; }
+    });
+  });
+  if (n) hSave();
+  return n;
+}
+/// 恢复：从归档视图恢复 = 清 archived；若当初是自动归档的，顺带清 autoArchived（人归的永远不动别人的标记）
+function hUnarchiveConv(id) {
+  const f = hFindConv(id); if (!f || !f.conv.archived) return false;
+  f.conv.archived = false;
+  if (f.conv.autoArchived) f.conv.autoArchived = false;
+  hSave();
+  return true;
+}
+function hArchivedConvs() {
+  const out = [];
+  hAllConvPools().forEach(({ scope, pool }) => {
+    pool.forEach(c => { if (c.archived) out.push({ conv: c, scope }); });
+  });
+  return out.sort((a, b) => (b.conv.ts || 0) - (a.conv.ts || 0));
+}
+
+/* ══ §44d 视图：导航分区 + 三个页面 ══ */
+let hermesView = null;      // null | 'rooms' | 'kanban' | 'archived'
+function setHermesView(v) {
+  if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);   // 与访达互斥
+  if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
+  hermesView = v;
+  const on = !!v;
+  ['.workspace', '.chat', '.split-v', '.split-h', '#railRight', '#panelSide', '#panelAutomation', '#tabsVertical']
+    .forEach(sel => document.querySelectorAll(sel).forEach(el => {
+      if (on) { el.dataset.hHide = '1'; el.style.display = 'none'; }
+      else if (el.dataset.hHide) { delete el.dataset.hHide; el.style.display = ''; }
+    }));
+  const pane = $('#hermesPane');
+  if (pane) pane.hidden = !on;
+  if (on) renderHermes(); else renderNav();
+  renderHermesNav();
+}
+function renderHermesNav() {
+  const host = $('#hermesList');
+  if (!host) return;
+  const H0 = hState();
+  const activeRooms = H0.rooms.filter(r => !r.disbanded_at).length;
+  const openTasks = H0.tasks.filter(t => ['triage', 'todo', 'scheduled', 'ready', 'running', 'blocked', 'review'].includes(t.status)).length;
+  const archived = hArchivedConvs().length;
+  const rows = [
+    { v: 'rooms', label: '群聊', badge: activeRooms ? `${activeRooms}` : '' },
+    { v: 'kanban', label: '任务看板', badge: openTasks ? `${openTasks}` : '' },
+    { v: 'archived', label: '归档会话', badge: archived ? `${archived}` : '' },
+  ];
+  host.innerHTML = rows.map(r => `<div class="plan-row${hermesView === r.v ? ' is-on' : ''}" data-hv="${r.v}">
+      <span class="plan-dot" style="background:#3B82F6"></span><span class="pname">${r.label}</span>
+      ${r.badge ? `<span class="sc" style="margin-left:auto;font-size:10.5px;color:var(--ink3,#8A8F96)">${r.badge}</span>` : ''}
+    </div>`).join('');
+  host.querySelectorAll('[data-hv]').forEach(el => el.onclick = () => setHermesView(el.dataset.hv));
+  const sect = $('#btnHermesSect');
+  if (sect) sect.classList.toggle('closed', !hermesView);
+}
+function renderHermes() {
+  const pane = $('#hermesPane');
+  if (!pane) return;
+  renderHermesNav();
+  const v = (hState().view = hermesView);
+  if (v === 'rooms') hermesRoomsHTML(pane);
+  else if (v === 'kanban') hermesKanbanHTML(pane);
+  else if (v === 'archived') hermesArchivedHTML(pane);
+  else pane.innerHTML = '';
+}
+/// 顶部条（三个页面共用）：标题 + 返回
+function hBar(title, sub, actions) {
+  return `<div class="hbar"><span class="htitle">${escapeHtml(title)}</span>
+    <span class="hsub">${escapeHtml(sub || '')}</span><span class="spacer"></span>
+    ${actions || ''}
+    <button class="hbtn ghost" data-hact="exit" title="回到工作区">← 返回工作区</button></div>`;
+}
+function hBindCommon(root) {
+  const ex = root.querySelector('[data-hact="exit"]');
+  if (ex) ex.onclick = () => setHermesView(null);
+}
+
+/// 通用弹层（新建房间 / 新建任务）—— 原型里已有的 askModal 只吃单个输入，这里要多字段
+function hOpenModal({ title, sub, body, okText, onOk }) {
+  let m = document.getElementById('hModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.className = 'hmodal'; m.id = 'hModal'; m.hidden = true;
+    document.body.appendChild(m);
+    m.addEventListener('mousedown', e => { if (e.target === m) m.hidden = true; });
+  }
+  m.innerHTML = `<div class="card"><h3>${escapeHtml(title)}</h3>
+    ${sub ? `<div class="sub">${sub}</div>` : ''}${body}
+    <div class="foot"><button class="hbtn ghost" data-hm="cancel">取消</button>
+      <button class="hbtn primary" data-hm="ok">${escapeHtml(okText || '确定')}</button></div></div>`;
+  m.hidden = false;
+  m.querySelector('[data-hm="cancel"]').onclick = () => { m.hidden = true; };
+  m.querySelector('[data-hm="ok"]').onclick = () => { if (onOk && onOk(m) !== false) m.hidden = true; };
+  const first = m.querySelector('input,textarea,select');
+  if (first) setTimeout(() => first.focus(), 30);
+  return m;
+}
+
+/* ── §44.1 群聊页（§2 hosted room） ── */
+function hermesRoomsHTML(pane) {
+  const H0 = hState();
+  const rooms = H0.rooms;
+  if (!H0.activeRoom && rooms.length) H0.activeRoom = rooms[0].id;
+  const room = rooms.find(r => r.id === H0.activeRoom) || null;
+
+  const left = `<div class="hcol" style="width:230px;flex:0 0 230px">
+      <div class="hcol-head">房间<span style="margin-left:auto"></span>
+        <button class="hbtn" data-hact="new-room" style="padding:3px 9px">＋ 新建群聊</button></div>
+      <div class="hcol-body">${rooms.length ? rooms.map(r => `
+        <div class="hitem${r.id === H0.activeRoom ? ' is-on' : ''}" data-room="${r.id}">
+          <span class="dot" style="background:${r.disbanded_at ? '#6B7280' : '#22C55E'}"></span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.name)}</span>
+          <span class="sub">${r.members.length}人 · ${r.events.length}ev</span>
+        </div>`).join('') : '<div class="hempty">还没有房间。<br>点右上「＋ 新建群聊」创建（2~6 个成员）。</div>'}
+      </div></div>`;
+
+  let mid, right;
+  if (!room) {
+    mid = `<div class="hcol" style="flex:1"><div class="hempty">先创建一个房间，把几个 Bot 放进去讨论。</div></div>`;
+    right = `<div class="hcol" style="width:250px;flex:0 0 250px"><div class="hcol-head">成员</div>
+      <div class="hempty">—</div></div>`;
+  } else {
+    const plans = hPlanNextTask(room.id);
+    const log = room.events.slice(-60).map(e => hEventHTML(e, room)).join('');
+    mid = `<div class="hcol" style="flex:1">
+      <div class="hcol-head">${escapeHtml(room.name)}
+        <span class="hsub" style="margin-left:8px">rev ${room.rev} · epoch ${room.authority_epoch} · 权威 ${escapeHtml(room.authority_gateway_id)}</span>
+        <span style="margin-left:auto"></span>
+        <button class="hbtn" data-hact="run-turn" title="${escapeHtml(plans.status)}">▶ 跑一轮</button>
+        <button class="hbtn" data-hact="run-all">⏩ 跑到结束</button>
+        <button class="hbtn danger" data-hact="disband">解散</button>
+      </div>
+      <div class="hcol-body" id="hLog" style="padding:0"><div class="hlog">${log || '<div class="hempty">日志为空 —— 发一条消息开始讨论。</div>'}</div></div>
+      <div class="hcomposer">
+        <input id="hSend" placeholder="发一条消息（可用 @handle 点名，@all 或不点名 = 全员）" spellcheck="false">
+        <button class="hbtn primary" data-hact="send">发送</button>
+      </div>
+      <div class="hcheck ${plans.status === 'task' ? 'ok' : plans.status === 'idle' ? '' : 'err'}">
+        plan_next_task → <b>${plans.status}</b>（${plans.reason}）
+        ${plans.status === 'task' ? `　下一位：<b>@${escapeHtml(plans.member.handle)}</b>（${escapeHtml(plans.member.display_name)}）· 第 ${plans.roundIndex + 1} 轮`
+          : ''}
+        <span style="float:right">上限 ${H_MAX_ROUNDS} 轮 × ${H_MAX_MSGS} 条</span>
+      </div></div>`;
+
+    right = `<div class="hcol" style="width:250px;flex:0 0 250px">
+      <div class="hcol-head">成员 <span class="hsub">（${room.members.length}/${H_MAX_DISC}）</span>
+        <span style="margin-left:auto"></span><button class="hbtn" data-hact="edit-members" style="padding:3px 9px">编辑</button></div>
+      <div class="hcol-body">
+        ${room.members.map((m, i) => `<div class="hitem" style="cursor:default">
+            <span class="hchip on">@${escapeHtml(m.handle)}</span>
+            <span style="min-width:0;overflow:hidden">${escapeHtml(hProfileName(m.profile))}</span>
+            <button class="hbtn ghost" data-hrm="${i}" title="移出" style="padding:0 6px;margin-left:auto">×</button>
+          </div>`).join('') || '<div class="hempty">无成员</div>'}
+        <div class="hsec">房间属性</div>
+        <div class="hnote">成员上限 ${H_MAX_MEMBERS} · 活跃房间上限 ${H_MAX_ROOMS}<br>
+        群会话按人分开（group_sessions_per_user=${H0.cfg.groupSessionsPerUser}）</div>
+      </div></div>`;
+  }
+
+  pane.innerHTML = hBar('群聊 · 多 Bot 讨论房间',
+    'hosted room：事件日志 + 2~6 成员 + plan_next_task 决策机（Hermes §2）',
+    `<button class="hbtn" data-hact="new-room">＋ 新建群聊</button>`)
+    + `<div class="hbody">${left}${mid}${right}</div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-room]').forEach(el => el.onclick = () => { H0.activeRoom = el.dataset.room; hSave(); renderHermes(); });
+  pane.querySelectorAll('[data-hrm]').forEach(b => b.onclick = () => {
+    const i = +b.dataset.hrm;
+    const ms = room.members.slice(); ms.splice(i, 1);
+    const res = hSetRoomMembers(room.id, ms);
+    if (!res.ok) { toast(`移出失败：${escapeHtml(res.err)}`); return; }
+    renderHermes();
+  });
+  pane.querySelectorAll('[data-hact="new-room"]').forEach(b => b.onclick = () => hNewRoomModal());
+  const send = () => { const i = pane.querySelector('#hSend'); if (!i) return;
+    const v = i.value; if (!v.trim()) return; hRoomSend(room.id, v); i.value = ''; renderHermes();
+    const lg = pane.querySelector('#hLog'); if (lg) lg.scrollTop = lg.scrollHeight; };
+  const sendBtn = pane.querySelector('[data-hact="send"]');
+  if (sendBtn) sendBtn.onclick = send;
+  const input = pane.querySelector('#hSend');
+  if (input) input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') send(); };
+  const rt = pane.querySelector('[data-hact="run-turn"]');
+  if (rt) rt.onclick = () => {
+    const p = hRunNextTurn(room.id);
+    renderHermes();
+    if (p.status === 'task') toast(`@${escapeHtml(p.member.handle)} 领取了一轮（${p.status}/${p.reason}）`);
+    else toast(`讨论结束：${p.status}（${p.reason}）`);
+  };
+  const ra = pane.querySelector('[data-hact="run-all"]');
+  if (ra) ra.onclick = () => {
+    // 每次 hRunNextTurn = 真跑了一位成员的一轮；用 plan 先探再跑，计数才是"跑了几个"
+    let n = 0, last = hPlanNextTask(room.id);
+    while (last.status === 'task' && n < H_MAX_ROUNDS * H_MAX_DISC) {
+      last = hRunNextTurn(room.id);
+      n++;
+    }
+    renderHermes();
+    toast(n ? `${n} 位成员依次领完了各自的轮次 → ${last.status}（${last.reason}）` : `没有可跑的轮次 → ${last.status}`);
+  };
+  const db = pane.querySelector('[data-hact="disband"]');
+  if (db) db.onclick = () => hOpenModal({ title: '解散房间', sub: '解散后房间进入 disbanded（事件日志保留）。',
+    okText: '解散', onOk: () => { hDisbandRoom(room.id); renderHermes(); toast('房间已解散'); } });
+  pane.querySelectorAll('[data-hact="edit-members"]').forEach(b => b.onclick = () => hMembersModal(room));
+  const lg = pane.querySelector('#hLog'); if (lg) lg.scrollTop = lg.scrollHeight;
+}
+function hEventHTML(e, room) {
+  const ctrl = !['message.user', 'message.member'].includes(e.kind);
+  if (ctrl) {
+    const label = { 'room.created': '房间创建', 'room.members_changed': '成员变更', 'room.renamed': '改名',
+      'room.disbanded': '房间解散', 'turn.settled': '讨论结束', 'room.stop_requested': '停止请求',
+      'authority.claimed': '权威接管', 'authority.lost': '权威丢失' }[e.kind] || e.kind;
+    return `<div class="hev ctrl">${label} · ${escapeHtml(e.event_id)}<div class="meta">seq ${e.seq} · ${new Date(e.created_at).toLocaleTimeString()}${e.payload.status ? ` · ${e.payload.status}(${e.payload.reason || ''})` : ''}</div></div>`;
+  }
+  if (e.kind === 'message.user') {
+    return `<div class="hev"><span class="who user">用户</span>：${escapeHtml(e.payload.text || '')}
+      <div class="meta">${escapeHtml(e.event_id)} · seq ${e.seq} · thread ${escapeHtml((e.payload.thread_id || '').slice(0, 14))}…</div></div>`;
+  }
+  const m = room.members.find(x => x.handle === e.payload.handle) || {};
+  return `<div class="hev"><span class="who">${escapeHtml(hProfileName(m.profile))}</span>
+    <span class="hsub">@${escapeHtml(e.payload.handle || '')}</span>
+    <span class="round">R${(e.payload.round_index ?? 0) + 1}</span>：${escapeHtml(e.payload.text || '')}
+    <div class="meta">${escapeHtml(e.event_id)} · seq ${e.seq} · ${e.payload.task_id ? 'task ' + e.payload.task_id : ''}</div></div>`;
+}
+function hNewRoomModal() {
+  const H0 = hState();
+  const picks = new Set(H0.profiles.slice(0, H_MIN_DISC).map(p => p.id));
+  const body = `<div class="hform">
+    <label>房间名称<input id="hName" value="需求讨论 ${H0.rooms.length + 1}"></label>
+    <label>成员（勾选 2~6 个角色；handle 唯一、@all/@everyone 保留）
+      <div class="hchips" id="hPicks">${H0.profiles.map(p => `<span class="hchip${picks.has(p.id) ? ' on' : ''}"
+        data-pid="${p.id}">${escapeHtml(p.name)}</span>`).join('')}</div></label>
+    <div id="hRosterMsg" class="hcheck ok"></div></div>`;
+  const m = hOpenModal({ title: '新建群聊（hosted room）',
+    sub: '对应 Hermes <code>groups.create</code> → <code>validate_roster(2~6)</code> → <code>create_room</code>（幂等）',
+    body, okText: '创建',
+    onOk: root => {
+      const name = root.querySelector('#hName').value.trim() || '未命名群聊';
+      const members = [...root.querySelectorAll('.hchip[data-pid].on')].map(el => {
+        const p = hProfile(el.dataset.pid);
+        return { profile: p.id, handle: p.handle };
+      });
+      const res = hCreateRoom({ name, members });
+      if (!res.ok) { root.querySelector('#hRosterMsg').className = 'hcheck err'; root.querySelector('#hRosterMsg').textContent = res.err; return false; }
+      renderHermes(); toast(`已创建房间「${escapeHtml(name)}」`);
+      return true;
+    } });
+  const sync = () => {
+    const n = m.querySelectorAll('.hchip[data-pid].on').length;
+    const msg = m.querySelector('#hRosterMsg');
+    const ok = n >= H_MIN_DISC && n <= H_MAX_DISC;
+    msg.className = 'hcheck ' + (ok ? 'ok' : 'err');
+    msg.textContent = ok ? `✓ ${n} 个成员（${H_MIN_DISC}~${H_MAX_DISC} 通过）` : `成员数 ${n} —— 必须 ${H_MIN_DISC}~${H_MAX_DISC} 个`;
+    m.querySelector('[data-hm="ok"]').disabled = !ok;
+  };
+  m.querySelectorAll('.hchip[data-pid]').forEach(el => el.onclick = () => { el.classList.toggle('on'); sync(); });
+  sync();
+}
+function hMembersModal(room) {
+  const H0 = hState();
+  const picks = new Set(room.members.map(m => m.profile));
+  const body = `<div class="hform">
+    <label>成员（2~6）<div class="hchips">${H0.profiles.map(p => `<span class="hchip${picks.has(p.id) ? ' on' : ''}"
+      data-pid="${p.id}">${escapeHtml(p.name)} · @${escapeHtml(p.handle)}</span>`).join('')}</div></label>
+    <div id="hRosterMsg" class="hcheck"></div></div>`;
+  const m = hOpenModal({ title: 'Manage members', sub: '对应 <code>group-chat-view-members.tsx:49 commitGroupChatRoster</code>（改清单 + 抬 revision）',
+    body, okText: '保存成员',
+    onOk: root => {
+      const members = [...root.querySelectorAll('.hchip[data-pid].on')].map(el => {
+        const p = hProfile(el.dataset.pid);
+        const old = room.members.find(x => x.profile === p.id);
+        return { profile: p.id, handle: old ? old.handle : p.handle };
+      });
+      const res = hSetRoomMembers(room.id, members);
+      if (!res.ok) { const el = root.querySelector('#hRosterMsg'); el.className = 'hcheck err'; el.textContent = res.err; return false; }
+      renderHermes(); toast('成员已更新（room.members_changed 已入日志）');
+      return true;
+    } });
+  const sync = () => {
+    const n = m.querySelectorAll('.hchip[data-pid].on').length;
+    const msg = m.querySelector('#hRosterMsg');
+    const ok = n >= H_MIN_DISC && n <= H_MAX_DISC;
+    msg.className = 'hcheck ' + (ok ? 'ok' : 'err');
+    msg.textContent = ok ? `✓ ${n} 个成员` : `成员数 ${n} —— 必须 ${H_MIN_DISC}~${H_MAX_DISC}`;
+    m.querySelector('[data-hm="ok"]').disabled = !ok;
+  };
+  m.querySelectorAll('.hchip[data-pid]').forEach(el => el.onclick = () => { el.classList.toggle('on'); sync(); });
+  sync();
+}
+
+/* ── §44.2 任务看板页（§3：泳道 + 认领 + dispatcher + 详情） ── */
+function hermesKanbanHTML(pane) {
+  const H0 = hState();
+  const active = hTask(H0.activeTask);
+  const lanes = H_STATUSES.filter(s => s !== 'archived').map(st => {
+    const list = H0.tasks.filter(t => t.status === st);
+    return `<div class="hlane"><div class="hlane-head">
+        <span class="hst" style="background:${hStatusColor(st)}"></span>${H_STATUS_ZH[st]}
+        <span class="cnt">${list.length}</span></div>
+      <div class="hlane-body" data-lane="${st}">
+        ${list.map(t => hTaskCard(t, H0.activeTask)).join('') || '<div class="hempty" style="padding:10px">—</div>'}
+      </div></div>`;
+  }).join('');
+  const archived = H0.tasks.filter(t => t.status === 'archived');
+  const autoOn = H0.cfg.dispatchInterval > 0;
+  pane.innerHTML = hBar('任务看板（插件）',
+    `kanban_db 7 表 → JSON · 状态机 9 态 · dispatcher 每 ${H0.cfg.dispatchInterval}s · 熔断 failure_limit=${H0.cfg.failureLimit}`,
+    `<button class="hbtn primary" data-hact="new-task">＋ 新建任务</button>
+     <button class="hbtn" data-hact="dispatch">立即分发</button>
+     <button class="hbtn${autoOn ? ' primary' : ''}" data-hact="toggle-auto" title="模拟 dispatcher 常驻循环">${autoOn ? '⏸ 关自动分发' : '▶ 开自动分发'}</button>`)
+    + `<div class="hbody"><div style="flex:1;min-width:0;display:flex;overflow:hidden">
+        <div style="flex:1;min-width:0;overflow:auto"><div class="hboard">${lanes}</div>
+          ${archived.length ? `<div style="padding:0 12px 14px"><div class="hsec">已归档 ${archived.length}</div>
+            <div class="hrow">${archived.map(t => `<span class="hchip" data-open="${t.id}">${escapeHtml(t.title.slice(0, 18))}</span>`).join('')}</div></div>` : ''}
+        </div>
+        ${active ? hTaskDetail(active) : ''}
+      </div></div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-hact="new-task"]').forEach(b => b.onclick = () => hNewTaskModal());
+  pane.querySelectorAll('[data-hact="dispatch"]').forEach(b => b.onclick = () => {
+    const n = hDispatchTick(); toast(n ? `分发：认领了 ${n} 个 ready 任务（模拟 worker）` : '没有可认领的 ready 任务');
+  });
+  pane.querySelector('[data-hact="toggle-auto"]').onclick = () => {
+    H0.cfg.dispatchInterval = autoOn ? 0 : H_DISPATCH_INTERVAL; hSave(); renderHermes();
+    toast(autoOn ? '自动分发已关（只手动分发）' : `自动分发已开：每 ${H_DISPATCH_INTERVAL}s 一次`);
+  };
+  pane.querySelectorAll('.htask').forEach(el => el.onclick = () => { H0.activeTask = el.dataset.t; hSave(); renderHermes(); });
+  pane.querySelectorAll('[data-open]').forEach(el => el.onclick = () => { H0.activeTask = el.dataset.open; hSave(); renderHermes(); });
+  if (active) hBindTaskDetail(pane, active);
+}
+function hStatusColor(st) {
+  return { triage: '#A78BFA', todo: '#60A5FA', scheduled: '#38BDF8', ready: '#34D399', running: '#22C55E',
+    blocked: '#F87171', review: '#FBBF24', done: '#4ADE80', archived: '#6B7280' }[st] || '#6B7280';
+}
+function hTaskCard(t, activeId) {
+  const fails = t.consecutive_failures >= hState().cfg.failureLimit;
+  return `<div class="htask${t.id === activeId ? ' is-on' : ''}" data-t="${t.id}">
+    <div class="t">${escapeHtml(t.title)}</div>
+    <div class="m">
+      <span class="tag">${escapeHtml(t.priority)}</span>
+      <span class="tag">${escapeHtml(hProfileName(t.assignee))}</span>
+      ${t.status === 'running' ? '<span class="tag run">运行中</span>' : ''}
+      ${fails ? `<span class="tag fail">连败 ${t.consecutive_failures}</span>` : ''}
+      ${t.project_id ? `<span class="tag">${escapeHtml((projById(t.project_id) || {}).name || '项目')}</span>` : ''}
+    </div></div>`;
+}
+function projById(id) { return (S.projects || []).find(p => p && p.id === id) || null; }
+function hTaskDetail(t) {
+  const H0 = hState();
+  const comments = hTaskComments(t.id);
+  const events = hTaskEvents(t.id).slice(-20);
+  const runs = H0.taskRuns.filter(r => r.task_id === t.id);
+  const links = H0.taskLinks.filter(l => l.parent_id === t.id || l.child_id === t.id);
+  const cur = runs[runs.length - 1];
+  return `<div class="hdetail">
+    <h4>${escapeHtml(t.title)}</h4>
+    <div class="hkv"><span class="k">id</span><span class="v">${escapeHtml(t.id)}</span></div>
+    <div class="hkv"><span class="k">状态</span><span class="v"><span class="hst" style="display:inline-block;background:${hStatusColor(t.status)}"></span> ${H_STATUS_ZH[t.status]}（${t.status}）</span></div>
+    <div class="hkv"><span class="k">负责人</span><span class="v">${escapeHtml(hProfileName(t.assignee))}</span></div>
+    <div class="hkv"><span class="k">优先级</span><span class="v">${escapeHtml(t.priority)}</span></div>
+    <div class="hkv"><span class="k">连败</span><span class="v">${t.consecutive_failures} / ${H0.cfg.failureLimit}</span></div>
+    <div class="hkv"><span class="k">创建</span><span class="v">${new Date(t.created_at).toLocaleString()}</span></div>
+    ${cur ? `<div class="hkv"><span class="k">本次 run</span><span class="v">${escapeHtml(cur.status)} · 进度 ${cur.progress || 0}%${cur.outcome ? ' · ' + cur.outcome : ''}${cur.simulated ? '（模拟 worker）' : ''}</span></div>` : ''}
+    ${t.result ? `<div class="hkv"><span class="k">结果</span><span class="v">${escapeHtml(t.result)}</span></div>` : ''}
+    <div class="hsec">正文</div>
+    <div class="hnote">${escapeHtml(t.body || '（空）')}</div>
+    <div class="hsec">操作</div>
+    <div class="hrow">
+      <select class="hbtn" data-act="status" style="padding:5px 8px">
+        ${H_STATUSES.map(s => `<option value="${s}"${s === t.status ? ' selected' : ''}>${H_STATUS_ZH[s]} (${s})</option>`).join('')}
+      </select>
+      <button class="hbtn primary" data-act="claim" ${t.status === 'ready' ? '' : 'disabled'}>认领（CAS ready→running）</button>
+      <button class="hbtn" data-act="ready">置为可认领</button>
+      <button class="hbtn" data-act="failnext" title="让当前/下次 run 失败，用来演示熔断">下次失败</button>
+      <button class="hbtn" data-act="archive">归档</button>
+      ${t.project_id ? `<button class="hbtn ghost" data-act="openproj">打开所在项目</button>` : ''}
+    </div>
+    <div class="hsec">依赖链（task_links）</div>
+    <div class="hnote">${links.length ? links.map(l => `${l.parent_id === t.id ? '→ 子 ' : '← 父 '}${escapeHtml((hTask(l.parent_id === t.id ? l.child_id : l.parent_id) || {}).title || '')}`).join('<br>') : '（无）'}</div>
+    <div class="hsec">评论（${comments.length}）</div>
+    <div class="hlog-list">${comments.map(c => `<div class="hev"><span class="who">${escapeHtml(c.author)}</span>：${escapeHtml(c.body)}
+      <div class="meta">${new Date(c.created_at).toLocaleString()}</div></div>`).join('') || '<div class="hnote">（无）</div>'}</div>
+    <div class="hrow" style="margin-top:8px">
+      <input id="hCmt" placeholder="加一条评论…" style="flex:1;background:#101418;border:1px solid #2A2E33;border-radius:8px;color:#EDEEF0;padding:7px 9px;outline:none">
+      <button class="hbtn" data-act="comment">发送</button>
+    </div>
+    <div class="hsec">事件（task_events，最后 ${events.length} 条）</div>
+    <div class="hlog-list">${events.slice().reverse().map(e => `<div class="hev ctrl">${escapeHtml(e.kind)}
+      <div class="meta">${escapeHtml(JSON.stringify(e.payload).slice(0, 110))} · ${new Date(e.created_at).toLocaleTimeString()}</div></div>`).join('') || '<div class="hnote">（无）</div>'}</div>
+    ${cur ? '' : ''}
+  </div>`;
+}
+function hBindTaskDetail(pane, t) {
+  const sel = pane.querySelector('[data-act="status"]');
+  if (sel) sel.onchange = () => { hSetTaskStatus(t.id, sel.value); renderHermes(); };
+  const act = name => pane.querySelector(`[data-act="${name}"]`);
+  if (act('claim')) act('claim').onclick = () => {
+    const r = hClaimTask(t.id);
+    toast(r.ok ? '已认领（模拟 worker 开跑）' : `认领失败：${escapeHtml(r.err)}`);
+    renderHermes();
+  };
+  if (act('ready')) act('ready').onclick = () => { hSetTaskStatus(t.id, 'ready'); hAddTaskEvent(t.id, 'status.changed', { to: 'ready', by: 'user' }); hSave(); renderHermes(); };
+  if (act('failnext')) act('failnext').onclick = () => {
+    const run = hState().taskRuns.filter(r => r.task_id === t.id && r.status === 'running').pop();
+    if (run) run.failNext = true; else t._failNext = true;
+    hSave(); toast('已标记：这次 run 会失败（用来演示 failure_limit 熔断）');
+    if (!run) { hSetTaskStatus(t.id, 'ready'); renderHermes(); }
+  };
+  if (act('archive')) act('archive').onclick = () => { hSetTaskStatus(t.id, 'archived'); renderHermes(); };
+  if (act('openproj')) act('openproj').onclick = () => { const p = projById(t.project_id); if (p) { setHermesView(null); selectProject(p.id); } };
+  if (act('comment')) act('comment').onclick = () => {
+    const i = pane.querySelector('#hCmt'); if (!i || !i.value.trim()) return;
+    hAddTaskComment(t.id, '用户', i.value.trim()); renderHermes();
+  };
+  const ci = pane.querySelector('#hCmt');
+  if (ci) ci.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') act('comment').click(); };
+}
+function hNewTaskModal() {
+  const H0 = hState();
+  const cur = proj();
+  const body = `<div class="hform">
+    <label>标题<input id="htTitle" placeholder="要做的事"></label>
+    <label>正文<textarea id="htBody" rows="3" placeholder="验收判据 / 边界…"></textarea></label>
+    <label>负责人（profile）
+      <select id="htAssignee">${H0.profiles.map(p => `<option value="${p.id}"${p.id === H0.cfg.defaultAssignee ? ' selected' : ''}>${escapeHtml(p.name)} · ${escapeHtml(p.model)}</option>`).join('')}</select></label>
+    <label>优先级
+      <select id="htPri">${['P0', 'P1', 'P2', 'P3'].map(p => `<option${p === 'P2' ? ' selected' : ''}>${p}</option>`).join('')}</select></label>
+    <label>关联项目
+      <select id="htProj"><option value="">（不关联）</option>${(S.projects || []).filter(p => p && !p.isDefault)
+        .map(p => `<option value="${p.id}"${cur && p.id === cur.id ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select></label>
+    <div class="hnote">新建后落 <b>triage → todo</b>；置为「可认领」后 dispatcher 才会认领（CAS）。</div></div>`;
+  hOpenModal({ title: '新建任务', sub: '对应 <code>POST /api/plugins/kanban/tasks</code>（plugin_api.py:423）', body, okText: '创建',
+    onOk: root => {
+      const title = root.querySelector('#htTitle').value.trim();
+      if (!title) return false;
+      hCreateTask({ title, body: root.querySelector('#htBody').value, assignee: root.querySelector('#htAssignee').value,
+        priority: root.querySelector('#htPri').value, projectId: root.querySelector('#htProj').value });
+      renderHermes(); toast('任务已创建（triage → todo）');
+      return true;
+    } });
+}
+
+/* ── §44.3 归档会话页（§10 双标记 + pinned 豁免 + 恢复 + 设置） ── */
+function hermesArchivedHTML(pane) {
+  const H0 = hState();
+  const arch = hArchivedConvs();
+  const all = [];
+  hAllConvPools().forEach(({ scope, pool }) => pool.forEach(c => { if (!c.isGroup && !c.archived) all.push({ conv: c, scope }); }));
+  const badge = c => `${c.pinned ? '<span class="hbadge pin">置顶</span>' : ''}`
+    + (c.archived ? (c.autoArchived ? '<span class="hbadge auto">自动归档</span>' : '<span class="hbadge human">手动归档</span>') : '');
+  const row = (it, archivedView) => `<div class="harc">
+      <div class="body"><div class="t">${badge(it.conv)}${escapeHtml(it.conv.title || '未命名对话')}</div>
+      <div class="d">${it.scope.kind === 'default' ? '默认区' : '项目 · ' + escapeHtml(it.scope.project.name)}
+        · ${it.conv.ts ? new Date(it.conv.ts).toLocaleString() : '—'}
+        ${it.conv.group ? ' · 分组 ' + escapeHtml(it.conv.group) : ''}</div></div>
+      <div class="hrow">
+        ${archivedView ? `<button class="hbtn" data-un="${it.conv.id}">恢复</button>` : `<button class="hbtn" data-ar="${it.conv.id}">归档</button>`}
+        <button class="hbtn ghost" data-pin="${it.conv.id}" title="${it.conv.pinned ? '取消置顶（置顶豁免自动归档）' : '置顶（豁免自动归档）'}">${it.conv.pinned ? '📌' : '📍'}</button>
+      </div></div>`;
+  pane.innerHTML = hBar('Archived Chats', '两列软删 archived + autoArchived · pinned 豁免 · 人归与自归不混（Hermes §10）')
+    + `<div class="hbody"><div class="hcol" style="flex:1">
+        <div class="hcol-head">已归档 <span class="hsub">（${arch.length}）</span>
+          <span style="margin-left:auto"></span>
+          <button class="hbtn" data-hact="scan">立即扫描自动归档</button></div>
+        <div class="hcol-body">
+          ${arch.length ? arch.map(it => row(it, true)).join('') : '<div class="hempty">没有归档的对话。</div>'}
+          <div class="hsec">未归档（${all.length}）—— 可手动归档，归档后从左侧对话列表消失</div>
+          ${all.slice(0, 40).map(it => row(it, false)).join('') || '<div class="hempty">（无）</div>'}
+        </div></div>
+        <div class="hcol" style="width:300px;flex:0 0 300px">
+          <div class="hcol-head">自动归档设置</div>
+          <div class="hcol-body">
+            <div class="hform">
+              <label class="hrow" style="flex-direction:row;align-items:center;gap:8px">
+                <input type="checkbox" id="hAutoArc" ${H0.cfg.autoArchive ? 'checked' : ''} style="width:auto">
+                <span>sessions.auto_archive（默认 false）</span></label>
+              <label>空闲天数 sessions.auto_archive_days
+                <input type="number" id="hAutoDays" min="1" max="90" value="${H0.cfg.autoArchiveDays}"></label>
+              <label>分发间隔 dispatch_interval_seconds（0=关）
+                <input type="number" id="hDispInt" min="0" max="600" value="${H0.cfg.dispatchInterval}"></label>
+              <label>熔断 failure_limit
+                <input type="number" id="hFailLim" min="1" max="10" value="${H0.cfg.failureLimit}"></label>
+            </div>
+            <div class="hnote">归档 ≠ 删除：真删除只有 <code>purge</code>（本页不提供）。<br>
+              人归的永远不会被自动扫描撤销；自动归档的恢复时才清 <code>autoArchived</code>。</div>
+          </div></div></div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-ar]').forEach(b => b.onclick = () => { hArchiveConv(b.dataset.ar, { manual: true }); renderHermes(); renderNav(); toast('已归档（手动：autoArchived=false）'); });
+  pane.querySelectorAll('[data-un]').forEach(b => b.onclick = () => { hUnarchiveConv(b.dataset.un); renderHermes(); renderNav(); toast('已恢复'); });
+  pane.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => { const f = hFindConv(b.dataset.pin); if (f) { f.conv.pinned = !f.conv.pinned; hSave(); renderHermes(); renderNav(); } });
+  const scan = pane.querySelector('[data-hact="scan"]');
+  if (scan) scan.onclick = () => { const n = hAutoArchiveScan(); renderHermes(); renderNav(); toast(n ? `自动归档了 ${n} 个` : '没有可自动归档的（开关关着 / 没有超期 / 置顶豁免）'); };
+  const bind = (id, key, num) => { const el = pane.querySelector(id); if (!el) return;
+    el.onchange = () => { H0.cfg[key] = num ? Math.max(0, parseInt(el.value, 10) || 0) : el.checked; hSave(); renderHermes(); }; };
+  bind('#hAutoArc', 'autoArchive', false); bind('#hAutoDays', 'autoArchiveDays', true);
+  bind('#hDispInt', 'dispatchInterval', true); bind('#hFailLim', 'failureLimit', true);
+}
+
+/* ── §44e 接线：退出路径 + 启动 ── */
+(function bindHermes() {
+  // 「项目 / 默认」两个段头点击 = 回工作区（保留 bind() 里原来的行为）
+  ['btnProjSect', 'btnPlanSect'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    const orig = b.onclick;
+    b.onclick = e => { if (hermesView) setHermesView(null); if (orig) orig(e); };
+  });
+  const sect = document.getElementById('btnHermesSect');
+  if (sect) sect.onclick = () => {
+    if (hermesView) setHermesView(null);
+    else setHermesView(hState().view || 'rooms');
+  };
+  renderHermesNav();
+  // 启动时跑一次自动归档扫描（开关默认关，所以默认不动作）
+  if (hState().cfg.autoArchive) hAutoArchiveScan();
+  // 自动分发常驻 tick（interval=0 = 关）
+  setInterval(() => {
+    const c = hState().cfg;
+    if (!c.dispatchInterval || c.dispatchInterval <= 0) return;
+    hDispatchTick();
+  }, 15000);
 })();
 
 })();
