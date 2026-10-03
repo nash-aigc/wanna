@@ -5845,6 +5845,14 @@ const PALETTE_ACTIONS = [
   { id: 'open-project-folder',  title: '打开项目文件夹…',      sub: '动作' },
   { id: 'search',               title: '打开搜索',             sub: '动作' },
   { id: 'add-quick-command',    title: '添加快捷命令…',        sub: '动作' },
+  // §48 Hermes 斜杠命令面（cli.py:1159 _SLASH_DISPATCH 的动词子集，sub 标 'Hermes' 便于分组识别）
+  { id: 'h-new',     title: '/new 新建对话',     sub: 'Hermes' },
+  { id: 'h-model',   title: '/model 切换模型',   sub: 'Hermes' },
+  { id: 'h-skills',  title: '/skills 打开技能',  sub: 'Hermes' },
+  { id: 'h-compress',title: '/compress 压缩历史', sub: 'Hermes' },
+  { id: 'h-status',  title: '/status 运行状态',  sub: 'Hermes' },
+  { id: 'h-retry',   title: '/retry 重发上一条', sub: 'Hermes' },
+  { id: 'h-stop',    title: '/stop 停止分发',    sub: 'Hermes' },
 ];
 
 /// §23.6.3 结果**按来源分组**；质量梯度照 match-field.ts:86 —— exact > 前缀 > 子串
@@ -5913,7 +5921,48 @@ function paletteRunAction(id) {
   const map = { 'new-markdown-file': 'newFile', 'new-terminal-tab': 'terminal',
     'new-browser-tab': 'browser', 'open-project-folder': 'folder', 'search': 'search' };
   if (id === 'add-quick-command') { openQuickCommandModal(null); return; }
+  // ── §48 Hermes 斜杠命令执行（每个动词都是真动作，不是跳转占位）──
+  if (id.startsWith('h-')) { paletteRunHermes(id.slice(2)); return; }
   if (map[id]) newTabAction(map[id]);
+}
+/// /new /model /skills /compress /status /retry /stop —— 照 cli.py:1159 的动词语义
+function paletteRunHermes(verb) {
+  if (verb === 'new') {
+    const p2 = S.plans;
+    const lastGroup = [...p2].reverse().find(x => x.isGroup);
+    const nid = 't' + now();
+    p2.push({ id: nid, sid: newSid(), title: `对话 ${p2.filter(x => !x.isGroup).length + 1}`,
+      ts: now(), group: lastGroup ? lastGroup.title : null, msgs: 0 });
+    save(true); selectTempCard(nid); renderNav();
+    toast('已新建对话卡（/new）'); return;
+  }
+  if (verb === 'model') { if (!hermesView) setHermesView('providers'); else setHermesView('providers');
+    toast('/model → 提供商页，点卡片即切换'); return; }
+  if (verb === 'skills') { setHermesView('skills'); return; }
+  if (verb === 'compress') {
+    const before = (S.chat || []).length;
+    if (before <= 6) { toast(`/compress：只有 ${before} 条，不用压`); return; }
+    S.chat = S.chat.slice(-6);              // 压到最近 6 条（其余进"摘要"= 本原型只截断，如实标注）
+    save(true); renderContent();
+    toast(`/compress：历史 ${before} → ${S.chat.length} 条（原型=截断保留最近，真 LLM 摘要属引擎期）`); return;
+  }
+  if (verb === 'status') {
+    const H0 = hState2();
+    toast(`/status：会话 ${S.plans.filter(x => !x.isGroup).length} · 看板未完 ${H0.tasks.filter(t => t.status !== 'done' && t.status !== 'archived').length}`
+      + ` · 技能 ${H0.skills.filter(s => s.state !== 'archived').length} · 定时 ${H0.cronJobs.filter(j => j.enabled).length} 活跃`); return;
+  }
+  if (verb === 'retry') {
+    const lastUser = [...(S.chat || [])].reverse().find(m => m.role === 'user');
+    if (!lastUser) { toast('/retry：没有可重发的'); return; }
+    const txt = String(lastUser.html || '').replace(/<[^>]+>/g, '');
+    dispatchReply(txt); toast('/retry：已重发最后一条用户消息'); return;
+  }
+  if (verb === 'stop') {
+    const H0 = hState();
+    const wasOn = H0.cfg.dispatchInterval > 0;
+    H0.cfg.dispatchInterval = 0; hSave();
+    toast(wasOn ? '/stop：已停看板 dispatcher（dispatch_interval_seconds=0）' : '/stop：dispatcher 本来就是关的'); return;
+  }
 }
 function openPalette() {
   S.paletteQuery = ''; S.paletteSel = 0;
@@ -9563,6 +9612,8 @@ function renderHermesNav() {
     { v: 'gateways', label: '网关', badge: `${H2.gateways.connections.length}` },
     { v: 'channels', label: '渠道', badge: (typeof H_CHANNELS !== 'undefined' && H_CHANNELS) ? `${H_CHANNELS.length}` : '16' },
     { v: 'quickEntry', label: '快捷输入', badge: (S.quickEntry && S.quickEntry.enabled) ? 'on' : 'off' },
+    { v: 'skills', label: '技能', badge: `${(H2.skills || []).filter(s => s.state !== 'archived').length}` },
+    { v: 'cron', label: '定时任务', badge: `${(H2.cronJobs || []).filter(j => j.enabled).length}/${(H2.cronJobs || []).length}` },
   ];
   host.innerHTML = rows.map(r => `<div class="plan-row${hermesView === r.v ? ' is-on' : ''}" data-hv="${r.v}">
       <span class="plan-dot" style="background:#3B82F6"></span><span class="pname">${r.label}</span>
@@ -9586,6 +9637,8 @@ function renderHermes() {
   else if (v === 'gateways') hermesGatewaysHTML(pane);
   else if (v === 'channels') hermesChannelsHTML(pane);
   else if (v === 'quickEntry') hermesQuickEntryHTML(pane);
+  else if (v === 'skills') hermesSkillsHTML(pane);
+  else if (v === 'cron') hermesCronHTML(pane);
   else pane.innerHTML = '';
 }
 /// 顶部条（三个页面共用）：标题 + 返回
@@ -9992,6 +10045,10 @@ function hermesArchivedHTML(pane) {
       </div></div>`;
   pane.innerHTML = hBar('Archived Chats', '两列软删 archived + autoArchived · pinned 豁免 · 人归与自归不混（Hermes §10）')
     + `<div class="hbody"><div class="hcol" style="flex:1">
+        <div class="hcol-head">全局搜索（FTS 形态 · session_search_tool.py:619）
+          <span style="margin-left:auto"></span>
+          <input id="hGSearch" placeholder="跨会话搜标题与最近消息…" style="width:230px;background:#101418;border:1px solid var(--line,#2A2E33);border-radius:8px;color:var(--ink,#EDEEF0);padding:5px 10px;font-size:12.5px"></div>
+        <div id="hGResults" style="display:none"></div>
         <div class="hcol-head">已归档 <span class="hsub">（${arch.length}）</span>
           <span style="margin-left:auto"></span>
           <button class="hbtn" data-hact="scan">立即扫描自动归档</button></div>
@@ -10018,6 +10075,25 @@ function hermesArchivedHTML(pane) {
               人归的永远不会被自动扫描撤销；自动归档的恢复时才清 <code>autoArchived</code>。</div>
           </div></div></div>`;
   hBindCommon(pane);
+  // §48 全局会话搜索：title + preview 跨会话匹配，带命中片段与 mock 摘要行
+  const gs = pane.querySelector('#hGSearch');
+  const gr = pane.querySelector('#hGResults');
+  const renderSearch = () => {
+    const q = (gs.value || '').trim();
+    if (!q) { gr.style.display = 'none'; gr.innerHTML = ''; return; }
+    const hits = hGlobalSearch(q);
+    gr.style.display = '';
+    gr.innerHTML = `<div class="hcol-body">${hits.length
+      ? hits.map(h => `<div class="harc"><div class="body">
+          <div class="t">${badge(h.conv)}${escapeHtml(h.conv.title || '未命名对话')}</div>
+          <div class="d">…${escapeHtml(h.frag)}…</div>
+          <div class="d" style="color:#9FD0FF;font-family:var(--mono,monospace);font-size:11px">摘要(mock)：${escapeHtml(h.summary)}</div>
+        </div><div class="hrow">${h.conv.archived ? `<button class="hbtn" data-un="${h.conv.id}">恢复</button>` : `<button class="hbtn" data-ar="${h.conv.id}">归档</button>`}</div></div>`).join('')
+      : `<div class="hempty">没有命中「${escapeHtml(q)}」的会话。</div>`}<div class="hnote" style="padding:6px 2px">命中 ${hits.length} 条 · 源 = 会话标题 + 最近消息（preview）；摘要行为 mock LLM，真摘要属引擎期。</div></div>`;
+    gr.querySelectorAll('[data-ar]').forEach(b => b.onclick = () => { hArchiveConv(b.dataset.ar, { manual: true }); renderHermes(); renderNav(); toast('已归档'); });
+    gr.querySelectorAll('[data-un]').forEach(b => b.onclick = () => { hUnarchiveConv(b.dataset.un); renderHermes(); renderNav(); toast('已恢复'); });
+  };
+  if (gs) { gs.oninput = renderSearch; gs.onkeydown = e => e.stopPropagation(); }
   pane.querySelectorAll('[data-ar]').forEach(b => b.onclick = () => { hArchiveConv(b.dataset.ar, { manual: true }); renderHermes(); renderNav(); toast('已归档（手动：autoArchived=false）'); });
   pane.querySelectorAll('[data-un]').forEach(b => b.onclick = () => { hUnarchiveConv(b.dataset.un); renderHermes(); renderNav(); toast('已恢复'); });
   pane.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => { const f = hFindConv(b.dataset.pin); if (f) { f.conv.pinned = !f.conv.pinned; hSave(); renderHermes(); renderNav(); } });
@@ -10052,6 +10128,23 @@ function hermesArchivedHTML(pane) {
     if (!c.dispatchInterval || c.dispatchInterval <= 0) return;
     hDispatchTick();
   }, 15000);
+  // §48 cron 假 timer：每 15s 检查到期任务（真调度与真投递属 Swift 期）
+  setInterval(() => {
+    const H0 = hState2();
+    if (!Array.isArray(H0.cronJobs)) return;
+    let fired = 0;
+    H0.cronJobs.forEach(j => {
+      if (!j.enabled || !j.nextRun || j.nextRun > Date.now()) return;
+      j.runs++; j.lastRun = Date.now();
+      j.nextRun = hcScheduleNext(j.schedule);
+      fired++;
+    });
+    if (fired) {
+      hSave();
+      if (typeof hermesView !== 'undefined' && hermesView === 'cron') renderHermes();
+      toast(`⏰ 定时任务到期触发 ${fired} 个（假 timer · 每 15s 检查）`);
+    }
+  }, 15000);
 })();
 
 
@@ -10078,6 +10171,26 @@ function hState2() {
       { name: 'llama.cpp', url: 'http://127.0.0.1:8080', up: false, models: [] },
     ];
   }
+  // ── §48 技能闭环（curator 语义：状态 active/review/archived + 使用计数 + 最后使用时间）──
+  if (!Array.isArray(H0.skills)) {
+    const DAY = 86400000, now0 = Date.now();
+    H0.skills = [
+      { id: 'sk-fig', name: 'figure-write', description: '画图技能：描述 → .geom → 校验 → SVG 落盘', body: '按 Geometry-DSL 的语法把用户的描述编译成分层几何定义，校验失败让模型修，最多 3 轮。', usage: 12, lastUsedAt: now0 - 2 * DAY, state: 'active', source: 'local' },
+      { id: 'sk-exec', name: 'shell-exec', description: '执行技能：argv 数组直跑，不经 shell', body: '工具目录挑一条，{参数} 占位符逐项替换后交 Process.arguments；模型给的参数带分号/管道也不会变成命令。', usage: 8, lastUsedAt: now0 - 5 * DAY, state: 'active', source: 'local' },
+      { id: 'sk-text', name: 'text-polish', description: '文本润色：转写 → 风格提示词 → 成稿', body: '勾选中的风格提示词 + 转写原文（+ 可选截图）拼一次请求，失败就用原文。', usage: 5, lastUsedAt: now0 - 20 * DAY, state: 'active', source: 'local' },
+      { id: 'sk-stale', name: 'legacy-import', description: '旧数据导入（已很久没用）', body: '一次性迁移脚本，早期版本用。', usage: 1, lastUsedAt: now0 - 120 * DAY, state: 'active', source: 'local' },
+      { id: 'sk-node', name: 'nameless-skill', description: '', body: '缺 description 的坏样例——体检会抓它。', usage: 0, lastUsedAt: now0 - 40 * DAY, state: 'active', source: 'local' },
+    ];
+  }
+  // ── §48 Cron 定时任务（cron/jobs.py:1800 create_job 字段形状；执行为假 timer）──
+  if (!Array.isArray(H0.cronJobs)) {
+    const t0 = Date.now();
+    H0.cronJobs = [
+      { id: 'cj-1', name: '技能策展巡检', schedule: 'every 4h', target: '当前会话', enabled: true, nextRun: t0 + 4 * 3600e3, lastRun: 0, runs: 3 },
+      { id: 'cj-2', name: '每日中午复盘', schedule: '0 12 * * *', target: '渠道 · 飞书（mock）', enabled: true, nextRun: (() => { const d = new Date(t0); d.setHours(12, 0, 0, 0); if (d.getTime() <= t0) d.setDate(d.getDate() + 1); return d.getTime(); })(), lastRun: t0 - 12 * 3600e3, runs: 17 },
+    ];
+  }
+  if (H0.cronJobs.some(j => j.nextRun === undefined)) H0.cronJobs.forEach(j => { if (j.nextRun === undefined) j.nextRun = Date.now() + 3600e3; });
   if (!Array.isArray(H0.providers) || !H0.providers.length) H0.providers = hDefaultProviders();
   if (!H0.modelCfg || typeof H0.modelCfg !== 'object') {
     // §9.3：persist_switch_by_default 默认 false（不持久化）
@@ -11395,5 +11508,320 @@ function qeComboFromEvent(e) {
     qeToggle();
   }, true);
 })();
+
+/* ══ §48 Hermes 第四批：技能闭环（curator）· 全局会话搜索 · 命令面板动词 · Cron 定时 ══
+   真值来源：agent/curator.py（技能生命周期/报表）、tools/session_search_tool.py:619（搜索形）、
+   cron/jobs.py:773 parse_schedule（四写法）+ :1800 create_job（job 字段）、
+   gateway/delivery.py:155 DeliveryRouter（投递目标）、cli.py:1159 _SLASH_DISPATCH（斜杠动词）。
+   原型边界：策展/体检/解析 = 纯函数真逻辑；投递与定时执行 = 假 timer + mock（真调度属 Swift 期）。 */
+
+/* ── 纯函数区 ── */
+/// 全局会话搜索：标题 + preview 跨会话，带命中片段与 mock 摘要（session_search_tool.py:619 形态）
+function hGlobalSearch(q) {
+  const needle = String(q || '').trim().toLowerCase();
+  if (!needle) return [];
+  const out = [];
+  hAllConvPools().forEach(({ scope, pool }) => pool.forEach(c => {
+    if (c.isGroup) return;
+    const title = c.title || '', prev = c.preview || '';
+    const hay = (title + ' ' + prev).toLowerCase();
+    if (hay.indexOf(needle) < 0) return;
+    const src = prev.toLowerCase().indexOf(needle) >= 0 ? prev : title;
+    const at = src.toLowerCase().indexOf(needle);
+    const frag = at < 0 ? src.slice(0, 60)
+      : (at > 24 ? '…' : '') + src.slice(Math.max(0, at - 24), at + needle.length + 40);
+    let hits = 0, p = 0;
+    while ((p = hay.indexOf(needle, p)) >= 0) { hits++; p += needle.length; }
+    const when = c.ts ? new Date(c.ts).toLocaleString() : '时间未知';
+    out.push({ conv: c, scope, frag, hits,
+      summary: `${when} · 命中 ${hits} 处 · 最近消息「${(prev || title).slice(0, 38)}」与「${q}」相关` });
+  }));
+  return out.sort((a, b) => (b.conv.ts || 0) - (a.conv.ts || 0));
+}
+/// 技能 frontmatter（agentskills.io 兼容形：name + description + 正文）
+function hSkillFrontmatter(sk) {
+  return `---\nname: ${sk.name}\ndescription: ${sk.description || ''}\n---\n\n${sk.body || ''}`;
+}
+/// curator 策展（curator.py 语义）：90 天未用 → review，180 天 → archived；
+/// 报表 added = 上次策展以来新建的技能数（照 curator.py:781 的 Added/Reviewed/Archived 三行）
+function hCurateSkills() {
+  const H0 = hState2();
+  const now = Date.now(), DAY = 86400000;
+  const since = H0.lastSkillCurate || 0;
+  const rep = { added: H0.skills.filter(s => (s.created || 0) > since).length, reviewed: 0, archived: 0 };
+  H0.skills.forEach(s => {
+    if (s.state === 'archived') return;
+    const idle = (now - (s.lastUsedAt || now)) / DAY;
+    if (idle > 180) { s.state = 'archived'; rep.archived++; }
+    else if (idle > 90 && s.state !== 'review') { s.state = 'review'; rep.reviewed++; }
+  });
+  H0.lastSkillCurate = now;
+  hSave();
+  return rep;
+}
+/// 技能体检（skill_linter 语义）：缺 description / 正文过短
+function hLintSkills() {
+  const issues = [];
+  hState2().skills.forEach(s => {
+    if (!s.description) issues.push({ name: s.name, why: '缺 description（frontmatter 必填）' });
+    if (!s.body || s.body.length < 20) issues.push({ name: s.name, why: '正文过短（<20 字）' });
+  });
+  return issues;
+}
+/// schedule 解析（cron/jobs.py:773 四写法）：30m · every 2h · crontab「0 12 * * *」· ISO
+function hcParseSchedule(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return { ok: false, err: '空' };
+  const now = Date.now();
+  const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 };
+  let m = s.match(/^(\d+)([smhd])$/i);
+  if (m) {
+    const ms = +m[1] * unit[m[2].toLowerCase()];
+    if (!ms) return { ok: false, err: '数值必须 > 0' };
+    return { ok: true, kind: 'duration', next: now + ms };
+  }
+  m = s.match(/^every\s+(\d+)([smhd])$/i);
+  if (m) {
+    const ms = +m[1] * unit[m[2].toLowerCase()];
+    if (!ms) return { ok: false, err: '数值必须 > 0' };
+    return { ok: true, kind: 'every', next: now + ms };
+  }
+  if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?$/.test(s)) {
+    const t = Date.parse(s.replace(' ', 'T'));
+    if (isNaN(t)) return { ok: false, err: 'ISO 时间解析失败' };
+    if (t <= now) return { ok: false, err: 'ISO 时间已过去' };
+    return { ok: true, kind: 'iso', next: t };
+  }
+  const parts = s.split(/\s+/);
+  if (parts.length === 5) {
+    const fields = parts.map(hcCronField);
+    if (fields.some(f => !f)) return { ok: false, err: 'crontab 字段不合法（支持 * / */n / 数字 / a-b / a,b）' };
+    const t = hcCronNext(fields, now);
+    if (!t) return { ok: false, err: '未来 7 天内无匹配' };
+    return { ok: true, kind: 'crontab', next: t };
+  }
+  return { ok: false, err: '不认识。支持：30m · every 2h · crontab「0 12 * * *」· ISO「2026-10-04T12:00」' };
+}
+function hcCronField(f) {
+  if (f === '*') return { any: true };
+  const st = f.match(/^\*\/(\d+)$/);
+  if (st) return { step: +st[1] };
+  const set = new Set();
+  for (const part of f.split(',')) {
+    const r = part.match(/^(\d+)-(\d+)$/);
+    if (r) { for (let i = +r[1]; i <= +r[2]; i++) set.add(i); continue; }
+    if (/^\d+$/.test(part)) { set.add(+part); continue; }
+    return null;
+  }
+  if (set.has(7)) set.add(0);                 // dow 7 = 周日
+  return { set };
+}
+function hcCronFieldHas(f, v) {
+  if (f.any) return true;
+  if (f.step) return v % f.step === 0;
+  return f.set.has(v);
+}
+function hcCronNext(fields, from) {
+  const [min, hour, dom, mon, dow] = fields;
+  let t = Math.floor(from / 60000) * 60000 + 60000;
+  const limit = t + 7 * 86400000;
+  while (t <= limit) {
+    const d = new Date(t);
+    if (hcCronFieldHas(min, d.getMinutes()) && hcCronFieldHas(hour, d.getHours())
+      && hcCronFieldHas(dom, d.getDate()) && hcCronFieldHas(mon, d.getMonth() + 1)
+      && hcCronFieldHas(dow, d.getDay())) return t;
+    t += 60000;
+  }
+  return 0;
+}
+/// 重算某任务的下次运行（新增/触发后 re-arm 用）
+function hcScheduleNext(schedule) {
+  const r = hcParseSchedule(schedule);
+  return r.ok ? r.next : (Date.now() + 3600e3);
+}
+
+/* ── 技能页（curator / linter / skills_hub / 存成技能） ── */
+function hermesSkillsHTML(pane) {
+  const H0 = hState2();
+  const skills = H0.skills;
+  const stateBadge = s => s.state === 'archived' ? '<span class="hbadge" style="background:rgba(255,255,255,.08);color:var(--ink3)">已归档</span>'
+    : s.state === 'review' ? '<span class="hbadge" style="background:rgba(251,191,36,.18);color:#FDE68A">待回顾</span>'
+    : '<span class="hbadge pin">active</span>';
+  // 可沉淀轮次 = 当前对话的用户消息（真数据，不造假）
+  const drafts = (S.chat || []).filter(m => m.role === 'user')
+    .map(m => String(m.html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+    .filter(t => t.length >= 6).slice(-3).reverse();
+  pane.innerHTML = hBar('技能 · 闭环学习（Skills）',
+    `${skills.length} 个 · curator 策展 + 体检 + skills_hub 安装（agent/curator.py · README「闭环学习」）`, hCurChip())
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      <div class="hset-sec">从最近轮次沉淀技能（复杂任务后自动建技能 —— 原型由你点确认，门面照 skill_manage action=create）</div>
+      <div class="hset-group">${drafts.length ? drafts.map((t, i) => `
+        <div class="hset"><div class="tx"><div class="tt" style="font-weight:400">${escapeHtml(t.slice(0, 90))}${t.length > 90 ? '…' : ''}</div>
+          <div class="ds">来源：当前会话第 ${i + 1} 条用户消息</div></div>
+          <div class="ct"><button class="hbtn primary" data-skact="draft" data-i="${i}">存成技能</button></div></div>`).join('')
+        : '<div class="hset"><div class="tx"><div class="ds">（当前会话还没有可沉淀的用户消息 —— 先聊几句）</div></div></div>'}</div>
+      <div class="hrow" style="padding:8px 16px 0">
+        <button class="hbtn" data-skact="curate">🧰 立即策展（curator）</button>
+        <button class="hbtn" data-skact="lint">🩺 技能体检（linter）</button>
+        <span style="flex:1"></span>
+        <input id="skHub" placeholder="github.com/user/repo 或技能名" style="width:230px;background:#101418;border:1px solid var(--line,#2A2E33);border-radius:8px;color:var(--ink,#EDEEF0);padding:6px 10px;font-size:12.5px">
+        <button class="hbtn primary" data-skact="hub">从 skills_hub 安装</button>
+      </div>
+      <div id="skReport" class="hnote" style="padding:8px 16px 0"></div>
+      <div class="hset-sec">技能清单</div>
+      <div class="hgw" style="padding:0 16px 16px">${skills.map(sk => `
+        <div class="hgw-card${sk.state === 'archived' ? ' is-quar' : ''}">
+          <div class="hgw-top"><span class="hgw-label" style="font-weight:600">${escapeHtml(sk.name)}</span>
+            ${stateBadge(sk)}
+            <span class="hchip on" style="margin-left:auto" title="skill_usage 计数">用过 ${sk.usage} 次</span></div>
+          <div class="hgw-fields" style="display:block;font-size:12px;line-height:1.7;color:#C7D2DA">
+            ${sk.description ? escapeHtml(sk.description) : '<span style="color:#FDE68A">⚠ 缺 description</span>'}
+            <br><span style="color:var(--ink3);font-size:11px">最后使用：${sk.lastUsedAt ? new Date(sk.lastUsedAt).toLocaleDateString() : '—'} · 来源 ${escapeHtml(sk.source || 'local')}</span></div>
+          <div class="hgw-ops">
+            <button class="hbtn" data-skact="use" data-id="${sk.id}">引用一次（[SKILL:]）</button>
+            ${sk.state === 'archived'
+              ? `<button class="hbtn" data-skact="restore" data-id="${sk.id}">恢复</button>`
+              : `<button class="hbtn" data-skact="archive" data-id="${sk.id}">归档</button>`}
+            <button class="hbtn ghost" data-skact="view" data-id="${sk.id}">SKILL.md</button>
+            <button class="hbtn danger" data-skact="del" data-id="${sk.id}">删除</button>
+          </div></div>`).join('') || '<div class="hempty">没有技能。</div>'}</div>
+    </div>`;
+  hBindCommon(pane);
+  // ⚠️ report 必须现查：curate/hub 都会 renderHermes() 整页重绘，捕获的旧节点会游离（§48 实测踩到）
+  const say = html => { const el = pane.querySelector('#skReport'); if (el) el.innerHTML = html; };
+  pane.querySelectorAll('[data-skact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.skact, id = b.dataset.id;
+    if (act === 'draft') {
+      const text = drafts[+b.dataset.i];
+      const slug = (String(text).toLowerCase().replace(/[^a-z0-9一-龥]+/g, '-').replace(/^-|-$/g, '').slice(0, 24)) || 'new-skill';
+      askModal({ title: '存成技能（skill_manage action=create）', text: '会生成 frontmatter（name + description）+ 正文；description 可稍后在列表里补',
+        value: slug, okText: '创建', onOk: v => {
+          const nm = (v || '').trim(); if (!nm) return false;
+          if (H0.skills.some(s => s.name === nm)) { toast('同名技能已存在'); return false; }
+          H0.skills.push({ id: hNewId('sk'), name: nm, description: text.slice(0, 60),
+            body: text, usage: 0, lastUsedAt: Date.now(), created: Date.now(), state: 'active', source: 'draft' });
+          hSave(); renderHermes(); renderHermesNav();
+          toast(`已创建 <b>${escapeHtml(nm)}</b>（frontmatter name+description 已生成）`);
+          return true;
+        } });
+      return;
+    }
+    if (act === 'curate') {
+      const rep = hCurateSkills(); renderHermes(); renderHermesNav();
+      say(`<b>curator 报表</b>（curator.py:781 形状）：<br>
+        Added（本轮新建）${rep.added} · Reviewed（转待回顾）${rep.reviewed} · Archived（归档）${rep.archived}
+        <br>规则：闲置 &gt;90 天 → 待回顾；&gt;180 天 → 归档。`);
+      toast(`策展完成：新建 ${rep.added} · 回顾 ${rep.reviewed} · 归档 ${rep.archived}`);
+      return;
+    }
+    if (act === 'lint') {
+      const iss = hLintSkills();
+      say(iss.length ? `<b>体检 ${iss.length} 处问题</b>：` + iss.map(x => `<br>⚠ <code>${escapeHtml(x.name)}</code> — ${escapeHtml(x.why)}`).join('')
+        : '<b>体检通过</b>：所有技能都有 description 且正文不短。');
+      toast(iss.length ? `体检发现 ${iss.length} 处问题` : '体检通过');
+      return;
+    }
+    if (act === 'hub') {
+      const slug = (pane.querySelector('#skHub').value || '').trim();
+      if (!slug) { toast('先填 github.com/user/repo 或技能名'); return; }
+      say(`skills_hub：正在从 <code>${escapeHtml(slug)}</code> 拉取…（mock：网络安装属 B 批）`);
+      setTimeout(() => {
+        const nm = slug.split('/').pop().replace(/\.git$/, '') || 'hub-skill';
+        if (H0.skills.some(s => s.name === nm)) { say(`skills_hub：<b>${escapeHtml(nm)}</b> 已存在，跳过`); toast('已存在同名技能'); return; }
+        H0.skills.push({ id: hNewId('sk'), name: nm, description: `从 skills_hub 安装（${slug}）`,
+          body: `hub 源：${slug}\n\n安装于 ${new Date().toLocaleString()}。`, usage: 0, lastUsedAt: Date.now(),
+          created: Date.now(), state: 'active', source: 'hub' });
+        hSave(); renderHermes(); renderHermesNav();
+        say(`skills_hub：✓ 已安装 <b>${escapeHtml(nm)}</b>（source=hub）`);
+        toast(`已安装「${escapeHtml(nm)}」`);
+      }, 400);
+      return;
+    }
+    const sk = H0.skills.find(x => x.id === id); if (!sk) return;
+    if (act === 'use') { sk.usage++; sk.lastUsedAt = Date.now();
+      if (sk.state === 'review') sk.state = 'active';           // 用过就从待回顾拉回 active
+      hSave(); renderHermes(); renderHermesNav();
+      toast(`[SKILL:${escapeHtml(sk.name)}] → 正文已注入本轮（usage=${sk.usage}）`); return; }
+    if (act === 'archive') { sk.state = 'archived'; hSave(); renderHermes(); renderHermesNav(); toast('已归档'); return; }
+    if (act === 'restore') { sk.state = 'active'; hSave(); renderHermes(); renderHermesNav(); toast('已恢复 active'); return; }
+    if (act === 'view') { askModal({ title: `SKILL.md — ${sk.name}`, text: hSkillFrontmatter(sk), okText: '关闭' }); return; }
+    if (act === 'del') { confirmModal({ title: '删除技能', text: `将删除 ${sk.name}（含正文）`, okText: '删除',
+      onOk: () => { H0.skills = H0.skills.filter(x => x.id !== id); hSave(); renderHermes(); renderHermesNav(); toast('已删除'); } }); return; }
+  });
+}
+
+/* ── Cron 定时任务页（cron/jobs.py 字段 + delivery.py 投递目标；执行=假 timer） ── */
+function hermesCronHTML(pane) {
+  const H0 = hState2();
+  const jobs = H0.cronJobs;
+  const targets = ['当前会话', '默认对话卡', '渠道 · 飞书（mock）', '渠道 · Telegram（mock）'];
+  const fmt = t => t ? new Date(t).toLocaleString() : '—';
+  pane.innerHTML = hBar('定时任务 · Cron',
+    `${jobs.filter(j => j.enabled).length}/${jobs.length} 活跃 · schedule 四写法（cron/jobs.py:773）· 投递（delivery.py:155）· 执行=假 timer`, '')
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      <div class="hset-sec">新建任务</div>
+      <div class="hset-group"><div class="hform" style="padding:10px 14px">
+        <div class="hrow">
+          <label style="flex:1">任务名<input id="cjName" placeholder="例如：每晚总结"></label>
+          <label style="flex:1.5">schedule（30m · every 2h · crontab「0 12 * * *」· ISO「2026-10-04T12:00」）
+            <input id="cjSched" placeholder="every 2h"></label>
+          <label style="flex:1">投递到<select id="cjTarget">${targets.map(t => `<option>${t}</option>`).join('')}</select></label>
+        </div>
+        <div class="hrow"><span class="hnote" id="cjParse" style="margin:0">输入 schedule 即时解析…</span>
+          <span style="flex:1"></span>
+          <button class="hbtn primary" data-cjact="add">＋ 添加任务</button></div>
+      </div></div>
+      <div class="hset-sec">任务列表</div>
+      <div class="hset-group">${jobs.map(j => `
+        <div class="hset">
+          <div class="tx"><div class="tt">${escapeHtml(j.name)}${j.enabled ? '' : ' <span style="color:var(--ink3);font-weight:400">（已停）</span>'}</div>
+            <div class="ds"><code>${escapeHtml(j.schedule)}</code>
+              → 下次 ${fmt(j.nextRun)} · 上次 ${fmt(j.lastRun)} · 已跑 ${j.runs} 次 · 投递 ${escapeHtml(j.target)}</div></div>
+          <div class="ct">
+            <button class="hbtn primary" data-cjact="run" data-id="${j.id}">立即触发</button>
+            <button class="hbtn" data-cjact="toggle" data-id="${j.id}">${j.enabled ? '停用' : '启用'}</button>
+            <button class="hbtn danger" data-cjact="del" data-id="${j.id}">删除</button>
+          </div></div>`).join('') || '<div class="hset"><div class="tx"><div class="ds">还没有定时任务。</div></div></div>'}</div>
+      <div class="hnote" style="padding:4px 16px 16px">执行 = 每 15 秒一次的假 timer 检查 <code>nextRun</code>（真调度与真投递属 Swift 期）；
+        解析器是<b>真逻辑</b>：duration / every / crontab（7 天内逐分扫）/ ISO 四种写法都能算出 nextRun。</div>
+    </div>`;
+  hBindCommon(pane);
+  const sched = pane.querySelector('#cjSched');
+  const parseEl = pane.querySelector('#cjParse');
+  const showParse = () => {
+    const r = hcParseSchedule(sched.value);
+    parseEl.innerHTML = r.ok
+      ? `<span style="color:#86EFAC">✓ ${r.kind}</span> → ${new Date(r.next).toLocaleString()}`
+      : `<span style="color:#FCA5A5">✗ ${escapeHtml(r.err)}</span>`;
+  };
+  if (sched) { sched.oninput = showParse; sched.onkeydown = e => e.stopPropagation(); }
+  pane.querySelectorAll('[data-cjact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.cjact, id = b.dataset.id;
+    if (act === 'add') {
+      const name = (pane.querySelector('#cjName').value || '').trim();
+      const sc = (pane.querySelector('#cjSched').value || '').trim();
+      if (!name) return toast('先填任务名');
+      const r = hcParseSchedule(sc);
+      if (!r.ok) return toast('schedule 不合法：' + r.err);
+      jobs.push({ id: hNewId('cj'), name, schedule: sc, target: pane.querySelector('#cjTarget').value,
+        enabled: true, nextRun: r.next, lastRun: 0, runs: 0 });
+      hSave(); renderHermes(); renderHermesNav();
+      toast(`已添加「${escapeHtml(name)}」（${r.kind} → ${new Date(r.next).toLocaleString()}）`);
+      return;
+    }
+    const j = jobs.find(x => x.id === id); if (!j) return;
+    if (act === 'run') {
+      j.runs++; j.lastRun = Date.now(); j.nextRun = hcScheduleNext(j.schedule);
+      hSave(); renderHermes(); renderHermesNav();
+      toast(`⏰ 「${escapeHtml(j.name)}」已触发 → 投递到 ${escapeHtml(j.target)}（mock）· 下次 ${new Date(j.nextRun).toLocaleString()}`);
+      return;
+    }
+    if (act === 'toggle') { j.enabled = !j.enabled;
+      if (j.enabled && (!j.nextRun || j.nextRun < Date.now())) j.nextRun = hcScheduleNext(j.schedule);
+      hSave(); renderHermes(); renderHermesNav(); toast(j.enabled ? '已启用' : '已停用'); return; }
+    if (act === 'del') { confirmModal({ title: '删除定时任务', text: j.name, okText: '删除',
+      onOk: () => { H0.cronJobs = jobs.filter(x => x.id !== id); hSave(); renderHermes(); renderHermesNav(); toast('已删除'); } }); return; }
+  });
+}
 
 })();
