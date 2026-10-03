@@ -13238,10 +13238,15 @@ function wikiGraphStatsRefresh() {
     ${g.hasMore ? '<span class="hchip">hasMore</span>' : ''}`;
 }
 
-const WG_TYPE_COLOR = { entity: '#60A5FA', concept: '#34D399', source: '#FBBF24',
-  finding: '#F472B6', query: '#A78BFA', synthesis: '#A78BFA' };
-let wgView = { scale: 1, tx: 40, ty: 40, drag: null, moved: 0, positions: [],
-  alpha: 0, dragNode: null, draggedNode: false, raf: 0 };
+/// §56 单色规范（用户：颜色太乱，应该是一个颜色——参照 Obsidian 灰白常态 + 高亮态）
+const WG_NODE = '#E6E6E6';              // 常态节点（全部同色）
+const WG_NODE_DIM = 'rgba(230,230,230,.16)';  // focus 时被暗化的无关节点
+const WG_FOCUS = '#0A84FF';             // 焦点节点 = 站内 accent（高亮态参照右3）
+const WG_NEIGHBOR = '#FFFFFF';          // 一度邻居
+const WG_EDGE = 'rgba(148,163,184,.16)';// 常态边（更淡）
+const WG_EDGE_FOCUS = 'rgba(10,132,255,.9)'; // 关联边高亮
+let wgView = { scale: 1, targetScale: 1, tx: 40, ty: 40, drag: null, moved: 0, positions: [],
+  alpha: 0, dragNode: null, draggedNode: false, raf: 0, hoverId: null, pins: new Set() };
 
 /// §55 圆形初始分布（Obsidian 式第一眼：加载即圆形团簇；随后力导向演化）
 function wgLayout(g, w, h) {
@@ -13256,10 +13261,12 @@ function wgLayout(g, w, h) {
     i++;
     pos.set(node.id, {
       x: Math.cos(a) * rr, y: Math.sin(a) * rr, vx: 0, vy: 0,    // 世界原点=圆心
-      r: 5 + Math.min(node.linkCount || 1, 8), t: node.nodeType || 'concept', n: node,
+      r: 3 + Math.min(node.linkCount || 1, 8) * 0.45,            // §56 3~6.6px：小点才露字（13px 的大球曾把标签全盖住）
+      t: node.nodeType || 'concept', n: node,
     });
   });
   wgView.alpha = 1;
+  wgView.pins.clear();          // 重载/换图 = 重置所有钉住（§56 拖过的节点不被弹回）
   return pos;
 }
 
@@ -13299,8 +13306,9 @@ function wgForceStep() {
   }
   // 向心 + 积分
   for (const p of P) {
-    p.vx -= p.x * KC; p.vy -= p.y * KC;
     if (wgView.dragNode === p) { p.vx = 0; p.vy = 0; continue; }   // 拖拽中钉住
+    if (wgView.pins.has(p.n.id)) { p.vx = 0; p.vy = 0; continue; } // §56 拖过后 pin：留原地不弹回
+    p.vx -= p.x * KC; p.vy -= p.y * KC;
     p.vx *= 0.88; p.vy *= 0.88;
     const sp = Math.hypot(p.vx, p.vy);
     if (sp > 9) { p.vx = p.vx / sp * 9; p.vy = p.vy / sp * 9; }
@@ -13324,6 +13332,46 @@ function wgWake() {
   wgView.raf = requestAnimationFrame(tick);
 }
 
+/// 合帧调度：所有事件路径的重绘都走这里（一帧最多一次全量 draw）—— 缩放/拖拽流畅的关键
+let wgDrawQueued = false;
+function wgScheduleDraw() {
+  if (wgDrawQueued) return;
+  wgDrawQueued = true;
+  requestAnimationFrame(() => { wgDrawQueued = false; wgDraw(); });
+}
+/// 焦点子图：hover 或拖拽中的节点 + 一度邻居（右3「高亮相关、其余变暗」）
+function wgFocusSet() {
+  const focusId = (wgView.dragNode && wgView.dragNode.n.id) || wgView.hoverId || null;
+  if (!focusId || !wgView.forGraph) return { id: null, nodes: null, edges: null };
+  const nodes = new Set([focusId]);
+  const edges = new Set();
+  (wgView.forGraph.edges || []).forEach((e, i) => {
+    if (e.source === focusId || e.target === focusId) {
+      edges.add(i);
+      nodes.add(e.source); nodes.add(e.target);
+    }
+  });
+  return { id: focusId, nodes, edges };
+}
+/// 命中测试：圆点 + **标签区**也算（文字很长，点在字上也应能抓住节点——§56 用户"无法拖拽"多半是点在字上）
+function wgHitNode(wx, wy) {
+  if (!wgView.positions) return null;
+  const pad = 8 / Math.max(wgView.scale, 0.4);
+  let best = null, bestD = Infinity;
+  for (const [, p] of wgView.positions) {
+    const d = Math.hypot(p.x - wx, p.y - wy) - p.r;
+    if (d < pad && d < bestD) { bestD = d; best = p; continue; }
+    // 标签盒（画在节点右侧，约 10px/字）
+    const charW = 10 / Math.max(wgView.scale, 0.6);
+    const lw = Math.min(String(p.n.label).length, 16) * charW;
+    if (wx >= p.x + p.r && wx <= p.x + p.r + 4 + lw && Math.abs(wy - p.y) < charW * 0.8) {
+      const dd = (wx - p.x - p.r) / (lw + 1);
+      if (dd < bestD) { bestD = dd; best = p; }
+    }
+  }
+  return best;
+}
+
 function wgDraw() {
   const canvas = document.getElementById('wgCanvas');
   if (!canvas) return;
@@ -13342,130 +13390,196 @@ function wgDraw() {
   if (!wgView.positions || wgView.forGraph !== g) {
     wgView.positions = wgLayout(g, Math.max(cw, 600), Math.max(ch, 400));
     wgView.forGraph = g;
-    wgView.tx = cw / 2; wgView.ty = ch / 2;      // 世界原点（圆心）摆到画布中心
-    wgView.scale = 1;
-    wgWake();                                     // 加载先画一帧（下面就会画），再后台演化
+    wgView.tx = cw / 2; wgView.ty = ch / 2;
+    wgView.scale = 1; wgView.targetScale = 1;
+    wgView.hoverId = null;
+    wgWake();
   }
   const pos = wgView.positions;
+  // 空图（项目无节点）：友好提示而不是黑屏（实测「短视频」n=0 踩到）
+  if (!pos || pos.size === 0) {
+    canvas.dataset.empty = '1';
+    ctx.fillStyle = '#6B7680'; ctx.font = '13px sans-serif';
+    ctx.fillText(`「${g.project || '该项目'}」暂无图谱节点（空 wiki 或页面间尚无链接）`, 24, 34);
+    ctx.fillText(`nodes=${g.nodes.length} edges=${(g.edges || []).length}`, 24, 56);
+    return;
+  }
+  canvas.dataset.empty = '';
+  const focus = wgFocusSet();                       // §56 焦点子图
+  const hasFocus = !!focus.id;
   ctx.save();
   ctx.translate(wgView.tx, wgView.ty);
   ctx.scale(wgView.scale, wgView.scale);
-  // 边
-  ctx.strokeStyle = 'rgba(148,163,184,.28)';
+  // ── 边：两遍（先暗后亮，避免亮边被暗边盖）──
   ctx.lineWidth = 1 / wgView.scale;
   ctx.beginPath();
+  let edgeIdx = 0;
   for (const e of g.edges) {
     const a = pos.get(e.source), b = pos.get(e.target);
-    if (!a || !b) continue;
+    if (!a || !b) { edgeIdx++; continue; }
+    const related = hasFocus && focus.edges.has(edgeIdx);
+    if (related) { edgeIdx++; continue; }           // 亮边第二遍画
     ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    edgeIdx++;
   }
+  ctx.strokeStyle = hasFocus ? 'rgba(148,163,184,.05)' : WG_EDGE;
   ctx.stroke();
-  // 节点 + 标签
+  if (hasFocus) {
+    ctx.beginPath();
+    edgeIdx = 0;
+    for (const e of g.edges) {
+      const a = pos.get(e.source), b = pos.get(e.target);
+      if (a && b && focus.edges.has(edgeIdx)) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+      edgeIdx++;
+    }
+    ctx.strokeStyle = WG_EDGE_FOCUS;
+    ctx.lineWidth = 1.5 / wgView.scale;
+    ctx.stroke();
+    ctx.lineWidth = 1 / wgView.scale;
+  }
+  // ── 节点 + 标签 ──
   const showLabel = wgView.scale >= 0.55;
   for (const [id, p] of pos) {
+    const isFocus = focus.id === id;
+    const isNeigh = hasFocus && focus.nodes.has(id);
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-    ctx.fillStyle = WG_TYPE_COLOR[p.t] || '#A78BFA';
+    if (isFocus) { ctx.fillStyle = WG_FOCUS; ctx.shadowColor = WG_FOCUS; ctx.shadowBlur = 10 / wgView.scale; }
+    else if (isNeigh) ctx.fillStyle = WG_NEIGHBOR;
+    else ctx.fillStyle = hasFocus ? WG_NODE_DIM : WG_NODE;
     ctx.fill();
-    if (showLabel) {
-      ctx.fillStyle = '#C7D2DA';
-      ctx.font = `${11 / Math.max(wgView.scale, .6)}px sans-serif`;
-      const label = p.n.label.length > 16 ? p.n.label.slice(0, 15) + '…' : p.n.label;
-      ctx.fillText(label, p.x + p.r + 4, p.y + 3);
+    ctx.shadowBlur = 0;
+    if (showLabel && (!hasFocus || isNeigh)) {
+      ctx.fillStyle = isFocus ? '#EAF3FF' : (hasFocus ? '#FFFFFF' : 'rgba(228,228,228,.62)');
+      const fw = 10 / Math.max(wgView.scale, 0.6);
+      ctx.font = `${isFocus ? 600 : 400} ${fw}px sans-serif`;
+      const label = p.n.label.length > 20 ? p.n.label.slice(0, 19) + '…' : p.n.label;
+      ctx.fillText(label, p.x + p.r + 4, p.y + fw * 0.36);
     }
   }
   ctx.restore();
   const ms = Math.round(performance.now() - t0);
   if (g.drawMs !== ms) { g.drawMs = ms; wikiGraphStatsRefresh(); }
-  // 可达性钩子：记录首节点的屏幕坐标（自动化/辅助功能定位用）
-  const first = wgView.positions && wgView.positions.values().next().value;
+  // 钩子
+  const first = pos.values().next().value;
   if (first) canvas.dataset.first = `${Math.round(first.x * wgView.scale + wgView.tx)},${Math.round(first.y * wgView.scale + wgView.ty)}`;
-  // 圆形度量：所有节点到圆心（世界原点）的最大距离——力导向团簇应保持有限半径
-  if (wgView.positions && wgView.positions.size) {
-    let maxR = 0;
-    for (const [, p] of wgView.positions) maxR = Math.max(maxR, Math.hypot(p.x, p.y));
-    canvas.dataset.radius = String(Math.round(maxR));
-  }
+  let maxR = 0, maxNodeR = 0;
+  for (const [, p] of pos) { maxR = Math.max(maxR, Math.hypot(p.x, p.y)); maxNodeR = Math.max(maxNodeR, p.r); }
+  canvas.dataset.radius = String(Math.round(maxR));
+  canvas.dataset.maxR = maxNodeR.toFixed(1);                       // §56 节点大小断言
+  canvas.dataset.focus = focus.id || '';                          // §56 焦点断言
+  canvas.dataset.focusEdges = hasFocus ? String(focus.edges.size) : '0';
+  canvas.dataset.scale = wgView.scale.toFixed(3);                 // §56 平滑缩放断言
+  canvas.dataset.target = String(wgView.targetScale ?? wgView.scale);
 }
 
 function wgBindCanvas(pane) {
   const canvas = pane.querySelector('#wgCanvas');
   if (!canvas) return;
-  const redraw = () => requestAnimationFrame(wgDraw);
-  canvas.onwheel = e => {
+  const redraw = () => wgScheduleDraw();                 // 事件路径一律合帧（§56 流畅缩放）
+
+  // ── 滚轮缩放：目标值 + rAF 平滑插值（锚点钉在光标下）—— 不再每事件同步全量重画 ──
+  // passive:false —— 元素 onwheel 在 Chrome 可能被判 passive，preventDefault 会失效导致页面跟着滚
+  const onWheel = e => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    const ns = Math.min(4, Math.max(0.25, wgView.scale * factor));
-    // 以光标为锚点缩放（改 scale + 平移补偿，一次重绘）
-    wgView.tx = mx - (mx - wgView.tx) * (ns / wgView.scale);
-    wgView.ty = my - (my - wgView.ty) * (ns / wgView.scale);
-    wgView.scale = ns;
-    redraw();
+    const cur = wgView.scale;
+    const ns = Math.min(4, Math.max(0.25, (wgView.targetScale ?? cur) * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    // 世界锚点按当前真实 scale 换算，动画期间钉住
+    wgView.zoomAnchor = { mx, my, awx: (mx - wgView.tx) / cur, awy: (my - wgView.ty) / cur };
+    wgView.targetScale = ns;
+    wgSmoothWake();
   };
+  canvas.addEventListener('wheel', onWheel, { passive: false });
+
   canvas.onmousedown = e => {
     wgView.moved = 0;
     wgView.draggedNode = false;
-    // 先试命中节点（世界坐标 + 缩放补偿命中半径）→ 拖节点；空白才平移画布
     const rect = canvas.getBoundingClientRect();
     const wx = (e.clientX - rect.left - wgView.tx) / wgView.scale;
     const wy = (e.clientY - rect.top - wgView.ty) / wgView.scale;
-    let best = null, bestD = 8 / wgView.scale;
-    if (wgView.positions) for (const [, p] of wgView.positions) {
-      const d = Math.hypot(p.x - wx, p.y - wy) - p.r;
-      if (d < bestD) { bestD = d; best = p; }
-    }
-    if (best) {
-      wgView.dragNode = best;
-      // draggedNode 只在真的移动时置位（mousemove）——mousedown 就置位会把单击
-      // 当成拖拽吞掉，点节点看文章的判据直接回归（§55 实测踩到）
+    const hit = wgHitNode(wx, wy);                       // 圆点 + 标签区（§56 点在字上也能抓）
+    if (hit) {
+      wgView.dragNode = hit;
+      wgView.hoverId = hit.n.id;
       wgView.alpha = Math.max(wgView.alpha, 0.35);
-      wgWake();
+      canvas.style.cursor = 'grabbing';
+      wgWake(); redraw();
       return;
     }
     wgView.drag = { x: e.clientX, y: e.clientY, tx: wgView.tx, ty: wgView.ty };
+    canvas.style.cursor = 'grabbing';
   };
   canvas.onmousemove = e => {
-    if (wgView.dragNode) {                            // §55 按住节点拖拽（Obsidian 式）
-      wgView.draggedNode = true;                      // 移动了才算拖拽（单击不置位）
+    if (wgView.dragNode) {
+      wgView.draggedNode = true;
       const rect = canvas.getBoundingClientRect();
       wgView.dragNode.x = (e.clientX - rect.left - wgView.tx) / wgView.scale;
       wgView.dragNode.y = (e.clientY - rect.top - wgView.ty) / wgView.scale;
       wgView.dragNode.vx = 0; wgView.dragNode.vy = 0;
-      wgDraw();
+      redraw();                                          // 拖拽期高亮子图随位置实时刷新
       return;
     }
-    if (!wgView.drag) return;
-    const dx = e.clientX - wgView.drag.x, dy = e.clientY - wgView.drag.y;
-    wgView.moved = Math.max(wgView.moved, Math.abs(dx) + Math.abs(dy));
-    wgView.tx = wgView.drag.tx + dx; wgView.ty = wgView.drag.ty + dy;
-    redraw();
-  };
-  window.addEventListener('mouseup', () => {
-    if (wgView.dragNode) { wgView.dragNode = null; wgView.alpha = Math.max(wgView.alpha, 0.15); wgWake(); }
-    wgView.drag = null;
-  });
-  canvas.onclick = e => {
-    if (wgView.moved > 4 || wgView.draggedNode) return;   // 拖过（平移或节点）就不算点击
-    const W = wikiState();
-    const g = W.graph; if (!g || !wgView.positions) return;
+    if (wgView.drag) {
+      const dx = e.clientX - wgView.drag.x, dy = e.clientY - wgView.drag.y;
+      wgView.moved = Math.max(wgView.moved, Math.abs(dx) + Math.abs(dy));
+      wgView.tx = wgView.drag.tx + dx; wgView.ty = wgView.drag.ty + dy;
+      redraw();
+      return;
+    }
+    // hover 焦点（右3 高亮态的另一入口）
     const rect = canvas.getBoundingClientRect();
     const wx = (e.clientX - rect.left - wgView.tx) / wgView.scale;
     const wy = (e.clientY - rect.top - wgView.ty) / wgView.scale;
-    let best = null, bestD = 14 / wgView.scale + 8;   // 命中半径随缩放反比
-    for (const [, p] of wgView.positions) {
-      const d = Math.hypot(p.x - wx, p.y - wy) - p.r;
-      if (d < bestD) { bestD = d; best = p; }
+    const hit = wgHitNode(wx, wy);
+    const id = hit ? hit.n.id : null;
+    canvas.style.cursor = hit ? 'pointer' : 'grab';
+    if (id !== wgView.hoverId) { wgView.hoverId = id; redraw(); }
+  };
+  window.addEventListener('mouseup', () => {
+    if (wgView.dragNode) {
+      wgView.pins.add(wgView.dragNode.n.id);   // §56 拖过的节点 pin 住（弹回=「拖不动」的真凶）
+      wgView.dragNode = null;
+      // 不注入能量：松手即留原地；其它节点已有速度自然收敛
+      wgWake();
     }
-    if (best) wgOpenArticle(best.n);
+    wgView.drag = null;
+    canvas.style.cursor = 'grab';
+    wgScheduleDraw();
+  });
+  canvas.onmouseleave = () => { if (!wgView.dragNode && wgView.hoverId) { wgView.hoverId = null; wgScheduleDraw(); } };
+  canvas.onclick = e => {
+    if (wgView.moved > 4 || wgView.draggedNode) return;
+    const rect = canvas.getBoundingClientRect();
+    const wx = (e.clientX - rect.left - wgView.tx) / wgView.scale;
+    const wy = (e.clientY - rect.top - wgView.ty) / wgView.scale;
+    const hit = wgHitNode(wx, wy);
+    if (hit) wgOpenArticle(hit.n);
   };
   redraw();
-  // 视口变化跟随重绘
   if (!wgBindCanvas._ro) {
-    wgBindCanvas._ro = new ResizeObserver(() => requestAnimationFrame(wgDraw));
+    wgBindCanvas._ro = new ResizeObserver(() => wgScheduleDraw());
   }
   wgBindCanvas._ro.observe(canvas.parentElement);
+}
+
+/// 平滑缩放循环：scale 向 targetScale 插值，锚点（光标下世界点）钉住（§56 不卡顿）
+let wgSmoothRaf = 0;
+function wgSmoothWake() {
+  if (wgSmoothRaf) return;
+  const tick = () => {
+    wgSmoothRaf = 0;
+    const t = wgView.targetScale ?? wgView.scale;
+    const a = wgView.zoomAnchor;
+    let done = false;
+    if (Math.abs(t - wgView.scale) < 0.003) { wgView.scale = t; done = true; }
+    else wgView.scale += (t - wgView.scale) * 0.3;
+    if (a) { wgView.tx = a.mx - a.awx * wgView.scale; wgView.ty = a.my - a.awy * wgView.scale; }
+    wgDraw();
+    if (!done) wgSmoothRaf = requestAnimationFrame(tick);
+  };
+  wgSmoothRaf = requestAnimationFrame(tick);
 }
 
 async function wgOpenArticle(node) {
@@ -13540,7 +13654,7 @@ function wikiGraphHTML(pane) {
             `<option${p.name === W.graphProject ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select>
           <input type="text" id="wgQ" placeholder="过滤 q（节点标签）…" value="${escapeHtml(W.graphQ || '')}" style="width:180px">
           <button class="hbtn primary" id="wgLoad">加载图谱</button>
-          <span class="hsub">滚轮缩放 · 拖拽平移 · 点节点看文章</span>
+          <span class="hsub">滚轮平滑缩放 · 拖空白平移 · 按住节点/标签拖拽（拖过钉住，加载可重置）· 点节点看文章</span>
         </div>
         <div style="flex:1;position:relative;min-height:0" id="wgWrap">
           <canvas id="wgCanvas" style="position:absolute;inset:0;width:100%;height:100%;cursor:grab"></canvas>
