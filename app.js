@@ -12319,9 +12319,22 @@ function wikiState() {
       },
       syncLog: [],                            // 一键下发的结果行
       createdCmd: '',                         // 新建实例将执行的命令
+      settingsTab: 'general',                 // §54 同步设置当前 section
+      diffTarget: null, diffOnly: false, diffAt: 0,
+      graph: null, graphProject: null, graphQ: '', graphLoading: false,
     };
   }
-  return S.wiki;
+  // §54 运行时回填（老状态文件没有这些键）
+  const W = S.wiki;
+  if (W.settingsTab === undefined) W.settingsTab = 'general';
+  if (W.diffOnly === undefined) W.diffOnly = false;
+  if (W.diffTarget === undefined || !W.instances.some(i => i.name === W.diffTarget)) W.diffTarget = W.apiOwner;
+  if (W.graph === undefined) W.graph = null;
+  if (W.graphProject === undefined) W.graphProject = null;
+  if (W.graphQ === undefined) W.graphQ = '';
+  // ⚠️ 不在这里调 wikiCfgEnsure：它引用的 const WIKI_SETTINGS 在 §54 块里，
+  // bindWiki（§53 块）先于它求值会触发 TDZ。sections 的 ensure 由各使用点自理（wikiCfgFlat/syncHTML/export）。
+  return W;
 }
 
 /// 自动检测①：真探测 /health（失败如实降级——浏览器 CORS 拦截时显示 blocked）
@@ -12380,6 +12393,7 @@ function renderWikiNav() {
     { v: 'projects', label: '知识库', badge: `${W.projects.length}` },
     { v: 'sync', label: '同步设置', badge: W.syncLog.length ? `${W.syncLog.length}` : '' },
     { v: 'create', label: '新建实例', badge: '' },
+    { v: 'graph', label: '关系图', badge: (W.graph && !W.graphLoading) ? `${W.graph.nodes.length}` : '' },
   ];
   host.innerHTML = rows.map(r => `<div class="plan-row${wikiView === r.v ? ' is-on' : ''}" data-wv="${r.v}">
       <span class="plan-dot" style="background:#10B981"></span><span class="pname">${r.label}</span>
@@ -12399,6 +12413,7 @@ function renderWiki() {
   else if (v === 'projects') wikiProjectsHTML(pane);
   else if (v === 'sync') wikiSyncHTML(pane);
   else if (v === 'create') wikiCreateHTML(pane);
+  else if (v === 'graph') wikiGraphHTML(pane);
   else pane.innerHTML = '';
 }
 
@@ -12716,5 +12731,648 @@ function wikiCreateHTML(pane) {
     b.onclick = e => { if (wikiView) setWikiView(null); if (orig) orig(e); };
   });
   renderWikiNav();
+  // ⚠️ 推迟到宏任务：wikiDiffTimer/WIKI_SETTINGS 是 §54 块里的 let/const，
+  // 本 IIFE 在脚本求值期执行，直接调会 TDZ 抛错并中断整个脚本（实测两连炸）。
+  setTimeout(() => wikiDiffStartPolling(), 0);
 })();
+/* ══ §54A 知识库 · 同步设置 100% 复刻 LLM Wiki 全部 16 个设置 section + 导入/导出 + 参数对比（轮询/事件）══
+   字段真值：reference/LLM_Wiki/src/i18n/zh.json settings.sections（16 组全量）+ app-state.json 顶层 keys。
+   对比模型：主配置 sections 为权威源，每实例持 cfgSnapshot；wikiDiff() 扁平逐参比对；
+   轮询 8s + 保存事件即时刷新（只更新 #wikiDiffBox，不整页重绘——保护正在编辑的输入焦点）。 */
+
+const WIKI_SETTINGS = [
+  { id: 'general', t: '通用', d: '启动和窗口关闭行为', f: [
+    { k: 'autostart', l: '登录系统后自动启动', type: 'switch', def: false },
+    { k: 'closeBehavior', l: '关闭窗口时', type: 'select', opts: ['每次询问', '隐藏窗口', '退出应用'], def: '隐藏窗口' } ] },
+  { id: 'interface', t: '界面', d: '语言与外观（切换即生效）', f: [
+    { k: 'uiLanguage', l: 'UI 语言', type: 'select', opts: ['简体中文', 'English', '日本語'], def: '简体中文' },
+    { k: 'theme', l: '主题', type: 'select', opts: ['浅色', '深色', '跟随系统'], def: '深色' },
+    { k: 'zoom', l: '界面缩放（%）', type: 'num', def: 100, min: 70, max: 150 } ] },
+  { id: 'output', t: '输出偏好', d: '生成语言与历史长度', f: [
+    { k: 'aiLanguage', l: 'AI 输出语言', type: 'select', opts: ['Auto', '简体中文', 'English'], def: 'Auto' },
+    { k: 'historyLength', l: '对话历史长度（条）', type: 'num', def: 20, min: 0, max: 200 } ] },
+  { id: 'llm', t: 'LLM 模型', d: 'Provider 凭据与模型（启用一个自动停用其他）', f: [
+    { k: 'activeProvider', l: '活跃 Provider', type: 'select', opts: ['OpenAI', 'Anthropic', 'DeepSeek', '自定义端点', 'Ollama 本地'], def: '自定义端点' },
+    { k: 'apiMode', l: 'API 模式', type: 'select', opts: ['openai_compat', 'anthropic_messages'], def: 'openai_compat' },
+    { k: 'endpoint', l: 'Endpoint', type: 'text', def: 'https://inferaiapi.com/v1' },
+    { k: 'apiKey', l: 'API Key', type: 'text', def: 'sk-••••••••••••••••••••540d' },
+    { k: 'model', l: '默认模型', type: 'text', def: 'deepseek-chat' },
+    { k: 'contextWindow', l: '上下文窗口', type: 'num', def: 128000, min: 1000, max: 1000000 },
+    { k: 'requestTimeout', l: '请求超时（分钟）', type: 'num', def: 30, min: 1, max: 120 },
+    { k: 'streamingOutput', l: '启用流式输出', type: 'switch', def: true },
+    { k: 'customHeaders', l: '自定义请求头（每行一条 Name: value）', type: 'text', def: '' },
+    { k: 'chatModel', l: 'Chat 模型（任务路由）', type: 'text', def: '' },
+    { k: 'ingestModel', l: 'Ingest 模型（任务路由）', type: 'text', def: '' },
+    { k: 'projectOverride', l: '为当前项目使用独立模型', type: 'switch', def: false },
+    { k: 'localCliIsolation', l: '隔离本地 CLI 配置（Claude/Codex）', type: 'switch', def: false },
+    { k: 'codexCliTimeout', l: 'Codex CLI 超时（分钟）', type: 'num', def: 30, min: 1, max: 240 } ] },
+  { id: 'embedding', t: '向量嵌入', d: '语义搜索', f: [
+    { k: 'enabled', l: '启用向量搜索', type: 'switch', def: true },
+    { k: 'endpoint', l: 'Endpoint（/v1/embeddings）', type: 'text', def: '' },
+    { k: 'apiKey', l: 'API Key（可选）', type: 'text', def: '' },
+    { k: 'model', l: 'Model', type: 'text', def: 'text-embedding-v3' },
+    { k: 'outputDimensionality', l: '输出维度（仅 Gemini）', type: 'num', def: 0, min: 0, max: 3072 },
+    { k: 'maxChunkChars', l: '每块最大字符数', type: 'num', def: 800, min: 100, max: 8000 },
+    { k: 'overlapChunkChars', l: '重叠字符数', type: 'num', def: 120, min: 0, max: 2000 },
+    { k: 'concurrency', l: '并发请求数（1–64）', type: 'num', def: 4, min: 1, max: 64 },
+    { k: 'batchSize', l: '单次请求输入数（1–64）', type: 'num', def: 16, min: 1, max: 64 },
+    { k: 'extraHeaders', l: '自定义请求头', type: 'text', def: '' } ] },
+  { id: 'multimodal', t: '图片描述', d: '导入时为图片生成 caption', f: [
+    { k: 'enabled', l: '导入时生成图片描述', type: 'switch', def: false },
+    { k: 'useMain', l: '使用主 LLM 生成 caption', type: 'switch', def: true },
+    { k: 'provider', l: '独立视觉 Provider', type: 'select', opts: ['主 LLM', 'OpenAI 兼容', 'Ollama', 'Azure'], def: '主 LLM' },
+    { k: 'endpoint', l: '端点 URL', type: 'text', def: '' },
+    { k: 'model', l: '模型（须支持视觉）', type: 'text', def: '' },
+    { k: 'apiKey', l: 'API Key', type: 'text', def: '' },
+    { k: 'concurrency', l: '并发 caption 请求数', type: 'num', def: 4, min: 1, max: 16 } ] },
+  { id: 'webSearch', t: '外部信息源', d: 'Deep Research 的搜索来源', f: [
+    { k: 'sources', l: '深度研究来源', type: 'select', opts: ['网页搜索', 'AnyTXT', '两者都用'], def: '网页搜索' },
+    { k: 'webProvider', l: '网页搜索 Provider', type: 'select', opts: ['Ollama', 'Bocha 博查', 'Firecrawl', 'SearXNG', 'SerpApi'], def: 'Bocha 博查' },
+    { k: 'instanceUrl', l: '实例 URL', type: 'text', def: '' },
+    { k: 'anytxtEndpoint', l: 'AnyTXT 端点', type: 'text', def: 'http://127.0.0.1:13000' },
+    { k: 'anytxtFilterDir', l: 'AnyTXT 搜索文件夹', type: 'text', def: '' },
+    { k: 'anytxtFilterExt', l: 'AnyTXT 扩展名过滤', type: 'text', def: '' },
+    { k: 'anytxtLimit', l: 'AnyTXT 最多本地结果数', type: 'num', def: 20, min: 1, max: 200 } ] },
+  { id: 'network', t: '网络', d: '外部 HTTP 请求代理（保存即生效）', f: [
+    { k: 'enabled', l: '启用代理', type: 'switch', def: false },
+    { k: 'url', l: '代理地址（须带协议头，不支持 SOCKS5）', type: 'text', def: '' },
+    { k: 'bypassLocal', l: '本地地址不走代理（推荐）', type: 'switch', def: true },
+    { k: 'acceptInvalidCerts', l: '忽略 TLS 证书错误', type: 'switch', def: false } ] },
+  { id: 'apiServer', t: 'API + MCP', d: '本地 HTTP API 与 MCP 访问', f: [
+    { k: 'enabled', l: '启用本地 HTTP API', type: 'switch', def: true },
+    { k: 'allowUnauthenticated', l: '允许无 token 访问', type: 'switch', def: true },
+    { k: 'allowLanAccess', l: '允许局域网访问（0.0.0.0，重启生效）', type: 'switch', def: false },
+    { k: 'mcpEnabled', l: '启用 MCP 访问', type: 'switch', def: true },
+    { k: 'token', l: '访问令牌（Bearer）', type: 'text', def: 'PAke••••••••••••••••ch3q' } ] },
+  { id: 'mineru', t: 'MinerU PDF 解析', d: '云端/自托管高质量 PDF 解析', f: [
+    { k: 'enabled', l: '启用 MinerU', type: 'switch', def: false },
+    { k: 'backend', l: '解析后端', type: 'select', opts: ['云端 mineru.net', '自托管 mineru-api'], def: '云端 mineru.net' },
+    { k: 'localEndpoint', l: '本地服务地址', type: 'text', def: '' },
+    { k: 'localToken', l: '本地 API Key（可选）', type: 'text', def: '' },
+    { k: 'parsingBackend', l: '解析引擎', type: 'select', opts: ['Hybrid', 'Pipeline', 'VLM'], def: 'Hybrid' },
+    { k: 'effort', l: 'Hybrid 精度', type: 'select', opts: ['Medium', 'High'], def: 'Medium' },
+    { k: 'ocrLanguage', l: 'OCR 语言', type: 'text', def: 'ch' },
+    { k: 'parseMethod', l: '解析方式', type: 'select', opts: ['自动', '文本提取', '强制 OCR'], def: '自动' },
+    { k: 'token', l: 'API Token（mineru.net）', type: 'text', def: '' },
+    { k: 'formulaParsing', l: '公式解析', type: 'switch', def: true },
+    { k: 'tableParsing', l: '表格解析', type: 'switch', def: true },
+    { k: 'imageAnalysis', l: '图片分析', type: 'switch', def: true } ] },
+  { id: 'sourceWatch', t: '资料文件夹自动监控', d: 'raw/sources 变化 → 提取队列', f: [
+    { k: 'enabled', l: '监控项目资料文件夹', type: 'switch', def: false },
+    { k: 'allProjects', l: '监控所有最近项目', type: 'switch', def: false },
+    { k: 'autoIngest', l: '自动提取允许的原始资料文件', type: 'switch', def: true },
+    { k: 'persistExtractedMarkdown', l: '保留解析后的 Markdown（raw/parsed）', type: 'switch', def: false },
+    { k: 'parsingConcurrency', l: '文档解析并发数', type: 'num', def: 2, min: 1, max: 16 },
+    { k: 'ingestConcurrency', l: '资料提取并发数', type: 'num', def: 2, min: 1, max: 16 },
+    { k: 'maxSize', l: '自动提取最大文件（MB）', type: 'num', def: 50, min: 1, max: 2000 },
+    { k: 'excludeDirs', l: '排除的文件夹', type: 'text', def: '.git, node_modules' },
+    { k: 'excludeExtensions', l: '排除的扩展名', type: 'text', def: 'tmp, bak, exe' },
+    { k: 'excludeGlobs', l: '排除的文件名模式', type: 'text', def: '' } ] },
+  { id: 'scheduledImport', t: '定时导入', d: '按间隔监控外部目录并导入', f: [
+    { k: 'enabled', l: '启用定时导入', type: 'switch', def: false },
+    { k: 'directory', l: '监控目录（须在项目之外）', type: 'text', def: '' },
+    { k: 'interval', l: '扫描间隔（分钟，最小 1）', type: 'num', def: 30, min: 1, max: 1440 } ] },
+  { id: 'skills', t: 'Skills', d: '扫描并选择对话可用的 Skill', f: [
+    { k: 'paths', l: '扫描目录（只读）', type: 'text', def: '.llm-wiki/skills, ~/.claude/skills, ~/.codex/skills' },
+    { k: 'enabledCount', l: '已启用 / 共发现', type: 'num', def: 5, min: 0, max: 999 },
+    { k: 'autoRefresh', l: '打开设置时自动重新扫描', type: 'switch', def: false } ] },
+  { id: 'maintenance', t: '维护', d: '索引重建 / 导入导出 / 版本历史 / 去重', f: [
+    { k: 'historyEnabled', l: '记录文件版本历史（.llm-wiki/history）', type: 'switch', def: false },
+    { k: 'historyKeep', l: '每个文件保留版本数（0–30）', type: 'num', def: 10, min: 0, max: 30 } ],
+    actions: [ '重建索引', '导出项目', '导入项目', '扫描重复实体/概念', '清空版本历史' ] },
+  { id: 'changelog', t: '更新日志', d: '版本可见功能改动（只读）', f: [], readonly: true },
+  { id: 'about', t: '关于', d: '构建信息与运行时状态', f: [
+    { k: 'autoUpdateCheck', l: '启动时自动检查更新（≤6h 一次）', type: 'switch', def: true },
+    { k: 'version', l: '版本（只读）', type: 'text', def: 'v0.6.11', ro: true } ] },
+];
+
+function wikiCfgDefaults() {
+  const sections = {};
+  WIKI_SETTINGS.forEach(s => {
+    sections[s.id] = {};
+    (s.f || []).forEach(f => { sections[s.id][f.k] = f.def; });
+  });
+  return sections;
+}
+function wikiCfgEnsure(mc) {
+  if (!mc.sections || typeof mc.sections !== 'object') mc.sections = wikiCfgDefaults();
+  WIKI_SETTINGS.forEach(s => {
+    if (!mc.sections[s.id]) mc.sections[s.id] = {};
+    (s.f || []).forEach(f => { if (mc.sections[s.id][f.k] === undefined) mc.sections[s.id][f.k] = f.def; });
+  });
+  return mc.sections;
+}
+/// 扁平化：{general.autostart: false, …}
+function wikiCfgFlat(sec) {
+  const out = {};
+  Object.keys(sec).forEach(g => Object.keys(sec[g] || {}).forEach(k => { out[`${g}.${k}`] = sec[g][k]; }));
+  return out;
+}
+/// 参数对比：主配置 vs 某实例快照 → 差异数组
+function wikiDiffSnapshot(snap) {
+  const main = wikiCfgFlat(wikiCfgEnsure(wikiState().mainConfig));
+  const inst = wikiCfgFlat(snap && snap.sections ? snap : { sections: {} });
+  const keys = [...new Set([...Object.keys(main), ...Object.keys(inst)])];
+  return keys.filter(k => String(main[k]) !== String(inst[k]))
+    .map(k => ({ key: k, main: main[k], inst: inst[k] }));
+}
+function wikiSnapOf(i) {
+  // 回填：实例快照缺 → 从主配置拷贝（b 预置两处漂移，供对比演示真实差异）
+  if (!i.cfgSnapshot || !i.cfgSnapshot.sections) {
+    const sections = JSON.parse(JSON.stringify(wikiCfgEnsure(wikiState().mainConfig)));
+    if (i.name === 'b') { sections.llm.model = 'gpt-5'; sections.interface.theme = '浅色'; }
+    i.cfgSnapshot = { sections };
+  }
+  return i.cfgSnapshot;
+}
+/// 只更新对比区 DOM —— 轮询与事件共用，绝不整页重绘（保护输入焦点）
+function wikiDiffRefresh() {
+  const box = document.getElementById('wikiDiffBox');
+  if (!box) return;
+  const W = wikiState();
+  const inst = W.instances.find(x => x.name === (W.diffTarget || W.apiOwner)) || W.instances[0];
+  if (!inst) { box.innerHTML = '<div class="hempty">没有实例</div>'; return; }
+  const diffs = wikiDiffSnapshot(wikiSnapOf(inst));
+  W.diffAt = Date.now(); save(true);
+  const only = !!W.diffOnly;
+  const rows = (only ? diffs : (() => {
+    const main = wikiCfgFlat(wikiCfgEnsure(W.mainConfig));
+    return Object.keys(main).map(k => ({ key: k, main: main[k], inst: wikiCfgFlat(wikiSnapOf(inst).sections)[k] }));
+  })()).slice(0, 400);
+  box.innerHTML = `<div class="hrow" style="padding:0 2px 8px">
+      <span class="hsub">对比 <b>${escapeHtml(inst.name)}</b> · ${diffs.length} 处漂移 ·
+        上次对比 ${new Date(W.diffAt).toLocaleTimeString()} · 每 8s 轮询 + 保存事件即时刷新</span>
+      <span style="flex:1"></span>
+      <select id="wikiDiffTarget">${W.instances.map(x =>
+        `<option value="${escapeHtml(x.name)}"${x.name === inst.name ? ' selected' : ''}>${escapeHtml(x.name)}</option>`).join('')}</select>
+      <button class="hchk${only ? ' is-on' : ''}" id="wikiDiffOnly">仅显示差异</button>
+      <button class="hbtn" id="wikiDiffNow">立即对比</button>
+      <button class="hbtn" id="wikiDiffAlign">拉齐到主配置</button>
+    </div>
+    <table class="wiki-diff-table"><thead><tr><th>参数</th><th>主配置（权威源）</th><th>实例 ${escapeHtml(inst.name)}</th><th></th></tr></thead>
+    <tbody>${rows.length ? rows.map(r => {
+      const same = String(r.main) === String(r.inst);
+      return `<tr class="${same ? '' : 'diff'}"><td><code>${escapeHtml(r.key)}</code></td>
+        <td>${escapeHtml(String(r.main ?? '—'))}</td><td>${escapeHtml(String(r.inst ?? '—'))}</td>
+        <td>${same ? '<span style="color:#4ADE80">✓</span>' : '<span style="color:#FBBF24">≠</span>'}</td></tr>`;
+    }).join('') : '<tr><td colspan="4" style="color:#4ADE80;padding:8px">✓ 完全一致</td></tr>'}</tbody></table>`;
+  const t = box.querySelector('#wikiDiffTarget');
+  if (t) t.onchange = () => { W.diffTarget = t.value; save(true); wikiDiffRefresh(); };
+  const ob = box.querySelector('#wikiDiffOnly');
+  if (ob) ob.onclick = () => { W.diffOnly = !W.diffOnly; save(true); wikiDiffRefresh(); };
+  const nb = box.querySelector('#wikiDiffNow');
+  if (nb) nb.onclick = () => { wikiDiffRefresh(); toast('已对比'); };
+  const ab = box.querySelector('#wikiDiffAlign');
+  if (ab) ab.onclick = () => {
+    if (inst.running) { toast(`${inst.name} 运行中 —— 先停止再拉齐（写回会覆盖）`); return; }
+    inst.cfgSnapshot = { sections: JSON.parse(JSON.stringify(wikiCfgEnsure(W.mainConfig))) };
+    save(true); wikiDiffRefresh();
+    toast(`「${escapeHtml(inst.name)}」已拉齐到主配置（同步语义）`);
+  };
+}
+/// 导出全部设置（含 formatIdentifier，防导错文件）
+function wikiExportSettings() {
+  const W = wikiState();
+  wikiCfgEnsure(W.mainConfig);
+  const doc = {
+    formatIdentifier: 'llm-wiki-settings', formatVersion: 1,
+    exportedAt: new Date().toISOString(),
+    source: 'Wanna 知识库 · 同步设置（16 sections 全量）',
+    sections: W.mainConfig.sections,
+  };
+  const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const d = new Date().toISOString().slice(0, 10);
+  a.download = `llm-wiki-settings-${d}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast(`已导出 ${Object.keys(doc.sections).length} 个 section → llm-wiki-settings-${d}.json`);
+}
+/// 导入：校验 formatIdentifier → 替换 sections → 事件触发即时对比
+function wikiImportSettings(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    let doc;
+    try { doc = JSON.parse(rd.result); } catch (e) { toast('JSON 解析失败'); return; }
+    if (!doc || doc.formatIdentifier !== 'llm-wiki-settings') { toast('不是 LLM Wiki 设置文件（formatIdentifier 不符）'); return; }
+    if ((doc.formatVersion || 0) > 1) { toast('文件版本更新，拒绝导入（防半应用）'); return; }
+    const W = wikiState();
+    W.mainConfig.sections = doc.sections;
+    wikiCfgEnsure(W.mainConfig);
+    save(true);
+    renderWiki();          // 导入是显式动作，允许整页重绘
+    wikiDiffRefresh();
+    toast(`已导入 ${Object.keys(W.mainConfig.sections).length} 个 section，并触发对比`);
+  };
+  rd.readAsText(file);
+}
+
+/* ── 同步设置页重构：16 section 子导航 + 全字段 + 导入导出 + 对比 ── */
+function wikiSyncHTML(pane) {
+  const W = wikiState();
+  const secs = wikiCfgEnsure(W.mainConfig);
+  const tab = W.settingsTab && WIKI_SETTINGS.some(s => s.id === W.settingsTab) ? W.settingsTab : 'general';
+  const sec = WIKI_SETTINGS.find(s => s.id === tab);
+  const fieldRow = f => {
+    const v = secs[tab][f.k];
+    let ct = '';
+    if (f.type === 'switch') ct = `<button type="button" class="hchk${v ? ' is-on' : ''}" data-wf="${f.k}">${v ? '开' : '关'}</button>`;
+    else if (f.type === 'num') ct = `<input type="number" data-wf="${f.k}" value="${Number(v) || 0}"${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.ro ? ' disabled' : ''}>`;
+    else if (f.type === 'select') ct = `<select data-wf="${f.k}">${(f.opts || []).map(o =>
+      `<option${o === v ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('')}</select>`;
+    else ct = `<input type="text" data-wf="${f.k}" value="${escapeHtml(String(v ?? ''))}"${f.ro ? ' readonly' : ''} style="min-width:230px">`;
+    return `<div class="hset"><div class="tx"><div class="tt">${escapeHtml(f.l)}</div>
+      <div class="ds"><code>${escapeHtml(tab)}.${escapeHtml(f.k)}</code></div></div>
+      <div class="ct">${ct}</div></div>`;
+  };
+  pane.innerHTML = hBar('知识库 · 同步设置（LLM Wiki 全部 16 组设置）',
+    '主实例 app-state.json 为权威源 · 导出/导入全量 · 对比轮询保证 100% 同步 · 下发= sync-config 语义',
+    `<button class="hbtn" id="wsExport">导出全部设置</button>
+     <button class="hbtn" id="wsImportBtn">导入设置</button>
+     <input type="file" id="wsImportFile" accept="application/json,.json" hidden>`)
+    + `<div class="hbody"><div class="hprof">
+        <div class="hprof-list" style="width:170px;flex:0 0 170px">
+          <div class="hcol-head" style="padding:2px 2px 8px">设置（${WIKI_SETTINGS.length} 组）</div>
+          <div class="hside">${WIKI_SETTINGS.map(s => `
+            <div class="hside-item${s.id === tab ? ' is-on' : ''}" data-wsec="${s.id}">
+              <span class="ic">${s.readonly ? '📜' : '⚙️'}</span>${escapeHtml(s.t)}</div>`).join('')}</div>
+        </div>
+        <div class="hprof-body">
+          <div class="hcrumb"><b>知识库</b><span class="sep">›</span><b>同步设置</b><span class="sep">›</span>${escapeHtml(sec.t)}</div>
+          <div class="hnote" style="padding:0 2px 8px">${escapeHtml(sec.d)}</div>
+          <div class="hset-group">${(sec.f || []).map(fieldRow).join('') ||
+            '<div class="hset"><div class="tx"><div class="ds">本组为只读展示。</div></div></div>'}</div>
+          ${sec.actions ? `<div class="hrow" style="padding:8px 2px;gap:8px">${sec.actions.map(a =>
+            `<button class="hbtn" data-wact2="${escapeHtml(a)}">${escapeHtml(a)}</button>`).join('')}
+            <span class="hsub" style="margin-left:6px">（真机动作，原型 mock 反馈）</span></div>` : ''}
+          ${sec.id === 'changelog' ? `<div class="hset-group"><div class="hset"><div class="tx">
+            <div class="ds">v0.6.11 — 多实例/队列恢复/图谱等以本仓库 reference/LLM_Wiki CHANGELOG 为准（原型不复制长文）。</div></div></div></div>` : ''}
+
+          <div class="hset-sec">参数对比（轮询 · 事件双保险）</div>
+          <div class="hset-group" style="padding:10px 14px"><div id="wikiDiffBox"></div></div>
+
+          <div class="hset-sec">下发到全部实例</div>
+          <div class="hset-group"><div class="hset">
+            <div class="tx"><div class="tt">保存与下发</div>
+              <div class="ds">先「保存主配置」（触发即时对比），再「一键下发」——剥 lastProject/recentProjects/projectRegistry/
+                scheduledImportConfig:*；运行中的实例拒绝（退出写回会覆盖）。导出/导入含全部 16 组，文件带
+                formatIdentifier=llm-wiki-settings 防导错。</div></div>
+            <div class="ct" style="gap:8px">
+              <button class="hbtn" data-wact="saveCfg">保存主配置</button>
+              <button class="hbtn" data-wact="syncAll">一键下发全部实例</button>
+            </div></div>
+          </div>
+          <div class="hnote" style="padding:4px 2px 16px">真机：<code>llm-wiki-instance stop &lt;名&gt; && sync-config &lt;名&gt;</code>
+            或 <code>sync-config --all</code>；首次继承 <code>clone &lt;名&gt; --seed</code>。</div>
+        </div>
+      </div></div>`;
+  // 子导航
+  pane.querySelectorAll('[data-wsec]').forEach(el => el.onclick = () => {
+    W.settingsTab = el.dataset.wsec; save(true); renderWiki();
+  });
+  // 字段绑定（switch 点击切、其余 change 落盘）
+  pane.querySelectorAll('[data-wf]').forEach(el => {
+    const k = el.dataset.wf;
+    if (el.classList.contains('hchk')) {
+      el.onclick = () => { secs[tab][k] = !secs[tab][k]; save(true); renderWiki(); };
+    } else {
+      el.onchange = () => {
+        const f = (sec.f || []).find(x => x.k === k);
+        let v = el.value;
+        if (f && f.type === 'num') { v = Number(v) || 0; if (f.min !== undefined) v = Math.max(f.min, v); if (f.max !== undefined) v = Math.min(f.max, v); }
+        secs[tab][k] = v; save(true);
+        wikiDiffRefresh();          // 事件：参数一变立即对比
+        toast(`已保存 ${tab}.${k}（对比已刷新）`);
+      };
+    }
+  });
+  pane.querySelectorAll('[data-wact2]').forEach(b => b.onclick = () =>
+    toast(`${escapeHtml(b.dataset.wact2)} —— 真机动作（原型 mock：如重建索引走 API/本地任务）`));
+  // 导出 / 导入
+  pane.querySelector('#wsExport').onclick = () => wikiExportSettings();
+  const fi = pane.querySelector('#wsImportFile');
+  pane.querySelector('#wsImportBtn').onclick = () => fi.click();
+  fi.onchange = () => { if (fi.files && fi.files[0]) wikiImportSettings(fi.files[0]); fi.value = ''; };
+  // 保存 / 下发
+  pane.querySelectorAll('[data-wact]').forEach(b => b.onclick = () => {
+    if (b.dataset.wact === 'saveCfg') { save(true); wikiDiffRefresh(); toast('主配置已保存（权威源）· 对比已刷新'); return; }
+    const W2 = wikiState();
+    const targets = W2.instances.filter(i => i.name !== W2.apiOwner);
+    W2.syncLog = targets.map(t => t.running
+      ? { target: t.name, ok: false, msg: '跳过：运行中（先 stop，防写回覆盖）' }
+      : { target: t.name, ok: true, msg: '✓ 已写入 app-state（剥项目指针）' });
+    // 成功的实例拉齐快照 → 对比差异归零
+    targets.forEach(t => { if (!t.running) t.cfgSnapshot = { sections: JSON.parse(JSON.stringify(wikiCfgEnsure(W2.mainConfig))) }; });
+    save(true); wikiDiffRefresh();
+    const okN = W2.syncLog.filter(x => x.ok).length;
+    toast(`下发完成：${okN}/${W2.syncLog.length} 成功${W2.syncLog.length - okN ? `，${W2.syncLog.length - okN} 个需先停止` : '（对比差异已清零）'}`);
+  });
+  wikiDiffRefresh();
+}
+/// 8s 轮询（全局一次；只在同步页刷对比区，不整页重绘）
+let wikiDiffTimer = null;
+function wikiDiffStartPolling() {
+  if (wikiDiffTimer) return;
+  wikiDiffTimer = setInterval(() => {
+    if (wikiView === 'sync' && document.getElementById('wikiDiffBox')) wikiDiffRefresh();
+  }, 8000);
+}
+
+/* ══ §54B 知识库 · 关系图（真 API 直连 + Canvas 高速渲染 + 点节点读文章）══
+   API（实测全通）：
+     GET /api/v1/projects                      → [{id,name,path}…]
+     GET /api/v1/projects/{id}/graph?limit=1000[&q=] → {nodes:[{id,label,linkCount,nodeType,path}], edges:[{source,target,weight}], hasMore}
+     GET /api/v1/projects/{id}/files/content?path=    → {content}
+   高速加载设计（不卡顿的五条，全部落在代码里）：
+     ① 数据 limit=1000 一次拉齐、旧图保留到新数据到达（切换项目无白屏）
+     ② **Canvas 单层渲染**（不是 SVG/DOM 节点 —— 千级节点 DOM 必卡）
+     ③ **确定性分层布局**（按 nodeType 分列，坐标由 label hash 生成）—— O(n) 出图、无迭代力导、打开即定形
+     ④ 只在交互（缩放/平移/拖动）时重绘；滚轮/拖拽只改 {scale,tx,ty} 三个数
+     ⑤ 文章正文**懒加载**（点节点才 fetch content）
+   失败降级：CORS/网络失败 → seeded mock 图 + 演示正文，状态行如实标注「演示数据」。 */
+
+function wikiGraphMock(projectName) {
+  // 确定性伪随机（同项目每次一样）
+  let seed = 0; for (const ch of projectName) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const types = ['entity', 'concept', 'finding', 'source'];
+  const nodes = [];
+  types.forEach(t => {
+    for (let i = 0; i < 10; i++) {
+      const label = `${t}-${i + 1}·${projectName.slice(0, 4)}`;
+      nodes.push({ id: label, label, linkCount: 1 + Math.floor(rnd() * 8), nodeType: t, path: `wiki/${t}s/${label}.md` });
+    }
+  });
+  const edges = [];
+  for (let i = 0; i < 55; i++) {
+    const a = nodes[Math.floor(rnd() * nodes.length)], b = nodes[Math.floor(rnd() * nodes.length)];
+    if (a !== b) edges.push({ source: a.id, target: b.id, weight: 1 });
+  }
+  return { nodes, edges, hasMore: false, mock: true };
+}
+
+async function wikiGraphLoad() {
+  const W = wikiState();
+  const proj = (W.apiProjects || []).find(p => p.name === W.graphProject)
+    || W.projects.find(p => p.name === W.graphProject);
+  const t0 = performance.now();
+  W.graphLoading = true; wikiGraphStatsRefresh();
+  try {
+    if (!proj || !proj.id) throw new Error('no-uuid');     // 本地清单无 UUID → 必须 mock
+    const q = W.graphQ ? `&q=${encodeURIComponent(W.graphQ)}` : '';
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 12000);
+    const r = await fetch(`http://127.0.0.1:19828/api/v1/projects/${proj.id}/graph?limit=1000${q}`,
+      { signal: ctrl.signal });
+    const j = await r.json();
+    if (!j || !Array.isArray(j.nodes)) throw new Error('bad shape');
+    W.graph = { nodes: j.nodes, edges: j.edges || [], hasMore: !!j.hasMore, mock: false,
+      project: W.graphProject, fetchedAt: Date.now(), fetchMs: Math.round(performance.now() - t0) };
+  } catch (e) {
+    const g = wikiGraphMock(W.graphProject || 'demo');
+    W.graph = { ...g, project: W.graphProject, fetchedAt: Date.now(),
+      fetchMs: Math.round(performance.now() - t0), degrade: String(e && e.message || e).slice(0, 40) };
+  }
+  W.graphLoading = false;
+  save(true);
+  renderWiki();                 // 新数据到达才整页换（旧图期间 stats 局部刷新）
+}
+
+function wikiGraphStatsRefresh() {
+  const el = document.getElementById('wgStats');
+  if (!el) return;
+  const W = wikiState();
+  const g = W.graph;
+  if (W.graphLoading) { el.innerHTML = '<span class="qe-state off">加载中…</span>'; return; }
+  if (!g) { el.innerHTML = '<span class="qe-state off">未加载</span>'; return; }
+  el.innerHTML = `<span class="qe-state ${g.mock ? 'err' : 'ok'}">${g.mock ? '演示数据（真 API 不可达）' : '真数据'}</span>
+    <span class="hchip">节点 ${g.nodes.length}</span><span class="hchip">边 ${g.edges.length}</span>
+    <span class="hchip">拉取 ${g.fetchMs}ms</span><span class="hchip">渲染 ${g.drawMs || 0}ms</span>
+    ${g.hasMore ? '<span class="hchip">hasMore</span>' : ''}`;
+}
+
+const WG_TYPE_COLOR = { entity: '#60A5FA', concept: '#34D399', source: '#FBBF24',
+  finding: '#F472B6', query: '#A78BFA', synthesis: '#A78BFA' };
+let wgView = { scale: 1, tx: 40, ty: 40, drag: null, moved: 0, positions: [] };
+
+function wgLayout(g, w, h) {
+  // 确定性分层：nodeType 分列，列内按 y 均匀分布 + label hash 抖动（O(n)，一次成形）
+  const types = [...new Set(g.nodes.map(n => n.nodeType || 'concept'))];
+  const cols = Math.max(types.length, 1);
+  const colW = Math.max(160, (w - 80) / cols);
+  const pos = new Map();
+  types.forEach((t, ci) => {
+    const list = g.nodes.filter(n => (n.nodeType || 'concept') === t);
+    const rowH = Math.max(36, (h - 80) / Math.max(list.length, 1));
+    list.forEach((n, ri) => {
+      let hash = 0; for (const ch of n.label) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0;
+      const jitter = (hash % 40) - 20;
+      pos.set(n.id, { x: 40 + ci * colW + colW / 2 + jitter, y: 50 + ri * rowH + rowH / 2,
+        r: 5 + Math.min(n.linkCount || 1, 8), t: n.nodeType || 'concept', n });
+    });
+  });
+  return pos;
+}
+
+function wgDraw() {
+  const canvas = document.getElementById('wgCanvas');
+  if (!canvas) return;
+  const W = wikiState();
+  const g = W.graph;
+  const wrap = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = wrap.clientWidth, ch = wrap.clientHeight;
+  if (canvas.width !== Math.round(cw * dpr)) { canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr); }
+  const t0 = performance.now();
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  if (!g) { ctx.fillStyle = '#6B7680'; ctx.font = '13px sans-serif';
+    ctx.fillText('选项目后点「加载图谱」', 24, 34); return; }
+  if (!wgView.positions || wgView.forGraph !== g) {
+    wgView.positions = wgLayout(g, Math.max(cw, 600), Math.max(ch, 400));
+    wgView.forGraph = g;
+  }
+  const pos = wgView.positions;
+  ctx.save();
+  ctx.translate(wgView.tx, wgView.ty);
+  ctx.scale(wgView.scale, wgView.scale);
+  // 边
+  ctx.strokeStyle = 'rgba(148,163,184,.28)';
+  ctx.lineWidth = 1 / wgView.scale;
+  ctx.beginPath();
+  for (const e of g.edges) {
+    const a = pos.get(e.source), b = pos.get(e.target);
+    if (!a || !b) continue;
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  }
+  ctx.stroke();
+  // 节点 + 标签
+  const showLabel = wgView.scale >= 0.55;
+  for (const [id, p] of pos) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = WG_TYPE_COLOR[p.t] || '#A78BFA';
+    ctx.fill();
+    if (showLabel) {
+      ctx.fillStyle = '#C7D2DA';
+      ctx.font = `${11 / Math.max(wgView.scale, .6)}px sans-serif`;
+      const label = p.n.label.length > 16 ? p.n.label.slice(0, 15) + '…' : p.n.label;
+      ctx.fillText(label, p.x + p.r + 4, p.y + 3);
+    }
+  }
+  ctx.restore();
+  const ms = Math.round(performance.now() - t0);
+  if (g.drawMs !== ms) { g.drawMs = ms; wikiGraphStatsRefresh(); }
+  // 可达性钩子：记录首节点的屏幕坐标（自动化/辅助功能定位用）
+  const first = wgView.positions && wgView.positions.values().next().value;
+  if (first) canvas.dataset.first = `${Math.round(first.x * wgView.scale + wgView.tx)},${Math.round(first.y * wgView.scale + wgView.ty)}`;
+}
+
+function wgBindCanvas(pane) {
+  const canvas = pane.querySelector('#wgCanvas');
+  if (!canvas) return;
+  const redraw = () => requestAnimationFrame(wgDraw);
+  canvas.onwheel = e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const ns = Math.min(4, Math.max(0.25, wgView.scale * factor));
+    // 以光标为锚点缩放（改 scale + 平移补偿，一次重绘）
+    wgView.tx = mx - (mx - wgView.tx) * (ns / wgView.scale);
+    wgView.ty = my - (my - wgView.ty) * (ns / wgView.scale);
+    wgView.scale = ns;
+    redraw();
+  };
+  canvas.onmousedown = e => {
+    wgView.drag = { x: e.clientX, y: e.clientY, tx: wgView.tx, ty: wgView.ty };
+    wgView.moved = 0;
+  };
+  canvas.onmousemove = e => {
+    if (!wgView.drag) return;
+    const dx = e.clientX - wgView.drag.x, dy = e.clientY - wgView.drag.y;
+    wgView.moved = Math.max(wgView.moved, Math.abs(dx) + Math.abs(dy));
+    wgView.tx = wgView.drag.tx + dx; wgView.ty = wgView.drag.ty + dy;
+    redraw();
+  };
+  window.addEventListener('mouseup', () => { wgView.drag = null; });
+  canvas.onclick = e => {
+    if (wgView.moved > 4) return;               // 拖过就不算点击
+    const W = wikiState();
+    const g = W.graph; if (!g || !wgView.positions) return;
+    const rect = canvas.getBoundingClientRect();
+    const wx = (e.clientX - rect.left - wgView.tx) / wgView.scale;
+    const wy = (e.clientY - rect.top - wgView.ty) / wgView.scale;
+    let best = null, bestD = 14 / wgView.scale + 8;   // 命中半径随缩放反比
+    for (const [, p] of wgView.positions) {
+      const d = Math.hypot(p.x - wx, p.y - wy) - p.r;
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    if (best) wgOpenArticle(best.n);
+  };
+  redraw();
+  // 视口变化跟随重绘
+  if (!wgBindCanvas._ro) {
+    wgBindCanvas._ro = new ResizeObserver(() => requestAnimationFrame(wgDraw));
+  }
+  wgBindCanvas._ro.observe(canvas.parentElement);
+}
+
+async function wgOpenArticle(node) {
+  const W = wikiState();
+  const panel = document.getElementById('wgArticle');
+  if (!panel) return;
+  panel.style.display = '';
+  panel.innerHTML = `<div class="hrow" style="justify-content:space-between">
+      <b>${escapeHtml(node.label)}</b><button class="hbtn sm" id="wgClose">✕</button></div>
+    <div class="hsub" style="margin:4px 0 8px">${escapeHtml(node.nodeType)} · ${escapeHtml(node.path || '')} · 度 ${node.linkCount || 0}</div>
+    <div class="hsub">加载正文…</div>`;
+  panel.querySelector('#wgClose').onclick = () => { panel.style.display = 'none'; };
+  const W2 = wikiState();
+  const proj = (W2.apiProjects || []).find(p => p.name === W2.graphProject)
+    || W2.projects.find(p => p.name === W2.graphProject);
+  try {
+    if (!proj || !proj.id || !node.path) throw new Error('no-path');
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 8000);
+    const r = await fetch(`http://127.0.0.1:19828/api/v1/projects/${proj.id}/files/content?path=${encodeURIComponent(node.path)}`,
+      { signal: ctrl.signal });
+    const j = await r.json();
+    const text = String(j.content || '').slice(0, 12000);
+    panel.innerHTML = `<div class="hrow" style="justify-content:space-between">
+        <b>${escapeHtml(node.label)}</b><button class="hbtn sm" id="wgClose">✕</button></div>
+      <div class="hsub" style="margin:4px 0 8px">${escapeHtml(node.path || '')}</div>
+      <pre class="wg-doc">${escapeHtml(text || '（空文件）')}</pre>`;
+  } catch (e) {
+    panel.innerHTML = `<div class="hrow" style="justify-content:space-between">
+        <b>${escapeHtml(node.label)}</b><button class="hbtn sm" id="wgClose">✕</button></div>
+      <div class="hsub" style="margin:4px 0 8px">${escapeHtml(node.path || '')} · 真正文不可达（${escapeHtml(String(e && e.message || e))}）</div>
+      <pre class="wg-doc"># ${escapeHtml(node.label)}
+
+（演示正文 · 降级模式）
+本图当前为${W.graph && W.graph.mock ? '演示数据' : '真数据但正文请求失败'}。
+真机通道：GET /api/v1/projects/{id}/files/content?path=${escapeHtml(node.path || '')}</pre>`;
+  }
+  panel.querySelector('#wgClose').onclick = () => { panel.style.display = 'none'; };
+}
+
+function wikiGraphHTML(pane) {
+  const W = wikiState();
+  const projects = (W.apiProjects && W.apiProjects.length ? W.apiProjects : W.projects);
+  if (!W.graphProject || !projects.some(p => p.name === W.graphProject)) W.graphProject = projects[0] && projects[0].name;
+  pane.innerHTML = hBar('知识库 · 关系图（Graph）',
+    '真 API：graph limit=1000 · Canvas 分层渲染 · 点节点读原文（files/content）',
+    `<span id="wgStats"><span class="qe-state off">未加载</span></span>`)
+    + `<div class="hbody" style="position:relative">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div class="hrow" style="padding:8px 12px;gap:8px;align-items:center;border-bottom:1px solid var(--line,#26292C)">
+          <span class="hsub">知识库</span>
+          <select id="wgProject">${projects.map(p =>
+            `<option${p.name === W.graphProject ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select>
+          <input type="text" id="wgQ" placeholder="过滤 q（节点标签）…" value="${escapeHtml(W.graphQ || '')}" style="width:180px">
+          <button class="hbtn primary" id="wgLoad">加载图谱</button>
+          <span class="hsub">滚轮缩放 · 拖拽平移 · 点节点看文章</span>
+        </div>
+        <div style="flex:1;position:relative;min-height:0" id="wgWrap">
+          <canvas id="wgCanvas" style="position:absolute;inset:0;width:100%;height:100%;cursor:grab"></canvas>
+          ${!W.graph ? `<div class="hempty" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+            选知识库 → 点「加载图谱」（真 API 失败自动降级演示图）</div>` : ''}
+        </div>
+      </div>
+      <div id="wgArticle" style="display:none;width:320px;flex:0 0 320px;border-left:1px solid var(--line,#26292C);
+        overflow:auto;padding:10px 12px;background:rgba(255,255,255,.02)"></div>
+    </div>`;
+  // 顺手拉一次真实项目清单（UUID 才能调 graph；失败保持本地清单）
+  if (!W.apiProjects) {
+    fetch('http://127.0.0.1:19828/api/v1/projects').then(r => r.json()).then(j => {
+      if (j && Array.isArray(j.projects) && j.projects.length) {
+        const W2 = wikiState();
+        W2.apiProjects = j.projects;
+        // 当前选择不在真清单（本地目录名 ≠ registry 项目）→ 自动切到第一个真项目，保证 graph 走真数据
+        if (!j.projects.some(p => p.name === W2.graphProject)) W2.graphProject = j.projects[0].name;
+        save(true);
+        if (wikiView === 'graph') renderWiki();
+      }
+    }).catch(() => {});
+  }
+  pane.querySelector('#wgLoad').onclick = () => {
+    const W2 = wikiState();
+    W2.graphProject = pane.querySelector('#wgProject').value;
+    W2.graphQ = pane.querySelector('#wgQ').value.trim();
+    save(true);
+    wikiGraphLoad();
+  };
+  pane.querySelector('#wgProject').onchange = () => {
+    // 切换知识库：旧图保留到新数据到达（无白屏）
+    const W2 = wikiState();
+    W2.graphProject = pane.querySelector('#wgProject').value;
+    save(true);
+    wikiGraphLoad();
+  };
+  wgBindCanvas(pane);
+  wikiGraphStatsRefresh();
+}
+
 })();

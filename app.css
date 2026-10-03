@@ -2666,3 +2666,17 @@ body.finder-on .finder-pane{position:relative}
 .wiki-cmd{margin:0 16px 10px;padding:11px 13px;background:#0E1216;border:1px solid var(--line,#26292C);
   border-radius:10px;font-family:var(--mono,monospace);font-size:12px;line-height:1.85;color:#9FD0FF;
   white-space:pre-wrap;word-break:break-all}
+
+/* ══ §54 关系图 + 参数对比 ══ */
+.wiki-diff-table{width:100%;border-collapse:collapse;font-size:12px}
+.wiki-diff-table th{text-align:left;color:var(--ink3,#83838C);font-weight:500;padding:5px 8px;
+  border-bottom:1px solid var(--line,#26292C);font-size:11.5px}
+.wiki-diff-table td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--ink2,#B5B5BC);
+  font-family:var(--mono,monospace);font-size:11.5px;word-break:break-all}
+.wiki-diff-table tr.diff td{background:rgba(251,191,36,.07)}
+.wiki-diff-table tr.diff td:first-child{color:#FDE68A}
+#wikiDiffBox select{height:27px}
+.wg-doc{white-space:pre-wrap;word-break:break-word;font-family:var(--mono,monospace);font-size:11.5px;
+  line-height:1.75;color:#C7D2DA;background:#0E1216;border:1px solid var(--line,#26292C);
+  border-radius:9px;padding:10px 12px;margin-top:6px;max-height:calc(100vh - 260px);overflow:auto}
+#wgCanvas{background:radial-gradient(ellipse at center, rgba(255,255,255,.02), transparent 70%)}
