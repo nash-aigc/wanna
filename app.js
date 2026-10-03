@@ -9583,6 +9583,7 @@ let hermesView = null;      // null | 'rooms' | 'kanban' | 'archived'
 function setHermesView(v) {
   if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);   // 与访达互斥
   if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
+  if (v && typeof wikiView !== 'undefined' && wikiView) setWikiView(null);          // §53 与知识库互斥
   hermesView = v;
   const on = !!v;
   ['.workspace', '.chat', '.split-v', '.split-h', '#railRight', '#panelSide', '#panelAutomation', '#tabsVertical']
@@ -12271,4 +12272,449 @@ function hermesDelegatesHTML(pane) {
   });
 }
 
+/* ══ §53 知识库：LLM Wiki 多实例控制台（不修改 LLM_Wiki 项目，只做驾驶舱）══
+   真值来源：llm_wiki_skill（SKILL.md 关键路径 / API_REFERENCE）+
+   03-多实例与部署/multi-instance.md（HOME隔离·克隆·sync-config·autostart 全套已存在）+
+   源码查证：src-tauri/src/api_server.rs:23 `const PORT: u16 = 19828` **硬编码**——
+   不改项目就无法每实例独立端口 → 采用「API 归属切换」模型（19828 唯一入口 + 归属实时标注）。
+   四层模型：实例(进程) → 配置(app-state) → 项目(Data/Wiki/<名> 注册表认领·互斥锁) → 文件。
+   原型边界：探测=真 fetch /health 失败降级；实例启停/同步/创建=真机 llm-wiki-instance 命令，
+   原型只改状态并显示将执行的命令；不读写真实 apiKey（脱敏样例）。 */
+
+let wikiView = null;   // null | 'instances' | 'projects' | 'sync' | 'create'
+
+function wikiState() {
+  if (!S.wiki || typeof S.wiki !== 'object') {
+    const ROOT = '/Users/mjm/Documents/SuperAgent/Data/Wiki/';
+    const MULTI = '~/Library/Application Support/LLM-Wiki-Multi/instances/';
+    S.wiki = {
+      // ── 实例：main=官方原版(真实HOME) · b=克隆（贴本机现状 llm-wiki-instance status）──
+      instances: [
+        { name: 'main', form: 'official', bundle: '/Applications/LLM Wiki.app',
+          home: '(真实 HOME)', running: true, autostart: true, autoResume: true },
+        { name: 'b', form: 'clone', bundle: '/Applications/LLM Wiki b.app',
+          home: MULTI + 'b/home', running: false, autostart: true, autoResume: false },
+      ],
+      apiOwner: 'main',                       // 19828 当前归属（真机=lsof→pid→HOME 反查）
+      probe: { status: 'unknown', at: 0 },    // online | blocked | offline | unknown
+      // ── 项目：Data/Wiki/ 真实目录（磁盘共享，实例靠 registry 认领，互斥锁）──
+      projects: [
+        { name: 'Memory', path: ROOT + 'Memory', owner: null, queue: { pending: 0, failed: 0 } },
+        { name: '产品经理', path: ROOT + '产品经理', owner: 'main', queue: { pending: 0, failed: 0 } },
+        { name: '产品经理】Source', path: ROOT + '产品经理】Source', owner: null, queue: { pending: 0, failed: 0 } },
+        { name: '技能设计', path: ROOT + '技能设计', owner: null, queue: { pending: 1, failed: 0 } },
+        { name: '技能设计】Source', path: ROOT + '技能设计】Source', owner: null, queue: { pending: 0, failed: 0 } },
+        { name: '编程', path: ROOT + '编程', owner: 'main', queue: { pending: 3, failed: 1 } },
+        { name: '营销销售', path: ROOT + '营销销售', owner: 'b', queue: { pending: 0, failed: 2 } },
+        { name: '营销销售】Sources', path: ROOT + '营销销售】Sources', owner: null, queue: { pending: 0, failed: 0 } },
+      ],
+      // ── 主配置（权威源=主实例 app-state.json；原型只放脱敏样例，真机由 Swift 读入）──
+      mainConfig: {
+        endpoint: 'https://inferaiapi.com/v1',
+        apiKey: 'sk-••••••••••••••••••••••••••••540d',
+        model: 'deepseek-chat',
+        embed: 'text-embedding-v3',
+        search: '内置关键词+语义',
+        theme: 'dark',
+      },
+      syncLog: [],                            // 一键下发的结果行
+      createdCmd: '',                         // 新建实例将执行的命令
+    };
+  }
+  return S.wiki;
+}
+
+/// 自动检测①：真探测 /health（失败如实降级——浏览器 CORS 拦截时显示 blocked）
+async function wikiProbe() {
+  const W = wikiState();
+  W.probe = { status: 'probing', at: Date.now() };
+  renderWiki();
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 1500);
+    const r = await fetch('http://127.0.0.1:19828/health', { signal: ctrl.signal });
+    const j = await r.json();
+    W.probe = { status: j && j.ok ? 'online' : 'weird', at: Date.now() };
+  } catch (e) {
+    // CORS / 网络拒 —— 不是"离线"，如实标注（真机由 llm-wiki-instance status / lsof 探）
+    W.probe = { status: 'blocked', at: Date.now(), why: String(e && e.message || e).slice(0, 60) };
+  }
+  save(true);
+  renderWiki();
+}
+
+/// 自动检测②：API 归属（真机：lsof -i :19828 → pid → ps eww HOME → 映射实例；原型=状态字段）
+function wikiOwnerLabel() {
+  const W = wikiState();
+  const inst = W.instances.find(i => i.name === W.apiOwner);
+  return inst ? inst.name : W.apiOwner;
+}
+
+function setWikiView(v) {
+  if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);
+  if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
+  if (v && hermesView) {                       // 与 Hermes 互斥（不走 setHermesView(null) 免得闪一下工作区）
+    hermesView = null;
+    const hp = $('#hermesPane'); if (hp) hp.hidden = true;
+    renderHermesNav();
+  }
+  wikiView = v;
+  const on = !!v;
+  ['.workspace', '.chat', '.split-v', '.split-h', '#railRight', '#panelSide', '#panelAutomation', '#tabsVertical']
+    .forEach(sel => document.querySelectorAll(sel).forEach(el => {
+      if (on) { el.dataset.wHide = '1'; el.style.display = 'none'; }
+      else if (el.dataset.wHide && !el.dataset.hHide) { delete el.dataset.wHide; el.style.display = ''; }
+    }));
+  const pane = $('#wikiPane');
+  if (pane) pane.hidden = !on;
+  if (on) renderWiki(); else renderNav();
+  renderWikiNav();
+}
+
+function renderWikiNav() {
+  const host = $('#wikiList');
+  if (!host) return;
+  const W = wikiState();
+  const rows = [
+    { v: 'instances', label: '实例', badge: `${W.instances.filter(i => i.running).length}/${W.instances.length}` },
+    { v: 'projects', label: '知识库', badge: `${W.projects.length}` },
+    { v: 'sync', label: '同步设置', badge: W.syncLog.length ? `${W.syncLog.length}` : '' },
+    { v: 'create', label: '新建实例', badge: '' },
+  ];
+  host.innerHTML = rows.map(r => `<div class="plan-row${wikiView === r.v ? ' is-on' : ''}" data-wv="${r.v}">
+      <span class="plan-dot" style="background:#10B981"></span><span class="pname">${r.label}</span>
+      ${r.badge ? `<span class="sc" style="margin-left:auto;font-size:10.5px;color:var(--ink3,#8A8F96)">${r.badge}</span>` : ''}
+    </div>`).join('');
+  host.querySelectorAll('[data-wv]').forEach(el => el.onclick = () => setWikiView(el.dataset.wv));
+  const sect = $('#btnWikiSect');
+  if (sect) sect.classList.toggle('closed', !wikiView);
+}
+
+function renderWiki() {
+  const pane = $('#wikiPane');
+  if (!pane) return;
+  renderWikiNav();
+  const v = wikiView;
+  if (v === 'instances') wikiInstancesHTML(pane);
+  else if (v === 'projects') wikiProjectsHTML(pane);
+  else if (v === 'sync') wikiSyncHTML(pane);
+  else if (v === 'create') wikiCreateHTML(pane);
+  else pane.innerHTML = '';
+}
+
+/// 顶部探测条（实例/项目/同步/新建 四页共用）
+function wikiProbeBar() {
+  const W = wikiState();
+  const p = W.probe;
+  const cls = p.status === 'online' ? 'ok' : p.status === 'blocked' || p.status === 'weird' ? 'err' : 'off';
+  const txt = { online: '19828 在线 ✓', offline: '19828 离线', probing: '探测中…',
+    blocked: '浏览器被 CORS 拦（真机用 lsof 探）', weird: '有响应但异常', unknown: '未探测' }[p.status] || p.status;
+  return `<div class="hset-group" style="margin:10px 16px 0"><div class="hset" style="padding:10px 14px">
+    <div class="tx"><div class="tt">自动检测</div>
+      <div class="ds">API 唯一入口 <code>127.0.0.1:19828</code>（源码硬编码，不改项目则无法分端口）·
+        当前归属：<b style="color:#93C5FD">${escapeHtml(wikiOwnerLabel())}</b>
+        —— 所有调用只打 19828，调用前核对归属 = 结构上不会读错实例。</div></div>
+    <div class="ct">
+      <span class="qe-state ${cls}">${txt}</span>
+      <button class="hbtn" id="wpProbe">重新探测</button>
+    </div></div></div>`;
+}
+function wikiBindProbe(pane) {
+  const b = pane.querySelector('#wpProbe');
+  if (b) b.onclick = () => wikiProbe();
+}
+
+/* ── 页1：实例总览 ── */
+function wikiInstancesHTML(pane) {
+  const W = wikiState();
+  pane.innerHTML = hBar('知识库 · 实例（LLM Wiki Console）',
+    'HOME 隔离 + 克隆 App + launchd 自启 = 复用现成 llm-wiki-instance，本页只做驾驶舱（multi-instance.md）')
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      ${wikiProbeBar()}
+      <div class="hset-sec">实例（${W.instances.length}）</div>
+      <div class="hgw" style="padding:0 16px 8px">${W.instances.map(i => `
+        <div class="hgw-card${i.name === W.apiOwner ? ' is-primary' : ''}">
+          <div class="hgw-top">
+            <span class="hgw-label">LLM Wiki ${i.name === 'main' ? '（主）' : escapeHtml(i.name)}</span>
+            <span class="hchip${i.running ? ' on' : ''}">${i.running ? '运行中' : '未运行'}</span>
+            ${i.name === W.apiOwner ? '<span class="hchip on">API 归属 · 19828</span>' : ''}
+          </div>
+          <div class="hgw-fields">
+            <span><b>形态</b>${i.form === 'clone' ? '克隆（独立 Dock 图标）' : '官方原版（真实 HOME）'}</span>
+            <span><b>bundle</b>${escapeHtml(i.bundle)}</span>
+            <span><b>home</b>${escapeHtml(i.home)}</span>
+          </div>
+          <div class="hrow" style="margin-top:8px;gap:8px;align-items:center">
+            <button class="hchk${i.autostart ? ' is-on' : ''}" data-wact="autostart" data-n="${i.name}">开机自启</button>
+            <button class="hchk${i.autoResume ? ' is-on' : ''}" data-wact="resume" data-n="${i.name}">自动继续任务</button>
+          </div>
+          <div class="hgw-ops">
+            <button class="hbtn" data-wact="start" data-n="${i.name}"${i.running ? ' disabled' : ''}>启动</button>
+            <button class="hbtn" data-wact="stop" data-n="${i.name}"${i.running ? '' : ' disabled'}>停止</button>
+            <button class="hbtn primary" data-wact="own" data-n="${i.name}"${i.name === W.apiOwner ? ' disabled' : ''}>设为 API 归属</button>
+            <button class="hbtn ghost" data-wact="log" data-n="${i.name}">日志</button>
+          </div>
+        </div>`).join('')}</div>
+      <div class="hset-sec">语义与命令（真机执行处）</div>
+      <div class="hnote" style="padding:0 16px 16px;line-height:1.9">
+        <b>开机自启</b> = <code>llm-wiki-instance autostart &lt;名&gt; on|off</code>（no-autostart 标记，LaunchAgent 的 all 跳过它）<br>
+        <b>自动继续任务</b> = 实例启动后检查 <code>&lt;项目&gt;/.llm-wiki/ingest-queue.json</code> 的 pending/failed →
+          调 queue-watcher / <code>QUEUE_MANAGE</code> 恢复（App 自带队列持久化+崩溃恢复，此项=Wanna 主动兜底）<br>
+        <b>切换 API 归属</b> = stop 当前持有者 → start 目标 → 等 19828 /health（19828 是单例，先启动者得；
+          这就是「防调错实例读错库」的机制——入口永远唯一，Wanna 永远标明归属）<br>
+        <b>启动/停止/日志</b> = <code>llm-wiki-instance &lt;名&gt; / stop &lt;名&gt; / tail launcher.log</code>
+      </div>
+    </div>`;
+  wikiBindProbe(pane);
+  pane.querySelectorAll('[data-wact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.wact, n = b.dataset.n;
+    const inst = W.instances.find(x => x.name === n); if (!inst) return;
+    if (act === 'autostart') { inst.autostart = !inst.autostart; save(true); renderWiki();
+      toast(`llm-wiki-instance autostart ${n} ${inst.autostart ? 'on' : 'off'}`); return; }
+    if (act === 'resume') { inst.autoResume = !inst.autoResume; save(true); renderWiki();
+      toast(inst.autoResume ? `${n}：启动后自动恢复队列（pending/failed → QUEUE_MANAGE resume）`
+        : `${n}：不自动续跑（队列保留，手动恢复）`); return; }
+    if (act === 'start') { inst.running = true; save(true); renderWiki();
+      toast(`llm-wiki-instance ${n}${n !== 'main' ? ' --seed' : ''}（真机执行；归 ${inst.autoResume ? '自动续跑' : '不动队列'}）`); return; }
+    if (act === 'stop') { inst.running = false; if (W.apiOwner === n) W.apiOwner = null;
+      save(true); renderWiki(); toast(`llm-wiki-instance stop ${n}`); return; }
+    if (act === 'own') {
+      const cur = W.instances.find(x => x.name === W.apiOwner);
+      if (cur && cur.running) cur.running = false;          // 端口单例：先停持有者
+      inst.running = true; W.apiOwner = n; save(true); renderWiki();
+      toast(`API 归属 → <b>${escapeHtml(n)}</b>（stop ${cur ? cur.name : '—'} → start ${n} → 等 19828 health；后续调用只打 19828）`);
+      return;
+    }
+    if (act === 'log') { toast(`<code>${escapeHtml(inst.home.replace(/\/home$/, ''))}/launcher.log</code>（真机 tail -50）`); return; }
+  });
+}
+
+/* ── 页2：知识库项目 ── */
+function wikiProjectsHTML(pane) {
+  const W = wikiState();
+  const instOpts = sel => `<option value="">（未绑定）</option>` + W.instances.map(i =>
+    `<option value="${escapeHtml(i.name)}"${sel === i.name ? ' selected' : ''}>${escapeHtml(i.name)}</option>`).join('');
+  pane.innerHTML = hBar('知识库 · 项目（Data/Wiki/）',
+    '磁盘共享 · 实例靠 registry 认领 · 同一项目同时只许一个实例打开（互斥锁）', '')
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      ${wikiProbeBar()}
+      <div class="hrow" style="padding:6px 16px 0">
+        <span class="hsub">根目录 <code>/Users/mjm/Documents/SuperAgent/Data/Wiki/</code></span>
+        <span style="flex:1"></span>
+        <button class="hbtn primary" data-wact="importDir">＋ 导入文件夹</button>
+        <button class="hbtn" data-wact="importFile">＋ 导入文件</button>
+      </div>
+      <div class="hset-sec">导入语义（API 无 create-project 端点 → 文件层是正确路径）</div>
+      <div class="hnote" style="padding:0 16px 8px;line-height:1.85">
+        导入 = ① 建 <code>Data/Wiki/&lt;名&gt;/</code> 并放入文件 → ② 写<b>目标实例</b> home 里
+        app-state.json 的 <code>projectRegistry</code>（{UUID,name,path}）—— 目标实例须停止时写
+        （与 sync-config 同约束，运行中写回会被覆盖）。绑定实例 = 声明"以后谁打开它"，防互斥锁撞车。
+      </div>
+      <div class="hgw" style="padding:0 16px 16px">${W.projects.map((p, idx) => `
+        <div class="hgw-card${p.queue.failed ? ' is-quar' : ''}">
+          <div class="hgw-top"><span class="hgw-label">${escapeHtml(p.name)}</span>
+            ${p.queue.pending || p.queue.failed
+              ? `<span class="hchip${p.queue.failed ? '' : ' on'}">队列 ${p.queue.pending} pending${p.queue.failed ? ` · ${p.queue.failed} failed` : ''}</span>`
+              : '<span class="hchip">队列空</span>'}
+            ${p.owner ? `<span class="hchip on" style="margin-left:auto">绑定 ${escapeHtml(p.owner)}</span>` : ''}</div>
+          <div class="hgw-fields"><span><b>path</b>${escapeHtml(p.path.replace('/Users/mjm/Documents/SuperAgent', '…'))}</span></div>
+          <div class="hrow" style="margin-top:8px;gap:8px;align-items:center">
+            <span class="hsub">绑定实例</span>
+            <select data-wact="bind" data-i="${idx}">${instOpts(p.owner)}</select>
+            <span style="flex:1"></span>
+            <button class="hbtn primary" data-wact="open" data-i="${idx}">在绑定实例打开</button>
+            <button class="hbtn" data-wact="queue" data-i="${idx}">队列详情</button>
+          </div>
+        </div>`).join('')}</div>
+    </div>`;
+  wikiBindProbe(pane);
+  pane.querySelectorAll('[data-wact]').forEach(el => {
+    const act = el.dataset.wact;
+    if (act === 'bind') { el.onchange = () => {
+      const p = W.projects[+el.dataset.i];
+      const v = el.value;
+      if (v) {  // 互斥检查：别的项目不能绑到同一实例？—— 一个实例可开多项目（不同时打开即可）
+        const clash = W.projects.find(x => x !== p && x.owner === v && x.opened);
+        if (clash) { toast(`${v} 正打开着「${clash.name}」—— 项目互斥锁：先关再开这个`); el.value = p.owner || ''; return; }
+      }
+      p.owner = v || null; save(true); renderWiki();
+      toast(v ? `「${escapeHtml(p.name)}」→ 绑定 ${escapeHtml(v)}（registry 写入该实例）` : '已解绑');
+    }; return; }
+    if (act === 'open') { el.onclick = () => {
+      const p = W.projects[+el.dataset.i];
+      if (!p.owner) { toast('先选绑定实例 —— 不知道开在哪个实例上'); return; }
+      const inst = W.instances.find(i => i.name === p.owner);
+      if (!inst) { toast('绑定的实例不存在'); return; }
+      if (!inst.running) { toast(`${p.owner} 未运行 —— 真机：llm-wiki-instance ${p.owner} 然后打开 ${p.path}`); return; }
+      if (p.owner !== W.apiOwner) { toast(`⚠ ${p.owner} 不是 API 归属（19828 在 ${W.apiOwner}）—— UI 打开可以，但检索 API 打到的将是 ${W.apiOwner}`); return; }
+      toast(`在 <b>${escapeHtml(p.owner)}</b> 打开「${escapeHtml(p.name)}」（真机：registry lastProject → App 打开）`);
+    }; return; }
+    if (act === 'queue') { el.onclick = () => {
+      const p = W.projects[+el.dataset.i];
+      askModal({ title: `队列详情 — ${p.name}`,
+        text: `<code>${escapeHtml(p.path)}/.llm-wiki/ingest-queue.json\npending ${p.queue.pending} · failed ${p.queue.failed}\nwarnings 见 ingest-warnings.log\n\n恢复: QUEUE_MANAGE resume "${p.name}"（真机）</code>`,
+        okText: '关闭' });
+    }; return; }
+    if (act === 'importDir' || act === 'importFile') { el.onclick = () => {
+      const isDir = act === 'importDir';
+      askModal({ title: isDir ? '导入文件夹（= 新建项目）' : '导入文件到已有项目',
+        text: isDir
+          ? '将创建 Data/Wiki/<名>/ 并放入文件，然后写入所选实例的 projectRegistry（须实例停止）'
+          : '格式：目标项目名|文件绝对路径 —— 复制文件进该项目（真机）',
+        value: isDir ? '新知识库' : '编程|/Users/mjm/Documents/SuperAgent/Data/xxx.md',
+        okText: isDir ? '创建并导入' : '导入', onOk: v => {
+          const s = String(v || '').trim();
+          if (!s) return false;
+          if (isDir) {
+            if (W.projects.some(p => p.name === s)) { toast('同名项目已存在'); return false; }
+            W.projects.push({ name: s, path: '/Users/mjm/Documents/SuperAgent/Data/Wiki/' + s,
+              owner: null, queue: { pending: 0, failed: 0 } });
+            save(true); renderWiki(); renderWikiNav();
+            toast(`已创建 <b>${escapeHtml(s)}</b>（+ 绑定实例后写 registry）`);
+          } else {
+            const [pn, fp] = s.split('|').map(x => (x || '').trim());
+            if (!pn || !fp) { toast('格式：项目名|路径'); return false; }
+            const p = W.projects.find(x => x.name === pn);
+            if (!p) { toast('项目不存在'); return false; }
+            p.queue.pending++; save(true); renderWiki();
+            toast(`已导入 →「${escapeHtml(pn)}」摄取队列 pending+1（真机：复制 ${escapeHtml(fp)} → 触发 rescan）`);
+          }
+          return true;
+        } });
+    }; }
+  });
+}
+
+/* ──页3：同步设置 ── */
+function wikiSyncHTML(pane) {
+  const W = wikiState();
+  const c = W.mainConfig;
+  pane.innerHTML = hBar('知识库 · 同步设置（主配置 → 全部实例）',
+    '主实例 app-state.json 是权威源 · 下发= sync-config 语义：剥项目指针 + 目标须停')
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      ${wikiProbeBar()}
+      <div class="hset-sec">主配置（编辑后先保存，再下发）</div>
+      <div class="hset-group">
+        <div class="hset"><div class="tx"><div class="tt">LLM endpoint</div>
+          <div class="ds">llmConfig.customEndpoint</div></div>
+          <div class="ct"><input type="text" id="wsEp" value="${escapeHtml(c.endpoint)}" style="width:280px"></div></div>
+        <div class="hset"><div class="tx"><div class="tt">API Key</div>
+          <div class="ds">脱敏显示 · 真机直读主实例 app-state（本页不落真实密钥）</div></div>
+          <div class="ct"><input type="text" id="wsKey" value="${escapeHtml(c.apiKey)}" style="width:280px"></div></div>
+        <div class="hset"><div class="tx"><div class="tt">默认模型</div><div class="ds">llmConfig.model</div></div>
+          <div class="ct"><input type="text" id="wsModel" value="${escapeHtml(c.model)}" style="width:200px"></div></div>
+        <div class="hset"><div class="tx"><div class="tt">嵌入 / 搜索 / 主题</div>
+          <div class="ds">embeddingConfig · searchApiConfig · theme</div></div>
+          <div class="ct"><span class="hchip">${escapeHtml(c.embed)}</span><span class="hchip">${escapeHtml(c.search)}</span>
+            <span class="hchip">${escapeHtml(c.theme)}</span></div></div>
+        <div class="hset"><div class="tx"><div class="tt">下发</div>
+          <div class="ds">剥离 lastProject / recentProjects / projectRegistry / scheduledImportConfig:* ——
+            防止新实例启动即撞主实例占用的项目（互斥锁）。<b>运行中的实例会被拒绝</b>（退出时写回会覆盖）。</div></div>
+          <div class="ct">
+            <button class="hbtn" data-wact="saveCfg">保存主配置</button>
+            <button class="hbtn primary" data-wact="syncAll">一键下发全部实例</button>
+          </div></div>
+      </div>
+      ${W.syncLog.length ? `<div class="hset-sec">上次下发结果</div>
+        <div class="hset-group">${W.syncLog.map(l => `<div class="hset" style="padding:9px 14px">
+          <div class="tx"><div class="tt" style="font-size:12.5px">${escapeHtml(l.target)}</div></div>
+          <div class="ct"><span class="qe-state ${l.ok ? 'ok' : 'err'}">${escapeHtml(l.msg)}</span></div>
+        </div>`).join('')}</div>` : ''}
+      <div class="hnote" style="padding:4px 16px 16px">真机：<code>llm-wiki-instance stop &lt;名&gt; && sync-config &lt;名&gt; && &lt;名&gt;</code>
+        或 <code>sync-config --all</code>（逐个只对停止状态生效）。首次继承 = <code>clone &lt;名&gt; --seed</code>。</div>
+    </div>`;
+  wikiBindProbe(pane);
+  pane.querySelectorAll('[data-wact]').forEach(b => b.onclick = () => {
+    if (b.dataset.wact === 'saveCfg') {
+      c.endpoint = pane.querySelector('#wsEp').value.trim();
+      c.apiKey = pane.querySelector('#wsKey').value.trim();
+      c.model = pane.querySelector('#wsModel').value.trim();
+      save(true); renderWiki(); toast('主配置已保存（权威源）');
+      return;
+    }
+    // syncAll：跑一遍 sync 语义（运行中的非源实例 → 拒绝）
+    const targets = W.instances.filter(i => i.name !== W.apiOwner);
+    W.syncLog = targets.map(t => t.running
+      ? { target: t.name, ok: false, msg: '跳过：运行中（先 stop，防写回覆盖）' }
+      : { target: t.name, ok: true, msg: '✓ 已写入 app-state（剥项目指针）' });
+    save(true); renderWiki();
+    const okN = W.syncLog.filter(x => x.ok).length;
+    toast(`下发完成：${okN}/${W.syncLog.length} 成功${W.syncLog.length - okN ? `，${W.syncLog.length - okN} 个需先停止` : ''}`);
+  });
+}
+
+/* ── 页4：新建实例 ── */
+function wikiCreateHTML(pane) {
+  const W = wikiState();
+  pane.innerHTML = hBar('知识库 · 新建实例', '一键 = llm-wiki-instance clone <名> --seed（克隆 App + 独立 HOME + 继承主配置）')
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      ${wikiProbeBar()}
+      <div class="hset-sec">创建参数</div>
+      <div class="hset-group"><div class="hset">
+        <div class="tx"><div class="tt">实例名</div><div class="ds">仅 [A-Za-z0-9_-] —— 决定克隆 App 名「LLM Wiki &lt;名&gt;.app」与数据目录</div></div>
+        <div class="ct"><input type="text" id="wcName" placeholder="例如 research" style="width:160px"></div>
+      </div>
+      <div class="hset"><div class="tx"><div class="tt">形态</div>
+        <div class="ds">克隆 = 独立 Dock 图标（+116MB，日常多开推荐）；轻量 = 共用图标省磁盘（临时/后台）</div></div>
+        <div class="ct"><select id="wcForm"><option value="clone">克隆（独立图标）</option>
+          <option value="light">轻量（共用图标）</option></select></div></div>
+      <div class="hset"><div class="tx"><div class="tt">开机自启</div>
+        <div class="ds">登录后 LaunchAgent 拉起（no-autostart 标记的反面）</div></div>
+        <div class="ct"><button type="button" class="hchk is-on" id="wcAuto">开机自启</button></div></div>
+      <div class="hset"><div class="tx"><div class="tt">自动继续之前停止/失败的任务</div>
+        <div class="ds">启动后扫该实例项目的 ingest-queue，有 pending/failed 即 QUEUE_MANAGE resume（queue-watcher 语义）</div></div>
+        <div class="ct"><button type="button" class="hchk is-on" id="wcResume">自动续跑</button></div></div>
+      <div class="hset"><div class="tx"><div class="tt">继承主配置（--seed）</div>
+        <div class="ds">复制主实例 LLM/嵌入/搜索配置并剥项目指针</div></div>
+        <div class="ct"><button type="button" class="hchk is-on" id="wcSeed">--seed</button></div></div>
+      <div class="hset"><div class="tx"><div class="tt">创建</div>
+        <div class="ds">端口注意：19828 是单例——新实例不抢端口，UI 照常；要用它的 API 需先「设为 API 归属」</div></div>
+        <div class="ct"><button class="hbtn primary" data-wact="create">创建并启动</button></div></div>
+      </div>
+      ${W.createdCmd ? `<div class="hset-sec">将执行（真机）</div>
+        <div class="wiki-cmd">${escapeHtml(W.createdCmd)}</div>` : ''}
+      <div class="hset-sec">现有实例</div>
+      <div class="hrow" style="padding:0 16px 16px;gap:7px;flex-wrap:wrap">
+        ${W.instances.map(i => `<span class="hchip${i.running ? ' on' : ''}">${escapeHtml(i.name)}${i.name === 'main' ? '·主' : ''}</span>`).join('')}
+      </div>
+    </div>`;
+  wikiBindProbe(pane);
+  ['wcAuto', 'wcResume', 'wcSeed'].forEach(id => {
+    const el = pane.querySelector('#' + id);
+    if (el) el.onclick = () => el.classList.toggle('is-on');
+  });
+  const createBtn = pane.querySelector('[data-wact="create"]');
+  if (createBtn) createBtn.onclick = () => {
+    const name = (pane.querySelector('#wcName').value || '').trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) { toast('非法实例名（仅字母/数字/横线/下划线）'); return; }
+    if (name === 'main' || W.instances.some(i => i.name === name)) { toast('实例名已存在'); return; }
+    const form = pane.querySelector('#wcForm').value;
+    const seed = pane.querySelector('#wcSeed').classList.contains('is-on');
+    const auto = pane.querySelector('#wcAuto').classList.contains('is-on');
+    const resume = pane.querySelector('#wcResume').classList.contains('is-on');
+    const MULTI = '~/Library/Application Support/LLM-Wiki-Multi/instances/';
+    W.instances.push({ name, form, bundle: form === 'clone' ? `/Applications/LLM Wiki ${name}.app` : '/Applications/LLM Wiki.app',
+      home: MULTI + name + '/home', running: true, autostart: auto, autoResume: resume });
+    W.createdCmd = [
+      form === 'clone' ? `llm-wiki-instance clone ${name}${seed ? ' --seed' : ''}` : `llm-wiki-instance ${name}${seed ? ' --seed' : ''}`,
+      auto ? '' : `llm-wiki-instance autostart ${name} off`,
+      resume ? `# 自动续跑已开（启动后扫 ingest-queue → QUEUE_MANAGE resume）` : '',
+    ].filter(Boolean).join('\n');
+    save(true); renderWiki(); renderWikiNav();
+    toast(`实例 <b>${escapeHtml(name)}</b> 已创建并启动（克隆约 116MB · 首启会弹文档权限一次）`);
+  };
+}
+
+/* §53 侧栏分区与退出路径接线 */
+(function bindWiki() {
+  const sect = document.getElementById('btnWikiSect');
+  if (sect) sect.onclick = () => { if (wikiView) setWikiView(null); else setWikiView('instances'); };
+  ['btnProjSect', 'btnPlanSect'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    const orig = b.onclick;
+    b.onclick = e => { if (wikiView) setWikiView(null); if (orig) orig(e); };
+  });
+  renderWikiNav();
+})();
 })();

@@ -2661,3 +2661,8 @@ body.finder-on .finder-pane{position:relative}
 .hchk.is-on{background:rgba(10,132,255,.14);border-color:rgba(10,132,255,.55);color:#CFE4FF}
 .hchk.is-on::before{content:'✓';color:var(--accent,#0A84FF);font-weight:700;font-size:11.5px}
 .hchk.sm{height:23px;padding:0 8px;font-size:11.5px;border-radius:6px}
+
+/* ══ §53 知识库页（LLM Wiki Console）══ */
+.wiki-cmd{margin:0 16px 10px;padding:11px 13px;background:#0E1216;border:1px solid var(--line,#26292C);
+  border-radius:10px;font-family:var(--mono,monospace);font-size:12px;line-height:1.85;color:#9FD0FF;
+  white-space:pre-wrap;word-break:break-all}
