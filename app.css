@@ -2404,3 +2404,84 @@ body.finder-on .finder-pane{position:relative}
 .qe-bar input:focus{border-color:var(--focus,#3B82F6)}
 .qe-bar .hint{font-size:11.5px;color:#8A8F96;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap}
 .qe-bar .dest{font-size:11.5px;color:#93C5FD}
+
+/* ══ §45 Hermes 第二批：角色(Profiles) · 记忆 · 提供商 · 网关 ══ */
+/* 角色页：左列表 + 右配置 + 底部文件树 */
+.hprof{display:flex;gap:0;height:100%;min-height:0}
+.hprof-list{width:210px;flex:0 0 210px;border-right:1px solid var(--line,#26292C);overflow:auto;padding:8px}
+.hprof-item{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:9px;cursor:pointer;
+  font-size:13px;color:var(--ink,#EDEEF0);margin-bottom:4px;border:1px solid transparent}
+.hprof-item:hover{background:rgba(255,255,255,.05)}
+.hprof-item.is-on{background:rgba(59,130,246,.16);border-color:rgba(59,130,246,.55)}
+.hprof-item .av{width:22px;height:22px;border-radius:50%;flex:0 0 22px;display:inline-flex;
+  align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#0B1220}
+.hprof-item .sub{display:block;font-size:10.5px;color:var(--ink3,#8A8F96);margin-top:1px}
+.hprof-body{flex:1;min-width:0;overflow:auto;padding:12px 14px}
+.hprof-cur{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:3px 9px;border-radius:12px;
+  background:rgba(34,197,94,.18);color:#BBF7D0;margin-left:8px}
+.hfiles{margin-top:10px;background:#0E1216;border:1px solid var(--line,#26292C);border-radius:10px;
+  padding:10px 12px;font-family:var(--mono,monospace);font-size:11.5px;line-height:1.85;color:#9FB0B8;
+  white-space:pre;overflow:auto}
+.hfiles b{color:#7DD3FC;font-weight:500}
+/* 记忆页 */
+.hmem{display:flex;gap:12px;padding:12px;height:100%;min-height:0}
+.hmem-card{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(255,255,255,.03);
+  border:1px solid var(--line,#26292C);border-radius:11px;overflow:hidden}
+.hmem-head{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line,#26292C);
+  font-size:12.5px;font-weight:600;color:var(--ink,#EDEEF0)}
+.hmem-usage{margin-left:auto;font-size:11px;font-family:var(--mono,monospace);color:var(--ink3,#8A8F96)}
+.hmem-usage.warn{color:#FBBF24}
+.hmem-usage.full{color:#F87171}
+.hmem-entries{flex:1;min-height:0;overflow:auto;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.hmem-entry{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);border-radius:8px;
+  padding:7px 9px;font-size:12.5px;line-height:1.6;color:var(--ink,#EDEEF0);display:flex;gap:8px;align-items:flex-start}
+.hmem-entry .txt{flex:1;min-width:0;word-break:break-word}
+.hmem-entry .ops{display:flex;gap:4px;opacity:.55}
+.hmem-entry .ops button{border:0;background:transparent;color:var(--ink3,#8A8F96);cursor:pointer;font-size:12px;
+  padding:0 3px}
+.hmem-entry .ops button:hover{color:#93C5FD}
+.hmem-entry:hover .ops{opacity:1}
+.hmem-foot{padding:8px 10px;border-top:1px solid var(--line,#26292C);display:flex;gap:8px}
+.hmem-foot input{flex:1;background:#0E1216;border:1px solid var(--line,#2A2E33);border-radius:8px;
+  color:var(--ink,#EDEEF0);font-size:12.5px;padding:6px 9px;outline:none}
+.hmem-foot input:focus{border-color:var(--focus,#3B82F6)}
+.hmem-delim{text-align:center;font-size:10.5px;color:#5B6670;font-family:var(--mono,monospace);padding:1px 0}
+.hsnap{margin:0 12px 10px;padding:9px 11px;background:rgba(59,130,246,.08);
+  border:1px dashed rgba(59,130,246,.4);border-radius:9px;font-size:11.5px;color:#BFDBFE;line-height:1.7}
+/* 提供商卡片 */
+.hprov{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;padding:12px}
+.hprov-card{background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;
+  padding:11px 12px;cursor:pointer;position:relative}
+.hprov-card:hover{border-color:rgba(59,130,246,.5)}
+.hprov-card.is-on{border-color:var(--focus,#3B82F6);background:rgba(59,130,246,.1);
+  box-shadow:0 0 0 1px rgba(59,130,246,.35)}
+.hprov-card .nm{font-size:13.5px;font-weight:600;color:var(--ink,#EDEEF0);margin-bottom:3px}
+.hprov-card .ds{font-size:11.5px;color:var(--ink3,#8A8F96);line-height:1.6;margin-bottom:7px;min-height:34px}
+.hprov-card .kv{font-size:11px;color:#9FB0B8;font-family:var(--mono,monospace);line-height:1.7;
+  word-break:break-all}
+.hprov-card .kv span{color:#6B7680}
+.hprov-card .badge{position:absolute;top:9px;right:10px;font-size:10.5px;padding:1px 7px;border-radius:9px;
+  background:rgba(34,197,94,.2);color:#BBF7D0}
+.hprov-card .badge.off{background:rgba(255,255,255,.07);color:var(--ink3,#8A8F96)}
+.hcap{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.hcap i{font-style:normal;font-size:10.5px;padding:1px 6px;border-radius:5px;background:rgba(255,255,255,.07);
+  color:#9FB0B8}
+.hcap i.yes{background:rgba(34,197,94,.18);color:#BBF7D0}
+/* 网关卡片（四类） */
+.hgw{display:flex;flex-direction:column;gap:10px;padding:12px}
+.hgw-card{background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;padding:12px}
+.hgw-card.is-primary{border-color:rgba(59,130,246,.6);background:rgba(59,130,246,.08)}
+.hgw-card.is-quar{border-color:rgba(248,113,113,.5);background:rgba(239,68,68,.07);opacity:.85}
+.hgw-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.hgw-kind{font-size:10.5px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,.08);color:#9FB0B8;
+  text-transform:uppercase;letter-spacing:.04em}
+.hgw-kind.local{background:rgba(34,197,94,.2);color:#BBF7D0}
+.hgw-kind.cloud{background:rgba(59,130,246,.2);color:#BFDBFE}
+.hgw-kind.remote{background:rgba(245,158,11,.2);color:#FDE68A}
+.hgw-kind.ssh{background:rgba(168,85,247,.2);color:#E9D5FF}
+.hgw-label{font-size:14px;font-weight:600;color:var(--ink,#EDEEF0)}
+.hgw-fields{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:9px;font-size:11.5px;color:#9FB0B8;
+  font-family:var(--mono,monospace)}
+.hgw-fields b{color:var(--ink3,#8A8F96);font-weight:400;font-family:inherit;margin-right:5px}
+.hgw-ops{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+.hgw-note{font-size:11.5px;color:var(--ink3,#8A8F96);line-height:1.75;padding:2px 14px 0}

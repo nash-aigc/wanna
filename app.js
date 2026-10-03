@@ -9282,6 +9282,9 @@ function hBuildPrompt({ room, member, delta, discussion }) {
       : hProfileName((room.members.find(m => m.handle === e.payload.handle) || {}).profile);
     lines.push(`${e.seq > discussion.seq ? '' : ''}${who}: ${e.payload.text}`);
   });
+  // §45 记忆注入：用**冻结快照**（会话开始那一刻），不是盘上最新 —— Hermes memory.md:57 的纪律
+  const snap = typeof hSnapshotBlock === 'function' ? hSnapshotBlock(member.profile) : '';
+  if (snap) { lines.push('[memory-frozen]'); lines.push(snap); }
   lines.push(`[your-turn] 成员 @${member.handle}（${member.display_name}）请给出你的回复。`);
   return lines.join('\n');
 }
@@ -9291,8 +9294,11 @@ function hRoomSend(roomId, text) {
   const room = H0.rooms.find(r => r.id === roomId);
   if (!room || !String(text || '').trim()) return { ok: false };
   const evId = hNewId('ev');
+  const isFirst = !room.events.some(e => e.kind === 'message.user');
   hAppendEvent(room, { eventId: evId, kind: 'message.user', actor: { kind: 'user', id: 'me' },
     payload: { thread_id: evId, text: String(text) } });
+  // §45 会话开始 = 冻结快照（此后盘上再改记忆也不影响这一场的 prompt）
+  if (isFirst) room.members.forEach(m => hFreezeMemory(m.profile));
   hSave();
   return { ok: true };
 }
@@ -9544,10 +9550,17 @@ function renderHermesNav() {
   const activeRooms = H0.rooms.filter(r => !r.disbanded_at).length;
   const openTasks = H0.tasks.filter(t => ['triage', 'todo', 'scheduled', 'ready', 'running', 'blocked', 'review'].includes(t.status)).length;
   const archived = hArchivedConvs().length;
+  const H2 = hState2();
+  const memEntries = Object.values(H2.memory || {})
+    .reduce((a, b) => a + ((b.memory || []).length + (b.user || []).length), 0);
   const rows = [
     { v: 'rooms', label: '群聊', badge: activeRooms ? `${activeRooms}` : '' },
     { v: 'kanban', label: '任务看板', badge: openTasks ? `${openTasks}` : '' },
     { v: 'archived', label: '归档会话', badge: archived ? `${archived}` : '' },
+    { v: 'profiles', label: '角色', badge: hProfiles().length > 1 ? `${hProfiles().length}` : '' },
+    { v: 'memory', label: '记忆', badge: memEntries ? `${memEntries}` : '' },
+    { v: 'providers', label: '提供商', badge: `${H2.providers.length}` },
+    { v: 'gateways', label: '网关', badge: `${H2.gateways.connections.length}` },
   ];
   host.innerHTML = rows.map(r => `<div class="plan-row${hermesView === r.v ? ' is-on' : ''}" data-hv="${r.v}">
       <span class="plan-dot" style="background:#3B82F6"></span><span class="pname">${r.label}</span>
@@ -9565,6 +9578,10 @@ function renderHermes() {
   if (v === 'rooms') hermesRoomsHTML(pane);
   else if (v === 'kanban') hermesKanbanHTML(pane);
   else if (v === 'archived') hermesArchivedHTML(pane);
+  else if (v === 'profiles') hermesProfilesHTML(pane);
+  else if (v === 'memory') hermesMemoryHTML(pane);
+  else if (v === 'providers') hermesProvidersHTML(pane);
+  else if (v === 'gateways') hermesGatewaysHTML(pane);
   else pane.innerHTML = '';
 }
 /// 顶部条（三个页面共用）：标题 + 返回
@@ -9630,6 +9647,7 @@ function hermesRoomsHTML(pane) {
       <div class="hcol-head">${escapeHtml(room.name)}
         <span class="hsub" style="margin-left:8px">rev ${room.rev} · epoch ${room.authority_epoch} · 权威 ${escapeHtml(room.authority_gateway_id)}</span>
         <span style="margin-left:auto"></span>
+        <button class="hbtn" data-hact="peek" title="查看下一轮要发给成员的完整 prompt（含 [memory-frozen] 注入）">🔍 prompt</button>
         <button class="hbtn" data-hact="run-turn" title="${escapeHtml(plans.status)}">▶ 跑一轮</button>
         <button class="hbtn" data-hact="run-all">⏩ 跑到结束</button>
         <button class="hbtn danger" data-hact="disband">解散</button>
@@ -9682,6 +9700,15 @@ function hermesRoomsHTML(pane) {
   if (sendBtn) sendBtn.onclick = send;
   const input = pane.querySelector('#hSend');
   if (input) input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') send(); };
+  const pk = pane.querySelector('[data-hact="peek"]');
+  if (pk) pk.onclick = () => {
+    const p = hPlanNextTask(room.id);
+    if (p.status !== 'task') return toast(`当前没有待发的轮次：${p.status}（${p.reason}）`);
+    hOpenModal({ title: '下一轮 prompt（原样）',
+      sub: '含 [control] / [transcript-delta] / [memory-frozen] / [your-turn] 四段 —— 记忆注入用的是**冻结快照**',
+      body: `<div class="hfiles" style="max-height:52vh">${escapeHtml(p.prompt)}</div>`,
+      okText: '关闭', onOk: () => true });
+  };
   const rt = pane.querySelector('[data-hact="run-turn"]');
   if (rt) rt.onclick = () => {
     const p = hRunNextTurn(room.id);
@@ -9924,7 +9951,7 @@ function hNewTaskModal() {
     <label>标题<input id="htTitle" placeholder="要做的事"></label>
     <label>正文<textarea id="htBody" rows="3" placeholder="验收判据 / 边界…"></textarea></label>
     <label>负责人（profile）
-      <select id="htAssignee">${H0.profiles.map(p => `<option value="${p.id}"${p.id === H0.cfg.defaultAssignee ? ' selected' : ''}>${escapeHtml(p.name)} · ${escapeHtml(p.model)}</option>`).join('')}</select></label>
+      <select id="htAssignee">${H0.profiles.map(p => `<option value="${p.id}"${p.id === (typeof hCurProfileId === 'function' && hCurProfileId() ? hCurProfileId() : H0.cfg.defaultAssignee) ? ' selected' : ''}>${escapeHtml(p.name)} · ${escapeHtml(p.model)}</option>`).join('')}</select></label>
     <label>优先级
       <select id="htPri">${['P0', 'P1', 'P2', 'P3'].map(p => `<option${p === 'P2' ? ' selected' : ''}>${p}</option>`).join('')}</select></label>
     <label>关联项目
@@ -10022,5 +10049,691 @@ function hermesArchivedHTML(pane) {
     hDispatchTick();
   }, 15000);
 })();
+
+
+/* ══ §45 Hermes 第二批：角色(Profiles §7) · 记忆(Memory §8) · 提供商(Providers §9) · 网关(Gateways §5.3) ══
+   四页全是"纯数据/纯逻辑"（DISSECT §13 A 批），字段照各自 schema，切换只改状态不发真请求。 */
+
+/* ── 状态回填（挂在 hState() 后面，避免改坏第一批的初始化顺序） ── */
+function hState2() {
+  const H0 = hState();
+  if (H0.activeProfile === undefined) H0.activeProfile = (H0.profiles[0] || {}).id || null;
+  if (H0.viewProfile === undefined) H0.viewProfile = H0.activeProfile;   // 正在查看的角色（≠当前角色）
+  if (!H0.memory || typeof H0.memory !== 'object') H0.memory = {};
+  if (!H0.memorySnapshots || typeof H0.memorySnapshots !== 'object') H0.memorySnapshots = {};
+  if (!H0.memoryCfg || typeof H0.memoryCfg !== 'object') {
+    // cli-config.yaml.example:1003-1016 逐键默认
+    H0.memoryCfg = { enabled: true, userEnabled: true, memoryLimit: 2200, userLimit: 1375, nudge: 10 };
+  }
+  if (!Array.isArray(H0.providers) || !H0.providers.length) H0.providers = hDefaultProviders();
+  if (!H0.modelCfg || typeof H0.modelCfg !== 'object') {
+    // §9.3：persist_switch_by_default 默认 false（不持久化）
+    H0.modelCfg = { provider: 'bailian', model: 'qwen3-vl-plus', persist: false };
+  }
+  if (!H0.gateways || typeof H0.gateways !== 'object') H0.gateways = hDefaultGateways();
+  hProfiles().forEach(p => {
+    if (p.display_name === undefined) p.display_name = p.name;
+    if (p.description === undefined) p.description = '';
+    if (p.descAuto === undefined) p.descAuto = false;
+    if (!Array.isArray(p.previousNames)) p.previousNames = [];
+    if (p.soul === undefined) p.soul = p.persona || '';
+    if (!p.uiMeta || typeof p.uiMeta !== 'object') p.uiMeta = { title: p.name, avatar: '', section: 'Agents', hidden: false };
+  });
+  return H0;
+}
+const hCurProfile = () => { const H0 = hState2(); return hProfile(H0.activeProfile) || hProfiles()[0] || null; };
+const hCurProfileId = () => { const p = hCurProfile(); return p ? p.id : null; };
+/// 顶栏的「当前角色」徽标（群聊/看板/记忆页共用 —— 这就是"主页面可选角色"的可见面）
+function hCurChip() {
+  const p = hCurProfile();
+  if (!p) return '';
+  return `<span class="hchip on" title="当前角色（在「角色」页切换）">🎭 ${escapeHtml(p.display_name || p.name)} · ${escapeHtml(p.provider)}/${escapeHtml(p.model)}</span>`;
+}
+const H_PROVIDER_COLORS = { bailian: '#FF6A00', deepseek: '#4D6BFE', openrouter: '#6467F2',
+  anthropic: '#D97757', openai: '#10A37F', gemini: '#4285F4', xiaomi: '#FF6900',
+  kimi: '#1F6FEB', minimax: '#7C3AED', zai: '#2563EB', ollama: '#9CA3AF', custom: '#6B7280' };
+function hDefaultProviders() {
+  const mk = (name, display, mode, auth, base, vision, models, desc) =>
+    ({ name, display_name: display, api_mode: mode, auth_type: auth, base_url: base,
+       supports_vision: !!vision, models, aliases: [], description: desc });
+  return [
+    mk('bailian', '阿里云百炼 DashScope', 'chat_completions', 'api_key', 'https://dashscope.aliyuncs.com/compatible-mode/v1', true,
+      ['qwen3-vl-plus', 'qwen-plus', 'qwen-audio-3.1-tts-flash'], '国内直连；本项目默认 🧠 用它'),
+    mk('deepseek', 'DeepSeek', 'chat_completions', 'api_key', 'https://api.deepseek.com', false,
+      ['deepseek-chat', 'deepseek-reasoner'], 'OpenAI 形状但路由无 /v1 前缀'),
+    mk('openrouter', 'OpenRouter（200+ 模型）', 'chat_completions', 'api_key', 'https://openrouter.ai/api/v1', true,
+      ['anthropic/claude-opus-4.6', 'openai/gpt-5'], '一个端点走多家；Jev 决策模型也走它'),
+    mk('anthropic', 'Anthropic', 'anthropic_messages', 'oauth_device_code', 'https://api.anthropic.com', true,
+      ['claude-opus-4.6', 'claude-sonnet-4.6'], '原生 messages 形状'),
+    mk('openai-codex', 'OpenAI', 'chat_completions', 'api_key', 'https://api.openai.com/v1', true,
+      ['gpt-5', 'o4-mini'], '含 codex_responses 形状'),
+    mk('gemini', 'Google Gemini', 'chat_completions', 'api_key', 'https://generativelanguage.googleapis.com/v1beta', true,
+      ['gemini-2.5-pro'], ''),
+    mk('xiaomi', '小米 MiMo', 'chat_completions', 'api_key', 'https://api.xiaomi.com/v1', true,
+      ['mimo-vl'], '小米自研'),
+    mk('kimi-coding', 'Kimi / Moonshot', 'chat_completions', 'api_key', 'https://api.moonshot.cn/v1', false,
+      ['kimi-k2.5'], ''),
+    mk('minimax', 'MiniMax', 'chat_completions', 'api_key', 'https://api.minimax.chat/v1', true,
+      ['MiniMax-Text-01'], ''),
+    mk('zai', 'z.ai / GLM', 'chat_completions', 'api_key', 'https://open.bigmodel.cn/api/paas/v4', false,
+      ['glm-4.6'], ''),
+    mk('ollama-cloud', 'Ollama（本地/云）', 'chat_completions', 'api_key', 'http://127.0.0.1:11434/v1', false,
+      ['qwen3:8b'], '自托管；原型只存配置'),
+    mk('custom', '自定义端点', 'chat_completions', 'api_key', '', false, [], 'ollama|vllm|llamacpp 别名'),
+  ];
+}
+function hDefaultGateways() {
+  // connection-registry.ts:49-107 字段 1:1；样例两条 + 一条被隔离的坏条目
+  return {
+    version: 2, primary: 'gw-local', launchMode: 'last-used', lastUsed: Date.now(),
+    connections: [
+      { id: 'gw-local', kind: 'local', label: '本地 · App 托管', authMode: null, token: '', url: '',
+        host: '', user: '', port: 0, keyPath: '', remoteHermesPath: '', remoteProfile: '', org: '' },
+      { id: 'gw-remote', kind: 'remote', label: '家里服务器', authMode: 'token', token: 'env:HERMES_GATEWAY_TOKEN',
+        url: 'https://gw.example.com:8642', host: 'gw.example.com', user: '', port: 8642,
+        keyPath: '', remoteHermesPath: '', remoteProfile: '', org: '' },
+    ],
+    quarantined: [{ id: 'gw-bad', kind: 'ssh', label: '坏掉的 SSH（探不通）', url: 'ssh://old-host:22',
+      reason: 'HTTP + WS 双探失败', at: Date.now() - 86400000 }],
+  };
+}
+const H_GW_KINDS = ['cloud', 'local', 'remote', 'ssh'];
+
+/* ── §8 记忆：两文件 + § 分隔 + 有界 + 冻结快照 ── */
+function hMemBucket(pid, target) {
+  const H0 = hState2();
+  if (!H0.memory[pid]) H0.memory[pid] = { memory: [], user: [] };
+  const b = H0.memory[pid];
+  if (!Array.isArray(b[target])) b[target] = [];
+  return b[target];
+}
+const hMemLimit = target => target === 'user' ? hState2().memoryCfg.userLimit : hState2().memoryCfg.memoryLimit;
+function hMemUsage(pid, target) {
+  const arr = hMemBucket(pid, target);
+  const chars = arr.join('\n§\n').length;
+  const lim = hMemLimit(target);
+  return { chars, limit: lim, pct: Math.min(100, Math.round(chars / lim * 100)), entries: arr.length };
+}
+/// 满了就报错让 agent 自己腾位（memory.md:25-33，不自动压缩）
+function hMemAdd(pid, target, text) {
+  const t = String(text || '').trim();
+  if (!t) return { ok: false, err: '内容为空' };
+  const arr = hMemBucket(pid, target);
+  const add = arr.concat([t]).join('\n§\n').length;
+  if (add > hMemLimit(target)) {
+    return { ok: false, err: `已达上限 ${hMemLimit(target)} 字符（当前 ${hMemUsage(pid, target).chars}）—— 先腾位再写` };
+  }
+  arr.push(t);
+  hSave();
+  return { ok: true, usage: hMemUsage(pid, target) };
+}
+function hMemReplace(pid, target, idx, text) {
+  const arr = hMemBucket(pid, target);
+  if (idx < 0 || idx >= arr.length) return { ok: false, err: '条目不存在' };
+  const t = String(text || '').trim();
+  if (!t) return hMemRemove(pid, target, idx);
+  const others = arr.filter((_, i) => i !== idx);
+  if (others.concat([t]).join('\n§\n').length > hMemLimit(target)) {
+    return { ok: false, err: '替换后会超上限，请先精简' };
+  }
+  arr[idx] = t;
+  hSave();
+  return { ok: true, usage: hMemUsage(pid, target) };
+}
+function hMemRemove(pid, target, idx) {
+  const arr = hMemBucket(pid, target);
+  if (idx < 0 || idx >= arr.length) return { ok: false };
+  arr.splice(idx, 1);
+  hSave();
+  return { ok: true, usage: hMemUsage(pid, target) };
+}
+/// format_for_system_prompt（memory_tool_store.py:463）：带占用头的块
+function hMemFormat(pid, target) {
+  const u = hMemUsage(pid, target);
+  const label = target === 'user' ? 'USER PROFILE (what you know about the user)' : 'MEMORY (your personal notes)';
+  const arr = hMemBucket(pid, target);
+  if (!arr.length) return '';
+  return `${label} [${u.pct}% — ${u.chars.toLocaleString()}/${u.limit.toLocaleString()} chars]\n§\n` + arr.join('\n§\n');
+}
+/// 冻结快照（memory.md:57：会话中途写盘立即生效于工具回显，但系统提示词下一会话才更新）
+function hFreezeMemory(pid) {
+  const H0 = hState2();
+  H0.memorySnapshots[pid] = { memory: hMemBucket(pid, 'memory').slice(), user: hMemBucket(pid, 'user').slice(),
+    at: Date.now() };
+  hSave();
+}
+function hSnapshotBlock(pid) {
+  const H0 = hState2();
+  const snap = H0.memorySnapshots[pid];
+  if (!snap) return '';
+  const fmt = (arr, target) => {
+    if (!arr || !arr.length) return '';
+    const lim = target === 'user' ? H0.memoryCfg.userLimit : H0.memoryCfg.memoryLimit;
+    const chars = arr.join('\n§\n').length;
+    const label = target === 'user' ? 'USER PROFILE (what you know about the user)' : 'MEMORY (your personal notes)';
+    return `${label} [${Math.min(100, Math.round(chars / lim * 100))}% — ${chars}/${lim} chars]\n§\n` + arr.join('\n§\n');
+  };
+  const a = fmt(snap.memory, 'memory'), b = fmt(snap.user, 'user');
+  return [a, b].filter(Boolean).join('\n\n');
+}
+/// 盘上最新 vs 已冻结快照 是否有差（"冻结快照"这条纪律的可见证据）
+function hMemSnapDiff(pid) {
+  const H0 = hState2();
+  const snap = H0.memorySnapshots[pid];
+  if (!snap) return { hasSnap: false, dirty: true };
+  const cur = hMemBucket(pid, 'memory').join('\n§\n') + '||' + hMemBucket(pid, 'user').join('\n§\n');
+  const sk = (snap.memory || []).join('\n§\n') + '||' + (snap.user || []).join('\n§\n');
+  return { hasSnap: true, dirty: cur !== sk, at: snap.at };
+}
+
+/* ── 网关注册表操作（connection-registry.ts 规则） ── */
+function hGwValidate(g, editId) {
+  const G = hState2().gateways;
+  const label = String(g.label || '').trim();
+  if (!label) return { ok: false, err: 'label 必填' };
+  if (label.length > 64) return { ok: false, err: 'label 最长 64 字符' };
+  if (G.connections.some(c => c.label === label && c.id !== editId)) return { ok: false, err: 'label 必须唯一' };
+  if (g.kind !== 'local') {
+    const url = String(g.url || '').trim();
+    if (g.kind === 'remote' || g.kind === 'cloud') {
+      if (!/^https?:\/\//.test(url)) return { ok: false, err: 'remote/cloud 需要 http(s):// 地址' };
+      const norm = url.replace(/\/+$/, '').toLowerCase();
+      if (G.connections.some(c => c.id !== editId && c.url && c.url.replace(/\/+$/, '').toLowerCase() === norm)) {
+        return { ok: false, err: '按规范化 URL 去重：已有同地址连接' };
+      }
+    }
+    if (g.kind === 'ssh') {
+      if (!g.host) return { ok: false, err: 'ssh 需要 host' };
+      const key = `${g.user || ''}@${g.host}:${g.port || 22}`;
+      if (G.connections.some(c => c.id !== editId && c.kind === 'ssh'
+        && `${c.user || ''}@${c.host}:${c.port || 22}` === key)) {
+        return { ok: false, err: '按 user@host:port 去重：已有同主机连接' };
+      }
+    }
+  }
+  return { ok: true };
+}
+function hGwAdd(g) {
+  const v = hGwValidate(g);
+  if (!v.ok) return v;
+  const G = hState2().gateways;
+  if (G.connections.length >= 20) return { ok: false, err: '连接数达到上限 20' };
+  const c = { id: hNewId('gw'), kind: g.kind, label: g.label.trim(), url: g.url || '', authMode: g.authMode || null,
+    token: g.token || '', host: g.host || '', user: g.user || '', port: +(g.port || 0), keyPath: g.keyPath || '',
+    remoteHermesPath: g.remoteHermesPath || '', remoteProfile: g.remoteProfile || '', org: g.org || '' };
+  G.connections.push(c);
+  hSave();
+  return { ok: true, conn: c };
+}
+function hGwRemove(id) {
+  const G = hState2().gateways;
+  const c = G.connections.find(x => x.id === id);
+  if (!c) return { ok: false, err: '不存在' };
+  if (c.kind === 'local') return { ok: false, err: 'local（App 托管）不可删除' };
+  if (G.primary === id) {
+    const fallback = G.connections.find(x => x.id !== id);
+    if (!fallback) return { ok: false, err: '删掉后没有兜底连接' };
+    G.primary = fallback.id;
+  }
+  G.connections = G.connections.filter(x => x.id !== id);
+  hSave();
+  return { ok: true };
+}
+function hGwTest(id) {
+  const G = hState2().gateways;
+  const c = G.connections.find(x => x.id === id);
+  if (!c) return { ok: false, err: '不存在' };
+  // B 批：真探测要发 HTTP + WebSocket；原型只做假探测（如实标注）
+  const bad = c.kind === 'remote' && !/^https?:\/\//.test(c.url || '');
+  if (bad) {
+    G.quarantined = G.quarantined.filter(q => q.id !== id);
+    G.quarantined.unshift({ id, kind: c.kind, label: c.label, url: c.url,
+      reason: '地址格式非法（探不通）', at: Date.now() });
+    if (G.quarantined.length > 20) G.quarantined.length = 20;   // REGISTRY_QUARANTINE_CAP=20
+    G.connections = G.connections.filter(x => x.id !== id);
+    hSave();
+    return { ok: false, err: 'HTTP + WS 双探失败 → 已隔离进 quarantined（坏条目保全不丢）' };
+  }
+  G.lastUsed = Date.now();
+  hSave();
+  return { ok: true, msg: `HTTP ✓ · WS ✓（假探测，B 批才发真请求）` };
+}
+
+/* ── 渲染分发扩展 ── */
+function renderHermes2() {
+  const pane = $('#hermesPane');
+  if (!pane) return;
+  const v = hermesView;
+  if (v === 'profiles') return hermesProfilesHTML(pane);
+  if (v === 'memory') return hermesMemoryHTML(pane);
+  if (v === 'providers') return hermesProvidersHTML(pane);
+  if (v === 'gateways') return hermesGatewaysHTML(pane);
+  return false;
+}
+
+/* ── 角色页（§7） ── */
+function hermesProfilesHTML(pane) {
+  const H0 = hState2();
+  const cur = hProfile(H0.viewProfile) || hCurProfile();
+  const list = hProfiles();
+  const left = `<div class="hprof-list">
+      <div class="hcol-head" style="padding:2px 2px 8px">角色（Profile）
+        <span style="margin-left:auto"></span></div>
+      ${list.map(p => `<div class="hprof-item${p.id === (H0.viewProfile || H0.activeProfile) ? ' is-on' : ''}" data-pfv="${p.id}">
+        <span class="av" style="background:${H_PROVIDER_COLORS[p.provider] || '#6B7280'}">${escapeHtml((p.display_name || p.name || '?').slice(0, 1))}</span>
+        <span style="min-width:0"><span style="display:block;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.display_name || p.name)}</span>
+        <span class="sub">${escapeHtml(p.handle)} · ${escapeHtml(p.model)}</span></span></div>`).join('')}
+      <div class="hrow" style="margin-top:8px">
+        <button class="hbtn" data-pfact="new" style="flex:1">＋ 新建</button>
+        <button class="hbtn" data-pfact="clone" title="复制当前角色（--clone 语义：拷 config/SOUL/记忆，不拷会话）">⧉ 复制</button>
+      </div>
+    </div>`;
+  const p = cur;
+  const body = p ? `<div class="hprof-body">
+      <div class="hrow"><span class="htitle">${escapeHtml(p.display_name || p.name)}</span>
+        ${p.id === H0.activeProfile ? '<span class="hprof-cur">✓ 当前角色</span>' : ''}
+        <span class="spacer" style="flex:1"></span>
+        <button class="hbtn primary" data-pfact="use">设为当前</button>
+        <button class="hbtn" data-pfact="rename">改名</button>
+        <button class="hbtn danger" data-pfact="del">删除</button></div>
+      <div class="hnote" style="margin-top:4px">一个 profile = 一个独立 Hermes home（自己的 config / 密钥 / SOUL / 记忆 / 会话）。
+        角色（Bot Mode）就是 profile 的一层展示。</div>
+      <div class="hsec">profile.yaml</div>
+      <div class="hform">
+        <div class="hrow">
+          <label style="flex:1">display_name<input data-pf="display_name" value="${escapeHtml(p.display_name || '')}"></label>
+          <label style="flex:1">handle（群聊 @名）<input data-pf="handle" value="${escapeHtml(p.handle || '')}"></label>
+        </div>
+        <label>description（1-2 句；看板 decomposer 按它路由任务）
+          <input data-pf="description" value="${escapeHtml(p.description || '')}"
+            placeholder="例：负责拆需求、定边界，回答偏结构化。"></label>
+        <div class="hrow">
+          <label style="flex:1">model
+            <select data-pf="model">${['qwen3-vl-plus','qwen-plus','deepseek-chat','deepseek-reasoner','gpt-5','claude-opus-4.6']
+              .map(m => `<option${m === p.model ? ' selected' : ''}>${m}</option>`).join('')}</select></label>
+          <label style="flex:1">provider（与「提供商」页联动）
+            <select data-pf="provider">${hState2().providers.map(x => `<option value="${x.name}"${x.name === p.provider ? ' selected' : ''}>${escapeHtml(x.display_name)}</option>`).join('')}</select></label>
+        </div>
+        <label>绑定项目文件夹（看板任务默认带它）
+          <select data-pf="projectPath"><option value="">（不绑定）</option>
+            ${(S.projects || []).filter(x => x && !x.isDefault).map(x =>
+              `<option value="${escapeHtml(x.path)}"${x.path === p.projectPath ? ' selected' : ''}>${escapeHtml(x.name)}</option>`).join('')}
+          </select></label>
+        <div class="hrow">
+          <label style="flex:1">description_auto（AI 生成徽标）
+            <select data-pf="descAuto"><option value="0"${!p.descAuto ? ' selected' : ''}>false</option>
+              <option value="1"${p.descAuto ? ' selected' : ''}>true</option></select></label>
+          <label style="flex:1">previous_names（改名历史，群聊旧 handle 同步用）
+            <input value="${escapeHtml((p.previousNames || []).join(', '))}" disabled></label>
+        </div>
+        <label>SOUL.md（人格与常驻指令）
+          <textarea data-pf="soul" rows="3" placeholder="这个角色说话的方式、底线、常用口癖…">${escapeHtml(p.soul || '')}</textarea></label>
+        <div class="hrow">
+          <label style="flex:1">ui_meta.hermes-bots.title（Bot 名）
+            <input data-pf="ui.title" value="${escapeHtml(p.uiMeta.title || '')}"></label>
+          <label style="flex:1">section（分组）
+            <input data-pf="ui.section" value="${escapeHtml(p.uiMeta.section || '')}"></label>
+          <label style="flex:1">hidden
+            <select data-pf="ui.hidden"><option value="0"${!p.uiMeta.hidden ? ' selected' : ''}>false</option>
+              <option value="1"${p.uiMeta.hidden ? ' selected' : ''}>true</option></select></label>
+        </div>
+      </div>
+      <div class="hsec">独立 home 目录（<code>~/.hermes/profiles/${escapeHtml(p.name)}/</code>）</div>
+      <div class="hfiles">├── <b>config.yaml</b>    全部行为设置（model/toolsets/gateway…）
+├── <b>.env</b>           该角色的密钥（可覆盖 shell 环境）
+├── <b>SOUL.md</b>        人格与常驻指令
+├── <b>profile.yaml</b>   角色元数据（上面这张表）
+├── <b>auth.json</b>      OAuth 登录
+├── <b>state.db</b>       会话库（Archived Chats 的底层）
+├── <b>memories/</b>      MEMORY.md + USER.md（本角色独享 → 「记忆」页）
+├── skills/  cron/jobs.json  logs/  plugins/  attachments/  cache/</div>
+      <div class="hnote">克隆语义：<b>⧉ 复制</b> = <code>--clone</code>（拷 config/SOUL/记忆），
+        <b>永不拷</b>会话历史 / cron / 单次 OAuth / bot token（一个 token 只能归一个 profile）。</div>
+    </div>` : '<div class="hprof-body"><div class="hempty">没有角色 —— 左下「＋ 新建」。</div></div>';
+
+  pane.innerHTML = hBar('角色 · 多角色隔离（Profiles）',
+    '一个 profile = 一个独立 home · 角色就是 profile 的一层展示（Hermes §7）', hCurChip())
+    + `<div class="hbody"><div class="hprof">${left}${body}</div></div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-pfv]').forEach(el => el.onclick = () => {
+    H0.viewProfile = el.dataset.pfv;                 // 点行 = 切换"正在查看的角色"
+    renderHermes();
+  });
+  pane.querySelectorAll('[data-pf]').forEach(el => {
+    const key = el.dataset.pf;
+    el.onchange = () => {
+      const prof = hCurProfile(); if (!prof) return;
+      let v = el.value;
+      if (key.endsWith('.hidden') || key.endsWith('.descAuto') || key === 'descAuto') v = v === '1' || v === 'true';
+      if (key.startsWith('ui.')) prof.uiMeta[key.slice(3)] = v;
+      else prof[key] = v;
+      if (key === 'display_name') prof.name = v || prof.name;
+      hSave(); renderHermes(); renderHermesNav();
+      toast('已保存（写入 profile.yaml）');
+    };
+  });
+  const act = k => pane.querySelector(`[data-pfact="${k}"]`);
+  if (act('use')) act('use').onclick = () => {
+    if (!p) return;
+    H0.activeProfile = p.id;
+    H0.viewProfile = p.id;
+    H0.cfg.defaultAssignee = p.id;                       // 看板 dispatcher 的默认负责人跟着角色走
+    H0.modelCfg.provider = p.provider; H0.modelCfg.model = p.model;
+    hSave(); renderHermes(); renderHermesNav();
+    toast(`当前角色 → <b>${escapeHtml(p.display_name || p.name)}</b>（群聊/看板/记忆都跟着它）`);
+  };
+  if (act('rename')) act('rename').onclick = () => {
+    if (!p) return;
+    askModal({ title: '改名（profile id）', text: '旧名会进 previous_names（群聊旧 handle 同步用）',
+      value: p.name, okText: '改名', onOk: v => {
+        const nv = (v || '').trim();
+        if (!nv || nv === p.name) return;
+        p.previousNames.push(p.name);
+        p.name = nv; hSave(); renderHermes(); renderHermesNav(); toast('已改名（previous_names 已记录）');
+      } });
+  };
+  if (act('del')) act('del').onclick = () => {
+    if (!p) return;
+    if (hProfiles().length <= 1) return toast('至少保留一个角色');
+    askModal({ title: '删除角色', text: `将删除 ${p.name}（含它的记忆与配置，会话历史一并不保留）`, okText: '删除', onOk: () => {
+      hState2().profiles = hProfiles().filter(x => x.id !== p.id);
+      delete H0.memory[p.id]; delete H0.memorySnapshots[p.id];
+      if (H0.activeProfile === p.id) H0.activeProfile = hProfiles()[0].id;
+      hSave(); renderHermes(); renderHermesNav(); toast('角色已删除');
+    } });
+  };
+  if (act('new')) act('new').onclick = () => askModal({ title: '新建角色',
+    text: '会创建一个独立 home（config / .env / SOUL / memories…）', value: '新角色', okText: '创建',
+    onOk: v => {
+      const nm = (v || '').trim(); if (!nm) return;
+      const id = hNewId('pf');
+      hProfiles().push({ id, name: nm, display_name: nm, handle: nm.toLowerCase().replace(/[^a-z0-9_一-龥]/g, '').slice(0, 12) || 'bot',
+        model: H0.modelCfg.model, provider: H0.modelCfg.provider, projectPath: '', persona: '',
+        description: '', descAuto: false, previousNames: [], soul: '',
+        uiMeta: { title: nm, avatar: '', section: 'Agents', hidden: false } });
+      H0.activeProfile = id; hSave(); renderHermes(); renderHermesNav(); toast(`已创建角色「${escapeHtml(nm)}」`);
+    } });
+  if (act('clone')) act('clone').onclick = () => {
+    if (!p) return;
+    const id = hNewId('pf');
+    const copy = JSON.parse(JSON.stringify(p));
+    copy.id = id; copy.name = p.name + '-copy'; copy.display_name = (p.display_name || p.name) + ' 副本';
+    copy.previousNames = [];   // --clone 拷 config/SOUL/记忆，但会话与登录态不拷
+    hProfiles().push(copy);
+    H0.memory[id] = { memory: hMemBucket(p.id, 'memory').slice(), user: hMemBucket(p.id, 'user').slice() };
+    H0.activeProfile = id;
+    hSave(); renderHermes(); renderHermesNav(); toast('已复制（--clone：含 config/SOUL/记忆，不含会话）');
+  };
+}
+
+/* ── 记忆页（§8） ── */
+function hermesMemoryHTML(pane) {
+  const H0 = hState2();
+  const p = hCurProfile();
+  if (!p) { pane.innerHTML = hBar('记忆', '没有角色') + '<div class="hempty">先在「角色」页建一个角色。</div>'; return; }
+  const pid = p.id;
+  const snap = hMemSnapDiff(pid);
+  const card = (target, title, limit) => {
+    const u = hMemUsage(pid, target);
+    const arr = hMemBucket(pid, target);
+    const cls = u.pct >= 100 ? 'full' : u.pct >= 85 ? 'warn' : '';
+    return `<div class="hmem-card" data-mem="${target}">
+      <div class="hmem-head">${title}
+        <span class="hmem-usage ${cls}">${u.chars}/${limit} chars · ${u.pct}%</span></div>
+      <div class="hmem-entries">
+        ${arr.length ? arr.map((t, i) => `<div class="hmem-entry">
+            <span class="txt">${escapeHtml(t)}</span>
+            <span class="ops"><button data-memact="edit" data-t="${target}" data-i="${i}" title="替换">✎</button>
+            <button data-memact="del" data-t="${target}" data-i="${i}" title="删除">✕</button></span>
+          </div>${i < arr.length - 1 ? '<div class="hmem-delim">§</div>' : ''}`).join('')
+          : '<div class="hempty" style="padding:14px">（空）—— 下面输入第一条</div>'}
+      </div>
+      <div class="hmem-foot"><input data-memnew="${target}" placeholder="新增一条（分隔符 §，上限 ${limit} 字符）…">
+        <button class="hbtn" data-memact="add" data-t="${target}">加</button></div>
+    </div>`;
+  };
+  pane.innerHTML = hBar('记忆 · 两文件有界存储（Memory）',
+    `MEMORY.md ≤${H0.memoryCfg.memoryLimit} · USER.md ≤${H0.memoryCfg.userLimit} · 条目分隔 \\n§\\n（Hermes §8）`, hCurChip())
+    + `<div class="hbody" style="flex-direction:column">
+      <div class="hmem">
+        ${card('memory', 'MEMORY.md — agent 自己的笔记', H0.memoryCfg.memoryLimit)}
+        ${card('user', 'USER.md — 用户画像', H0.memoryCfg.userLimit)}
+      </div>
+      <div class="hsnap">${snap.hasSnap
+        ? (snap.dirty
+            ? `❄️ <b>冻结快照</b>（${new Date(snap.at).toLocaleString()}）与盘上最新<b>不一致</b> —— 写盘立刻生效于工具回显，
+               但<b>系统提示词下一会话才更新</b>（保前缀缓存）。下一场讨论仍用旧快照，点「冻结」才会换。`
+            : `❄️ <b>冻结快照</b>与盘上一致（${new Date(snap.at).toLocaleString()}）—— 下一场讨论注入的就是这份。`)
+        : '❄️ 还没有冻结快照 —— 下一场房间讨论开始时会自动冻结一次。'}
+        <span style="float:right"><button class="hbtn" data-memact="freeze" style="padding:3px 9px">以当前记忆冻结快照</button></span></div>
+      <div style="padding:0 12px 12px" class="hrow">
+        <label class="hrow" style="gap:6px"><input type="checkbox" id="mEnabled" ${H0.memoryCfg.enabled ? 'checked' : ''}> memory_enabled</label>
+        <label class="hrow" style="gap:6px"><input type="checkbox" id="mUserEnabled" ${H0.memoryCfg.userEnabled ? 'checked' : ''}> user_profile_enabled</label>
+        <label class="hrow" style="gap:6px">memory_char_limit <input type="number" id="mLimit" value="${H0.memoryCfg.memoryLimit}" min="200" max="8000" style="width:86px"></label>
+        <label class="hrow" style="gap:6px">user_char_limit <input type="number" id="mUserLimit" value="${H0.memoryCfg.userLimit}" min="200" max="8000" style="width:86px"></label>
+        <label class="hrow" style="gap:6px">nudge_interval（每 N 个用户轮提醒写记忆，0=关）
+          <input type="number" id="mNudge" value="${H0.memoryCfg.nudge}" min="0" max="100" style="width:70px"></label>
+      </div></div>`;
+  hBindCommon(pane);
+  const add = (target) => {
+    const i = pane.querySelector(`[data-memnew="${target}"]`);
+    if (!i || !i.value.trim()) return;
+    const res = hMemAdd(pid, target, i.value);
+    if (!res.ok) { toast(escapeHtml(res.err)); return; }
+    renderHermes();
+  };
+  pane.querySelectorAll('[data-memact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.memact;
+    if (act === 'add') return add(b.dataset.t);
+    if (act === 'freeze') { hFreezeMemory(pid); renderHermes(); toast('已冻结快照（下一场讨论注入这份）'); return; }
+    const t = b.dataset.t, idx = +b.dataset.i;
+    if (act === 'del') { hMemRemove(pid, t, idx); renderHermes(); toast('已删除（removal）'); return; }
+    if (act === 'edit') {
+      const cur = hMemBucket(pid, t)[idx];
+      askModal({ title: '替换条目（replace）', text: '满了会拒写，不自动压缩', value: cur, okText: '替换',
+        onOk: v => { const r = hMemReplace(pid, t, idx, v); if (!r.ok) { toast(escapeHtml(r.err)); return false; }
+          renderHermes(); toast('已替换'); } });
+    }
+  });
+  pane.querySelectorAll('[data-memnew]').forEach(i => i.onkeydown = e => {
+    e.stopPropagation(); if (e.key === 'Enter') add(i.dataset.memnew);
+  });
+  const bindChk = (id, key) => { const el = pane.querySelector(id); if (!el) return;
+    el.onchange = () => { H0.memoryCfg[key] = el.checked; hSave(); renderHermes(); }; };
+  const bindNum = (id, key) => { const el = pane.querySelector(id); if (!el) return;
+    el.onchange = () => { H0.memoryCfg[key] = Math.max(0, parseInt(el.value, 10) || 0); hSave(); renderHermes(); }; };
+  bindChk('#mEnabled', 'enabled'); bindChk('#mUserEnabled', 'userEnabled');
+  bindNum('#mLimit', 'memoryLimit'); bindNum('#mUserLimit', 'userLimit'); bindNum('#mNudge', 'nudge');
+}
+
+/* ── 提供商页（§9） ── */
+function hermesProvidersHTML(pane) {
+  const H0 = hState2();
+  const p = hCurProfile();
+  const curProv = p ? p.provider : H0.modelCfg.provider;
+  const curModel = p ? p.model : H0.modelCfg.model;
+  const cards = H0.providers.map(x => `
+    <div class="hprov-card${x.name === curProv ? ' is-on' : ''}" data-prov="${x.name}">
+      <span class="badge${x.name === curProv ? '' : ' off'}">${x.name === curProv ? '当前' : '可切换'}</span>
+      <div class="nm">${escapeHtml(x.display_name)}</div>
+      <div class="ds">${escapeHtml(x.description || '')}</div>
+      <div class="kv"><span>name</span> ${escapeHtml(x.name)}
+        <br><span>api_mode</span> ${escapeHtml(x.api_mode)}
+        <br><span>auth_type</span> ${escapeHtml(x.auth_type)}
+        <br><span>base_url</span> ${escapeHtml(x.base_url || '—')}
+        ${x.models.length ? '<br><span>models</span> ' + escapeHtml(x.models.slice(0, 3).join(' / ')) : ''}</div>
+      <div class="hcap">
+        <i class="${x.supports_vision ? 'yes' : ''}">vision ${x.supports_vision ? '✓' : '—'}</i>
+        <i>health ${x.name === 'custom' ? '—' : '✓'}</i>
+        <i>model_list ${x.models.length ? '✓' : '—'}</i>
+        ${x.aliases.length ? '<i>aliases ✓</i>' : ''}
+      </div>
+    </div>`).join('');
+  pane.innerHTML = hBar('提供商 · 多 Provider 切换（Providers）',
+    `${H0.providers.length} 个注册表条目 · /model 语义：解析→凭据→normalize（Hermes §9）`, hCurChip())
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      <div class="hgw-note" style="padding-top:10px">当前：<b>${escapeHtml(curProv)}</b> / <b>${escapeHtml(curModel)}</b>
+        　→ 切换会写进<b>当前角色</b>的 provider/model（每请求重解析，保存即生效）。
+        　持久化开关 <code>model.persist_switch_by_default</code>（默认 <b>false</b> = 只对本会话生效）。</div>
+      <div class="hrow" style="padding:8px 14px 0">
+        <label class="hrow" style="gap:6px"><input type="checkbox" id="provPersist" ${H0.modelCfg.persist ? 'checked' : ''}>
+          persist_switch_by_default（写回 config）</label>
+        <span style="flex:1"></span>
+        <span class="hsub">模型：<select id="provModel" class="hbtn" style="padding:4px 8px">
+          ${(H0.providers.find(x => x.name === curProv) || { models: [curModel] }).models.concat([curModel])
+            .filter((v, i, a) => a.indexOf(v) === i)
+            .map(m => `<option${m === curModel ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+        </select></span>
+      </div>
+      <div class="hprov">${cards}</div>
+      <div class="hsec" style="padding:0 14px">命名 provider 条目（config.yaml 的 <code>providers:</code> 块）</div>
+      <div style="padding:0 14px 16px">
+        <div class="hcard" style="background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;padding:11px 12px">
+          <div class="hform">
+            <div class="hrow">
+              <label style="flex:1">key（条目名）<input id="npKey" placeholder="my-proxy"></label>
+              <label style="flex:1">base_url（必填）<input id="npUrl" placeholder="https://llm.internal.example.com/v1"></label>
+            </div>
+            <div class="hrow">
+              <label style="flex:1">key_env / api_key<input id="npKeyEnv" placeholder="MY_PROXY_API_KEY"></label>
+              <label style="flex:1">api_mode
+                <select id="npMode"><option>chat_completions</option><option>codex_responses</option>
+                  <option>anthropic_messages</option></select></label>
+              <label style="flex:1">model<input id="npModel" placeholder="databricks-claude-sonnet-4-6"></label>
+            </div>
+            <div class="hrow"><button class="hbtn" data-pact="addnamed">＋ 添加命名条目</button>
+              <span class="hsub">（key_cmd 支持每请求重取短时令牌；extra_headers 值按密钥处理、永不入日志）</span></div>
+          </div>
+          <div id="npList" style="margin-top:8px">${(H0.namedProviders || []).map((n, i) =>
+            `<div class="hchip" style="margin:4px 6px 0 0">${escapeHtml(n.key)} → ${escapeHtml(n.base_url)}
+              <button data-npdel="${i}" style="border:0;background:transparent;color:#F87171;cursor:pointer">×</button></div>`).join('')
+            || '<span class="hsub">（还没有命名条目）</span>'}</div>
+        </div>
+      </div>
+    </div>`;
+  hBindCommon(pane);
+  pane.querySelectorAll('[data-prov]').forEach(el => el.onclick = () => {
+    const name = el.dataset.prov;
+    const prof = hCurProfile();
+    const prov = H0.providers.find(x => x.name === name);
+    if (prof) { prof.provider = name;
+      if (prov && prov.models.length && prov.models.indexOf(prof.model) < 0) prof.model = prov.models[0]; }
+    H0.modelCfg.provider = name;
+    if (prov && prov.models.length) H0.modelCfg.model = prov.models[0];
+    hSave(); renderHermes(); renderHermesNav();
+    toast(`已切换到 <b>${escapeHtml(prov ? prov.display_name : name)}</b>（/model · ${H0.modelCfg.persist ? '已写回 config' : '仅本会话'}）`);
+  });
+  const pm = pane.querySelector('#provModel');
+  if (pm) pm.onchange = () => {
+    const prof = hCurProfile();
+    if (prof) prof.model = pm.value;
+    H0.modelCfg.model = pm.value;
+    hSave(); renderHermes(); renderHermesNav();
+    toast(`模型 → ${escapeHtml(pm.value)}`);
+  };
+  const pp = pane.querySelector('#provPersist');
+  if (pp) pp.onchange = () => { H0.modelCfg.persist = pp.checked; hSave();
+    toast(pp.checked ? 'persist_switch_by_default = true（切换会写回 config）' : 'persist_switch_by_default = false（默认，不持久化）'); };
+  const addNp = pane.querySelector('[data-pact="addnamed"]');
+  if (addNp) addNp.onclick = () => {
+    const key = pane.querySelector('#npKey').value.trim();
+    const url = pane.querySelector('#npUrl').value.trim();
+    if (!key || !url) return toast('key 与 base_url 都必填');
+    if ((H0.namedProviders || []).some(n => n.key === key)) return toast('条目名已存在');
+    H0.namedProviders = H0.namedProviders || [];
+    H0.namedProviders.push({ key, base_url: url, key_env: pane.querySelector('#npKeyEnv').value.trim(),
+      api_mode: pane.querySelector('#npMode').value, model: pane.querySelector('#npModel').value.trim() });
+    hSave(); renderHermes(); toast(`已添加命名条目「${escapeHtml(key)}」`);
+  };
+  pane.querySelectorAll('[data-npdel]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    H0.namedProviders.splice(+b.dataset.npdel, 1); hSave(); renderHermes(); toast('已删除命名条目');
+  });
+}
+
+/* ── 网关页（§5.3 connection-registry） ── */
+function hermesGatewaysHTML(pane) {
+  const H0 = hState2();
+  const G = H0.gateways;
+  const cardOf = c => {
+    const isQ = G.quarantined.some(q => q.id === c.id);
+    return `<div class="hgw-card${G.primary === c.id ? ' is-primary' : ''}${isQ ? ' is-quar' : ''}" data-gw="${c.id}">
+      <div class="hgw-top">
+        <span class="hgw-kind ${c.kind}">${c.kind}</span>
+        <span class="hgw-label">${escapeHtml(c.label)}</span>
+        ${G.primary === c.id ? '<span class="hchip on" style="margin-left:auto">primary</span>' : ''}
+        ${G.lastUsed && c.id === G.lastUsed ? '' : ''}
+        <span class="hsub" style="margin-left:auto">${G.primary === c.id ? '' : ''}</span>
+      </div>
+      <div class="hgw-fields">
+        ${c.url ? `<span><b>url</b>${escapeHtml(c.url)}</span>` : ''}
+        ${c.kind === 'ssh' ? `<span><b>host</b>${escapeHtml(c.host || '—')}</span><span><b>user</b>${escapeHtml(c.user || '—')}</span><span><b>port</b>${c.port || 22}</span><span><b>key</b>${escapeHtml(c.keyPath || '—')}</span>` : ''}
+        ${c.authMode ? `<span><b>auth</b>${escapeHtml(c.authMode)}</span>` : ''}
+        ${c.token ? `<span><b>token</b>${escapeHtml(c.token)}</span>` : ''}
+        ${c.remoteHermesPath ? `<span><b>remote_path</b>${escapeHtml(c.remoteHermesPath)}</span>` : ''}
+        ${c.remoteProfile ? `<span><b>remote_profile</b>${escapeHtml(c.remoteProfile)}</span>` : ''}
+      </div>
+      <div class="hgw-ops">
+        <button class="hbtn" data-gwact="test" data-id="${c.id}">Test（HTTP + WS）</button>
+        <button class="hbtn" data-gwact="primary" data-id="${c.id}" ${G.primary === c.id ? 'disabled' : ''}>设为 primary</button>
+        <button class="hbtn danger" data-gwact="del" data-id="${c.id}" ${c.kind === 'local' ? 'disabled title="local 不可删"' : ''}>删除</button>
+      </div></div>`;
+  };
+  pane.innerHTML = hBar('网关 · 多网关连接（Gateways）',
+    `connections.json · version ${G.version} · launchMode ${G.launchMode} · 隔离区 ${G.quarantined.length}/20（Hermes §5.3）`)
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
+      <div class="hgw-note" style="padding-top:10px">三个入口：Settings → Gateways · 侧栏 profile 轨的插头 · Cmd+K 命令面板。
+        规则：<b>label 唯一且 ≤64</b> · <b>local 不可删</b> · <b>primary 兜底</b> ·
+        去重按规范化 URL 或 <code>user@host:port</code> · Test 同时探 HTTP + WebSocket · 隔离区上限 20（坏条目保全不丢）。</div>
+      <div class="hrow" style="padding:4px 14px 0">
+        <label class="hrow" style="gap:6px">launchMode
+          <select id="gwLaunch" class="hbtn" style="padding:4px 8px">
+            <option value="last-used"${G.launchMode === 'last-used' ? ' selected' : ''}>last-used</option>
+            <option value="primary"${G.launchMode === 'primary' ? ' selected' : ''}>primary</option>
+          </select></label>
+        <span class="hsub">lastUsed：${G.lastUsed ? new Date(G.lastUsed).toLocaleString() : '—'}</span>
+        <span style="flex:1"></span>
+        <button class="hbtn primary" data-gwact="add">＋ 添加连接</button>
+      </div>
+      <div class="hgw">
+        ${G.connections.map(cardOf).join('')}
+        ${G.quarantined.length ? `<div class="hsec">隔离区 quarantined（${G.quarantined.length}/20）—— 坏条目保全不丢</div>` +
+          G.quarantined.map(q => `<div class="hgw-card is-quar"><div class="hgw-top">
+            <span class="hgw-kind ${q.kind}">${q.kind}</span><span class="hgw-label">${escapeHtml(q.label)}</span>
+            <span class="hsub" style="margin-left:auto">${escapeHtml(q.reason || '')}</span></div>
+            <div class="hgw-fields"><span><b>url</b>${escapeHtml(q.url || '—')}</span>
+            <span><b>at</b>${new Date(q.at).toLocaleString()}</span></div>
+            <div class="hgw-ops"><button class="hbtn" data-gwact="unq" data-id="${q.id}">恢复</button></div></div>`).join('') : ''}
+        ${!G.connections.length ? '<div class="hempty">没有连接。</div>' : ''}
+      </div></div>`;
+  hBindCommon(pane);
+  const lm = pane.querySelector('#gwLaunch');
+  if (lm) lm.onchange = () => { G.launchMode = lm.value; hSave(); renderHermes();
+    toast(`launchMode = ${lm.value}`); };
+  pane.querySelectorAll('[data-gwact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.gwact, id = b.dataset.id;
+    if (act === 'add') return hGwAddModal();
+    if (act === 'test') { const r = hGwTest(id); renderHermes(); toast(r.ok ? r.msg : escapeHtml(r.err)); return; }
+    if (act === 'primary') { G.primary = id; G.lastUsed = Date.now(); hSave(); renderHermes();
+      toast('primary 已切换（删连接时它兜底）'); return; }
+    if (act === 'del') { const r = hGwRemove(id); renderHermes(); toast(r.ok ? '已删除' : escapeHtml(r.err)); return; }
+    if (act === 'unq') { const q = G.quarantined.find(x => x.id === id);
+      if (q) { G.quarantined = G.quarantined.filter(x => x.id !== id); hSave(); renderHermes(); toast('已移出隔离区（未自动加回连接）'); } }
+  });
+}
+function hGwAddModal() {
+  askModal({ title: '添加连接', text: 'kind = cloud / local / remote / ssh；label 唯一（≤64）',
+    value: 'remote|新连接|https://', okText: '添加', onOk: v => {
+      const parts = String(v || '').split('|');
+      const kind = (parts[0] || '').trim();
+      if (H_GW_KINDS.indexOf(kind) < 0) { toast('kind 必须是 cloud / local / remote / ssh'); return false; }
+      const label = (parts[1] || '').trim();
+      const url = (parts[2] || '').trim();
+      const r = hGwAdd({ kind, label, url });
+      if (!r.ok) { toast(escapeHtml(r.err)); return false; }
+      renderHermes(); toast(`已添加连接「${escapeHtml(label)}」`);
+      return true;
+    } });
+}
 
 })();
