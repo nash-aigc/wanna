@@ -13354,24 +13354,18 @@ function wgFocusSet() {
   });
   return { id: focusId, nodes, edges };
 }
-/// 命中测试：圆点 + **标签区**也算（文字很长，点在字上也应能抓住节点——§56 用户"无法拖拽"多半是点在字上）
+/// 命中测试：**只有离圆点特别近才选中节点**（§58 用户：Obsidian 密集处任意位置都能按住拖画布——
+/// 「不会自动匹配圆点，除非距离特别近」；§56 的 8px 余量 + 整条标签带命中会把密集区的按下全吞掉，
+/// 平移就没了。标签区命中随之作废：按在字上 = 拖画布，按在点上 = 抓节点）
 function wgHitNode(wx, wy) {
   if (!wgView.positions) return null;
   const sc = Math.max(wgView.scale, 0.0001);
-  const pad = 8 / Math.max(wgView.scale, 0.4);
-  const gap = 4 / sc;                                     // §57 与绘制同式：4 CSS px 换算成世界单位
+  const pad = 2 / sc;                                     // 2 CSS px 余量 = "特别近"（8px 太贪）
   let best = null, bestD = Infinity;
   for (const [, p] of wgView.positions) {
     const rr = p.r / sc;                                  // §57 屏幕恒定半径（与 wgDraw.arc 同式）
     const d = Math.hypot(p.x - wx, p.y - wy) - rr;
-    if (d < pad && d < bestD) { bestD = d; best = p; continue; }
-    // 标签盒（画在节点右侧，约 10px/字）
-    const charW = 10 / Math.max(wgView.scale, 0.6);
-    const lw = Math.min(String(p.n.label).length, 16) * charW;
-    if (wx >= p.x + rr && wx <= p.x + rr + gap + lw && Math.abs(wy - p.y) < charW * 0.8) {
-      const dd = (wx - p.x - rr) / (lw + 1);
-      if (dd < bestD) { bestD = dd; best = p; }
-    }
+    if (d < pad && d < bestD) { bestD = d; best = p; }
   }
   return best;
 }
@@ -13523,15 +13517,19 @@ function wgBindCanvas(pane) {
 
   // ── 滚轮缩放：目标值 + rAF 平滑插值（锚点钉在光标下）—— 不再每事件同步全量重画 ──
   // passive:false —— 元素 onwheel 在 Chrome 可能被判 passive，preventDefault 会失效导致页面跟着滚
+  // §58 步长必须按 **delta 量** 映射：旧版每事件固定 ×1.12、无视 deltaY —— 触控板/捏合一次动作
+  // 几十个小 delta → 1.12^40≈63 倍、瞬顶钳制极值（用户："突然最小，突然最大"）。exp 映射后
+  // 鼠标一格（≈100）≈ ×1.105，触控板每发只是微调，量再大也只能连续平滑地走。
   const onWheel = e => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     const cur = wgView.scale;
-    const ns = Math.min(4, Math.max(0.25, (wgView.targetScale ?? cur) * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+    const factor = Math.min(1.15, Math.max(1 / 1.15, Math.exp(-dy * 0.001)));
     // 世界锚点按当前真实 scale 换算，动画期间钉住
     wgView.zoomAnchor = { mx, my, awx: (mx - wgView.tx) / cur, awy: (my - wgView.ty) / cur };
-    wgView.targetScale = ns;
+    wgView.targetScale = Math.min(4, Math.max(0.25, (wgView.targetScale ?? cur) * factor));
     wgSmoothWake();
   };
   canvas.addEventListener('wheel', onWheel, { passive: false });
@@ -13617,7 +13615,7 @@ function wgSmoothWake() {
     const a = wgView.zoomAnchor;
     let done = false;
     if (Math.abs(t - wgView.scale) < 0.003) { wgView.scale = t; done = true; }
-    else wgView.scale += (t - wgView.scale) * 0.3;
+    else wgView.scale += (t - wgView.scale) * 0.18;       // §58 0.3→0.18：更缓的过渡（≈250ms 收敛，不再“突然到位”）
     if (a) { wgView.tx = a.mx - a.awx * wgView.scale; wgView.ty = a.my - a.awy * wgView.scale; }
     wgDraw();
     if (!done) wgSmoothRaf = requestAnimationFrame(tick);
