@@ -2680,3 +2680,9 @@ body.finder-on .finder-pane{position:relative}
   line-height:1.75;color:#C7D2DA;background:#0E1216;border:1px solid var(--line,#26292C);
   border-radius:9px;padding:10px 12px;margin-top:6px;max-height:calc(100vh - 260px);overflow:auto}
 #wgCanvas{background:radial-gradient(ellipse at center, rgba(255,255,255,.02), transparent 70%)}
+/* §55 文章编辑态 */
+.wg-edit{width:100%;height:calc(100vh - 300px);min-height:220px;resize:vertical;
+  white-space:pre-wrap;word-break:break-word;font-family:var(--mono,monospace);font-size:11.5px;
+  line-height:1.75;color:#C7D2DA;background:#0E1216;border:1px solid var(--line,#26292C);
+  border-radius:9px;padding:10px 12px;outline:none}
+.wg-edit:focus{border-color:var(--accent,#0A84FF)}

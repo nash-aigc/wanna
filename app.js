@@ -12299,14 +12299,14 @@ function wikiState() {
       probe: { status: 'unknown', at: 0 },    // online | blocked | offline | unknown
       // ── 项目：Data/Wiki/ 真实目录（磁盘共享，实例靠 registry 认领，互斥锁）──
       projects: [
-        { name: 'Memory', path: ROOT + 'Memory', owner: null, queue: { pending: 0, failed: 0 } },
-        { name: '产品经理', path: ROOT + '产品经理', owner: 'main', queue: { pending: 0, failed: 0 } },
-        { name: '产品经理】Source', path: ROOT + '产品经理】Source', owner: null, queue: { pending: 0, failed: 0 } },
-        { name: '技能设计', path: ROOT + '技能设计', owner: null, queue: { pending: 1, failed: 0 } },
-        { name: '技能设计】Source', path: ROOT + '技能设计】Source', owner: null, queue: { pending: 0, failed: 0 } },
-        { name: '编程', path: ROOT + '编程', owner: 'main', queue: { pending: 3, failed: 1 } },
-        { name: '营销销售', path: ROOT + '营销销售', owner: 'b', queue: { pending: 0, failed: 2 } },
-        { name: '营销销售】Sources', path: ROOT + '营销销售】Sources', owner: null, queue: { pending: 0, failed: 0 } },
+        { name: 'Memory', path: ROOT + 'Memory', owner: null, queue: { pending: 0, failed: 0, processing: 0, autoResume: true } },
+        { name: '产品经理', path: ROOT + '产品经理', owner: 'main', queue: { pending: 0, failed: 0, processing: 0, autoResume: true } },
+        { name: '产品经理】Source', path: ROOT + '产品经理】Source', owner: null, queue: { pending: 0, failed: 0, processing: 0, autoResume: true } },
+        { name: '技能设计', path: ROOT + '技能设计', owner: null, queue: { pending: 1, failed: 0, processing: 0, autoResume: true } },
+        { name: '技能设计】Source', path: ROOT + '技能设计】Source', owner: null, queue: { pending: 0, failed: 0, processing: 0, autoResume: true } },
+        { name: '编程', path: ROOT + '编程', owner: 'main', queue: { pending: 3, failed: 1, processing: 0, autoResume: true } },
+        { name: '营销销售', path: ROOT + '营销销售', owner: 'b', queue: { pending: 0, failed: 2, processing: 0, autoResume: false } },
+        { name: '营销销售】Sources', path: ROOT + '营销销售】Sources', owner: null, queue: { pending: 0, failed: 0, processing: 0, autoResume: true } },
       ],
       // ── 主配置（权威源=主实例 app-state.json；原型只放脱敏样例，真机由 Swift 读入）──
       mainConfig: {
@@ -12332,6 +12332,14 @@ function wikiState() {
   if (W.graph === undefined) W.graph = null;
   if (W.graphProject === undefined) W.graphProject = null;
   if (W.graphQ === undefined) W.graphQ = '';
+  if (!W.articleEdits || typeof W.articleEdits !== 'object') W.articleEdits = {};
+  // §55 队列字段回填（老 state 的 queue 只有 pending/failed）
+  (W.projects || []).forEach(p => {
+    const q = p.queue || (p.queue = { pending: 0, failed: 0 });
+    if (q.processing === undefined) q.processing = 0;
+    if (q.autoResume === undefined) q.autoResume = true;
+    if (q.stalled === undefined) q.stalled = false;
+  });
   // ⚠️ 不在这里调 wikiCfgEnsure：它引用的 const WIKI_SETTINGS 在 §54 块里，
   // bindWiki（§53 块）先于它求值会触发 TDZ。sections 的 ensure 由各使用点自理（wikiCfgFlat/syncHTML/export）。
   return W;
@@ -12505,6 +12513,70 @@ function wikiInstancesHTML(pane) {
 }
 
 /* ── 页2：知识库项目 ── */
+/// §55 队列巡检（queue-watcher 语义：停滞 = 有 pending 无 processing；autoResume → 重置激活）
+function wikiQueueScan(manual, onlyName) {
+  const W = wikiState();
+  const recovered = [];
+  W.projects.forEach(p => {
+    if (onlyName && p.name !== onlyName) return;
+    const q = p.queue;
+    const stalled = q.pending > 0 && q.processing === 0;
+    q.stalled = stalled;
+    if (q.autoResume && stalled) {
+      // QUEUE_WATCHER 阶段1：激活 pending + autoStart（原型模拟：processing+1、pending-1）
+      q.processing = 1; q.pending = Math.max(0, q.pending - 1);
+      recovered.push(p.name + '（激活 pending + autoStart）');
+    }
+    if (q.autoResume && q.failed > 0) {
+      // 阶段2：failed 重置为 pending（真机：status 改回 pending + 重启实例）
+      q.pending += q.failed; q.failed = 0;
+      recovered.push(p.name.split('】')[0] + '（failed→pending 重置）');
+    }
+  });
+  save(true);
+  wikiQueuePaint();
+  if (recovered.length) {
+    toast(`${manual ? '手动' : '自动'}继续 ${recovered.length} 项：<br>${recovered.slice(0, 3).map(escapeHtml).join('<br>')}${recovered.length > 3 ? '<br>…' : ''}`);
+  } else if (manual) {
+    toast('没有可恢复的：无停滞（有 pending 必须无 processing 才算停滞）');
+  }
+  return recovered;
+}
+/// 手动继续单卡（真机：QUEUE_MANAGE.sh resume "<项目>" / queue-watcher --once）
+function wikiQueueResume(name) {
+  const W = wikiState();
+  const p = W.projects.find(x => x.name === name);
+  if (!p) return;
+  const q = p.queue;
+  if (!q.pending && !q.failed) { toast(`「${escapeHtml(name)}」队列为空，无需继续`); return; }
+  if (q.failed > 0) { q.pending += q.failed; q.failed = 0; }
+  if (q.pending > 0 && q.processing === 0) { q.processing = 1; q.pending = Math.max(0, q.pending - 1); }
+  q.stalled = q.pending > 0 && q.processing === 0;
+  save(true); wikiQueuePaint();
+  toast(`已继续「${escapeHtml(name)}」→ processing ${q.processing} · pending ${q.pending}（真机 QUEUE_MANAGE resume）`);
+}
+/// 局部刷新：只重写徽标与开关，不整页重绘（保护页内其它交互）
+function wikiQueuePaint() {
+  if (wikiView !== 'projects') return;
+  const W = wikiState();
+  W.projects.forEach((p, i) => {
+    const q = p.queue;
+    const badgeEl = document.querySelector(`[data-qbadge="${i}"]`);
+    if (badgeEl) badgeEl.innerHTML = wikiQueueBadgeHTML(q);
+    const hchk = document.querySelector(`[data-qauto="${i}"]`);
+    if (hchk) { hchk.classList.toggle('is-on', !!q.autoResume); hchk.lastChild.textContent = q.autoResume ? ' 自动继续' : ' 手动模式'; }
+  });
+}
+function wikiQueueBadgeHTML(q) {
+  const parts = [`队列 ${q.pending} pending`];
+  if (q.processing) parts.push(`${q.processing} processing`);
+  if (q.failed) parts.push(`${q.failed} failed`);
+  const stalled = q.pending > 0 && q.processing === 0;
+  return (stalled ? `<span class="hchip" style="background:rgba(239,68,68,.22);color:#FCA5A5">⚠ 已停滞</span>` : '')
+    + `<span class="hchip${q.failed || stalled ? '' : ' on'}">${parts.join(' · ')}</span>`
+    + (q.processing ? `<span class="hchip on">摄取中</span>` : '');
+}
+
 function wikiProjectsHTML(pane) {
   const W = wikiState();
   const instOpts = sel => `<option value="">（未绑定）</option>` + W.instances.map(i =>
@@ -12516,6 +12588,7 @@ function wikiProjectsHTML(pane) {
       <div class="hrow" style="padding:6px 16px 0">
         <span class="hsub">根目录 <code>/Users/mjm/Documents/SuperAgent/Data/Wiki/</code></span>
         <span style="flex:1"></span>
+        <button class="hbtn" data-wact="scanq">🔍 立即巡检队列</button>
         <button class="hbtn primary" data-wact="importDir">＋ 导入文件夹</button>
         <button class="hbtn" data-wact="importFile">＋ 导入文件</button>
       </div>
@@ -12528,12 +12601,12 @@ function wikiProjectsHTML(pane) {
       <div class="hgw" style="padding:0 16px 16px">${W.projects.map((p, idx) => `
         <div class="hgw-card${p.queue.failed ? ' is-quar' : ''}">
           <div class="hgw-top"><span class="hgw-label">${escapeHtml(p.name)}</span>
-            ${p.queue.pending || p.queue.failed
-              ? `<span class="hchip${p.queue.failed ? '' : ' on'}">队列 ${p.queue.pending} pending${p.queue.failed ? ` · ${p.queue.failed} failed` : ''}</span>`
-              : '<span class="hchip">队列空</span>'}
+            <span data-qbadge="${idx}">${wikiQueueBadgeHTML(p.queue)}</span>
             ${p.owner ? `<span class="hchip on" style="margin-left:auto">绑定 ${escapeHtml(p.owner)}</span>` : ''}</div>
           <div class="hgw-fields"><span><b>path</b>${escapeHtml(p.path.replace('/Users/mjm/Documents/SuperAgent', '…'))}</span></div>
           <div class="hrow" style="margin-top:8px;gap:8px;align-items:center">
+            <button class="hchk${p.queue.autoResume ? ' is-on' : ''}" data-qauto="${idx}">${p.queue.autoResume ? ' 自动继续' : ' 手动模式'}</button>
+            <button class="hbtn" data-wact="resume1" data-i="${idx}">继续摄取</button>
             <span class="hsub">绑定实例</span>
             <select data-wact="bind" data-i="${idx}">${instOpts(p.owner)}</select>
             <span style="flex:1"></span>
@@ -12543,6 +12616,13 @@ function wikiProjectsHTML(pane) {
         </div>`).join('')}</div>
     </div>`;
   wikiBindProbe(pane);
+  pane.querySelectorAll('[data-qauto]').forEach(b => b.onclick = () => {
+    const p = W.projects[+b.dataset.qauto];
+    p.queue.autoResume = !p.queue.autoResume; save(true); wikiQueuePaint();
+    toast(p.queue.autoResume
+      ? `「${escapeHtml(p.name)}」开启自动继续（停滞时自动重置+autoStart，10s 巡检）`
+      : `「${escapeHtml(p.name)}」改手动模式（只提醒不自动动）`);
+  });
   pane.querySelectorAll('[data-wact]').forEach(el => {
     const act = el.dataset.wact;
     if (act === 'bind') { el.onchange = () => {
@@ -12570,6 +12650,8 @@ function wikiProjectsHTML(pane) {
         text: `<code>${escapeHtml(p.path)}/.llm-wiki/ingest-queue.json\npending ${p.queue.pending} · failed ${p.queue.failed}\nwarnings 见 ingest-warnings.log\n\n恢复: QUEUE_MANAGE resume "${p.name}"（真机）</code>`,
         okText: '关闭' });
     }; return; }
+    if (act === 'scanq') { el.onclick = () => wikiQueueScan(true); return; }
+    if (act === 'resume1') { el.onclick = () => wikiQueueResume(W.projects[+el.dataset.i].name); return; }
     if (act === 'importDir' || act === 'importFile') { el.onclick = () => {
       const isDir = act === 'importDir';
       askModal({ title: isDir ? '导入文件夹（= 新建项目）' : '导入文件到已有项目',
@@ -12734,6 +12816,10 @@ function wikiCreateHTML(pane) {
   // ⚠️ 推迟到宏任务：wikiDiffTimer/WIKI_SETTINGS 是 §54 块里的 let/const，
   // 本 IIFE 在脚本求值期执行，直接调会 TDZ 抛错并中断整个脚本（实测两连炸）。
   setTimeout(() => wikiDiffStartPolling(), 0);
+  // §55 队列自动巡检：10s 一拍（真机=queue-watcher launchd 15min；原型页面级）
+  setTimeout(() => setInterval(() => {
+    if (wikiView === 'projects') wikiQueueScan(false);
+  }, 10000), 0);
 })();
 /* ══ §54A 知识库 · 同步设置 100% 复刻 LLM Wiki 全部 16 个设置 section + 导入/导出 + 参数对比（轮询/事件）══
    字段真值：reference/LLM_Wiki/src/i18n/zh.json settings.sections（16 组全量）+ app-state.json 顶层 keys。
@@ -13154,25 +13240,88 @@ function wikiGraphStatsRefresh() {
 
 const WG_TYPE_COLOR = { entity: '#60A5FA', concept: '#34D399', source: '#FBBF24',
   finding: '#F472B6', query: '#A78BFA', synthesis: '#A78BFA' };
-let wgView = { scale: 1, tx: 40, ty: 40, drag: null, moved: 0, positions: [] };
+let wgView = { scale: 1, tx: 40, ty: 40, drag: null, moved: 0, positions: [],
+  alpha: 0, dragNode: null, draggedNode: false, raf: 0 };
 
+/// §55 圆形初始分布（Obsidian 式第一眼：加载即圆形团簇；随后力导向演化）
 function wgLayout(g, w, h) {
-  // 确定性分层：nodeType 分列，列内按 y 均匀分布 + label hash 抖动（O(n)，一次成形）
-  const types = [...new Set(g.nodes.map(n => n.nodeType || 'concept'))];
-  const cols = Math.max(types.length, 1);
-  const colW = Math.max(160, (w - 80) / cols);
   const pos = new Map();
-  types.forEach((t, ci) => {
-    const list = g.nodes.filter(n => (n.nodeType || 'concept') === t);
-    const rowH = Math.max(36, (h - 80) / Math.max(list.length, 1));
-    list.forEach((n, ri) => {
-      let hash = 0; for (const ch of n.label) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0;
-      const jitter = (hash % 40) - 20;
-      pos.set(n.id, { x: 40 + ci * colW + colW / 2 + jitter, y: 50 + ri * rowH + rowH / 2,
-        r: 5 + Math.min(n.linkCount || 1, 8), t: n.nodeType || 'concept', n });
+  const R = Math.min(w, h) * 0.36;
+  const n = g.nodes.length || 1;
+  let i = 0;
+  g.nodes.forEach(node => {
+    let hash = 0; for (const ch of node.label) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0;
+    const a = (i / n) * Math.PI * 2 + (hash % 100) / 100 * 0.35;   // 角向散开避免正多边形感
+    const rr = R * (0.42 + ((hash % 1000) / 1000) * 0.58);         // 半径带内随机
+    i++;
+    pos.set(node.id, {
+      x: Math.cos(a) * rr, y: Math.sin(a) * rr, vx: 0, vy: 0,    // 世界原点=圆心
+      r: 5 + Math.min(node.linkCount || 1, 8), t: node.nodeType || 'concept', n: node,
     });
   });
+  wgView.alpha = 1;
   return pos;
+}
+
+/// 力导向一步（d3-force 同族：斥力 + 弹簧 + 向心 + 阻尼；O(n²+e)，262 节点 <5ms/帧）
+function wgForceStep() {
+  const P = [...wgView.positions.values()];
+  const alpha = wgView.alpha;
+  const KR = 2600 * alpha;      // 斥力常数
+  const KS = 0.045;             // 弹簧刚度
+  const REST = 46;              // 边理想长度
+  const KC = 0.014 * alpha;     // 向心（保持圆形聚簇 = Obsidian 观感）
+  // 斥力（质点对）
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i];
+    for (let j = i + 1; j < P.length; j++) {
+      const b = P[j];
+      let dx = a.x - b.x, dy = a.y - b.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 < 1) { dx = (Math.random() - .5) * 2; dy = (Math.random() - .5) * 2; d2 = 4; }
+      if (d2 > 160000) continue;                       // 远对跳过（近似 Barnes-Hut 的省法）
+      const f = KR / d2;
+      const d = Math.sqrt(d2);
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+  }
+  // 弹簧（边）
+  const byId = wgView.positions;
+  for (const e of (wgView.forGraph.edges || [])) {
+    const a = byId.get(e.source), b = byId.get(e.target);
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const f = KS * (d - REST);
+    const fx = (dx / d) * f, fy = (dy / d) * f;
+    a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+  }
+  // 向心 + 积分
+  for (const p of P) {
+    p.vx -= p.x * KC; p.vy -= p.y * KC;
+    if (wgView.dragNode === p) { p.vx = 0; p.vy = 0; continue; }   // 拖拽中钉住
+    p.vx *= 0.88; p.vy *= 0.88;
+    const sp = Math.hypot(p.vx, p.vy);
+    if (sp > 9) { p.vx = p.vx / sp * 9; p.vy = p.vy / sp * 9; }
+    p.x += p.vx; p.y += p.vy;
+  }
+  wgView.alpha = Math.max(0.012, wgView.alpha * 0.987);
+}
+
+/// 唤醒演化循环（冷却即停，省电不卡；拖拽/换图会重新唤醒）
+function wgWake() {
+  if (wgView.raf) return;
+  const tick = () => {
+    wgView.raf = 0;
+    if (!wgView.positions || wgView.positions.size === 0) return;
+    if (wgView.alpha > 0.013 || wgView.dragNode) {
+      wgForceStep();
+      wgDraw();
+      wgView.raf = requestAnimationFrame(tick);
+    }
+  };
+  wgView.raf = requestAnimationFrame(tick);
 }
 
 function wgDraw() {
@@ -13193,6 +13342,9 @@ function wgDraw() {
   if (!wgView.positions || wgView.forGraph !== g) {
     wgView.positions = wgLayout(g, Math.max(cw, 600), Math.max(ch, 400));
     wgView.forGraph = g;
+    wgView.tx = cw / 2; wgView.ty = ch / 2;      // 世界原点（圆心）摆到画布中心
+    wgView.scale = 1;
+    wgWake();                                     // 加载先画一帧（下面就会画），再后台演化
   }
   const pos = wgView.positions;
   ctx.save();
@@ -13228,6 +13380,12 @@ function wgDraw() {
   // 可达性钩子：记录首节点的屏幕坐标（自动化/辅助功能定位用）
   const first = wgView.positions && wgView.positions.values().next().value;
   if (first) canvas.dataset.first = `${Math.round(first.x * wgView.scale + wgView.tx)},${Math.round(first.y * wgView.scale + wgView.ty)}`;
+  // 圆形度量：所有节点到圆心（世界原点）的最大距离——力导向团簇应保持有限半径
+  if (wgView.positions && wgView.positions.size) {
+    let maxR = 0;
+    for (const [, p] of wgView.positions) maxR = Math.max(maxR, Math.hypot(p.x, p.y));
+    canvas.dataset.radius = String(Math.round(maxR));
+  }
 }
 
 function wgBindCanvas(pane) {
@@ -13247,19 +13405,49 @@ function wgBindCanvas(pane) {
     redraw();
   };
   canvas.onmousedown = e => {
-    wgView.drag = { x: e.clientX, y: e.clientY, tx: wgView.tx, ty: wgView.ty };
     wgView.moved = 0;
+    wgView.draggedNode = false;
+    // 先试命中节点（世界坐标 + 缩放补偿命中半径）→ 拖节点；空白才平移画布
+    const rect = canvas.getBoundingClientRect();
+    const wx = (e.clientX - rect.left - wgView.tx) / wgView.scale;
+    const wy = (e.clientY - rect.top - wgView.ty) / wgView.scale;
+    let best = null, bestD = 8 / wgView.scale;
+    if (wgView.positions) for (const [, p] of wgView.positions) {
+      const d = Math.hypot(p.x - wx, p.y - wy) - p.r;
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    if (best) {
+      wgView.dragNode = best;
+      // draggedNode 只在真的移动时置位（mousemove）——mousedown 就置位会把单击
+      // 当成拖拽吞掉，点节点看文章的判据直接回归（§55 实测踩到）
+      wgView.alpha = Math.max(wgView.alpha, 0.35);
+      wgWake();
+      return;
+    }
+    wgView.drag = { x: e.clientX, y: e.clientY, tx: wgView.tx, ty: wgView.ty };
   };
   canvas.onmousemove = e => {
+    if (wgView.dragNode) {                            // §55 按住节点拖拽（Obsidian 式）
+      wgView.draggedNode = true;                      // 移动了才算拖拽（单击不置位）
+      const rect = canvas.getBoundingClientRect();
+      wgView.dragNode.x = (e.clientX - rect.left - wgView.tx) / wgView.scale;
+      wgView.dragNode.y = (e.clientY - rect.top - wgView.ty) / wgView.scale;
+      wgView.dragNode.vx = 0; wgView.dragNode.vy = 0;
+      wgDraw();
+      return;
+    }
     if (!wgView.drag) return;
     const dx = e.clientX - wgView.drag.x, dy = e.clientY - wgView.drag.y;
     wgView.moved = Math.max(wgView.moved, Math.abs(dx) + Math.abs(dy));
     wgView.tx = wgView.drag.tx + dx; wgView.ty = wgView.drag.ty + dy;
     redraw();
   };
-  window.addEventListener('mouseup', () => { wgView.drag = null; });
+  window.addEventListener('mouseup', () => {
+    if (wgView.dragNode) { wgView.dragNode = null; wgView.alpha = Math.max(wgView.alpha, 0.15); wgWake(); }
+    wgView.drag = null;
+  });
   canvas.onclick = e => {
-    if (wgView.moved > 4) return;               // 拖过就不算点击
+    if (wgView.moved > 4 || wgView.draggedNode) return;   // 拖过（平移或节点）就不算点击
     const W = wikiState();
     const g = W.graph; if (!g || !wgView.positions) return;
     const rect = canvas.getBoundingClientRect();
@@ -13300,11 +13488,30 @@ async function wgOpenArticle(node) {
     const r = await fetch(`http://127.0.0.1:19828/api/v1/projects/${proj.id}/files/content?path=${encodeURIComponent(node.path)}`,
       { signal: ctrl.signal });
     const j = await r.json();
-    const text = String(j.content || '').slice(0, 12000);
+    let text = String(j.content || '').slice(0, 12000);
+    const edited = W2.articleEdits[node.path];          // §55 本地编辑优先（查看+编辑）
+    if (edited !== undefined) text = edited;
     panel.innerHTML = `<div class="hrow" style="justify-content:space-between">
-        <b>${escapeHtml(node.label)}</b><button class="hbtn sm" id="wgClose">✕</button></div>
-      <div class="hsub" style="margin:4px 0 8px">${escapeHtml(node.path || '')}</div>
-      <pre class="wg-doc">${escapeHtml(text || '（空文件）')}</pre>`;
+        <b>${escapeHtml(node.label)}</b>
+        <span class="hrow" style="gap:6px"><button class="hbtn sm" id="wgEdit">编辑</button>
+        <button class="hbtn sm" id="wgClose">✕</button></span></div>
+      <div class="hsub" style="margin:4px 0 8px">${escapeHtml(node.path || '')}${edited !== undefined ? ' · 已本地编辑' : ''}</div>
+      <pre class="wg-doc" id="wgDocView">${escapeHtml(text || '（空文件）')}</pre>`;
+    panel.querySelector('#wgEdit').onclick = () => {
+      panel.innerHTML = `<div class="hrow" style="justify-content:space-between">
+          <b>编辑 — ${escapeHtml(node.label)}</b>
+          <span class="hrow" style="gap:6px"><button class="hbtn primary sm" id="wgSave">保存</button>
+          <button class="hbtn sm" id="wgCancel">取消</button></span></div>
+        <div class="hsub" style="margin:4px 0 8px">${escapeHtml(node.path || '')} · 原型存本地 articleEdits（真机写回项目 md）</div>
+        <textarea class="wg-edit" id="wgDocEdit">${escapeHtml(text)}</textarea>`;
+      panel.querySelector('#wgCancel').onclick = () => wgOpenArticle(node);
+      panel.querySelector('#wgSave').onclick = () => {
+        W2.articleEdits[node.path] = panel.querySelector('#wgDocEdit').value;
+        save(true);
+        toast(`已保存本地编辑（${escapeHtml(node.path)}）· 真机由 Swift 写回文件`);
+        wgOpenArticle(node);
+      };
+    };
   } catch (e) {
     panel.innerHTML = `<div class="hrow" style="justify-content:space-between">
         <b>${escapeHtml(node.label)}</b><button class="hbtn sm" id="wgClose">✕</button></div>
