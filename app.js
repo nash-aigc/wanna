@@ -10069,6 +10069,15 @@ function hState2() {
     // cli-config.yaml.example:1003-1016 逐键默认
     H0.memoryCfg = { enabled: true, userEnabled: true, memoryLimit: 2200, userLimit: 1375, nudge: 10 };
   }
+  if (H0.memoryCfg.provider === undefined) H0.memoryCfg.provider = 'builtin';   // §47 记忆提供方（真图下拉）
+  if (H0.provTab === undefined) H0.provTab = 'keys';                             // §47 提供方子导航：keys/endpoints/local
+  if (!Array.isArray(H0.localModels)) {
+    // §47 本地模型（照真图「提供方 › 本地模型」的模式；网络 mock）
+    H0.localModels = [
+      { name: 'Ollama', url: 'http://localhost:11434', up: true, models: ['qwen3:8b', 'llama3.2:3b'] },
+      { name: 'llama.cpp', url: 'http://127.0.0.1:8080', up: false, models: [] },
+    ];
+  }
   if (!Array.isArray(H0.providers) || !H0.providers.length) H0.providers = hDefaultProviders();
   if (!H0.modelCfg || typeof H0.modelCfg !== 'object') {
     // §9.3：persist_switch_by_default 默认 false（不持久化）
@@ -10128,8 +10137,10 @@ function hDefaultProviders() {
 }
 function hDefaultGateways() {
   // connection-registry.ts:49-107 字段 1:1；样例两条 + 一条被隔离的坏条目
+  // mode/keychain = 真图「设置 › 网关 › 当前窗口」的连接模式卡与钥匙串开关（§47）
   return {
     version: 2, primary: 'gw-local', launchMode: 'last-used', lastUsed: Date.now(),
+    mode: 'local', keychain: false,
     connections: [
       { id: 'gw-local', kind: 'local', label: '本地 · App 托管', authMode: null, token: '', url: '',
         host: '', user: '', port: 0, keyPath: '', remoteHermesPath: '', remoteProfile: '', org: '' },
@@ -10498,25 +10509,50 @@ function hermesMemoryHTML(pane) {
   };
   pane.innerHTML = hBar('记忆 · 两文件有界存储（Memory）',
     `MEMORY.md ≤${H0.memoryCfg.memoryLimit} · USER.md ≤${H0.memoryCfg.userLimit} · 条目分隔 \\n§\\n（Hermes §8）`, hCurChip())
-    + `<div class="hbody" style="flex-direction:column">
+    + `<div class="hbody" style="flex-direction:column;overflow:auto">
       <div class="hmem">
         ${card('memory', 'MEMORY.md — agent 自己的笔记', H0.memoryCfg.memoryLimit)}
         ${card('user', 'USER.md — 用户画像', H0.memoryCfg.userLimit)}
       </div>
-      <div class="hsnap">${snap.hasSnap
-        ? (snap.dirty
-            ? `❄️ <b>冻结快照</b>（${new Date(snap.at).toLocaleString()}）与盘上最新<b>不一致</b> —— 写盘立刻生效于工具回显，
-               但<b>系统提示词下一会话才更新</b>（保前缀缓存）。下一场讨论仍用旧快照，点「冻结」才会换。`
-            : `❄️ <b>冻结快照</b>与盘上一致（${new Date(snap.at).toLocaleString()}）—— 下一场讨论注入的就是这份。`)
-        : '❄️ 还没有冻结快照 —— 下一场房间讨论开始时会自动冻结一次。'}
-        <span style="float:right"><button class="hbtn" data-memact="freeze" style="padding:3px 9px">以当前记忆冻结快照</button></span></div>
-      <div style="padding:0 12px 12px" class="hrow">
-        <label class="hrow" style="gap:6px"><input type="checkbox" id="mEnabled" ${H0.memoryCfg.enabled ? 'checked' : ''}> memory_enabled</label>
-        <label class="hrow" style="gap:6px"><input type="checkbox" id="mUserEnabled" ${H0.memoryCfg.userEnabled ? 'checked' : ''}> user_profile_enabled</label>
-        <label class="hrow" style="gap:6px">memory_char_limit <input type="number" id="mLimit" value="${H0.memoryCfg.memoryLimit}" min="200" max="8000" style="width:86px"></label>
-        <label class="hrow" style="gap:6px">user_char_limit <input type="number" id="mUserLimit" value="${H0.memoryCfg.userLimit}" min="200" max="8000" style="width:86px"></label>
-        <label class="hrow" style="gap:6px">nudge_interval（每 N 个用户轮提醒写记忆，0=关）
-          <input type="number" id="mNudge" value="${H0.memoryCfg.nudge}" min="0" max="100" style="width:70px"></label>
+      <div class="hset-sec">记忆设置（memory.yaml · 照真图「记忆与上下文 › 持久记忆」排版）</div>
+      <div class="hset-group">
+        <div class="hset">
+          <div class="tx"><div class="tt">持久记忆</div><div class="ds">保存有助于未来会话的持久记忆。</div></div>
+          <div class="ct"><label class="hsw"><input type="checkbox" id="mEnabled"${H0.memoryCfg.enabled ? ' checked' : ''}><span class="tr"><span class="kb"></span></span></label></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">用户画像</div><div class="ds">维护一份精简的用户偏好画像。</div></div>
+          <div class="ct"><label class="hsw"><input type="checkbox" id="mUserEnabled"${H0.memoryCfg.userEnabled ? ' checked' : ''}><span class="tr"><span class="kb"></span></span></label></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">记忆预算</div><div class="ds">MEMORY.md 的字符上限（${hMemUsage(pid, 'memory').chars}/${H0.memoryCfg.memoryLimit} · ${hMemUsage(pid, 'memory').pct}%）。满了<b>拒写</b>，不自动压缩。</div></div>
+          <div class="ct"><input type="number" id="mLimit" value="${H0.memoryCfg.memoryLimit}" min="200" max="8000"></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">画像预算</div><div class="ds">USER.md 的字符上限（${hMemUsage(pid, 'user').chars}/${H0.memoryCfg.userLimit} · ${hMemUsage(pid, 'user').pct}%）。</div></div>
+          <div class="ct"><input type="number" id="mUserLimit" value="${H0.memoryCfg.userLimit}" min="200" max="8000"></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">写记忆提醒</div><div class="ds">每 N 个用户轮提醒写记忆，0 = 关。</div></div>
+          <div class="ct"><input type="number" id="mNudge" value="${H0.memoryCfg.nudge}" min="0" max="100" style="width:80px"></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">记忆提供方</div><div class="ds">Memory provider plugin —— 决定记忆怎么存取（真图同款行）。</div></div>
+          <div class="ct"><select id="mProvider">
+            <option value="builtin"${H0.memoryCfg.provider === 'builtin' ? ' selected' : ''}>仅内置</option>
+            <option value="mem0"${H0.memoryCfg.provider === 'mem0' ? ' selected' : ''}>mem0（plugin）</option>
+            <option value="vector"${H0.memoryCfg.provider === 'vector' ? ' selected' : ''}>向量库（plugin）</option>
+          </select></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">冻结快照</div>
+            <div class="ds">${snap.hasSnap
+              ? (snap.dirty
+                  ? `❌ 与盘上最新<b>不一致</b>（快照 ${new Date(snap.at).toLocaleString()}）—— 写盘立刻生效于工具回显，但系统提示词下一会话才更新（保前缀缓存）。下一场讨论仍用旧快照。`
+                  : `❄️ 与盘上一致（${new Date(snap.at).toLocaleString()}）—— 下一场讨论注入的就是这份。`)
+              : '❄️ 还没有冻结快照 —— 下一场房间讨论开始时会自动冻结一次。'}</div></div>
+          <div class="ct"><button class="hbtn" data-memact="freeze"${snap.hasSnap && !snap.dirty ? ' disabled' : ''}>以当前记忆冻结快照</button></div>
+        </div>
       </div></div>`;
   hBindCommon(pane);
   const add = (target) => {
@@ -10548,6 +10584,9 @@ function hermesMemoryHTML(pane) {
     el.onchange = () => { H0.memoryCfg[key] = Math.max(0, parseInt(el.value, 10) || 0); hSave(); renderHermes(); }; };
   bindChk('#mEnabled', 'enabled'); bindChk('#mUserEnabled', 'userEnabled');
   bindNum('#mLimit', 'memoryLimit'); bindNum('#mUserLimit', 'userLimit'); bindNum('#mNudge', 'nudge');
+  const mProv = pane.querySelector('#mProvider');
+  if (mProv) mProv.onchange = () => { H0.memoryCfg.provider = mProv.value; hSave();
+    toast(`记忆提供方 → <b>${escapeHtml(mProv.options[mProv.selectedIndex].text)}</b>`); };
 }
 
 /* ── 提供商页（§9） ── */
@@ -10556,6 +10595,22 @@ function hermesProvidersHTML(pane) {
   const p = hCurProfile();
   const curProv = p ? p.provider : H0.modelCfg.provider;
   const curModel = p ? p.model : H0.modelCfg.model;
+  const tab = H0.provTab || 'keys';
+  /// 左子导航（照真图「提供方 › 账号/API 密钥/自定义端点/本地模型」；「账号」= OAuth 登录，按要求忽略不做）
+  const side = `<div class="hprof-list">
+      <div class="hcol-head" style="padding:2px 2px 8px">提供方（Provider）</div>
+      <div class="hside">
+        <div class="hside-item${tab === 'keys' ? ' is-on' : ''}" data-ptab="keys"><span class="ic">🔑</span>API 密钥</div>
+        <div class="hside-item${tab === 'endpoints' ? ' is-on' : ''}" data-ptab="endpoints"><span class="ic">🌐</span>自定义端点</div>
+        <div class="hside-item${tab === 'local' ? ' is-on' : ''}" data-ptab="local"><span class="ic">🖥️</span>本地模型</div>
+      </div>
+      <div class="hnote" style="padding:12px 4px 0;line-height:1.8">三种模式 = 三种凭据/地址来源：<br>
+        <b>API 密钥</b>：注册表 12 家，key 进 config 的 provider 块<br>
+        <b>自定义端点</b>：自己家的 base_url（命名条目）<br>
+        <b>本地模型</b>：Ollama / llama.cpp 等本机服务<br>
+        <span style="opacity:.6">（真图还有「账号」= OAuth 登录，本批按要求忽略）</span></div>
+    </div>`;
+
   const cards = H0.providers.map(x => `
     <div class="hprov-card${x.name === curProv ? ' is-on' : ''}" data-prov="${x.name}">
       <span class="badge${x.name === curProv ? '' : ' off'}">${x.name === curProv ? '当前' : '可切换'}</span>
@@ -10573,25 +10628,35 @@ function hermesProvidersHTML(pane) {
         ${x.aliases.length ? '<i>aliases ✓</i>' : ''}
       </div>
     </div>`).join('');
-  pane.innerHTML = hBar('提供商 · 多 Provider 切换（Providers）',
-    `${H0.providers.length} 个注册表条目 · /model 语义：解析→凭据→normalize（Hermes §9）`, hCurChip())
-    + `<div class="hbody" style="flex-direction:column;overflow:auto">
-      <div class="hgw-note" style="padding-top:10px">当前：<b>${escapeHtml(curProv)}</b> / <b>${escapeHtml(curModel)}</b>
+
+  let body = '';
+  if (tab === 'keys') {
+    body = `<div class="hcrumb"><b>设置</b><span class="sep">›</span><b>提供方</b><span class="sep">›</span>API 密钥</div>
+      <div class="hgw-note" style="padding-top:4px">当前：<b>${escapeHtml(curProv)}</b> / <b>${escapeHtml(curModel)}</b>
         　→ 切换会写进<b>当前角色</b>的 provider/model（每请求重解析，保存即生效）。
         　持久化开关 <code>model.persist_switch_by_default</code>（默认 <b>false</b> = 只对本会话生效）。</div>
-      <div class="hrow" style="padding:8px 14px 0">
-        <label class="hrow" style="gap:6px"><input type="checkbox" id="provPersist" ${H0.modelCfg.persist ? 'checked' : ''}>
-          persist_switch_by_default（写回 config）</label>
-        <span style="flex:1"></span>
-        <span class="hsub">模型：<select id="provModel" class="hbtn" style="padding:4px 8px">
-          ${(H0.providers.find(x => x.name === curProv) || { models: [curModel] }).models.concat([curModel])
-            .filter((v, i, a) => a.indexOf(v) === i)
-            .map(m => `<option${m === curModel ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}
-        </select></span>
-      </div>
       <div class="hprov">${cards}</div>
-      <div class="hsec" style="padding:0 14px">命名 provider 条目（config.yaml 的 <code>providers:</code> 块）</div>
-      <div style="padding:0 14px 16px">
+      <div class="hset-sec">切换行为</div>
+      <div class="hset-group">
+        <div class="hset">
+          <div class="tx"><div class="tt">persist_switch_by_default</div>
+            <div class="ds">开启后 /model 切换会写回 config（默认关闭 = 只对本会话生效）。</div></div>
+          <div class="ct"><label class="hsw"><input type="checkbox" id="provPersist"${H0.modelCfg.persist ? ' checked' : ''}><span class="tr"><span class="kb"></span></span></label></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">当前模型</div>
+            <div class="ds">跟着所选 provider 的 model_list 走（切换即写进当前角色）。</div></div>
+          <div class="ct"><select id="provModel">
+            ${(H0.providers.find(x => x.name === curProv) || { models: [curModel] }).models.concat([curModel])
+              .filter((v, i, a) => a.indexOf(v) === i)
+              .map(m => `<option${m === curModel ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+          </select></div>
+        </div>
+      </div>`;
+  } else if (tab === 'endpoints') {
+    body = `<div class="hcrumb"><b>设置</b><span class="sep">›</span><b>提供方</b><span class="sep">›</span>自定义端点</div>
+      <div class="hset-sec">命名 provider 条目（config.yaml 的 <code>providers:</code> 块）</div>
+      <div style="padding:0 16px 16px">
         <div class="hcard" style="background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;padding:11px 12px">
           <div class="hform">
             <div class="hrow">
@@ -10605,7 +10670,7 @@ function hermesProvidersHTML(pane) {
                   <option>anthropic_messages</option></select></label>
               <label style="flex:1">model<input id="npModel" placeholder="databricks-claude-sonnet-4-6"></label>
             </div>
-            <div class="hrow"><button class="hbtn" data-pact="addnamed">＋ 添加命名条目</button>
+            <div class="hrow"><button class="hbtn primary" data-pact="addnamed">＋ 添加命名条目</button>
               <span class="hsub">（key_cmd 支持每请求重取短时令牌；extra_headers 值按密钥处理、永不入日志）</span></div>
           </div>
           <div id="npList" style="margin-top:8px">${(H0.namedProviders || []).map((n, i) =>
@@ -10613,9 +10678,47 @@ function hermesProvidersHTML(pane) {
               <button data-npdel="${i}" style="border:0;background:transparent;color:#F87171;cursor:pointer">×</button></div>`).join('')
             || '<span class="hsub">（还没有命名条目）</span>'}</div>
         </div>
+      </div>`;
+  } else {
+    body = `<div class="hcrumb"><b>设置</b><span class="sep">›</span><b>提供方</b><span class="sep">›</span>本地模型</div>
+      <div class="hrow" style="padding:8px 16px 0">
+        <span class="hsub">本机推理服务 —— 不进 12 条注册表，按 base_url 直连；检测为 mock。</span>
+        <span style="flex:1"></span>
+        <button class="hbtn" data-lmact="scan">🔍 检测本机</button>
       </div>
-    </div>`;
+      <div class="hgw" style="padding:10px 16px 4px">
+        ${(H0.localModels || []).map((m, i) => `
+          <div class="hgw-card${m.up ? ' is-primary' : ''}">
+            <div class="hgw-top">
+              <span class="hgw-kind local">local</span>
+              <span class="hgw-label">${escapeHtml(m.name)}</span>
+              <span class="hchip${m.up ? ' on' : ''}" style="margin-left:auto">${m.up ? '在线' : '离线'}</span>
+            </div>
+            <div class="hgw-fields"><span><b>url</b>${escapeHtml(m.url)}</span>
+              <span><b>models</b>${m.models.length ? escapeHtml(m.models.join(' / ')) : '—'}</span></div>
+            <div class="hgw-ops">
+              <button class="hbtn" data-lmact="probe" data-i="${i}">检测</button>
+              <button class="hbtn" data-lmact="use" data-i="${i}" ${m.up ? '' : 'disabled title="离线"'}>设为当前</button>
+              <button class="hbtn danger" data-lmact="del" data-i="${i}">删除</button>
+            </div>
+          </div>`).join('')
+          || '<div class="hempty">没有本地端点。</div>'}
+      </div>
+      <div class="hset-sec">添加本地端点</div>
+      <div style="padding:0 16px 16px" class="hrow">
+        <label class="hrow" style="gap:6px">名称 <input id="lmName" placeholder="Ollama" style="width:130px"></label>
+        <label class="hrow" style="gap:6px">url <input id="lmUrl" placeholder="http://localhost:11434" style="width:250px"></label>
+        <button class="hbtn primary" data-lmact="add">＋ 添加</button>
+      </div>`;
+  }
+
+  pane.innerHTML = hBar('提供方 · 多 Provider 切换（Providers）',
+    `${H0.providers.length} 个注册表条目 · 三模式（API 密钥 / 自定义端点 / 本地模型）· /model 语义（Hermes §9）`, hCurChip())
+    + `<div class="hbody"><div class="hprof">${side}<div class="hprof-body">${body}</div></div></div>`;
   hBindCommon(pane);
+  pane.querySelectorAll('[data-ptab]').forEach(el => el.onclick = () => {
+    H0.provTab = el.dataset.ptab; hSave(); renderHermes();
+  });
   pane.querySelectorAll('[data-prov]').forEach(el => el.onclick = () => {
     const name = el.dataset.prov;
     const prof = hCurProfile();
@@ -10653,6 +10756,24 @@ function hermesProvidersHTML(pane) {
     e.stopPropagation();
     H0.namedProviders.splice(+b.dataset.npdel, 1); hSave(); renderHermes(); toast('已删除命名条目');
   });
+  pane.querySelectorAll('[data-lmact]').forEach(b => b.onclick = () => {
+    const act = b.dataset.lmact, i = +b.dataset.i;
+    const list = H0.localModels;
+    if (act === 'scan') { renderHermes();
+      toast('已扫描 11434 / 8080 / 1234 —— Ollama ✓ 在线 · llama.cpp ✗ 无响应（mock）'); return; }
+    if (act === 'probe') { list[i].up = !list[i].up;
+      if (list[i].up && !list[i].models.length) list[i].models = ['qwen3:8b'];
+      hSave(); renderHermes(); toast(list[i].up ? `${escapeHtml(list[i].name)} ✓ 在线（mock probe）` : `${escapeHtml(list[i].name)} ✗ 离线`); return; }
+    if (act === 'use') { hSave(); toast(`当前端点 → <b>${escapeHtml(list[i].name)}</b>（${escapeHtml(list[i].url)} · mock）`); return; }
+    if (act === 'del') { list.splice(i, 1); hSave(); renderHermes(); toast('已删除本地端点'); return; }
+    if (act === 'add') {
+      const name = pane.querySelector('#lmName').value.trim();
+      const url = pane.querySelector('#lmUrl').value.trim();
+      if (!name || !url) return toast('名称与 url 都必填');
+      list.push({ name, url, up: false, models: [] });
+      hSave(); renderHermes(); toast(`已添加本地端点「${escapeHtml(name)}」`);
+    }
+  });
 }
 
 /* ── 网关页（§5.3 connection-registry） ── */
@@ -10683,19 +10804,51 @@ function hermesGatewaysHTML(pane) {
         <button class="hbtn danger" data-gwact="del" data-id="${c.id}" ${c.kind === 'local' ? 'disabled title="local 不可删"' : ''}>删除</button>
       </div></div>`;
   };
-  pane.innerHTML = hBar('网关 · 多网关连接（Gateways）',
-    `connections.json · version ${G.version} · launchMode ${G.launchMode} · 隔离区 ${G.quarantined.length}/20（Hermes §5.3）`)
+  /// 连接模式四卡（照真图「设置 › 网关 › 当前窗口」：图标+标题+描述，选中 accent 边+✓）
+  const GW_MODES = [
+    { k: 'local', ic: '🖥️', t: '本地网关', d: '在 localhost 启动私有 Hermes 后端。这是默认方式，并且可离线工作。' },
+    { k: 'cloud', ic: '☁️', t: 'Hermes Cloud', d: '只需登录 Hermes Cloud 一次，即可从你账户下的智能体中选择——无需粘贴 URL。' },
+    { k: 'remote', ic: '📡', t: '远程网关', q: true, d: '将此桌面外壳连接到远程 Hermes 后端。' },
+    { k: 'ssh', ic: '🖳', t: '通过 SSH 连接', q: true, d: 'Hermes 会通过 SSH 在远程启动并以隧道连接到本应用——无需自行启动或暴露任何服务。前提：已具备到该主机的密钥 SSH 访问。' },
+  ];
+  pane.innerHTML = hBar('网关 · Gateways',
+    `连接模式 + 已保存的连接 · connections.json v${G.version} · 隔离区 ${G.quarantined.length}/20（Hermes §5.3）`)
     + `<div class="hbody" style="flex-direction:column;overflow:auto">
-      <div class="hgw-note" style="padding-top:10px">三个入口：Settings → Gateways · 侧栏 profile 轨的插头 · Cmd+K 命令面板。
+      <div class="hcrumb"><b>设置</b><span class="sep">›</span><b>网关</b><span class="sep">›</span>当前窗口</div>
+      <div class="hset-sec">连接模式</div>
+      <div class="hmode">${GW_MODES.map(m => `
+        <button class="hmode-card${G.mode === m.k ? ' is-on' : ''}" data-gwmode="${m.k}">
+          <span class="tick">✓</span>
+          <div class="mi">${m.ic}</div>
+          <div class="mt">${m.t}${m.q ? ' <span style="opacity:.45;font-size:11px">?</span>' : ''}</div>
+          <div class="md">${m.d}</div>
+        </button>`).join('')}</div>
+      <div class="hmode-ops">
+        <button class="hbtn ghost" data-gwact="savelater">保存到下次重启</button>
+        <button class="hbtn primary" data-gwact="savereconnect">保存并重连</button>
+      </div>
+      <div class="hset-group" style="margin-top:8px">
+        <div class="hset">
+          <div class="tx"><div class="tt">使用系统钥匙串加密已保存的机密</div>
+            <div class="ds">默认关闭。开启后，网关 token 和登录凭据将使用系统钥匙串（Keychain Access、GNOME Keyring 或 Windows DPAPI）加密——系统可能会请求授权或密码。关闭时，它们以仅当前用户可读的普通文件形式存储。</div></div>
+          <div class="ct"><label class="hsw"><input type="checkbox" id="gwKeychain"${G.keychain ? ' checked' : ''}><span class="tr"><span class="kb"></span></span></label></div>
+        </div>
+        <div class="hset">
+          <div class="tx"><div class="tt">诊断</div>
+            <div class="ds">在文件管理器中显示 desktop.log，网关启动失败时很有用。</div></div>
+          <div class="ct"><button class="hbtn ghost" data-gwact="openlog">📄 打开日志</button></div>
+        </div>
+      </div>
+      <div class="hset-sec">已保存的连接 —— connections.json · lastUsed：${G.lastUsed ? new Date(G.lastUsed).toLocaleString() : '—'}</div>
+      <div class="hgw-note" style="padding-top:0">三个入口：Settings → Gateways · 侧栏 profile 轨的插头 · Cmd+K 命令面板。
         规则：<b>label 唯一且 ≤64</b> · <b>local 不可删</b> · <b>primary 兜底</b> ·
         去重按规范化 URL 或 <code>user@host:port</code> · Test 同时探 HTTP + WebSocket · 隔离区上限 20（坏条目保全不丢）。</div>
       <div class="hrow" style="padding:4px 14px 0">
         <label class="hrow" style="gap:6px">launchMode
-          <select id="gwLaunch" class="hbtn" style="padding:4px 8px">
+          <select id="gwLaunch">
             <option value="last-used"${G.launchMode === 'last-used' ? ' selected' : ''}>last-used</option>
             <option value="primary"${G.launchMode === 'primary' ? ' selected' : ''}>primary</option>
           </select></label>
-        <span class="hsub">lastUsed：${G.lastUsed ? new Date(G.lastUsed).toLocaleString() : '—'}</span>
         <span style="flex:1"></span>
         <button class="hbtn primary" data-gwact="add">＋ 添加连接</button>
       </div>
@@ -10711,12 +10864,24 @@ function hermesGatewaysHTML(pane) {
         ${!G.connections.length ? '<div class="hempty">没有连接。</div>' : ''}
       </div></div>`;
   hBindCommon(pane);
+  pane.querySelectorAll('[data-gwmode]').forEach(b => b.onclick = () => {
+    G.mode = b.dataset.gwmode; hSave(); renderHermes();
+    const m = GW_MODES.find(x => x.k === G.mode);
+    toast(`连接模式 → <b>${escapeHtml(m ? m.t : G.mode)}</b>（点「保存并重连」立即生效，否则下次启动生效）`);
+  });
+  const gk = pane.querySelector('#gwKeychain');
+  if (gk) gk.onchange = () => { G.keychain = gk.checked; hSave();
+    toast(gk.checked ? '钥匙串加密已开启（token/凭据进 Keychain）' : '钥匙串加密已关闭（普通文件，仅当前用户可读）'); };
   const lm = pane.querySelector('#gwLaunch');
   if (lm) lm.onchange = () => { G.launchMode = lm.value; hSave(); renderHermes();
     toast(`launchMode = ${lm.value}`); };
   pane.querySelectorAll('[data-gwact]').forEach(b => b.onclick = () => {
     const act = b.dataset.gwact, id = b.dataset.id;
     if (act === 'add') return hGwAddModal();
+    if (act === 'savelater') { hSave(); toast('已保存 —— 连接模式的变更下次启动时生效'); return; }
+    if (act === 'savereconnect') { G.lastUsed = Date.now(); hSave(); renderHermes();
+      toast('已保存并重连（mock：desktop.log 已记录一次 reconnect）'); return; }
+    if (act === 'openlog') { toast('已在访达中显示 <code>~/Library/Application Support/Hermes/desktop.log</code>（mock）'); return; }
     if (act === 'test') { const r = hGwTest(id); renderHermes(); toast(r.ok ? r.msg : escapeHtml(r.err)); return; }
     if (act === 'primary') { G.primary = id; G.lastUsed = Date.now(); hSave(); renderHermes();
       toast('primary 已切换（删连接时它兜底）'); return; }

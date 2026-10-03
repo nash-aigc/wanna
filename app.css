@@ -2308,7 +2308,7 @@ body.finder-on .finder-pane{position:relative}
 .hitem{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;cursor:pointer;
   font-size:13px;color:var(--ink,#EDEEF0);margin-bottom:4px;border:1px solid transparent}
 .hitem:hover{background:rgba(255,255,255,.05)}
-.hitem.is-on{background:rgba(59,130,246,.16);border-color:rgba(59,130,246,.55)}
+.hitem.is-on{background:rgba(10,132,255,.16);border-color:rgba(10,132,255,.55)}
 .hitem .sub{font-size:11px;color:var(--ink3,#8A8F96);margin-left:auto;white-space:nowrap}
 .hitem .dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px;background:#4B5563}
 /* 事件日志 */
@@ -2320,12 +2320,12 @@ body.finder-on .finder-pane{position:relative}
 .hev .who.user{color:#FCD34D}
 .hev .meta{font-size:10.5px;color:var(--ink3,#8A8F96);margin-top:3px;font-family:var(--mono,monospace)}
 .hev .round{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:5px;
-  background:rgba(59,130,246,.22);color:#BFDBFE;margin-right:6px}
+  background:rgba(10,132,255,.22);color:#BFDBFE;margin-right:6px}
 /* 成员 / chip */
 .hchips{display:flex;flex-wrap:wrap;gap:6px;padding:2px}
 .hchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 9px;border-radius:14px;
   background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);color:var(--ink,#EDEEF0)}
-.hchip.on{background:rgba(59,130,246,.22);border-color:rgba(59,130,246,.5);color:#DBEAFE}
+.hchip.on{background:rgba(10,132,255,.22);border-color:rgba(10,132,255,.5);color:#DBEAFE}
 .hchip button{border:0;background:transparent;color:inherit;cursor:pointer;font-size:13px;padding:0 2px}
 .hcheck{font-size:11.5px;color:var(--ink3,#8A8F96);padding:6px 12px;border-top:1px solid var(--line,#26292C)}
 .hcheck.err{color:#FCA5A5}
@@ -2346,8 +2346,8 @@ body.finder-on .finder-pane{position:relative}
 .hlane-body{padding:8px;overflow:auto;display:flex;flex-direction:column;gap:7px;min-height:52px}
 .htask{background:var(--surface2,#1B1F23);border:1px solid var(--line,#2A2E33);border-radius:9px;
   padding:8px 9px;cursor:pointer;font-size:12.5px;color:var(--ink,#EDEEF0)}
-.htask:hover{border-color:rgba(59,130,246,.5)}
-.htask.is-on{border-color:var(--focus,#3B82F6);box-shadow:0 0 0 1px rgba(59,130,246,.35)}
+.htask:hover{border-color:rgba(10,132,255,.5)}
+.htask.is-on{border-color:var(--accent,#0A84FF);box-shadow:0 0 0 1px rgba(10,132,255,.35)}
 .htask .t{font-weight:600;margin-bottom:5px;line-height:1.45;word-break:break-word}
 .htask .m{display:flex;gap:6px;flex-wrap:wrap;font-size:10.5px;color:var(--ink3,#8A8F96)}
 .htask .tag{background:rgba(255,255,255,.07);border-radius:5px;padding:1px 6px}
@@ -2375,14 +2375,14 @@ body.finder-on .finder-pane{position:relative}
 /* 归档行 */
 .harc{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:9px;
   border:1px solid var(--line,#26292C);background:rgba(255,255,255,.03);margin-bottom:7px}
-.harc.is-on{border-color:var(--focus,#3B82F6);background:rgba(59,130,246,.12)}
+.harc.is-on{border-color:var(--accent,#0A84FF);background:rgba(10,132,255,.12)}
 .harc .body{flex:1;min-width:0}
 .harc .t{font-size:13px;font-weight:600;color:var(--ink,#EDEEF0);margin-bottom:3px}
 .harc .d{font-size:11.5px;color:var(--ink3,#8A8F96);line-height:1.6}
 .hbadge{font-size:10.5px;padding:1px 6px;border-radius:5px;background:rgba(255,255,255,.08);
   color:var(--ink3,#8A8F96);margin-right:5px;white-space:nowrap}
 .hbadge.auto{background:rgba(245,158,11,.18);color:#FDE68A}
-.hbadge.human{background:rgba(59,130,246,.18);color:#BFDBFE}
+.hbadge.human{background:rgba(10,132,255,.18);color:#BFDBFE}
 .hbadge.pin{background:rgba(34,197,94,.18);color:#BBF7D0}
 /* 弹层（新建房间 / 新建任务 / 录制快捷键） */
 .hmodal{position:fixed;inset:0;z-index:260;display:flex;align-items:center;justify-content:center;
@@ -2412,7 +2412,7 @@ body.finder-on .finder-pane{position:relative}
 .hprof-item{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:9px;cursor:pointer;
   font-size:13px;color:var(--ink,#EDEEF0);margin-bottom:4px;border:1px solid transparent}
 .hprof-item:hover{background:rgba(255,255,255,.05)}
-.hprof-item.is-on{background:rgba(59,130,246,.16);border-color:rgba(59,130,246,.55)}
+.hprof-item.is-on{background:rgba(10,132,255,.16);border-color:rgba(10,132,255,.55)}
 .hprof-item .av{width:22px;height:22px;border-radius:50%;flex:0 0 22px;display:inline-flex;
   align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#0B1220}
 .hprof-item .sub{display:block;font-size:10.5px;color:var(--ink3,#8A8F96);margin-top:1px}
@@ -2446,15 +2446,15 @@ body.finder-on .finder-pane{position:relative}
   color:var(--ink,#EDEEF0);font-size:12.5px;padding:6px 9px;outline:none}
 .hmem-foot input:focus{border-color:var(--focus,#3B82F6)}
 .hmem-delim{text-align:center;font-size:10.5px;color:#5B6670;font-family:var(--mono,monospace);padding:1px 0}
-.hsnap{margin:0 12px 10px;padding:9px 11px;background:rgba(59,130,246,.08);
-  border:1px dashed rgba(59,130,246,.4);border-radius:9px;font-size:11.5px;color:#BFDBFE;line-height:1.7}
+.hsnap{margin:0 12px 10px;padding:9px 11px;background:rgba(10,132,255,.08);
+  border:1px dashed rgba(10,132,255,.4);border-radius:9px;font-size:11.5px;color:#BFDBFE;line-height:1.7}
 /* 提供商卡片 */
 .hprov{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;padding:12px}
 .hprov-card{background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;
   padding:11px 12px;cursor:pointer;position:relative}
-.hprov-card:hover{border-color:rgba(59,130,246,.5)}
-.hprov-card.is-on{border-color:var(--focus,#3B82F6);background:rgba(59,130,246,.1);
-  box-shadow:0 0 0 1px rgba(59,130,246,.35)}
+.hprov-card:hover{border-color:rgba(10,132,255,.5)}
+.hprov-card.is-on{border-color:var(--accent,#0A84FF);background:rgba(10,132,255,.1);
+  box-shadow:0 0 0 1px rgba(10,132,255,.35)}
 .hprov-card .nm{font-size:13.5px;font-weight:600;color:var(--ink,#EDEEF0);margin-bottom:3px}
 .hprov-card .ds{font-size:11.5px;color:var(--ink3,#8A8F96);line-height:1.6;margin-bottom:7px;min-height:34px}
 .hprov-card .kv{font-size:11px;color:#9FB0B8;font-family:var(--mono,monospace);line-height:1.7;
@@ -2470,13 +2470,13 @@ body.finder-on .finder-pane{position:relative}
 /* 网关卡片（四类） */
 .hgw{display:flex;flex-direction:column;gap:10px;padding:12px}
 .hgw-card{background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;padding:12px}
-.hgw-card.is-primary{border-color:rgba(59,130,246,.6);background:rgba(59,130,246,.08)}
+.hgw-card.is-primary{border-color:rgba(10,132,255,.6);background:rgba(10,132,255,.08)}
 .hgw-card.is-quar{border-color:rgba(248,113,113,.5);background:rgba(239,68,68,.07);opacity:.85}
 .hgw-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .hgw-kind{font-size:10.5px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,.08);color:#9FB0B8;
   text-transform:uppercase;letter-spacing:.04em}
 .hgw-kind.local{background:rgba(34,197,94,.2);color:#BBF7D0}
-.hgw-kind.cloud{background:rgba(59,130,246,.2);color:#BFDBFE}
+.hgw-kind.cloud{background:rgba(10,132,255,.2);color:#BFDBFE}
 .hgw-kind.remote{background:rgba(245,158,11,.2);color:#FDE68A}
 .hgw-kind.ssh{background:rgba(168,85,247,.2);color:#E9D5FF}
 .hgw-label{font-size:14px;font-weight:600;color:var(--ink,#EDEEF0)}
@@ -2520,7 +2520,7 @@ body.finder-on .finder-pane{position:relative}
 .hch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;padding:12px}
 .hch-card{background:rgba(255,255,255,.035);border:1px solid var(--line,#26292C);border-radius:11px;
   padding:11px 12px;position:relative}
-.hch-card.hl{border-color:rgba(59,130,246,.55);background:rgba(59,130,246,.07)}
+.hch-card.hl{border-color:rgba(10,132,255,.55);background:rgba(10,132,255,.07)}
 .hch-card .pn{font-size:13.5px;font-weight:600;color:var(--ink,#EDEEF0);display:flex;align-items:center;gap:7px}
 .hch-card .pn .flag{font-size:11px;padding:1px 6px;border-radius:6px;background:rgba(255,255,255,.08);color:#9FB0B8}
 .hch-card .meta{font-size:11.5px;color:#8B96A0;line-height:1.75;margin-top:6px;font-family:var(--mono,monospace);
@@ -2532,8 +2532,8 @@ body.finder-on .finder-pane{position:relative}
   word-break:break-all}
 .hch-enums b{color:#7DD3FC;font-weight:500}
 /* 飞书一键创建：三步卡 */
-.hfs{margin-top:10px;border:1px dashed rgba(59,130,246,.5);border-radius:10px;padding:10px 12px;
-  background:rgba(59,130,246,.06)}
+.hfs{margin-top:10px;border:1px dashed rgba(10,132,255,.5);border-radius:10px;padding:10px 12px;
+  background:rgba(10,132,255,.06)}
 .hfs-steps{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:#9FB0B8}
 .hfs-step{padding:2px 9px;border-radius:11px;background:rgba(255,255,255,.07);color:#8FA0AA}
 .hfs-step.on{background:var(--focus,#2563EB);color:#fff}
@@ -2549,3 +2549,95 @@ body.finder-on .finder-pane{position:relative}
 .hme{background:#0E1216;border:1px solid var(--line,#26292C);border-radius:10px;padding:11px 12px;
   font-family:var(--mono,monospace);font-size:11.5px;line-height:1.85;color:#9FD0FF;white-space:pre-wrap;
   word-break:break-all;margin-top:8px}
+
+/* ══ §47 Hermes 四页重排：统一样式层（照真图 UI 排版 + 全站控件收口）══
+   原则：控件只有一套 —— 按钮 .hbtn（primary=--accent）、开关 .hsw、设置行 .hset、
+   select 一律去原生（appearance:none + 自绘箭头）。任何页不许再出现原生白底 select /
+   裸 checkbox 行 / 只给这一页用的按钮颜色。 */
+
+/* 主按钮 = --accent 蓝（qsp-btn.primary / btn-primary 同一语言；var(--focus) 是琥珀
+   焦点色，管"焦点/高亮"，不管"主操作"—— §44 把 primary 挂到 focus 上是错的） */
+.hbtn.primary{background:var(--accent,#0A84FF);border-color:transparent;color:#fff}
+.hbtn.primary:hover{background:#2592FF;border-color:transparent;color:#fff}
+.hbtn.ghost{background:transparent}
+
+/* select 去原生：深色底 + 自绘 chevron（macOS 原生 select 在深色页上是系统灰白按钮，
+   角色页「绑定项目」那个橙框白底 select 就是这么来的） */
+.hbody select, .hform select, .hset select, .qe-set select, .hmode select{
+  appearance:none;-webkit-appearance:none;
+  background-color:#101418;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238A8F96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 9px center;
+  border:1px solid var(--line,#2A2E33);border-radius:8px;color:var(--ink,#EDEEF0);
+  padding:6px 26px 6px 10px;font-size:12.5px;cursor:pointer;min-height:30px}
+.hbody select:hover,.hform select:hover,.hset select:hover{border-color:rgba(10,132,255,.55)}
+.hbody select:focus,.hform select:focus,.hset select:focus{outline:none;border-color:var(--accent,#0A84FF)}
+.hbody select option{background:#101418;color:var(--ink,#EDEEF0)}
+/* 数字输入同样收口（原生 spinner 白底很难看，靠 appearance 去掉箭头、统一底色） */
+.hset input[type=number],.hform input[type=number]{
+  appearance:none;-webkit-appearance:none;background:#101418;
+  border:1px solid var(--line,#2A2E33);border-radius:8px;color:var(--ink,#EDEEF0);
+  padding:6px 10px;font-size:13px;min-height:30px;width:110px;text-align:right}
+.hset input[type=number]:focus,.hform input[type=number]:focus{outline:none;border-color:var(--accent,#0A84FF)}
+/* 原生 checkbox 太素 —— Hermes 页里开关一律走 .hsw；这里只兜底染 accent */
+.hbody input[type=checkbox]{accent-color:var(--accent,#0A84FF);width:14px;height:14px}
+
+/* 开关 .hsw（iOS 形，照真图记忆页/钥匙串那两颗；label 包裹，input 本身隐藏） */
+.hsw{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;font-size:12.5px;color:var(--ink2,#B5B5BC)}
+.hsw input{position:absolute;opacity:0;width:0;height:0}
+.hsw .tr{width:40px;height:22px;border-radius:11px;background:#2A2E33;border:1px solid var(--line2,#3A3F45);
+  position:relative;transition:background .16s,border-color .16s;flex:0 0 40px}
+.hsw .kb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#8A8F96;
+  transition:left .16s,background .16s}
+.hsw input:checked + .tr{background:var(--accent,#0A84FF);border-color:transparent}
+.hsw input:checked + .tr .kb{left:20px;background:#fff}
+.hsw:hover .tr{border-color:rgba(10,132,255,.5)}
+
+/* 设置行 .hset（照真图「左 标题+描述 / 右 控件」的排版 —— 记忆页、网关页、提供方页共用） */
+.hset-list{display:flex;flex-direction:column;padding:2px 16px 14px}
+.hset{display:flex;align-items:center;gap:18px;padding:15px 2px;border-bottom:1px solid var(--line,#242426)}
+.hset:last-child{border-bottom:0}
+.hset .tx{min-width:0;flex:1}
+.hset .tt{font-size:13.5px;color:var(--ink,#EDEDEF);font-weight:500;line-height:1.45}
+.hset .ds{font-size:11.5px;color:var(--ink3,#83838C);line-height:1.65;margin-top:3px}
+.hset .ct{margin-left:auto;flex:0 0 auto;display:flex;align-items:center;gap:9px}
+.hset-group{margin:0 14px 6px;border:1px solid var(--line,#242426);border-radius:12px;background:rgba(255,255,255,.025)}
+.hset-group .hset{padding-left:14px;padding-right:14px}
+.hset-group .hset:first-child{padding-top:13px}
+.hset-sec{font-size:11.5px;color:var(--ink3,#83838C);font-weight:600;margin:16px 16px 7px;letter-spacing:.01em}
+
+/* 连接模式卡（照真图网关页 4 张卡：图标 + 标题 + 描述，选中 = accent 边 + 右上 ✓） */
+.hmode{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;padding:2px 16px 4px}
+.hmode-card{position:relative;text-align:left;background:rgba(255,255,255,.03);
+  border:1px solid var(--line,#242426);border-radius:12px;padding:13px 14px;cursor:pointer;
+  transition:border-color .14s,background .14s}
+.hmode-card:hover{border-color:rgba(10,132,255,.45)}
+.hmode-card.is-on{border-color:var(--accent,#0A84FF);background:rgba(10,132,255,.10)}
+.hmode-card .mi{font-size:14px;line-height:1;margin-bottom:8px;color:var(--ink2,#B5B5BC)}
+.hmode-card.is-on .mi{color:#9CC7FF}
+.hmode-card .mt{font-size:13.5px;font-weight:600;color:var(--ink,#EDEDEF);display:flex;align-items:center;gap:7px}
+.hmode-card .md{font-size:11.5px;color:var(--ink3,#83838C);line-height:1.7;margin-top:6px}
+.hmode-card .tick{position:absolute;top:11px;right:12px;color:var(--accent,#0A84FF);font-size:13px;
+  font-weight:700;opacity:0;transition:opacity .14s}
+.hmode-card.is-on .tick{opacity:1}
+/* 模式卡下方的操作行（保存到下次重启 / 保存并重连 —— 右对齐，照真图） */
+.hmode-ops{display:flex;justify-content:flex-end;gap:10px;padding:10px 16px 4px}
+
+/* 提供方页左子导航（照真图侧栏「提供方 › 账号/API 密钥/自定义端点/本地模型」的层级） */
+.hside{display:flex;flex-direction:column;gap:2px}
+.hside-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;
+  font-size:12.5px;color:var(--ink2,#B5B5BC);cursor:pointer;border:1px solid transparent}
+.hside-item:hover{background:rgba(255,255,255,.05);color:var(--ink,#EDEDEF)}
+.hside-item.is-on{background:rgba(10,132,255,.14);border-color:rgba(10,132,255,.45);color:#DCEBFF}
+.hside-item .ic{width:16px;text-align:center;opacity:.85}
+
+/* 页内面包屑（照真图「设置 › 网关 › 当前窗口」） */
+.hcrumb{font-size:11.5px;color:var(--ink3,#83838C);padding:10px 16px 2px;display:flex;gap:7px;align-items:center}
+.hcrumb b{color:var(--ink2,#B5B5BC);font-weight:500}
+.hcrumb .sep{opacity:.5}
+/* 裸 text input（添加本地端点那一行等 hrow 里的输入）—— 与 .hform input 同款 */
+.hrow input[type=text],.hrow input:not([type]),.hset input[type=text]{
+  background:#101418;border:1px solid var(--line,#2A2E33);border-radius:8px;color:var(--ink,#EDEEF0);
+  padding:6px 10px;font-size:12.5px;min-height:30px}
+.hrow input[type=text]:focus,.hrow input:not([type]):focus,.hset input[type=text]:focus{
+  outline:none;border-color:var(--accent,#0A84FF)}
