@@ -8317,28 +8317,46 @@ const QSP = {
   hkRec: null,           // {id, fpKey?, def}
   newSel: 0, batchSel: 0,
 };
+const QSP_PREFS_DEFAULT = {
+  showSelection: true,
+  searchRememberDomain: true, searchRecentCount: 10, searchShowIn: 'new_window',
+  searchKinds: [
+    { n: '文件夹', e: '', u: 'public.folder' },
+    { n: '归档', e: 'zip, 7z, rar, tar, gz, bz2,…', u: '' },
+    { n: '应用', e: '', u: 'com.apple.application' },
+    { n: '视频', e: '', u: 'public.movie' },
+    { n: '图像', e: '', u: 'public.image' },
+    { n: '文稿', e: '', u: 'public.data' },
+    { n: '文稿', e: 'doc, docx, pages, xls, x…', u: '' },
+  ],
+  newfileExpanded: true, newfileIcon: false,
+  batchMode: 'lite', batchEnterConfirm: true, batchLog: true, batchFormat: '$n',
+  batchReplace: '', batchAdd: '',
+  // 43.3 连接 = 左右两栏：左列表 + 右详情（条目自己带字段）
+  connType: 'FTP', connSSL: true, connProxy: false, connOnDemand: true, connAtLaunch: false, connAskUpload: true,
+  connList: [], connSel: -1, connEnc: 'UTF-8',
+  // 43.5 iCloud：下拉三态 + 应用文件夹列表（演示数据，结构照真图）
+  icloudApps: 'auto',
+  icloudAppsList: [
+    { n: '文本编辑', t: 'app' }, { n: 'Shortcuts', t: 'app' },
+    { n: '脚本编辑器 (空)', t: 'app' }, { n: '图书 (空)', t: 'app' },
+    { n: '预览 (空)', t: 'app' }, { n: '自动操作 (空)', t: 'app' },
+    { n: 'Dropover (空)', t: 'app' }, { n: 'Obsidian (空)', t: 'app' },
+    { n: 'Surge', t: 'dir' }, { n: 'Quantumult X', t: 'dir' },
+    { n: 'Documents by Readdle', t: 'dir' }, { n: 'Numbers', t: 'dir' },
+    { n: 'Shadowrocket', t: 'dir' }, { n: 'MarginNote 4', t: 'dir' },
+    { n: 'PastePal', t: 'dir' },
+  ],
+};
 function qspPrefs() {
-  if (!S.qspPrefs || typeof S.qspPrefs !== 'object') {
-    S.qspPrefs = {
-      showSelection: true,
-      searchRememberDomain: true, searchRecentCount: 10, searchShowIn: 'new_window',
-      searchKinds: [
-        { n: '文件夹', e: '', u: 'public.folder' },
-        { n: '归档', e: 'zip, 7z, rar, tar, gz, bz2,…', u: '' },
-        { n: '应用', e: '', u: 'com.apple.application' },
-        { n: '视频', e: '', u: 'public.movie' },
-        { n: '图像', e: '', u: 'public.image' },
-        { n: '文稿', e: '', u: 'public.data' },
-        { n: '文稿', e: 'doc, docx, pages, xls, x…', u: '' },
-      ],
-      newfileExpanded: true,
-      batchMode: 'lite', batchEnterConfirm: true, batchLog: true, batchFormat: '$n',
-      batchReplace: '', batchAdd: '',
-      connType: 'FTP', connSSL: true, connProxy: false, connOnDemand: true, connAtLaunch: false, connAskUpload: true,
-      icloudApps: 'auto',
-    };
-  }
-  return S.qspPrefs;
+  if (!S.qspPrefs || typeof S.qspPrefs !== 'object') S.qspPrefs = {};
+  const p = S.qspPrefs;
+  // 逐键回填：老存盘没有的新键也拿得到默认值（不整块覆盖，用户改过的保留）
+  Object.keys(QSP_PREFS_DEFAULT).forEach(k => {
+    if (p[k] === undefined) p[k] = JSON.parse(JSON.stringify(QSP_PREFS_DEFAULT[k]));
+  });
+  if (!Array.isArray(p.newfiles)) p.newfiles = JSON.parse(JSON.stringify(QSP_NEWFILES));
+  return p;
 }
 /* ── 开 / 关 ── */
 function qspOpenPage(page) {
@@ -8775,16 +8793,19 @@ const QSP_NEWFILES = [
 ];
 function qspRenderNewfilesPage(body) {
   const p = qspPrefs();
+  const files = p.newfiles;
   body.innerHTML = `
     <div class="qsp-sec">文件模板</div>
     <div class="qsp-card">
       <table class="qsp-table"><thead><tr><th style="width:16%">快捷键</th><th style="width:34%">名称</th><th style="width:24%">内容</th><th>模板</th></tr></thead>
-      <tbody>${QSP_NEWFILES.map((f, i) => `<tr data-nf="${i}" class="${QSP.newSel === i ? 'is-sel' : ''}">
-        <td style="color:#7C8B90">${f.k || 'A'}</td><td>${escapeHtml(f.n)}</td>
+      <tbody>${files.map((f, i) => `<tr data-nf="${i}" class="${QSP.newSel === i ? 'is-sel' : ''}">
+        <td style="color:#7C8B90">${escapeHtml(f.k || 'A')}</td><td>${escapeHtml(f.n)}</td>
         <td style="color:#7C8B90">${f.c || '—'}</td><td style="color:#7C8B90">${f.t || '使用空“' + escapeHtml((f.n.split('.').pop() || '') + '”') }</td></tr>`).join('')}
       </tbody></table>
+      <div class="qsp-tablebar"><button class="qsp-btn sm" id="qspNfAdd">＋</button>
+        <button class="qsp-btn sm" id="qspNfDel">−</button></div>
     </div>
-    <div class="qsp-sec">右键菜单</div>
+    <div class="qsp-sec">功能</div>
     <div class="qsp-card">
       <div class="qsp-row"><span class="qsp-lab">在右键菜单中展开显示</span>
         <button class="qsp-sw ${p.newfileExpanded ? 'on' : ''}" data-pref="newfileExpanded"></button></div>
@@ -8799,6 +8820,20 @@ function qspRenderNewfilesPage(body) {
   body.querySelectorAll('[data-pref]').forEach(el => el.onclick = () => {
     const k = el.dataset.pref; p[k] = !p[k]; save(true); qspRenderBody();
   });
+  // 43.2 添加 / 删除（真的增删行）
+  document.getElementById('qspNfAdd').onclick = () => {
+    askModal({ title: '添加模板', text: '名称（含扩展名）', value: '未命名.txt', okText: '添加',
+      onOk: v => { if (!v || !v.trim()) return;
+        files.push({ k: '', n: v.trim(), c: '0 B', t: '' });
+        QSP.newSel = files.length - 1; save(true); qspRenderBody(); } });
+  };
+  document.getElementById('qspNfDel').onclick = () => {
+    if (QSP.newSel < 0 || QSP.newSel >= files.length) return toast('先点表格里要删除的那一行');
+    const nm = files[QSP.newSel].n;
+    if (nm === '—— 分割线 ——') return toast('分割线不能删');
+    files.splice(QSP.newSel, 1); QSP.newSel = -1; save(true); qspRenderBody();
+    toast(`已删除「${escapeHtml(nm)}」`);
+  };
 }
 /* ── 42.12 批量重命名页（XS:JHSBatchRenameSettingsView 逐字） ── */
 function qspRenderBatchRenamePage(body) {
@@ -8842,56 +8877,105 @@ function qspRenderBatchRenamePage(body) {
 const QSP_CONN_TYPES = ['FTP', 'SFTP', 'WebDAV', 'WebDAVS', '阿里云OSS', '亚马逊S3', '腾讯云COS', '七牛云KODO'];
 function qspRenderConnectionsPage(body) {
   const p = qspPrefs();
-  const inp = (k, ph) => `<input class="qsp-inp" style="flex:1;max-width:360px" data-ci="${k}" value="${escapeHtml(p['conn_' + k] || '')}" placeholder="${ph}">`;
-  const sw = k => `<button class="qsp-sw ${p[k] ? 'on' : ''}" data-csw="${k}"></button>`;
+  const list = p.connList;
+  const sel = p.connSel;
+  const cur = (sel >= 0 && sel < list.length) ? list[sel] : null;
+  const inp = (k, ph) => `<input class="qsp-inp" style="flex:1;max-width:360px" data-cf="${k}"
+    value="${escapeHtml(cur ? (cur[k] || '') : '')}" placeholder="${ph}" ${cur ? '' : 'disabled'}>`;
+  const sw = k => `<button class="qsp-sw ${cur && cur[k] ? 'on' : ''}" data-csw="${k}" ${cur ? '' : 'disabled'}></button>`;
   body.innerHTML = `
-    <div class="qsp-sec">连接类型</div>
-    <div class="qsp-card"><div class="qsp-row" style="flex-wrap:wrap;gap:8px">
-      ${QSP_CONN_TYPES.map(t => `<button class="qsp-btn sm ${p.connType === t ? 'primary' : ''}" data-ctype="${t}">${t}</button>`).join('')}
-    </div></div>
-    <div class="qsp-sec">服务器</div>
-    <div class="qsp-card">
-      <div class="qsp-row"><span class="qsp-lab">名称</span>${inp('name', '我的服务器')}</div>
-      <div class="qsp-row"><span class="qsp-lab">地址</span>${inp('addr', 'ftp.example.com')}</div>
-      <div class="qsp-row"><span class="qsp-lab">端口</span>${inp('port', '21')}</div>
-      <div class="qsp-row"><span class="qsp-lab">用户名</span>${inp('user', '')}</div>
-      <div class="qsp-row"><span class="qsp-lab">密码</span>${inp('pass', '')}</div>
-      <div class="qsp-row"><span class="qsp-lab">字符编码</span>
-        <span class="qsp-seg">${['UTF-8', 'GBK', 'ISO-8859-1'].map(e =>
-          `<button data-enc="${e}" class="${(p.connEnc || 'UTF-8') === e ? 'on' : ''}">${e}</button>`).join('')}</span></div>
-    </div>
-    <div class="qsp-sec">选项</div>
-    <div class="qsp-card">
-      <div class="qsp-row"><span class="qsp-lab">启用SSL</span>${sw('connSSL')}</div>
-      <div class="qsp-row"><span class="qsp-lab">私钥文件</span>${inp('key', '未选择')}</div>
-      <div class="qsp-row"><span class="qsp-lab">代理</span>${sw('connProxy')}</div>
-      <div class="qsp-row"><span class="qsp-lab">按需连接</span>${sw('connOnDemand')}</div>
-      <div class="qsp-row"><span class="qsp-lab">应用启动时连接</span>${sw('connAtLaunch')}</div>
-      <div class="qsp-row"><span class="qsp-lab">上传前确认</span>${sw('connAskUpload')}</div>
+    <div class="qsp-conn-cols">
+      <div class="qsp-conn-list">
+        <div class="qsp-conn-rows" id="qspConnRows">
+          ${list.length ? list.map((c, i) => `<div class="qsp-conn-item${sel === i ? ' is-sel' : ''}" data-ci="${i}">
+              <span>${escapeHtml(c.name || '未命名连接')}</span><span class="ty">${escapeHtml(c.type || 'FTP')}</span></div>`).join('')
+            : '<div class="qsp-conn-empty">还没有连接。<br>点下面的 <b>＋</b> 添加一个（FTP · SFTP · WebDAV · 云存储）。</div>'}
+        </div>
+        <div class="qsp-tablebar"><button class="qsp-btn sm" id="qspConnAdd">＋</button>
+          <button class="qsp-btn sm" id="qspConnDel">−</button></div>
+      </div>
+      <div class="qsp-conn-detail">
+        ${!cur ? '<div class="qsp-conn-placeholder">在左侧选择一个连接查看/编辑。<br>还没有连接就先点左下角的 <b>＋</b>。</div>' : `
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${QSP_CONN_TYPES.map(t => `<button class="qsp-btn sm ${cur.type === t ? 'primary' : ''}" data-ctype="${t}">${t}</button>`).join('')}
+        </div>
+        <div class="qsp-card">
+          <div class="qsp-row"><span class="qsp-lab">名称</span>${inp('name', '我的服务器')}</div>
+          <div class="qsp-row"><span class="qsp-lab">地址</span>${inp('addr', 'ftp.example.com')}</div>
+          <div class="qsp-row"><span class="qsp-lab">端口</span>${inp('port', '21')}</div>
+          <div class="qsp-row"><span class="qsp-lab">用户名</span>${inp('user', '')}</div>
+          <div class="qsp-row"><span class="qsp-lab">密码</span>${inp('pass', '')}</div>
+          <div class="qsp-row"><span class="qsp-lab">字符编码</span>
+            <span class="qsp-seg">${['UTF-8', 'GBK', 'ISO-8859-1'].map(e =>
+              `<button data-enc="${e}" class="${(cur.enc || 'UTF-8') === e ? 'on' : ''}">${e}</button>`).join('')}</span></div>
+        </div>
+        <div class="qsp-card">
+          <div class="qsp-row"><span class="qsp-lab">启用SSL</span>${sw('ssl')}</div>
+          <div class="qsp-row"><span class="qsp-lab">私钥文件</span>${inp('key', '未选择')}</div>
+          <div class="qsp-row"><span class="qsp-lab">代理</span>${sw('proxy')}</div>
+          <div class="qsp-row"><span class="qsp-lab">按需连接</span>${sw('onDemand')}</div>
+          <div class="qsp-row"><span class="qsp-lab">应用启动时连接</span>${sw('atLaunch')}</div>
+          <div class="qsp-row"><span class="qsp-lab">上传前确认</span>${sw('askUpload')}</div>
+        </div>`}
+      </div>
     </div>`;
-  body.querySelectorAll('[data-ctype]').forEach(b => b.onclick = () => { p.connType = b.dataset.ctype; save(true); qspRenderBody(); });
-  body.querySelectorAll('[data-enc]').forEach(b => b.onclick = () => { p.connEnc = b.dataset.enc; save(true); qspRenderBody(); });
-  body.querySelectorAll('[data-csw]').forEach(b => b.onclick = () => { const k = b.dataset.csw; p[k] = !p[k]; save(true); qspRenderBody(); });
-  body.querySelectorAll('[data-ci]').forEach(i => i.oninput = () => { p['conn_' + i.dataset.ci] = i.value; save(true); });
+  // 左：选中 / 添加 / 删除
+  body.querySelectorAll('[data-ci]').forEach(el => el.onclick = () => {
+    p.connSel = +el.dataset.ci; save(true); qspRenderBody();
+  });
+  document.getElementById('qspConnAdd').onclick = () => {
+    askModal({ title: '新建连接', text: '连接名称', value: '我的服务器', okText: '添加',
+      onOk: v => { if (!v || !v.trim()) return;
+        list.push({ name: v.trim(), type: p.connType || 'FTP', addr: '', port: '21',
+          user: '', pass: '', enc: 'UTF-8', ssl: true, key: '', proxy: false,
+          onDemand: true, atLaunch: false, askUpload: true });
+        p.connSel = list.length - 1; save(true); qspRenderBody();
+        toast(`已添加连接「${escapeHtml(v.trim())}」`); } });
+  };
+  document.getElementById('qspConnDel').onclick = () => {
+    if (sel < 0 || sel >= list.length) return toast('先在左侧选中要删除的连接');
+    const nm = list[sel].name;
+    list.splice(sel, 1); p.connSel = list.length ? 0 : -1; save(true); qspRenderBody();
+    toast(`已删除连接「${escapeHtml(nm)}」`);
+  };
+  if (!cur) return;
+  body.querySelectorAll('[data-ctype]').forEach(b => b.onclick = () => { cur.type = b.dataset.ctype; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-enc]').forEach(b => b.onclick = () => { cur.enc = b.dataset.enc; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-csw]').forEach(b => b.onclick = () => { const k = b.dataset.csw; cur[k] = !cur[k]; save(true); qspRenderBody(); });
+  body.querySelectorAll('[data-cf]').forEach(i => i.oninput = () => { cur[i.dataset.cf] = i.value; save(true); });
 }
 /* ── 42.14 iCloud 页（XS:JHSiCloudSettingsView 逐字） ── */
 function qspRenderICloudPage(body) {
   const p = qspPrefs();
+  const IC_MODES = [['auto', '自动'], ['hidden', '自定义隐藏项'], ['visible', '自定义可见项']];
+  const modeLabel = (IC_MODES.find(m => m[0] === p.icloudApps) || IC_MODES[0])[1];
+  const list = p.icloudAppsList;
   body.innerHTML = `
-    <div class="qsp-sec">iCloud云盘</div>
     <div class="qsp-card">
-      <div class="qsp-row" style="flex-wrap:wrap">
-        <span class="qsp-lab">在 iCloud云盘 中显示应用文件夹</span>
-        ${[['auto', '自动'], ['hidden', '自定义隐藏项'], ['visible', '自定义可见项']].map(([k, l]) =>
-          `<label class="qsp-opt"><span class="qsp-radio${p.icloudApps === k ? ' on' : ''}" data-ic="${k}"></span>${l}</label>`).join('')}
-        <button class="qsp-btn sm" id="qspIcView" style="margin-left:auto">查看</button>
-      </div>
+      <div class="qsp-ic-row"><span style="flex:1">在 iCloud云盘 中显示应用文件夹</span>
+        <button class="qsp-drop" id="qspIcMode">${escapeHtml(modeLabel)}<span class="cv">⇕</span></button></div>
+      <table class="qsp-table qsp-ic-list"><tbody>
+      ${list.map((a, i) => `<tr data-ic="${i}">
+        <td style="width:40%"><span class="qsp-ic-ico" style="background:${a.t === 'dir' ? '#45ACE6' : '#8E959B'};${a.t === 'dir' ? '' : 'color:#fff'}">${a.t === 'dir' ? '📁' : 'A'}</span>
+          <span style="margin-left:8px">${escapeHtml(a.n)}</span></td>
+        <td class="qsp-ic-empty">${/\(空\)/.test(a.n) ? '(空)' : ''}</td>
+        <td style="width:70px;text-align:right"><button class="qsp-ic-view" data-icv="${i}">查看</button></td>
+      </tr>`).join('')}
+      </tbody></table>
     </div>`;
-  body.querySelectorAll('[data-ic]').forEach(el => el.onclick = () => {
-    p.icloudApps = el.dataset.ic; save(true); qspRenderBody();
+  document.getElementById('qspIcMode').onclick = e => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    showMenu(IC_MODES.map(([k, l]) => ({
+      label: (p.icloudApps === k ? '✓ ' : '　') + l,
+      action: () => { p.icloudApps = k; save(true); qspRenderBody(); },
+    })), null, { x: r.left, y: r.bottom + 4 });
+  };
+  body.querySelectorAll('[data-icv]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const a = list[+b.dataset.icv];
+    toast(`在 iCloud云盘 中查看「${escapeHtml(a.n)}」的应用文件夹（演示）`);
   });
-  document.getElementById('qspIcView').onclick = () =>
-    fpNavTo(FP.active, '/Users/mjm/Library/Mobile Documents/com~apple~CloudDocs', true);
 }
 /* ── 42.15 关窗三条路径 + 快捷键录制（与 §41.8 共用捕获监听） ── */
 document.addEventListener('keydown', e => {
@@ -8917,6 +9001,13 @@ document.addEventListener('keydown', e => {
   if (fw) fw.onclick = () => qspNavStep(1);
   const fi = document.getElementById('qspFilterInput');
   if (fi) fi.oninput = () => { QSP.filter = fi.value; qspRenderNav(); };
+  // 43.4 点设置窗**外面**（遮罩上）= 自动隐藏；点窗体内部不关
+  document.addEventListener('mousedown', e => {
+    if (!QSP.open) return;
+    if (!e.target || typeof e.target.closest !== 'function') return;
+    if (e.target.closest('.qsp-win')) return;
+    qspClose();
+  }, true);
   // 42.15 Esc 关窗（录制键位时 Esc 由录制监听先吃掉）
   document.addEventListener('keydown', e => {
     if (!QSP.open || QSP.hkRec) return;

@@ -2117,7 +2117,8 @@ body.finder-on .finder-pane{position:relative}
 .qsp-yellow{background:#F5BD4F}
 .qsp-green{background:#61C454}
 /* 左栏 */
-.qsp-side{width:30.9%;min-width:230px;background:#162227;padding:44px 12px 14px;
+/* §43.1 定宽 206px = QSpace 原始 APP 实测（真图 412px/2，占 897pt 窗的 22.97%）—— 不随窗宽缩放 */
+.qsp-side{width:206px;min-width:206px;max-width:206px;background:#162227;padding:44px 12px 14px;
   display:flex;flex-direction:column;gap:8px;overflow:auto}
 .qsp-filter{display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border-radius:8px;
   background:#101A1E;color:#7C8B90;flex:0 0 auto}
@@ -2242,3 +2243,38 @@ body.finder-on .finder-pane{position:relative}
 .qsp-steps button{width:22px;height:20px;border:0;border-radius:5px;background:#2A3336;color:#D7D9DA;
   cursor:pointer;font-size:13px;line-height:1}
 .qsp-steps button:hover{background:#354044}
+
+/* ══ §43 设置窗四修 ══ */
+/* 43.3 连接页 = 左右两块面板（照 QSpace 实拍：左列表 + 底部±，右详情） */
+.qsp-conn-cols{display:flex;gap:10px;align-items:stretch;min-height:430px}
+.qsp-conn-list{width:36%;min-width:230px;display:flex;flex-direction:column;background:#1D2629;
+  border-radius:10px;overflow:hidden}
+.qsp-conn-rows{flex:1;min-height:0;overflow:auto;padding:6px 0;position:relative}
+.qsp-conn-empty{padding:22px 16px;text-align:center;color:#767F83;font-size:12.5px;line-height:1.7}
+.qsp-conn-item{display:flex;align-items:center;gap:9px;height:34px;padding:0 14px;font-size:13.5px;
+  color:#D7D9DA;cursor:pointer;user-select:none}
+.qsp-conn-item:hover{background:rgba(255,255,255,.05)}
+.qsp-conn-item.is-sel{background:#0A84FF;color:#fff}
+.qsp-conn-item .ty{margin-left:auto;font-size:11.5px;color:#8B9599}
+.qsp-conn-item.is-sel .ty{color:#DCE9FF}
+.qsp-conn-detail{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;background:#1D2629;
+  border-radius:10px;padding:14px;overflow:auto}
+.qsp-conn-detail .qsp-conn-placeholder{margin:auto;text-align:center;color:#767F83;font-size:12.5px;
+  line-height:1.7}
+/* 43.2 新建文件表格底部工具条（与聚焦搜索种类表同款） */
+.qsp-tablebar .qsp-btn.sm{min-width:46px}
+/* 43.5 iCloud：一行下拉 + 斑马纹应用列表（照真图） */
+.qsp-ic-row{display:flex;align-items:center;gap:10px;min-height:46px;padding:9px 16px;
+  border-bottom:1px solid rgba(255,255,255,.055);font-size:13.5px;color:#D7D9DA}
+.qsp-ic-row:last-child{border-bottom:0}
+.qsp-ic-list tr:nth-child(even) td,.qsp-ic-row:nth-child(even){background:rgba(255,255,255,.045)}
+.qsp-ic-ico{width:18px;height:18px;flex:0 0 18px;border-radius:4px;display:inline-flex;
+  align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#0C0C0E}
+.qsp-ic-empty{color:#7C8B90;font-size:11.5px}
+.qsp-ic-view{margin-left:auto;border:0;background:transparent;color:#9FD0FF;font-size:13px;cursor:pointer;
+  padding:2px 4px}
+.qsp-ic-view:hover{color:#fff;text-decoration:underline}
+.qsp-drop{border:0;background:transparent;color:#D7D9DA;font-size:13.5px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:5px;padding:3px 6px;border-radius:6px}
+.qsp-drop:hover{background:rgba(255,255,255,.07)}
+.qsp-drop .cv{color:#9AA6AA;font-size:11.5px}
