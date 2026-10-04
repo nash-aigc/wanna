@@ -2744,3 +2744,69 @@ body.finder-on .finder-pane{position:relative}
 .md-code{background:#0A0A0C;border:1px solid var(--line,#26292C);border-radius:8px;padding:10px 12px;
   font-size:11px;line-height:1.55;color:#C8E6D0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   white-space:pre-wrap;word-break:break-all;max-height:340px;overflow:auto;margin:0}
+
+/* ══ §61 模型页二次改版：Keys 下拉 / 四行卡片 / 运行组件 / 结果预览 / 代码窗放大 ══ */
+.md-frow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.md-flbl{font-size:11.5px;color:var(--ink3,#8A8F96);width:38px;flex:none}
+.md-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0}
+.md-keysbtn{margin-left:auto;flex:none}
+.md-keys{display:flex;gap:10px;flex-wrap:wrap;padding:8px 10px;background:#0C0C0E;
+  border:1px solid var(--line,#26292C);border-radius:8px;margin:2px 0 4px}
+.md-searchrow{align-items:center;gap:10px}
+.md-search{width:340px;flex:none}
+.md-count{font-size:11.5px;color:#93C5FD;background:rgba(10,132,255,.10);
+  border:1px solid rgba(10,132,255,.35);border-radius:7px;padding:3px 9px;white-space:nowrap}
+.md-brief{font-size:11px;color:var(--ink3,#8A8F96)}
+.md-r1{display:flex;align-items:center;gap:8px;min-width:0}
+.md-r1 .md-name{flex:none;max-width:52%}
+.md-r1 .md-id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px}
+.md-badge.fm{color:#C9A7FF;border-color:rgba(150,90,255,.35)}
+.md-badge.off{color:#FF8A8A;border-color:rgba(255,80,80,.4)}
+.md-drawer{width:580px}                                    /* §61 加大：一行能放更多代码 */
+.md-code{min-height:300px;max-height:480px;font-size:11.5px;line-height:1.6}
+.md-langchip{display:inline-block;font-size:10.5px;color:#7ED9A2;background:#101014;
+  border:1px solid var(--line,#26292C);border-radius:6px;padding:1px 7px;margin:0 6px;vertical-align:1px}
+/* 运行：输入 / 按钮 / 二次确认 / 呼吸灯 */
+.md-input{width:100%;min-height:64px;resize:vertical;background:#101014;color:var(--ink,#F2F2F4);
+  border:1px solid var(--line,#26292C);border-radius:8px;padding:8px 10px;font-size:12.5px;
+  font-family:inherit;line-height:1.5}
+.md-input:focus{outline:none;border-color:rgba(10,132,255,.6)}
+.md-runrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.md-runhint{font-size:11px}
+.md-runbtn.is-armed{animation:mdGlow 1.15s ease-in-out infinite}
+@keyframes mdGlow{
+  0%,100%{box-shadow:0 0 0 0 rgba(10,132,255,.55);border-color:#0A84FF}
+  50%{box-shadow:0 0 14px 4px rgba(10,132,255,.45);border-color:#7AB8FF}
+}
+@media (prefers-reduced-motion: reduce){ .md-runbtn.is-armed{animation:none;box-shadow:0 0 10px 2px rgba(10,132,255,.4)} }
+.md-confirm{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.45);
+  border-radius:8px;padding:9px 11px;display:flex;flex-direction:column;gap:8px}
+.md-cost{font-size:12px;line-height:1.55;color:#FDE68A;font-weight:600}
+/* 状态时间线（提交 / 轮询 / 完成） */
+.md-steps{list-style:none;margin:6px 0 0;padding:6px 10px 6px 26px;background:#0A0A0C;
+  border:1px solid var(--line,#26292C);border-radius:8px;display:flex;flex-direction:column;gap:5px;
+  max-height:170px;overflow:auto}
+.md-steps li{font-size:11.5px;color:var(--ink2,#B9B9C2);position:relative}
+.md-steps li::before{content:'●';position:absolute;left:-16px;color:#8A8F96;font-size:9px}
+.md-steps li.is-ok::before{content:'✓';color:#4ADE80}
+.md-steps li.is-err::before{content:'✗';color:#FF8A8A}
+.md-steps li.is-ok{color:#B7F0CD}
+.md-steps li.is-err{color:#FFB4B4}
+.md-steps li b{color:var(--ink,#F2F2F4);margin-right:6px;font-weight:600}
+.md-steps time{float:right;color:var(--ink3,#8A8F96);font-size:10px}
+/* 结果组件：文本 / 图片 / 音频 / 视频 / 链接 */
+.md-result:not(:empty){margin-top:4px}
+.md-resblock{background:#0A0A0C;border:1px solid var(--line,#26292C);border-radius:8px;
+  padding:9px 11px;display:flex;flex-direction:column;gap:8px}
+.md-restag{font-size:10.5px;color:#7ED9A2;letter-spacing:.02em}
+.md-restext{margin:0;font-size:11.5px;line-height:1.6;color:#C8E6D0;white-space:pre-wrap;
+  word-break:break-all;max-height:260px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.md-imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.md-imgitem{display:flex;flex-direction:column;gap:5px}
+.md-imgitem img{width:100%;border-radius:6px;border:1px solid var(--line,#26292C);background:#000;
+  min-height:40px}
+.md-resblock video{width:100%;max-height:300px;border-radius:6px;background:#000}
+.md-resblock audio{width:100%}
+.md-linkrow{display:flex;gap:6px;align-items:center;font-size:11px}
+.md-linkrow code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:#7ED9A2;font-size:10.5px}
