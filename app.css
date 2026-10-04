@@ -2810,3 +2810,7 @@ body.finder-on .finder-pane{position:relative}
 .md-linkrow{display:flex;gap:6px;align-items:center;font-size:11px}
 .md-linkrow code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   color:#7ED9A2;font-size:10.5px}
+
+/* ══ §62 运行组件不许被压缩：flex 列里 overflow 子项的 min-height 会归零 → 显式不收缩 ══ */
+.md-dscroll > *{flex:0 0 auto}
+.md-steps{min-height:44px}

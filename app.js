@@ -14415,12 +14415,17 @@ function mcRenderDrawer() {
       mcRefreshCode(m);
     };
   });
+  // §62 运行后把「任务过程 / 结果」滚进可视区（否则在长抽屉折叠线以下，看起来=被压缩没了）
+  const anchor = d.querySelector('#mdResult .md-resblock') || d.querySelector('.md-steps') || d.querySelector('.md-confirm');
+  if (anchor && run.phase !== 'idle') anchor.scrollIntoView({ block: 'nearest' });
   const runBtn = d.querySelector('#mdRun');
   if (runBtn) runBtn.onclick = () => {
     if (run.phase === 'submitting' || run.phase === 'polling') return;
     mcState.run.phase = 'confirm';
     mcState.armed = true;
     mcRenderDrawer();
+    const cb = document.querySelector('.md-confirm');
+    if (cb) cb.scrollIntoView({ block: 'nearest' });
   };
   const stop = d.querySelector('#mdStop');
   if (stop) stop.onclick = () => { mcAbortRun(); mcStep('停止', '用户手动停止'); mcRenderDrawer(); };
