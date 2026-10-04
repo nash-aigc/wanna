@@ -6412,6 +6412,7 @@ function monitorCountdowns() {
 /// 监控模式开关 —— 左栏：搜索+项目/默认列表 ⇄ 监控选项；右栏：编辑区+对话+分隔+右 rail
 /// 全部换成监控页；nav-quick（设置/历史/添加/角色/录音）原样保留（你点名的"设置部分保留不变"）
 function setMonitorMode(on) {
+  if (on) closeActionPage();                             // §63 与动作识别页互斥
   if (on && typeof modelView !== 'undefined' && modelView) setModelView(null);        // §60 与模型页互斥
   if (on && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);   // §34 两个独立页互斥
   monitorOpen = on;
@@ -6707,6 +6708,7 @@ function fpGroupValue(entry, g) {
 }
 
 function setFinderOpen(on) {
+  if (on) closeActionPage();                              // §63 与动作识别页互斥
   if (on && typeof modelView !== 'undefined' && modelView) setModelView(null);  // §60 与模型页互斥
   if (on && monitorOpen) setMonitorMode(false);          // 两个独立页互斥
   finderOpen = on;
@@ -9583,6 +9585,7 @@ function hArchivedConvs() {
 /* ══ §44d 视图：导航分区 + 三个页面 ══ */
 let hermesView = null;      // null | 'rooms' | 'kanban' | 'archived'
 function setHermesView(v) {
+  if (v) closeActionPage();                               // §63 与动作识别页互斥
   if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);   // 与访达互斥
   if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
   if (v && typeof wikiView !== 'undefined' && wikiView) setWikiView(null);          // §53 与知识库互斥
@@ -12375,6 +12378,7 @@ function wikiOwnerLabel() {
 }
 
 function setWikiView(v) {
+  if (v) closeActionPage();                               // §63 与动作识别页互斥
   if (v && typeof modelView !== 'undefined' && modelView) setModelView(null);  // §60 与模型页互斥
   if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);
   if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
@@ -13758,6 +13762,7 @@ const mcState = {
 let mcKeys = { volcano: '', bailian: '', minimax: '' };
 
 function setModelView(v) {
+  if (v) closeActionPage();                               // §63 与动作识别页互斥
   if (v && typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);
   if (v && typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
   if (v && typeof hermesView !== 'undefined' && hermesView) {
@@ -14514,6 +14519,178 @@ function mcResultHTML(res, m) {
     }
   });
   renderModelNav();
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   §63 动作识别页 —— 左：项目文档（功能/用法/设计思路/场景分类）
+                    右：ChatModule 寄宿的完整对话窗（图文/语音/视频/通话）
+   真值：reference/mediapipe（google-ai-edge 克隆 126M，gitignore 只读副本）
+         + gesture_control/gesture_launcher.py（312 行自研应用层，README 实证）
+   ══════════════════════════════════════════════════════════════════════ */
+let actionView = null;                    // null | 'open'
+
+function closeActionPage() {
+  if (typeof actionView !== 'undefined' && actionView) setActionView(null);
+  else if (typeof ChatModule !== 'undefined' && ChatModule.attached) ChatModule.detach();   // 陈旧寄宿兜底
+}
+
+function setActionView(v) {
+  // 打开前先收掉其它接管页（互斥，与 setModelView 同一套）
+  if (v) {
+    if (typeof finderOpen !== 'undefined' && finderOpen) setFinderOpen(false);
+    if (typeof monitorOpen !== 'undefined' && monitorOpen) setMonitorMode(false);
+    if (typeof hermesView !== 'undefined' && hermesView) {
+      hermesView = null;
+      const hp = $('#hermesPane'); if (hp) hp.hidden = true;
+      renderHermesNav();
+    }
+    if (typeof wikiView !== 'undefined' && wikiView) setWikiView(null);
+    if (typeof modelView !== 'undefined' && modelView) setModelView(null);
+  }
+  actionView = v;
+  const on = !!v;
+  // ⚠️ hide 列表**故意不含 '.chat'** —— 对话窗本页要寄宿使用（attach 会把它搬进插槽）
+  ['.workspace', '.split-v', '.split-h', '#railRight', '#panelSide', '#panelAutomation', '#tabsVertical']
+    .forEach(sel => document.querySelectorAll(sel).forEach(el => {
+      if (on) { el.dataset.aHide = '1'; el.style.display = 'none'; }
+      else if (el.dataset.aHide) { delete el.dataset.aHide; el.style.display = ''; }
+    }));
+  const pane = $('#actionPane');
+  if (pane) pane.hidden = !on;
+  if (on) { actionPageHTML(pane); }
+  else if (typeof ChatModule !== 'undefined' && ChatModule.attached) ChatModule.detach();
+  renderActionNav();
+}
+
+function renderActionNav() {
+  const host = $('#actionList');
+  if (!host) return;
+  host.innerHTML = `<div class="plan-row${actionView ? ' is-on' : ''}" data-av="open">
+      <span class="plan-dot" style="background:#F97316"></span><span class="pname">动作识别 · MediaPipe</span>
+    </div>`;
+  host.querySelectorAll('[data-av]').forEach(el => el.onclick = () => setActionView('open'));   // 行恒打开（开关在分区头，§63 修：分区已开再点行会把自己关掉）
+  const sect = $('#btnActionSect');
+  if (sect) sect.classList.toggle('closed', !actionView);
+}
+
+function actionPageHTML(pane) {
+  if (!pane) return;
+  // §63 安全闸：innerHTML 重绘会连带删掉仍在 pane 里的 #chatPane —— 先搬回家，末尾再 attach
+  if (typeof ChatModule !== 'undefined' && ChatModule.attached) ChatModule.detach();
+  pane.innerHTML = `
+    <div class="hbar">
+      <b>动作识别 · MediaPipe</b>
+      <span class="hsub">左：项目全部功能 / 用法 / 设计思路 / 场景分类 · 右：完整对话窗（图文 · 语音 · 视频 · 通话）</span>
+      <span class="hchip">reference/mediapipe 126M 已嵌入</span>
+    </div>
+    <div class="act-body">
+      <div class="act-docs" id="actDocs">
+
+        <div class="act-card">
+          <h4><span class="num">1</span>项目是什么（两层结构）</h4>
+          <p><b style="color:#F2F2F4">框架层</b> = <code>reference/mediapipe/</code> —— google-ai-edge/mediapipe 完整克隆（126MB，只读第三方副本，已在 .gitignore 内不进版本库）；<b style="color:#F2F2F4">应用层</b> = <code>gesture_control/</code> —— 自研手势控制（312 行，唯一依赖 MediaPipe Hands）。</p>
+          <p>执行链三层：<b style="color:#F2F2F4">识别</b>（21 个手部关键点 → 手指数）→ <b style="color:#F2F2F4">决策</b>（12 帧防抖状态机）→ <b style="color:#F2F2F4">执行</b>（AppleScript / open URL / 任意 shell）。三层各自可单独替换。</p>
+        </div>
+
+        <div class="act-card">
+          <h4><span class="num">2</span>全部功能 · 应用层 gesture_control（已实现）<span class="act-tag done">已实现</span></h4>
+          <div class="act-grid">
+            <div class="act-tile"><b>✋ 5 指 → 网易云播放</b><span>张开手掌；首次会自动拉起网易云；AppleScript 读菜单状态精确点「播放」</span></div>
+            <div class="act-tile"><b>✌️ 2 指 → 暂停音乐</b><span>同上，读「暂停」菜单项点击，不误触不抢焦点</span></div>
+            <div class="act-tile"><b>🤟 3 指 → 打开 Safari</b><span><code>open -a Safari</code></span></div>
+            <div class="act-tile"><b>☝️ 1 指 → 新标签搜索</b><span><code>open location</code> 打开百度搜索「赵今麦最新电影」（URL 编码）</span></div>
+          </div>
+          <ul>
+            <li><b>运行模式</b>：实时预览窗口 / <code>--no-window</code> 后台（提示音+状态文件）/ <code>--camera N</code> 选摄像头 / <code>--hold N</code> 调防抖帧数</li>
+            <li><b>链路自检</b>：<code>--simulate 5|2|3|1</code> 不开摄像头、用模拟手指数直接触发执行层</li>
+            <li><b>反馈</b>：预览 HUD（手指数 / 稳定帧进度 / 最近触发）、触发响铃、日志写 <code>~/gesture_control_last_action.txt</code></li>
+          </ul>
+        </div>
+
+        <div class="act-card">
+          <h4><span class="num">3</span>全部功能 · 框架层 MediaPipe 能力地图</h4>
+          <div class="act-grid">
+            <div class="act-tile"><b>Hands 手部 21 关键点</b><span>指尖/指节/腕 3D 坐标；本项目在用，几何规则即可数手指</span></div>
+            <div class="act-tile"><b>Gesture Recognizer 静态手势</b><span>21 类分类（👍👌✋✌️…）+ 关键点；不用自己写几何规则</span></div>
+            <div class="act-tile"><b>Pose Landmarker 全身 33 点</b><span>骨架角度 → 健身计数、体感动作</span></div>
+            <div class="act-tile"><b>Face Landmarker 面部</b><span>478 点 + 表情系数 → 微表情、眨眼、张嘴指令</span></div>
+            <div class="act-tile"><b>Object / Image 检测分类</b><span>识别摄像头前的物体/场景 → 条件触发</span></div>
+            <div class="act-tile"><b>Text Recognizer OCR</b><span>画面文字 → 文字指令</span></div>
+            <div class="act-tile"><b>Audio Classifier 音频</b><span>声音事件分类（拍手=指令的连续音频版）</span></div>
+            <div class="act-tile"><b>Model Maker / Studio</b><span>用自己的数据微调模型、浏览器里可视化评测</span></div>
+          </div>
+          <p class="hsub">每个任务 = 统一的 Tasks API（创建 Task → 逐帧 detect），换任务不换架构。</p>
+        </div>
+
+        <div class="act-card">
+          <h4><span class="num">4</span>使用方法</h4>
+          <div class="actpre"># 摄像头实时（弹出预览窗口）
+python3 gesture_launcher.py
+
+# 后台跑（无窗口，触发时提示音）
+python3 gesture_launcher.py --no-window
+
+# 指定摄像头 / 调防抖（默认 12 帧 ≈ 0.4s 稳定才触发）
+python3 gesture_launcher.py --camera 1 --hold 20
+
+# 不开摄像头，先验证执行链（模拟 5/2/3/1 指）
+python3 gesture_launcher.py --simulate 5</div>
+          <div class="actpre"># 接入 MediaPipe 任务的通用三步（Python，示意）
+import mediapipe as mp
+tasks = mp.tasks.vision
+opts = tasks.HandLandmarkerOptions(base_options=mp.tasks.BaseOptions(
+    model_asset_path="hand_landmarker.task"), num_hands=1)
+detector = tasks.HandLandmarker.create_from_options(opts)
+# 逐帧：result = detector.detect(video_frame) → 拿 21 个关键点坐标</div>
+          <p class="hsub">细节与官方文档：仓库内 <code>reference/mediapipe/docs/</code> 与 gesture_control/README.md。</p>
+        </div>
+
+        <div class="act-card">
+          <h4><span class="num">5</span>设计思路 —— 怎么想才能用满这个项目的全部能力</h4>
+          <ul>
+            <li><b>① 识别 / 决策 / 执行三层解耦。</b>换动作只改 <code>execute_gesture</code> 一张映射表（想「打开任意网页 / 控任意软件」= 表里加一行）；换识别只改 <code>count_fingers</code>；防抖是独立状态机。**想清楚你要换哪一层，就不用动另外两层。**</li>
+            <li><b>② 静态用规则，连续用时序。</b>手指数是单帧几何规则（指尖高于指节）；连续动作（挥手轨迹、动作序列、手语句子）需要「窗口 + 状态机」—— 本项目 12 帧防抖就是最小时序窗，触发后必须归零（抬起手才允许再触发），这是所有连续识别的骨架。</li>
+            <li><b>③ 链路分层验证。</b>先 <code>--simulate</code> 验执行链，再上真手验识别 —— 出问题先回答「是识别错了还是执行错了」，两层分开测，一次只动一层。</li>
+            <li><b>④ 先定交互粒度，再选模型。</b>一个动作 = 一个可断言的系统副作用（打开/播放/搜索），粒度细 → 误触少、好调试；想更自然再升级：几何规则 → Gesture Recognizer 分类器 → 轨迹/序列模型，每升一级都要重新付时序判定的复杂度。</li>
+          </ul>
+        </div>
+
+        <div class="act-card">
+          <h4><span class="num">6</span>使用场景分类 —— 手势识别 vs 手语识别（都识别手，但形态完全不同）</h4>
+          <div class="act-grid">
+            <div class="act-tile"><b>静态手势识别 <span class="act-tag done">本项目</span></b><span><b>单帧姿势 = 指令</b>，无时序：手指数（5/2/3/1 指）、👍👌；延迟最低、防抖最简单。场景：媒体控制、翻页、快捷指令、演讲遥控</span></div>
+            <div class="act-tile"><b>静态手势分类 <span class="act-tag ready">框架就绪</span></b><span>Gesture Recognizer 直接给 21 类标签，不用自己写指尖规则；适合要做「点赞/OK/比心」等丰富指令时替换几何规则</span></div>
+            <div class="act-tile"><b>连续动作识别 <span class="act-tag ready">框架就绪</span></b><span><b>时序序列 = 语义</b>：挥手轨迹、深蹲/挥拍计数（Pose 角度序列）、动作起止边界。需要窗口 + 状态机（本项目防抖即雏形）</span></div>
+            <div class="act-tile"><b>手语识别（连续）<span class="act-tag todo">需序列模型</span></b><span><b>手形（静态）+ 运动（连续）+ 时序</b> 才是一个词/句；入门路径：先静态字母（Gesture Recognizer + 手形规则），再加词级时间窗，最后上序列模型；与「手势识别」的差别 = 单帧 vs 跨帧语义</span></div>
+            <div class="act-tile"><b>人脸/表情 <span class="act-tag ready">框架就绪</span></b><span>Face Landmarker：眨眼、张嘴、点头 → 无障碍开关、注意力检测（静态阈值 + 微时序）</span></div>
+            <div class="act-tile"><b>全身姿态 <span class="act-tag ready">框架就绪</span></b><span>Pose 33 点：健身计数、久坐提醒、体感游戏（角度阈值 = 静态判定，动作段 = 连续判定）</span></div>
+            <div class="act-tile"><b>语音（另一路）<span class="act-tag ready">已有</span></b><span>与视觉同构的连续识别：说话是时序信号 —— 本原型的语音输入/通话就是现成执行链的另一输入端</span></div>
+            <div class="act-tile"><b>音乐 · 系统自动化 <span class="act-tag done">本项目</span></b><span>已实现：手势控网易云（播放/暂停）、开网页/搜索；扩展 = 往执行层表里加任意 AppleScript / URL / shell</span></div>
+          </div>
+          <p style="margin-top:8px"><b style="color:#F2F2F4">选型心法</b>：先问「这个交互是单帧能说清，还是必须跨帧才成立？」—— 单帧 → 静态手势/表情阈值（本项目路线）；跨帧 → 连续识别，接受窗口、边界、误触三个新问题。手语属于后者，但可以<b>从静态字母起步</b>逐级加上去。</p>
+        </div>
+
+        <div class="act-hint">💬 右侧就是完整对话窗：可以直接把摄像头截图发过来（图文）、开口问（语音）、或视频通话（视频）—— 比如「这个手势在 MediaPipe 里用哪个任务识别？」「帮我把 3 指改成打开 GitHub」。</div>
+      </div>
+      <div class="act-slot" id="actChatSlot"></div>
+    </div>`;
+  // 寄宿对话窗（ChatModule：一份 DOM，全页面共用；关闭本页自动搬回家）
+  if (typeof ChatModule !== 'undefined') ChatModule.attach(pane.querySelector('#actChatSlot'));
+}
+
+/* ── 侧栏分区接线 + 与其它分区互斥 ── */
+(function bindAction() {
+  const sect = document.getElementById('btnActionSect');
+  if (sect) sect.onclick = () => { if (actionView) setActionView(null); else setActionView('open'); };
+  setTimeout(() => {
+    ['btnProjSect', 'btnPlanSect', 'btnHermesSect', 'btnWikiSect', 'btnModelSect'].forEach(id => {
+      const b = document.getElementById(id);
+      if (!b) return;
+      const orig = b.onclick;
+      b.onclick = e => { closeActionPage(); if (orig) orig(e); };
+    });
+  }, 0);
+  renderActionNav();
 })();
 
 })();
